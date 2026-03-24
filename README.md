@@ -3,10 +3,10 @@
 RayDi is a minimalist differentiable ray tracing package built on top of Dr.Jit and OptiX.
 
 ```bash
-pip install .
+pip install raydi
 ```
 
-RayDi is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and wave simulators.
+RayDi is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
 
 The goal is simple: expose differentiable ray-mesh intersection on the GPU without bringing in a full graphics framework.
 
