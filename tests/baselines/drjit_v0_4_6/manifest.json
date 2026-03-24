@@ -1,0 +1,17 @@
+{
+  "baseline_version": "drjit_v0_4_6",
+  "cuda_version": "Build cuda_12.9.r12.9/compiler.35813241_0",
+  "raydi_commit": "f55f2725739192dbf9e2fb24cf44cf54d5dd6e52",
+  "drjit_commit": "4b022cb70d17367adddfdc6be10e0dd4e615d127",
+  "drjit_version": "0.4.6",
+  "platform": "Windows-10-10.0.26100-SP0",
+  "python_version": "3.8.20 (default, Oct  3 2024, 15:19:54) [MSC v.1929 64 bit (AMD64)]",
+  "tolerance_policy": {
+    "default_abs": 1e-06,
+    "default_rel": 1e-06,
+    "gradient_abs": 5e-05,
+    "gradient_rel": 5e-05,
+    "matrix_abs": 1e-05,
+    "matrix_rel": 1e-05
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "boundary_mask": [
+    true,
+    true,
+    true
+  ],
+  "edge_count": 3,
+  "p0": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "prim_id": -1,
+  "shape_id": -1,
+  "t_is_inf": true,
+  "valid": false
+}

@@ -1,0 +1,143 @@
+name: Build And Publish PyPI Wheels
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build_wheels:
+    name: ${{ matrix.os_name }} / py${{ matrix.python_version }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS is intentionally excluded: RayDi requires CUDA + OptiX.
+          - runner: ubuntu-22.04
+            os_name: linux
+            python_version: "3.10"
+            cuda_version: "12.5.0"
+          - runner: ubuntu-22.04
+            os_name: linux
+            python_version: "3.11"
+            cuda_version: "12.5.0"
+          - runner: ubuntu-22.04
+            os_name: linux
+            python_version: "3.12"
+            cuda_version: "12.5.0"
+          - runner: ubuntu-22.04
+            os_name: linux
+            python_version: "3.13"
+            cuda_version: "12.5.0"
+          - runner: windows-2022
+            os_name: windows
+            python_version: "3.10"
+            cuda_version: "12.5.0"
+          - runner: windows-2022
+            os_name: windows
+            python_version: "3.11"
+            cuda_version: "12.5.0"
+          - runner: windows-2022
+            os_name: windows
+            python_version: "3.12"
+            cuda_version: "12.5.0"
+          - runner: windows-2022
+            os_name: windows
+            python_version: "3.13"
+            cuda_version: "12.5.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: local
+          linux-local-args: '["--toolkit"]'
+          log-file-suffix: "${{ matrix.os_name }}-py${{ matrix.python_version }}.log"
+
+      - name: Show toolchain
+        shell: bash
+        run: |
+          python --version
+          cmake --version || true
+          nvcc --version
+
+      - name: Install build frontend
+        run: python -m pip install --upgrade pip build cmake ninja
+
+      - name: Build wheel
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "4"
+        run: python -m build --wheel
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os_name }}-py${{ matrix.python_version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build_sdist:
+    name: sdist
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build frontend
+        run: python -m pip install --upgrade pip build
+
+      - name: Build source distribution
+        run: python -m build --sdist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish To PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build_wheels
+      - build_sdist
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/raydi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
