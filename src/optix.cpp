@@ -1,6 +1,6 @@
 #include <drjit-core/optix.h>
 #define OPTIX_STUBS_IMPL
-#include <raydi/optix.h>
+#include <rayd/optix.h>
 
 #include <sstream>
 
@@ -12,7 +12,7 @@
 #  include <dlfcn.h>
 #endif
 
-namespace raydi {
+namespace rayd {
 
 namespace {
 
@@ -184,7 +184,7 @@ OptixRuntimeInfo query_optix_runtime_info() {
     OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
     info.query_function_table_available = query_fn != nullptr;
     if (query_fn != nullptr) {
-        info.abi_probe_result = query_fn(RAYDI_OPTIX_TARGET_ABI,
+        info.abi_probe_result = query_fn(RAYD_OPTIX_TARGET_ABI,
                                          0,
                                          nullptr,
                                          nullptr,
@@ -212,7 +212,7 @@ OptixRuntimeInfo query_optix_runtime_info() {
     return info;
 }
 
-} // namespace raydi
+} // namespace rayd
 
 void init_optix_api() {
     jit_optix_context(); // Ensure OptiX is initialized

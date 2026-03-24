@@ -136,45 +136,45 @@ def _ray_to_dict(ray):
     }
 
 
-def _load_raydi():
-    package_root = os.environ.get("RAYDI_PACKAGE_ROOT")
+def _load_rayd():
+    package_root = os.environ.get("RAYD_PACKAGE_ROOT")
     if not package_root:
-        import raydi as pj
+        import rayd as pj
 
         return pj
 
-    package_dir = Path(package_root) / "raydi"
-    ext_candidates = sorted(package_dir.glob("raydi*.pyd"))
+    package_dir = Path(package_root) / "rayd"
+    ext_candidates = sorted(package_dir.glob("rayd*.pyd"))
     if not ext_candidates:
-        raise RuntimeError(f"RAYDI_PACKAGE_ROOT does not contain raydi/*.pyd: {package_root}")
+        raise RuntimeError(f"RAYD_PACKAGE_ROOT does not contain rayd/*.pyd: {package_root}")
 
-    sys.modules.pop("raydi.raydi", None)
-    sys.modules.pop("raydi", None)
-    spec = importlib.util.spec_from_file_location("raydi.raydi", ext_candidates[0])
+    sys.modules.pop("rayd.rayd", None)
+    sys.modules.pop("rayd", None)
+    spec = importlib.util.spec_from_file_location("rayd.rayd", ext_candidates[0])
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to create import spec for {ext_candidates[0]}")
 
     ext_module = importlib.util.module_from_spec(spec)
-    sys.modules["raydi.raydi"] = ext_module
+    sys.modules["rayd.rayd"] = ext_module
     spec.loader.exec_module(ext_module)
 
-    package = types.ModuleType("raydi")
+    package = types.ModuleType("rayd")
     package.__file__ = str(package_dir / "__init__.py")
     package.__path__ = [str(package_dir)]
-    package.__package__ = "raydi"
-    package.raydi = ext_module
+    package.__package__ = "rayd"
+    package.rayd = ext_module
 
     for name, value in ext_module.__dict__.items():
         if name.startswith("__") and name not in {"__doc__", "__name__"}:
             continue
         setattr(package, name, value)
 
-    sys.modules["raydi"] = package
+    sys.modules["rayd"] = package
     return package
 
 
 def collect_baseline_data():
-    pj = _load_raydi()
+    pj = _load_rayd()
     import drjit as dr
     import drjit.cuda as cuda
     import drjit.cuda.ad as ad
@@ -641,7 +641,7 @@ def collect_manifest():
     return {
         "baseline_version": "drjit_v0_4_6",
         "drjit_version": getattr(drjit, "__version__", None),
-        "raydi_commit": _git_output("git", "rev-parse", "HEAD"),
+        "rayd_commit": _git_output("git", "rev-parse", "HEAD"),
         "drjit_commit": _optional_git_output(
             "git",
             "-C",

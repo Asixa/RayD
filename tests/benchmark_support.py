@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import raydi as pj
+import rayd as pj
 import drjit as dr
 import drjit.cuda as cuda
 import drjit.cuda.ad as ad
@@ -166,8 +166,8 @@ class IntersectionSummary:
         }
 
 
-class RayDiBackend:
-    name = "raydi"
+class RayDBackend:
+    name = "rayd"
 
     def environment(self) -> dict[str, Any]:
         return {
@@ -542,7 +542,7 @@ class MitsubaBackend:
         dynamic_update: bool,
         updated_mesh_data: dict[str, list[float] | list[int]] | None = None,
     ) -> dict[str, Any]:
-        # Keep scene/params/rays outside the timed loop to match the RayDi benchmark.
+        # Keep scene/params/rays outside the timed loop to match the RayD benchmark.
         # For dynamic updates, explicitly mark the reused parameter dirty so Mitsuba
         # refreshes internal state even when the same AD buffer is submitted repeatedly.
         scene, params = self._scene(mesh_data)
@@ -598,8 +598,8 @@ def _compare_gradients(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
 def _build_backends(names: list[str], mitsuba_variant: str) -> list[Any]:
     backends: list[Any] = []
     for name in names:
-        if name == "raydi":
-            backends.append(RayDiBackend())
+        if name == "rayd":
+            backends.append(RayDBackend())
         elif name == "mitsuba":
             mi = _try_import_mitsuba(mitsuba_variant)
             if mi is None:
@@ -616,13 +616,13 @@ def _build_backends(names: list[str], mitsuba_variant: str) -> list[Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Benchmark RayDi ray intersection and gradients against Mitsuba."
+        description="Benchmark RayD ray intersection and gradients against Mitsuba."
     )
     parser.add_argument(
         "--backends",
         nargs="+",
-        default=["raydi", "mitsuba"],
-        choices=["raydi", "mitsuba"],
+        default=["rayd", "mitsuba"],
+        choices=["rayd", "mitsuba"],
         help="Backends to run.",
     )
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
@@ -726,18 +726,18 @@ def main() -> int:
         _cleanup_drjit()
         results["backends"][backend.name] = backend_result
 
-    if "raydi" in forward_static and "mitsuba" in forward_static:
+    if "rayd" in forward_static and "mitsuba" in forward_static:
         results["comparisons"]["forward_static"] = _compare_intersections(
-            forward_static["raydi"], forward_static["mitsuba"]
+            forward_static["rayd"], forward_static["mitsuba"]
         )
         results["comparisons"]["forward_dynamic"] = _compare_intersections(
-            forward_dynamic["raydi"], forward_dynamic["mitsuba"]
+            forward_dynamic["rayd"], forward_dynamic["mitsuba"]
         )
         results["comparisons"]["gradient_static"] = _compare_gradients(
-            grad_static["raydi"], grad_static["mitsuba"]
+            grad_static["rayd"], grad_static["mitsuba"]
         )
         results["comparisons"]["gradient_dynamic"] = _compare_gradients(
-            grad_dynamic["raydi"], grad_dynamic["mitsuba"]
+            grad_dynamic["rayd"], grad_dynamic["mitsuba"]
         )
 
     print(json.dumps(results, indent=2))

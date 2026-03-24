@@ -1,8 +1,8 @@
 #pragma once
 
-#include <raydi/types.h>
+#include <rayd/types.h>
 
-namespace raydi {
+namespace rayd {
 
 template <typename> struct RayData;
 template <bool Detached>
@@ -37,5 +37,5 @@ class OptixScene;
 class SceneEdge;
 class Scene;
 
-} // namespace raydi
+} // namespace rayd
 

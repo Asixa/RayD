@@ -1,4 +1,4 @@
-import raydi as rd
+import rayd as rd
 import drjit.cuda as cuda
 
 

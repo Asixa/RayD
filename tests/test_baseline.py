@@ -32,7 +32,7 @@ class BaselineRegressionTests(unittest.TestCase):
     def test_baseline_manifest_is_present(self):
         self.assertEqual(self.baseline_manifest["baseline_version"], "drjit_v0_4_6")
         self.assertIn("drjit_version", self.baseline_manifest)
-        self.assertIn("raydi_commit", self.baseline_manifest)
+        self.assertIn("rayd_commit", self.baseline_manifest)
 
     def test_baseline_outputs_match(self):
         for section, expected_section in sorted(self.expected_data.items()):

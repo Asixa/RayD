@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import raydi as rd
+import rayd as rd
 import drjit as dr
 import drjit.cuda as cuda
 import drjit.cuda.ad as ad

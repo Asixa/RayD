@@ -1,7 +1,7 @@
 {
   "baseline_version": "drjit_v0_4_6",
   "cuda_version": "Build cuda_12.9.r12.9/compiler.35813241_0",
-  "raydi_commit": "f55f2725739192dbf9e2fb24cf44cf54d5dd6e52",
+  "rayd_commit": "f55f2725739192dbf9e2fb24cf44cf54d5dd6e52",
   "drjit_commit": "4b022cb70d17367adddfdc6be10e0dd4e615d127",
   "drjit_version": "0.4.6",
   "platform": "Windows-10-10.0.26100-SP0",

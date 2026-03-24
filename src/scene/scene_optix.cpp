@@ -5,11 +5,11 @@
 #include <mutex>
 #include <vector>
 
-#include <raydi/ray.h>
-#include <raydi/mesh.h>
-#include <raydi/scene/scene_optix.h>
+#include <rayd/ray.h>
+#include <rayd/mesh.h>
+#include <rayd/scene/scene_optix.h>
 
-namespace raydi {
+namespace rayd {
 
 const char *miss_and_closesthit_ptx = R"(
 .version 7.4
@@ -64,12 +64,12 @@ const char *miss_and_closesthit_ptx = R"(
 
 namespace dr = drjit;
 
-#ifndef RAYDI_OPTIX_MODULE_OPT_LEVEL
-#  define RAYDI_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
+#ifndef RAYD_OPTIX_MODULE_OPT_LEVEL
+#  define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
 #endif
 
-#ifndef RAYDI_OPTIX_EXCEPTION_FLAGS
-#  define RAYDI_OPTIX_EXCEPTION_FLAGS OPTIX_EXCEPTION_FLAG_NONE
+#ifndef RAYD_OPTIX_EXCEPTION_FLAGS
+#  define RAYD_OPTIX_EXCEPTION_FLAGS OPTIX_EXCEPTION_FLAG_NONE
 #endif
 
 namespace {
@@ -489,14 +489,14 @@ void OptixScene::configure(const std::vector<OptixSceneMeshDesc> &meshes) {
     m_accel->context = jit_optix_context();
 
     m_accel->module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
-    m_accel->module_compile_options.optLevel = RAYDI_OPTIX_MODULE_OPT_LEVEL;
+    m_accel->module_compile_options.optLevel = RAYD_OPTIX_MODULE_OPT_LEVEL;
 
     m_accel->pipeline_compile_options.usesMotionBlur = false;
     m_accel->pipeline_compile_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     m_accel->pipeline_compile_options.numPayloadValues = 5;
     m_accel->pipeline_compile_options.numAttributeValues = 0;
-    m_accel->pipeline_compile_options.exceptionFlags = RAYDI_OPTIX_EXCEPTION_FLAGS;
+    m_accel->pipeline_compile_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     m_accel->pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
     m_accel->pipeline_compile_options.usesPrimitiveTypeFlags =
         static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
@@ -838,4 +838,4 @@ template OptixIntersection OptixScene::ray_intersect<false>(const Ray &ray, Mask
 template MaskDetached OptixScene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask OptixScene::shadow_test<false>(const Ray &ray, Mask active) const;
 
-} // namespace raydi
+} // namespace rayd

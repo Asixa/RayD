@@ -1,16 +1,16 @@
 #pragma once
 
-#define RAYDI_OPTIX_TARGET_VERSION 80100
-#define RAYDI_OPTIX_TARGET_ABI 93
+#define RAYD_OPTIX_TARGET_VERSION 80100
+#define RAYD_OPTIX_TARGET_ABI 93
 
 #include <drjit-core/optix.h>
 
 #include <string>
 
-// Minimal host-side OptiX declarations used by RayDi.
+// Minimal host-side OptiX declarations used by RayD.
 // Keep this aligned with the OptiX 8.1.0 host API subset that the project targets.
 #ifndef OPTIX_VERSION
-#  define OPTIX_VERSION RAYDI_OPTIX_TARGET_VERSION
+#  define OPTIX_VERSION RAYD_OPTIX_TARGET_VERSION
 #endif
 
 // =====================================================
@@ -271,11 +271,11 @@ D(optixAccelCompact, OptixDeviceContext, CUstream, OptixTraversableHandle,
 
 extern void init_optix_api();
 
-namespace raydi {
+namespace rayd {
 
 struct OptixRuntimeInfo {
-    int target_version = RAYDI_OPTIX_TARGET_VERSION;
-    int target_abi = RAYDI_OPTIX_TARGET_ABI;
+    int target_version = RAYD_OPTIX_TARGET_VERSION;
+    int target_abi = RAYD_OPTIX_TARGET_ABI;
     bool module_create_available = false;
     bool device_context_get_property_available = false;
     bool query_function_table_available = false;
@@ -288,4 +288,4 @@ struct OptixRuntimeInfo {
 
 OptixRuntimeInfo query_optix_runtime_info();
 
-} // namespace raydi
+} // namespace rayd

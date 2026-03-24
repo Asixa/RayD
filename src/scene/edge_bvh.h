@@ -1,6 +1,6 @@
 #pragma once
 
-namespace raydi {
+namespace rayd {
 
 void build_edge_bvh_gpu(
     int primitive_count,
@@ -28,4 +28,4 @@ void build_edge_bvh_gpu(
     int *is_leaf,
     int *primitive_leaf_node);
 
-} // namespace raydi
+} // namespace rayd

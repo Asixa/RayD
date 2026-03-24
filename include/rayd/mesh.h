@@ -2,12 +2,12 @@
 
 #include <memory>
 
-#include <raydi/raydi.h>
-#include <raydi/edge.h>
+#include <rayd/rayd.h>
+#include <rayd/edge.h>
 
-namespace raydi {
+namespace rayd {
 
-/// Triangle mesh plus cached geometric data used by RayDi queries.
+/// Triangle mesh plus cached geometric data used by RayD queries.
 class Mesh final {
 public:
     Mesh() = default;
@@ -165,4 +165,4 @@ private:
     IntDetached optix_face_buffer_;
 };
 
-} // namespace raydi
+} // namespace rayd

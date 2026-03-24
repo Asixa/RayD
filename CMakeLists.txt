@@ -8,9 +8,9 @@ project(${SKBUILD_PROJECT_NAME} VERSION ${SKBUILD_PROJECT_VERSION})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(RAYDI_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL_3 + no exceptions)." ON)
-option(RAYDI_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
-option(RAYDI_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
+option(RAYD_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL_3 + no exceptions)." ON)
+option(RAYD_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
+option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
 
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 execute_process(
@@ -47,12 +47,12 @@ endif()
 
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
-if(RAYDI_OPTIX_PRODUCTION_CONFIG)
-    set(RAYDI_OPTIX_MODULE_OPT_LEVEL 0x2343)
-    set(RAYDI_OPTIX_EXCEPTION_FLAGS 0)
+if(RAYD_OPTIX_PRODUCTION_CONFIG)
+    set(RAYD_OPTIX_MODULE_OPT_LEVEL 0x2343)
+    set(RAYD_OPTIX_EXCEPTION_FLAGS 0)
 else()
-    set(RAYDI_OPTIX_MODULE_OPT_LEVEL 0x2340)
-    set(RAYDI_OPTIX_EXCEPTION_FLAGS 11)
+    set(RAYD_OPTIX_MODULE_OPT_LEVEL 0x2340)
+    set(RAYD_OPTIX_EXCEPTION_FLAGS 11)
 endif()
 
 find_package(CUDA 11.0 REQUIRED)
@@ -70,95 +70,95 @@ include_directories(
     ${CUDA_INCLUDE_DIRS}
 )
 
-set(RAYDI_INCLUDE_DIR include/raydi)
-set(RAYDI_SOURCE_DIR src)
-set(RAYDI_SOURCE_FILES
-    ${RAYDI_INCLUDE_DIR}/raydi.h
-    ${RAYDI_INCLUDE_DIR}/constants.h
-    ${RAYDI_INCLUDE_DIR}/fwd.h
-    ${RAYDI_INCLUDE_DIR}/types.h
-    ${RAYDI_INCLUDE_DIR}/utils.h
+set(RAYD_INCLUDE_DIR include/rayd)
+set(RAYD_SOURCE_DIR src)
+set(RAYD_SOURCE_FILES
+    ${RAYD_INCLUDE_DIR}/rayd.h
+    ${RAYD_INCLUDE_DIR}/constants.h
+    ${RAYD_INCLUDE_DIR}/fwd.h
+    ${RAYD_INCLUDE_DIR}/types.h
+    ${RAYD_INCLUDE_DIR}/utils.h
 
-    ${RAYDI_INCLUDE_DIR}/ray.h
-    ${RAYDI_INCLUDE_DIR}/intersection.h
-    ${RAYDI_INCLUDE_DIR}/transform.h
+    ${RAYD_INCLUDE_DIR}/ray.h
+    ${RAYD_INCLUDE_DIR}/intersection.h
+    ${RAYD_INCLUDE_DIR}/transform.h
 
-    ${RAYDI_INCLUDE_DIR}/edge.h
+    ${RAYD_INCLUDE_DIR}/edge.h
 
-    ${RAYDI_INCLUDE_DIR}/mesh.h
-    ${RAYDI_SOURCE_DIR}/mesh.cpp
+    ${RAYD_INCLUDE_DIR}/mesh.h
+    ${RAYD_SOURCE_DIR}/mesh.cpp
 
-    ${RAYDI_INCLUDE_DIR}/optix.h
+    ${RAYD_INCLUDE_DIR}/optix.h
 
-    ${RAYDI_INCLUDE_DIR}/camera.h
-    ${RAYDI_SOURCE_DIR}/camera.cpp
+    ${RAYD_INCLUDE_DIR}/camera.h
+    ${RAYD_SOURCE_DIR}/camera.cpp
 
-    ${RAYDI_INCLUDE_DIR}/scene/scene_optix.h
-    ${RAYDI_SOURCE_DIR}/scene/scene_optix.cpp
-    ${RAYDI_INCLUDE_DIR}/scene/scene_edge.h
-    ${RAYDI_SOURCE_DIR}/scene/scene_edge.cpp
-    ${RAYDI_SOURCE_DIR}/scene/edge_bvh.h
+    ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
+    ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
+    ${RAYD_INCLUDE_DIR}/scene/scene_edge.h
+    ${RAYD_SOURCE_DIR}/scene/scene_edge.cpp
+    ${RAYD_SOURCE_DIR}/scene/edge_bvh.h
 
-    ${RAYDI_INCLUDE_DIR}/scene/scene.h
-    ${RAYDI_SOURCE_DIR}/scene/scene.cpp
+    ${RAYD_INCLUDE_DIR}/scene/scene.h
+    ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
-    ${RAYDI_SOURCE_DIR}/optix.cpp
-    ${RAYDI_SOURCE_DIR}/raydi.cpp
+    ${RAYD_SOURCE_DIR}/optix.cpp
+    ${RAYD_SOURCE_DIR}/rayd.cpp
 )
 if(WIN32)
-    set(RAYDI_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
-    set(RAYDI_VSDEVCMD "${CMAKE_GENERATOR_INSTANCE}/Common7/Tools/VsDevCmd.bat")
-    set(RAYDI_CUDA_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_bvh.bat")
-    file(GENERATE OUTPUT "${RAYDI_CUDA_BUILD_SCRIPT}" CONTENT
+    set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
+    set(RAYD_VSDEVCMD "${CMAKE_GENERATOR_INSTANCE}/Common7/Tools/VsDevCmd.bat")
+    set(RAYD_CUDA_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_bvh.bat")
+    file(GENERATE OUTPUT "${RAYD_CUDA_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYDI_VSDEVCMD}\" -arch=x64\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.cu\" -I\"${CMAKE_CURRENT_SOURCE_DIR}/include\" -I\"${CMAKE_CURRENT_SOURCE_DIR}\" -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYDI_CUDA_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu\" -I\"${CMAKE_CURRENT_SOURCE_DIR}/include\" -I\"${CMAKE_CURRENT_SOURCE_DIR}\" -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
 ")
     add_custom_command(
-        OUTPUT "${RAYDI_CUDA_OBJECT}"
-        COMMAND "${RAYDI_CUDA_BUILD_SCRIPT}"
+        OUTPUT "${RAYD_CUDA_OBJECT}"
+        COMMAND "${RAYD_CUDA_BUILD_SCRIPT}"
         DEPENDS
-            "${RAYDI_CUDA_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.h"
+            "${RAYD_CUDA_BUILD_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
         VERBATIM
     )
 else()
-    set(RAYDI_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
+    set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
     add_custom_command(
-        OUTPUT "${RAYDI_CUDA_OBJECT}"
+        OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.cu"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
                 -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
                 -I"${CMAKE_CURRENT_SOURCE_DIR}"
-                -o "${RAYDI_CUDA_OBJECT}"
+                -o "${RAYD_CUDA_OBJECT}"
         DEPENDS
-            "${RAYDI_CUDA_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYDI_SOURCE_DIR}/scene/edge_bvh.h"
+            "${RAYD_CUDA_BUILD_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
         VERBATIM
     )
 endif()
-set_source_files_properties("${RAYDI_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYDI_SOURCE_FILES "${RAYDI_CUDA_OBJECT}")
+set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_SOURCE_FILES "${RAYD_CUDA_OBJECT}")
 
-set(RAYDI_NANOBIND_ARGS NB_DOMAIN drjit)
-if(RAYDI_NANOBIND_NOMINSIZE)
-    list(APPEND RAYDI_NANOBIND_ARGS NOMINSIZE)
+set(RAYD_NANOBIND_ARGS NB_DOMAIN drjit)
+if(RAYD_NANOBIND_NOMINSIZE)
+    list(APPEND RAYD_NANOBIND_ARGS NOMINSIZE)
 endif()
-if(RAYDI_ENABLE_LTO)
-    list(APPEND RAYDI_NANOBIND_ARGS LTO)
+if(RAYD_ENABLE_LTO)
+    list(APPEND RAYD_NANOBIND_ARGS LTO)
 endif()
 
-nanobind_add_module(raydi ${RAYDI_NANOBIND_ARGS} ${RAYDI_SOURCE_FILES})
-target_compile_definitions(raydi PRIVATE
-    RAYDI_OPTIX_MODULE_OPT_LEVEL=${RAYDI_OPTIX_MODULE_OPT_LEVEL}
-    RAYDI_OPTIX_EXCEPTION_FLAGS=${RAYDI_OPTIX_EXCEPTION_FLAGS}
+nanobind_add_module(rayd ${RAYD_NANOBIND_ARGS} ${RAYD_SOURCE_FILES})
+target_compile_definitions(rayd PRIVATE
+    RAYD_OPTIX_MODULE_OPT_LEVEL=${RAYD_OPTIX_MODULE_OPT_LEVEL}
+    RAYD_OPTIX_EXCEPTION_FLAGS=${RAYD_OPTIX_EXCEPTION_FLAGS}
 )
 
 if(WIN32)
-    target_compile_options(raydi PRIVATE
+    target_compile_options(rayd PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
         $<$<COMPILE_LANGUAGE:CXX>:/MP>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2>
@@ -167,20 +167,20 @@ if(WIN32)
     )
 endif()
 
-set(PYRAYDI_LIBRARIES drjit drjit-core drjit-extra nanothread)
+set(PYRAYD_LIBRARIES drjit drjit-core drjit-extra nanothread)
 if(WIN32)
-    list(APPEND PYRAYDI_LIBRARIES version)
+    list(APPEND PYRAYD_LIBRARIES version)
 endif()
-target_link_libraries(raydi PRIVATE ${PYRAYDI_LIBRARIES} ${CUDA_LIBRARIES})
+target_link_libraries(rayd PRIVATE ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
 
-install(TARGETS raydi DESTINATION raydi)
+install(TARGETS rayd DESTINATION rayd)
 
-set_target_properties(raydi PROPERTIES
+set_target_properties(rayd PROPERTIES
     SKIP_BUILD_RPATH FALSE
     BUILD_WITH_INSTALL_RPATH FALSE
     INSTALL_RPATH "$ORIGIN"
     INSTALL_RPATH_USE_LINK_PATH TRUE
 )
-set_property(TARGET raydi PROPERTY CXX_STANDARD 17)
-set_target_properties(raydi PROPERTIES PREFIX "")
+set_property(TARGET rayd PROPERTY CXX_STANDARD 17)
+set_target_properties(rayd PROPERTIES PREFIX "")
 

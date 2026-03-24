@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydi {
+namespace rayd {
 
 [[noreturn]] inline void throw_runtime_error_local(const std::string &message) {
     throw std::runtime_error(message);
@@ -1217,4 +1217,4 @@ void build_edge_bvh_gpu(
     }
 }
 
-} // namespace raydi
+} // namespace rayd

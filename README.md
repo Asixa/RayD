@@ -1,31 +1,31 @@
-# RayDi
+# RayD
 
-RayDi is a minimalist differentiable ray tracing package built on top of Dr.Jit and OptiX.
+RayD is a minimalist differentiable ray tracing package built on top of Dr.Jit and OptiX.
 
 ```bash
-pip install raydi
+pip install rayd
 ```
 
-RayDi is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
+RayD is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
 
 The goal is simple: expose differentiable ray-mesh intersection on the GPU without bringing in a full graphics framework.
 
-## Why RayDi?
+## Why RayD?
 
-RayDi is for users who want OptiX acceleration and autodiff, but do not want a full renderer.
+RayD is for users who want OptiX acceleration and autodiff, but do not want a full renderer.
 
 Why not Mitsuba? Mitsuba is excellent for graphics rendering, but often too high-level for RF, acoustics, sonar, or custom wave simulation. In those settings, direct access to ray-scene queries and geometry gradients is usually more useful than a full material-light-integrator stack.
 
-RayDi keeps only the geometric core:
+RayD keeps only the geometric core:
 
 - differentiable ray-mesh intersection
 - scene-level GPU acceleration through OptiX
 - edge acceleration structures for nearest-edge queries
 - primary-edge sampling support for edge-based gradient terms
 
-For intersection workloads, RayDi targets Mitsuba-level performance and matching results with a much smaller API surface.
+For intersection workloads, RayD targets Mitsuba-level performance and matching results with a much smaller API surface.
 
-## What RayDi Provides
+## What RayD Provides
 
 - `Mesh`: triangle geometry, transforms, UVs, and edge topology
 - `Scene`: a container of meshes plus OptiX acceleration
@@ -48,7 +48,7 @@ Build meshes, put them in a scene, launch rays, define a loss, and backpropagate
 The example below traces a single ray against one triangle and backpropagates the hit distance to the vertex positions.
 
 ```python
-import raydi as rd
+import rayd as rd
 import drjit as dr
 import drjit.cuda as cuda
 import drjit.cuda.ad as ad
@@ -87,11 +87,11 @@ print("t =", its.t)
 print("grad z =", dr.grad(verts)[2])
 ```
 
-This is the core RayDi workflow. Replace the single ray with your own batched rays, RF paths, acoustic paths, or edge-based objectives.
+This is the core RayD workflow. Replace the single ray with your own batched rays, RF paths, acoustic paths, or edge-based objectives.
 
 ## Edge Acceleration Structure
 
-RayDi also provides a scene-level edge acceleration structure.
+RayD also provides a scene-level edge acceleration structure.
 
 This is useful for:
 
@@ -100,11 +100,11 @@ This is useful for:
 - visibility-boundary terms
 - geometric edge diffraction models
 
-In other words, RayDi is not limited to triangle hits. It also gives you direct access to edge-level geometry queries, which are important in many non-graphics simulators.
+In other words, RayD is not limited to triangle hits. It also gives you direct access to edge-level geometry queries, which are important in many non-graphics simulators.
 
 ## Compiling Locally
 
-RayDi is a Python package with a C++/CUDA extension.
+RayD is a Python package with a C++/CUDA extension.
 
 You need Python `>=3.10`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit>=1.3.0`, `nanobind==2.11.0`, and `scikit-build-core`.
 
@@ -129,13 +129,13 @@ python -m pip install .
 
 ## Dependencies
 
-RayDi depends on:
+RayD depends on:
 
 - Python `3.10+`
 - Dr.Jit `1.3.0+`
 - OptiX `8+`
 
-RayDi does not include:
+RayD does not include:
 
 - BSDFs
 - emitters
@@ -148,9 +148,9 @@ That is by design.
 
 ## Repository Layout
 
-- [`include/raydi/`](include/raydi): public C++ headers
+- [`include/rayd/`](include/rayd): public C++ headers
 - [`src/`](src): C++ and CUDA implementation
-- [`src/raydi.cpp`](src/raydi.cpp): Python bindings
+- [`src/rayd.cpp`](src/rayd.cpp): Python bindings
 - [`examples/`](examples): basic and renderer-side examples
 - [`tests/test_geometry.py`](tests/test_geometry.py): geometry regression tests
 - [`docs/api_reference.md`](docs/api_reference.md): Python API reference
@@ -163,7 +163,7 @@ python -m unittest tests.test_geometry -v
 
 ## Credits
 
-RayDi is developed with reference to:
+RayD is developed with reference to:
 
 - [psdr-jit](https://github.com/andyyankai/psdr-jit)
 - [redner](https://github.com/BachiLi/redner)

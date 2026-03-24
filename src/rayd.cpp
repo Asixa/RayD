@@ -1,20 +1,20 @@
-#include <raydi/raydi.h>
+#include <rayd/rayd.h>
 
 #include <nanobind/stl/string.h>
 #include <drjit/python.h>
 
-#include <raydi/intersection.h>
-#include <raydi/ray.h>
-#include <raydi/transform.h>
-#include <raydi/edge.h>
-#include <raydi/mesh.h>
-#include <raydi/optix.h>
-#include <raydi/camera.h>
-#include <raydi/scene/scene.h>
+#include <rayd/intersection.h>
+#include <rayd/ray.h>
+#include <rayd/transform.h>
+#include <rayd/edge.h>
+#include <rayd/mesh.h>
+#include <rayd/optix.h>
+#include <rayd/camera.h>
+#include <rayd/scene/scene.h>
 
 namespace nb = nanobind;
 using namespace nb::literals;
-using namespace raydi;
+using namespace rayd;
 
 namespace {
 
@@ -105,7 +105,7 @@ struct type_caster<T, std::enable_if_t<drjit::is_array_v<T>, int>> {
 
 } // namespace nanobind::detail
 
-NB_MODULE(raydi, m) {
+NB_MODULE(rayd, m) {
     auto bind_section = [](const char *name, auto &&fn) {
         try {
             fn();
@@ -126,7 +126,7 @@ NB_MODULE(raydi, m) {
     jit_set_flag(JitFlag::SymbolicLoops, false);
 
     m.doc() = "Differentiable geometry queries built on Dr.Jit and OptiX.";
-    m.attr("__name__") = "raydi";
+    m.attr("__name__") = "rayd";
     bind_section("core types", [&]() {
         nb::class_<RayDetached>(m, "RayDetached")
             .def(nb::init<>())
@@ -328,42 +328,42 @@ NB_MODULE(raydi, m) {
             .def("has_pending_updates", &Scene::has_pending_updates)
             .def_prop_ro("last_commit_profile", &Scene::last_commit_profile)
             .def("intersect",
-                 [](const Scene &scene, const RayDetached &ray, raydi::MaskDetached active) {
+                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.ray_intersect<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("intersect",
-                 [](const Scene &scene, const Ray &ray, raydi::Mask active) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.ray_intersect<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("shadow_test",
-                 [](const Scene &scene, const RayDetached &ray, raydi::MaskDetached active) {
+                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("shadow_test",
-                 [](const Scene &scene, const Ray &ray, raydi::Mask active) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.shadow_test<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Vector3f &point, raydi::Mask active) {
+                 [](const Scene &scene, const Vector3f &point, rayd::Mask active) {
                      return scene.closest_edge<false>(point, active);
                  },
                  nb::arg("point").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Vector3fDetached &point, raydi::MaskDetached active) {
+                 [](const Scene &scene, const Vector3fDetached &point, rayd::MaskDetached active) {
                      return scene.closest_edge<true>(point, active);
                  },
                  nb::arg("point").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const RayDetached &ray, raydi::MaskDetached active) {
+                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.closest_edge<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Ray &ray, raydi::Mask active) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.closest_edge<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)

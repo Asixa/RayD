@@ -2,13 +2,13 @@
 
 #include <utility>
 
-#include <raydi/raydi.h>
-#include <raydi/edge.h>
+#include <rayd/rayd.h>
+#include <rayd/edge.h>
 #include <drjit/tensor.h>
 #include <drjit/math.h>
 #include <drjit/util.h>
 
-namespace raydi {
+namespace rayd {
 
 class Scene;
 
@@ -169,4 +169,4 @@ private:
     friend class Scene;
 };
 
-} // namespace raydi
+} // namespace rayd

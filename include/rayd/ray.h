@@ -1,8 +1,8 @@
 #pragma once
 
-#include <raydi/raydi.h>
+#include <rayd/rayd.h>
 
-namespace raydi {
+namespace rayd {
 
 template <typename Float_>
 struct RayData {
@@ -31,4 +31,4 @@ struct RayData {
     DRJIT_STRUCT(RayData, o, d, tmax)
 };
 
-} // namespace raydi
+} // namespace rayd

@@ -4,9 +4,9 @@ build-backend = "scikit_build_core.build"
 
 
 [project]
-name = "raydi"
+name = "rayd"
 version = "0.1.0"
-description = "RayDi: minimalist differentiable ray tracing package wrapping Dr.Jit and OptiX."
+description = "RayD: minimalist differentiable ray tracing package wrapping Dr.Jit and OptiX."
 readme = "README.md"
 authors = [{ name = "Xingyu Chen" }]
 

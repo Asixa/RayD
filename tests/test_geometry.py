@@ -47,7 +47,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
 
             print(json.dumps({
                 "has_rayc": hasattr(pj, "RayC"),
@@ -67,7 +67,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -109,7 +109,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -140,7 +140,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -168,7 +168,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -216,7 +216,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import gc
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -311,7 +311,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
 
@@ -352,7 +352,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
@@ -394,7 +394,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -437,7 +437,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -482,7 +482,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
@@ -529,7 +529,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -583,7 +583,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -645,7 +645,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh_a = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -685,7 +685,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -739,7 +739,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -825,7 +825,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -874,7 +874,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             result = {}
@@ -922,7 +922,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             result = {}
@@ -960,7 +960,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -1018,7 +1018,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 2.0],
@@ -1064,7 +1064,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             xs = []
@@ -1130,7 +1130,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -1203,7 +1203,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
             import json
             import math
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -1259,7 +1259,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -1307,7 +1307,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -1352,7 +1352,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -1393,7 +1393,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit.cuda as cuda
 
             mesh = pj.Mesh(cuda.Array3f([-0.5, 0.5, 0.0],
@@ -1444,9 +1444,9 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            from tests.benchmark_support import RayDiBackend, _make_grid_mesh_data, _make_ray_data
+            from tests.benchmark_support import RayDBackend, _make_grid_mesh_data, _make_ray_data
 
-            backend = RayDiBackend()
+            backend = RayDBackend()
             mesh = _make_grid_mesh_data(8)
             rays = _make_ray_data(8)
             result = backend.gradient_performance(
@@ -1469,7 +1469,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
@@ -1532,7 +1532,7 @@ class GeometryCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
-            import raydi as pj
+            import rayd as pj
             import drjit as dr
             import drjit.cuda as cuda
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include <raydi/raydi.h>
+#include <rayd/rayd.h>
 
-namespace raydi {
+namespace rayd {
 
 template <typename Float_>
 struct IntersectionData {
@@ -29,4 +29,4 @@ struct IntersectionData {
     DRJIT_STRUCT(IntersectionData, t, p, n, geo_n, uv, barycentric, shape_id, prim_id)
 };
 
-} // namespace raydi
+} // namespace rayd

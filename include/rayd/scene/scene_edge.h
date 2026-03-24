@@ -1,11 +1,11 @@
 #pragma once
 
-#include <raydi/raydi.h>
-#include <raydi/edge.h>
-#include <raydi/ray.h>
+#include <rayd/rayd.h>
+#include <rayd/edge.h>
+#include <rayd/ray.h>
 #include <vector>
 
-namespace raydi {
+namespace rayd {
 
 struct EdgeDirtyRange {
     int offset = 0;
@@ -66,5 +66,5 @@ private:
     std::vector<IntDetached> refit_levels_;
 };
 
-} // namespace raydi
+} // namespace rayd
 

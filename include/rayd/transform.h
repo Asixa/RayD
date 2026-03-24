@@ -1,13 +1,13 @@
 #pragma once
 
-#include <raydi/raydi.h>
+#include <rayd/rayd.h>
 
 #include <drjit/matrix.h>
 #include <drjit/quaternion.h>
 #include <drjit/sphere.h>
 #include <drjit/transform.h>
 
-namespace raydi {
+namespace rayd {
 namespace transform {
 
 template <typename Float>
@@ -93,4 +93,4 @@ drjit::Array<Float, 2> transform2d_pos(const drjit::Matrix<Float, 3> &matrix,
     return drjit::head<2>(transformed) / transformed.z();
 }
 
-} // namespace raydi
+} // namespace rayd

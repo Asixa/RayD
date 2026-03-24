@@ -8,10 +8,10 @@
 
 #include "edge_bvh.h"
 
-#include <raydi/scene/scene_edge.h>
-#include <raydi/utils.h>
+#include <rayd/scene/scene_edge.h>
+#include <rayd/utils.h>
 
-namespace raydi {
+namespace rayd {
 
 namespace {
 
@@ -1619,5 +1619,5 @@ template ClosestEdgeCandidate SceneEdge::closest_edge<true>(const RayDetached &r
 template ClosestEdgeCandidate SceneEdge::closest_edge<false>(const Ray &ray,
                                                                  Mask &active) const;
 
-} // namespace raydi
+} // namespace rayd
 

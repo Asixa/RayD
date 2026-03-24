@@ -7,9 +7,9 @@ import drjit as _drjit
 if _sys.platform == "win32" and hasattr(_os, "add_dll_directory"):
     _os.add_dll_directory(str(_pathlib.Path(_drjit.__file__).resolve().parent))
 
-from .raydi import *  # noqa: F401,F403
+from .rayd import *  # noqa: F401,F403
 
 try:
-    del raydi
+    del rayd
 except NameError:
     pass

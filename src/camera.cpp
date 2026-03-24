@@ -1,14 +1,14 @@
 #include <sstream>
 #include <vector>
 
-#include <raydi/ray.h>
-#include <raydi/transform.h>
-#include <raydi/intersection.h>
-#include <raydi/mesh.h>
-#include <raydi/camera.h>
-#include <raydi/scene/scene.h>
+#include <rayd/ray.h>
+#include <rayd/transform.h>
+#include <rayd/intersection.h>
+#include <rayd/mesh.h>
+#include <rayd/camera.h>
+#include <rayd/scene/scene.h>
 
-namespace raydi {
+namespace rayd {
 
 namespace {
 
@@ -305,7 +305,7 @@ void PerspectiveCamera::prepare_primary_edges(const Scene &scene) {
         const Vector3f sample_edge_start = transform_pos(world_to_sample_, edge_start);
         const Vector3f sample_edge_end = transform_pos(world_to_sample_, edge_end);
 
-#ifdef RAYDI_PRIMARY_EDGE_VIS_CHECK
+#ifdef RAYD_PRIMARY_EDGE_VIS_CHECK
         scatter(primary_edge_info_.p0, detach<false>(sample_edge_start), scatter_indices);
         scatter(primary_edge_info_.p1, detach<false>(sample_edge_end), scatter_indices);
 #else
@@ -460,4 +460,4 @@ drjit::Tensor<Float> PerspectiveCamera::render_grad(const Scene &scene, int spp,
     return drjit::Tensor<Float>(image, 2, shape);
 }
 
-} // namespace raydi
+} // namespace rayd

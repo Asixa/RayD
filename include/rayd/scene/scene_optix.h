@@ -1,10 +1,10 @@
 #pragma once
 
-#include <raydi/raydi.h>
-#include <raydi/optix.h>
+#include <rayd/rayd.h>
+#include <rayd/optix.h>
 #include <vector>
 
-namespace raydi {
+namespace rayd {
 
 struct OptixState;
 class Mesh;
@@ -63,4 +63,4 @@ private:
     OptixCommitProfile last_commit_profile_;
 };
 
-} // namespace raydi
+} // namespace rayd

@@ -7,10 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include <raydi/transform.h>
-#include <raydi/mesh.h>
+#include <rayd/transform.h>
+#include <rayd/mesh.h>
 
-namespace raydi {
+namespace rayd {
 
 template <bool Detached>
 static std::pair<TriangleInfoT<Detached>, Vector3fT<Detached>> process_mesh(const Vector3fT<Detached> &vertex_positions,
@@ -436,4 +436,4 @@ std::string Mesh::to_string() const {
     return stream.str();
 }
 
-} // namespace raydi
+} // namespace rayd

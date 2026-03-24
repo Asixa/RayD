@@ -1,9 +1,9 @@
 #pragma once
 
-#include <raydi/raydi.h>
-#include <raydi/ray.h>
+#include <rayd/rayd.h>
+#include <rayd/ray.h>
 
-namespace raydi {
+namespace rayd {
 
 template <typename Float_>
 struct NearestPointEdgeData {
@@ -95,7 +95,7 @@ struct PrimaryEdgeInfoData {
     using Vec2f = std::conditional_t<IsDetached, Vector2fDetached, Vector2f>;
     using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
 
-#ifdef RAYDI_PRIMARY_EDGE_VIS_CHECK
+#ifdef RAYD_PRIMARY_EDGE_VIS_CHECK
     Vec3f p0;
     Vec3f p1;
 #else
@@ -139,4 +139,4 @@ struct SecondaryEdgeInfoData {
 using SecondaryEdgeInfo = SecondaryEdgeInfoData<Float>;
 using SecondaryEdgeInfoDetached = SecondaryEdgeInfoData<FloatDetached>;
 
-} // namespace raydi
+} // namespace rayd

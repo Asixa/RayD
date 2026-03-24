@@ -3,13 +3,13 @@
 #include <sstream>
 #include <vector>
 
-#include <raydi/intersection.h>
-#include <raydi/camera.h>
-#include <raydi/ray.h>
-#include <raydi/scene/scene.h>
-#include <raydi/scene/scene_edge.h>
+#include <rayd/intersection.h>
+#include <rayd/camera.h>
+#include <rayd/ray.h>
+#include <rayd/scene/scene.h>
+#include <rayd/scene/scene_edge.h>
 
-namespace raydi {
+namespace rayd {
 
 namespace {
 
@@ -822,5 +822,5 @@ template NearestPointEdge Scene::closest_edge<false>(const Vector3f &point, Mask
 template NearestRayEdgeDetached Scene::closest_edge<true>(const RayDetached &ray, MaskDetached active) const;
 template NearestRayEdge Scene::closest_edge<false>(const Ray &ray, Mask active) const;
 
-} // namespace raydi
+} // namespace rayd
 

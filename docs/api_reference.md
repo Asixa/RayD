@@ -1,10 +1,10 @@
 # API Reference
 
-This document describes the current public Python API exposed by `raydi`.
+This document describes the current public Python API exposed by `rayd`.
 
 ## Module Overview
 
-RayDi is a geometry-only differentiable ray-intersection package built on Dr.Jit and OptiX.
+RayD is a geometry-only differentiable ray-intersection package built on Dr.Jit and OptiX.
 
 Public top-level exports:
 
@@ -27,7 +27,7 @@ All array-valued inputs and outputs use Dr.Jit CUDA arrays or tensors.
 
 ## Type Conventions
 
-RayDi follows a simple naming rule:
+RayD follows a simple naming rule:
 
 - `Detached` suffix: query runs on detached values
 - no suffix: query participates in Dr.Jit AD
@@ -218,7 +218,7 @@ Properties:
 Notes:
 
 - call `configure()` after changing camera parameters or transforms
-- `render_grad()` depends on the camera’s primary-edge pipeline and is connected directly to the Dr.Jit AD graph
+- `render_grad()` depends on the camera鈥檚 primary-edge pipeline and is connected directly to the Dr.Jit AD graph
 - `prepare_edges(scene)` must be rerun after scene updates that affect visibility
 
 ## Ray Types
@@ -374,7 +374,7 @@ Interpretation:
 ### Ray Intersection
 
 ```python
-import raydi as rd
+import rayd as rd
 import drjit.cuda as cuda
 
 mesh = rd.Mesh(
@@ -399,7 +399,7 @@ its = scene.intersect(ray)
 ### Point Nearest-Edge Query
 
 ```python
-import raydi as rd
+import rayd as rd
 import drjit.cuda as cuda
 
 points = cuda.Array3f([0.25], [0.1], [0.0])
@@ -409,7 +409,7 @@ edge = scene.nearest_edge(points)
 ### Ray Nearest-Edge Query
 
 ```python
-import raydi as rd
+import rayd as rd
 import drjit.cuda as cuda
 
 ray = rd.RayDetached(
@@ -423,7 +423,7 @@ edge = scene.nearest_edge(ray)
 ### Depth Rendering
 
 ```python
-import raydi as rd
+import rayd as rd
 
 camera = rd.Camera(45.0, 1e-4, 1e4)
 camera.width = 128

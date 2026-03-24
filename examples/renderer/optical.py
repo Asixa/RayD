@@ -1,4 +1,4 @@
-"""Differentiable Cornell box — path tracing + edge-AD in ~200 lines."""
+"""Differentiable Cornell box 鈥?path tracing + edge-AD in ~200 lines."""
 
 import argparse
 import time
@@ -9,7 +9,7 @@ import drjit.cuda as cuda
 import drjit.cuda.ad as ad
 import matplotlib.pyplot as plt
 import numpy as np
-import raydi as rd
+import rayd as rd
 
 PI = 3.14159265358979323846
 
@@ -118,7 +118,7 @@ def trace(scene, albedo_t, emission_t, light_id, primary_ray, rng, max_depth=4):
         kd = dr.gather(cuda.Array3f, albedo_t, sid, hit)
         Le = dr.gather(cuda.Array3f, emission_t, sid, hit)
 
-        # emission — first bounce only
+        # emission 鈥?first bounce only
         if depth == 0:
             L = dr.select(hit & (sid == light_id), L + beta * Le, L)
 

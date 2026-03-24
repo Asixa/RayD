@@ -3,9 +3,9 @@
 #include <array>
 #include <vector>
 
-#include <raydi/raydi.h>
+#include <rayd/rayd.h>
 
-namespace raydi {
+namespace rayd {
 
 template <typename ArrayD, typename Mask_>
 DRJIT_INLINE ArrayD compressD(const ArrayD &array, const Mask_ &active) {
@@ -292,4 +292,4 @@ DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
     return fmadd(dx, dx, fmadd(dy, dy, dz * dz));
 }
 
-} // namespace raydi
+} // namespace rayd

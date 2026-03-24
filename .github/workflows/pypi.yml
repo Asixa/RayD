@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS is intentionally excluded: RayDi requires CUDA + OptiX.
+          # macOS is intentionally excluded: RayD requires CUDA + OptiX.
           - runner: ubuntu-22.04
             os_name: linux
             python_version: "3.10"
@@ -125,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/raydi
+      url: https://pypi.org/p/rayd
     permissions:
       contents: read
       id-token: write

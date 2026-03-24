@@ -8,7 +8,7 @@
 #include <drjit/jit.h>
 #include <drjit/matrix.h>
 
-namespace raydi {
+namespace rayd {
 
 using namespace drjit;
 
@@ -130,4 +130,4 @@ using TriangleUVDetached = TriangleUvData<FloatDetached>;
 template <bool Detached_>
 using TriangleUVT = std::conditional_t<Detached_, TriangleUVDetached, TriangleUV>;
 
-} // namespace raydi
+} // namespace rayd

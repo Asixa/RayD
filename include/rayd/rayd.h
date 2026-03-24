@@ -4,14 +4,14 @@
 #include <string>
 #include <string_view>
 
-constexpr int RAYDI_NUM_CHANNELS = 3;
+constexpr int RAYD_NUM_CHANNELS = 3;
 
-#include <raydi/constants.h>
-#include <raydi/types.h>
-#include <raydi/fwd.h>
-#include <raydi/utils.h>
+#include <rayd/constants.h>
+#include <rayd/types.h>
+#include <rayd/fwd.h>
+#include <rayd/utils.h>
 
-namespace raydi {
+namespace rayd {
 
 inline void require(bool condition, std::string_view message) {
     if (!condition) {
@@ -19,4 +19,4 @@ inline void require(bool condition, std::string_view message) {
     }
 }
 
-} // namespace raydi
+} // namespace rayd

@@ -4,13 +4,13 @@
 #include <memory>
 #include <vector>
 
-#include <raydi/raydi.h>
-#include <raydi/edge.h>
-#include <raydi/mesh.h>
-#include <raydi/scene/scene_edge.h>
-#include <raydi/scene/scene_optix.h>
+#include <rayd/rayd.h>
+#include <rayd/edge.h>
+#include <rayd/mesh.h>
+#include <rayd/scene/scene_edge.h>
+#include <rayd/scene/scene_optix.h>
 
-namespace raydi {
+namespace rayd {
 
 struct SceneCommitProfile {
     double mesh_update_ms = 0.0;
@@ -108,5 +108,5 @@ private:
     friend class PerspectiveCamera;
 };
 
-} // namespace raydi
+} // namespace rayd
 
