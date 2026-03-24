@@ -12,7 +12,7 @@ option(RAYD_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL
 option(RAYD_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
 option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
 
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -c "import importlib.util, pathlib, sys; spec = importlib.util.find_spec('drjit'); sys.stdout.write(str(pathlib.Path(next(iter(spec.submodule_search_locations))).resolve() / 'cmake')) if spec and spec.submodule_search_locations else sys.exit(1)"
     RESULT_VARIABLE DRJIT_CMAKE_DIR_RESULT
