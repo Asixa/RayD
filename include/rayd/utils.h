@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <tuple>
 #include <vector>
 
 #include <rayd/rayd.h>

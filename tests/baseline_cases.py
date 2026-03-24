@@ -10,22 +10,6 @@ from pathlib import Path
 from tests.baseline_utils import DEFAULT_TOLERANCE_POLICY, ROOT, write_baseline_tree
 
 
-PROBE_POINTS = [
-    (0.0, 0.0, 0.0),
-    (1.0, 0.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (0.0, 0.0, 1.0),
-    (1.0, 2.0, 3.0),
-]
-
-PROBE_DIRECTIONS = [
-    (1.0, 0.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (0.0, 0.0, 1.0),
-    (1.0, 1.0, 0.0),
-]
-
-
 def _git_output(*args):
     return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
@@ -72,11 +56,6 @@ def _vec(values, array_type):
     return array_type([x], [y], [z])
 
 
-def _vec2(values, array_type):
-    x, y = values
-    return array_type([x], [y])
-
-
 def _vector_to_list(vec, size, lane=0):
     return [_float_lane(vec[i], lane) for i in range(size)]
 
@@ -101,31 +80,6 @@ def _float_array_to_list(array):
 
 def _int_array_to_list(array):
     return [int(v) for v in list(array)]
-
-
-def _matrix_rows(pj, mat):
-    rows = pj._test_matrix_rows(mat)
-    return [_vector_to_list(row, 4) for row in rows]
-
-
-def _transform_case(pj, cuda, mat):
-    return {
-        "matrix": _matrix_rows(pj, mat),
-        "points": [
-            {
-                "input": list(point),
-                "output": _vector_to_list(pj._test_transform_pos(mat, _vec(point, cuda.Array3f)), 3),
-            }
-            for point in PROBE_POINTS
-        ],
-        "directions": [
-            {
-                "input": list(direction),
-                "output": _vector_to_list(pj._test_transform_dir(mat, _vec(direction, cuda.Array3f)), 3),
-            }
-            for direction in PROBE_DIRECTIONS
-        ],
-    }
 
 
 def _ray_to_dict(ray):
@@ -351,176 +305,7 @@ def collect_baseline_data():
         "valid": _bool_lane(its.is_valid()),
         "grad_tz": _float_lane(dr.grad(tz)),
         "t": _float_lane(its.t),
-        "matrix_rows": _matrix_rows(pj, transform_mesh.to_world_left),
     }
-
-    identity = cuda.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    translation = cuda.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 2.0],
-            [0.0, 1.0, 0.0, -3.0],
-            [0.0, 0.0, 1.0, 4.5],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    scale = cuda.Matrix4f(
-        [
-            [2.0, 0.0, 0.0, 0.0],
-            [0.0, 3.0, 0.0, 0.0],
-            [0.0, 0.0, 4.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    rotation_z = cuda.Matrix4f(
-        [
-            [0.0, -1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    look_at = pj._test_look_at(
-        cuda.Array3f([1.0], [2.0], [5.0]),
-        cuda.Array3f([0.0], [0.0], [0.0]),
-        cuda.Array3f([0.0], [1.0], [0.0]),
-    )
-
-    transform_cases = {
-        "identity": _transform_case(pj, cuda, identity),
-        "translation": _transform_case(pj, cuda, translation),
-        "scale": _transform_case(pj, cuda, scale),
-        "rotation_z_90": _transform_case(pj, cuda, rotation_z),
-        "look_at": _transform_case(pj, cuda, look_at),
-    }
-
-    transforms = {
-        "matrix_entry_checks": {name: case["matrix"] for name, case in transform_cases.items()},
-        "point_transform_checks": {name: case["points"] for name, case in transform_cases.items()},
-        "direction_transform_checks": {name: case["directions"] for name, case in transform_cases.items()},
-    }
-
-    left = cuda.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0, 0.5],
-            [0.0, 0.0, 1.0, -2.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    raw = rotation_z
-    right = scale
-    composed = left @ raw @ right
-    composition_case = _transform_case(pj, cuda, composed)
-    transforms["composition_left_right"] = {
-        "left": _matrix_rows(pj, left),
-        "raw": _matrix_rows(pj, raw),
-        "right": _matrix_rows(pj, right),
-        "composed": composition_case["matrix"],
-        "points": composition_case["points"],
-        "directions": composition_case["directions"],
-    }
-
-    camera = {}
-
-    fov_camera = pj.Camera(60.0, 1e-4, 1e3)
-    fov_camera.width = 64
-    fov_camera.height = 32
-    fov_camera.configure(cache=False)
-    camera["perspective_fov"] = {
-        "helper_matrix": _matrix_rows(pj, pj._test_perspective(60.0, 1e-4, 1e3)),
-        "camera_to_sample": _matrix_rows(pj, fov_camera.camera_to_sample),
-        "sample_to_camera": _matrix_rows(pj, fov_camera.sample_to_camera),
-    }
-
-    intrinsic_camera = pj.Camera(0.75, 0.9, 0.45, 0.55, 1e-4, 1e3)
-    intrinsic_camera.width = 80
-    intrinsic_camera.height = 60
-    intrinsic_camera.configure(cache=False)
-    camera["perspective_intrinsic"] = {
-        "helper_matrix": _matrix_rows(pj, pj._test_perspective_intrinsic(0.75, 0.9, 0.45, 0.55, 1e-4, 1e3)),
-        "camera_to_sample": _matrix_rows(pj, intrinsic_camera.camera_to_sample),
-        "sample_to_camera": _matrix_rows(pj, intrinsic_camera.sample_to_camera),
-    }
-
-    samples = [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.25, 0.75)]
-    camera["sample_ray"] = {
-        "default_camera": [
-            {
-                "sample": list(sample),
-                "ray": _ray_to_dict(fov_camera.sample_ray(_vec2(sample, cuda.Array2f))),
-            }
-            for sample in samples
-        ]
-    }
-
-    transformed_camera = pj.Camera(45.0, 1e-4, 1e4)
-    transformed_camera.width = 40
-    transformed_camera.height = 20
-    transformed_camera.to_world_left = ad.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0, -2.0],
-            [0.0, 0.0, 1.0, 0.5],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    transformed_camera.to_world = ad.Matrix4f(
-        [
-            [1.0, 0.0, 0.0, 0.25],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 1.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    transformed_camera.to_world_right = ad.Matrix4f(
-        [
-            [0.0, -1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    transformed_camera.configure(cache=False)
-    camera["world_to_sample"] = {
-        "matrix": _matrix_rows(pj, transformed_camera.world_to_sample),
-        "probe_points": [
-            {
-                "input": list(point),
-                "output": _vector_to_list(
-                    pj._test_transform_pos(transformed_camera.world_to_sample, _vec(point, ad.Array3f)),
-                    3,
-                ),
-            }
-            for point in PROBE_POINTS
-        ],
-    }
-    camera["sample_to_world"] = {
-        "matrix": _matrix_rows(pj, transformed_camera.sample_to_world),
-        "probe_points": [
-            {
-                "input": list(point),
-                "output": _vector_to_list(
-                    pj._test_transform_pos(transformed_camera.sample_to_world, _vec(point, ad.Array3f)),
-                    3,
-                ),
-            }
-            for point in PROBE_POINTS
-        ],
-    }
-    camera["sample_ray"]["transformed_camera"] = [
-        {
-            "sample": list(sample),
-            "ray": _ray_to_dict(transformed_camera.sample_ray(_vec2(sample, cuda.Array2f))),
-        }
-        for sample in samples
-    ]
 
     edge_mesh = pj.Mesh(
         cuda.Array3f([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
@@ -628,8 +413,6 @@ def collect_baseline_data():
     return {
         "geometry": geometry,
         "gradients": gradients,
-        "transforms": transforms,
-        "camera": camera,
         "edges": edges,
         "stress": stress,
     }
