@@ -14,7 +14,7 @@ option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
 
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c "import drjit, sys; sys.stdout.write(drjit.get_cmake_dir())"
+    COMMAND "${Python_EXECUTABLE}" -c "import importlib.util, pathlib, sys; spec = importlib.util.find_spec('drjit'); sys.stdout.write(str(pathlib.Path(next(iter(spec.submodule_search_locations))).resolve() / 'cmake')) if spec and spec.submodule_search_locations else sys.exit(1)"
     RESULT_VARIABLE DRJIT_CMAKE_DIR_RESULT
     OUTPUT_VARIABLE DRJIT_CMAKE_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -24,7 +24,7 @@ if(NOT DRJIT_CMAKE_DIR_RESULT EQUAL 0)
 endif()
 
 execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c "import nanobind, sys; sys.stdout.write(nanobind.cmake_dir())"
+    COMMAND "${Python_EXECUTABLE}" -c "import importlib.util, pathlib, sys; spec = importlib.util.find_spec('nanobind'); sys.stdout.write(str(pathlib.Path(next(iter(spec.submodule_search_locations))).resolve() / 'cmake')) if spec and spec.submodule_search_locations else sys.exit(1)"
     RESULT_VARIABLE NANOBIND_CMAKE_DIR_RESULT
     OUTPUT_VARIABLE NANOBIND_CMAKE_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
