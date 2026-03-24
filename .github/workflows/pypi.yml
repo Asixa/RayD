@@ -11,46 +11,59 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_wheels:
-    name: ${{ matrix.os_name }} / py${{ matrix.python_version }}
-    runs-on: ${{ matrix.runner }}
+  build_linux_wheels:
+    name: linux / manylinux_2_28
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build Linux wheels
+        uses: pypa/cibuildwheel@v3.3.0
+        env:
+          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: "bash {package}/.github/scripts/install_cuda_manylinux.sh"
+          CIBW_ENVIRONMENT_LINUX: >-
+            CUDA_HOME=/usr/local/cuda
+            CUDA_PATH=/usr/local/cuda
+            CUDA_ROOT=/usr/local/cuda
+            CUDA_BIN_PATH=/usr/local/cuda
+            CUDACXX=/usr/local/cuda/bin/nvcc
+            PATH=/usr/local/cuda/bin:$PATH
+            LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair
+            --exclude libcuda.so.1
+            --exclude libnvoptix.so.1
+            --exclude libdrjit-core.so
+            --exclude libdrjit-extra.so
+            --exclude libnanothread.so
+            -w {dest_dir} {wheel}
+        with:
+          output-dir: dist
+
+      - name: Upload Linux wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build_windows_wheels:
+    name: windows / py${{ matrix.python_version }}
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # macOS is intentionally excluded: RayD requires CUDA + OptiX.
-          - runner: ubuntu-22.04
-            os_name: linux
-            python_version: "3.10"
-            cuda_version: "12.5.0"
-          - runner: ubuntu-22.04
-            os_name: linux
-            python_version: "3.11"
-            cuda_version: "12.5.0"
-          - runner: ubuntu-22.04
-            os_name: linux
-            python_version: "3.12"
-            cuda_version: "12.5.0"
-          - runner: ubuntu-22.04
-            os_name: linux
-            python_version: "3.13"
-            cuda_version: "12.5.0"
-          - runner: windows-2022
-            os_name: windows
-            python_version: "3.10"
-            cuda_version: "12.5.0"
-          - runner: windows-2022
-            os_name: windows
-            python_version: "3.11"
-            cuda_version: "12.5.0"
-          - runner: windows-2022
-            os_name: windows
-            python_version: "3.12"
-            cuda_version: "12.5.0"
-          - runner: windows-2022
-            os_name: windows
-            python_version: "3.13"
-            cuda_version: "12.5.0"
+        python_version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout
@@ -64,10 +77,9 @@ jobs:
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
-          cuda: ${{ matrix.cuda_version }}
+          cuda: "12.5.0"
           method: local
-          linux-local-args: '["--toolkit"]'
-          log-file-suffix: "${{ matrix.os_name }}-py${{ matrix.python_version }}.log"
+          log-file-suffix: "windows-py${{ matrix.python_version }}.log"
 
       - name: Show toolchain
         shell: bash
@@ -84,10 +96,10 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
         run: python -m build --wheel
 
-      - name: Upload wheel artifacts
+      - name: Upload Windows wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os_name }}-py${{ matrix.python_version }}
+          name: wheels-windows-py${{ matrix.python_version }}
           path: dist/*.whl
           if-no-files-found: error
 
@@ -121,7 +133,8 @@ jobs:
     name: Publish To PyPI
     if: github.event_name == 'release' && github.event.action == 'published'
     needs:
-      - build_wheels
+      - build_linux_wheels
+      - build_windows_wheels
       - build_sdist
     runs-on: ubuntu-latest
     environment:
@@ -153,3 +166,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          verbose: true
