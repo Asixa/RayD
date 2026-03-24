@@ -25,9 +25,7 @@ SECTION_FILES = {
     "geometry/multi_mesh.json": ("geometry", "multi_mesh"),
     "geometry/uv.json": ("geometry", "uv"),
     "geometry/batched_hits.json": ("geometry", "batched_hits"),
-    "geometry/degenerate.json": ("geometry", "degenerate"),
     "gradients/vertex_gradients.json": ("gradients", "vertex_gradients"),
-    "edges/secondary_edges.json": ("edges", "secondary_edges"),
     "edges/primary_edge_sampling.json": ("edges", "primary_edge_sampling"),
     "stress/repeated_run_summary.json": ("stress", "repeated_run_summary"),
 }

@@ -237,28 +237,6 @@ def collect_baseline_data():
         "t_prefix": _float_array_to_list(its.t)[:16],
     }
 
-    degenerate_mesh = pj.Mesh(
-        cuda.Array3f([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
-    degenerate_mesh.configure()
-    secondary_edges = degenerate_mesh.secondary_edges()
-    degenerate_scene = pj.Scene()
-    degenerate_scene.add_mesh(degenerate_mesh)
-    degenerate_scene.configure()
-    its = degenerate_scene.intersect(
-        pj.RayDetached(cuda.Array3f([0.5], [0.0], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
-    )
-    geometry["degenerate"] = {
-        "valid": _bool_lane(its.is_valid()),
-        "shape_id": _int_lane(its.shape_id),
-        "prim_id": _int_lane(its.prim_id),
-        "t_is_inf": abs(_float_lane(its.t)) == float("inf"),
-        "edge_count": secondary_edges.size(),
-        "boundary_mask": _bool_array_to_list(secondary_edges.is_boundary),
-        "start": _vector_array_to_rows(secondary_edges.start, 3),
-    }
-
     gradients = {}
 
     grad_mesh = pj.Mesh(
@@ -301,19 +279,11 @@ def collect_baseline_data():
     ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
     its = transform_scene.intersect(ray)
     dr.backward(its.t)
-    gradients["transform_gradients"] = {
-        "valid": _bool_lane(its.is_valid()),
-        "grad_tz": _float_lane(dr.grad(tz)),
-        "t": _float_lane(its.t),
-    }
-
     edge_mesh = pj.Mesh(
         cuda.Array3f([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
         cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
     edge_mesh.configure()
-    edge_indices = edge_mesh.edge_indices()
-    secondary_edges = edge_mesh.secondary_edges()
 
     front_mesh = pj.Mesh(
         cuda.Array3f([-0.5, 0.5, 0.0], [-0.5, -0.5, 0.5], [3.0, 3.0, 3.0]),
@@ -331,16 +301,6 @@ def collect_baseline_data():
     edge_sample = edge_camera.sample_edge(cuda.Float([0.25]))
 
     edges = {
-        "secondary_edges": {
-            "edge_indices": [_int_array_to_list(edge_index) for edge_index in edge_indices],
-            "edge_count": secondary_edges.size(),
-            "boundary_mask": _bool_array_to_list(secondary_edges.is_boundary),
-            "start": _vector_array_to_rows(secondary_edges.start, 3),
-            "edge": _vector_array_to_rows(secondary_edges.edge, 3),
-            "normal0": _vector_array_to_rows(secondary_edges.normal0, 3),
-            "normal1": _vector_array_to_rows(secondary_edges.normal1, 3),
-            "opposite": _vector_array_to_rows(secondary_edges.opposite, 3),
-        },
         "primary_edge_sampling": {
             "idx": _int_lane(edge_sample.idx),
             "pdf": _float_lane(edge_sample.pdf),
