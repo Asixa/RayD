@@ -1,6 +1,6 @@
-"""Test: Adam optimization using Slang-compiled forward + backward.
+"""Test: Adam optimization using Slang-compiled traceAD.
 
-All gradient computation happens in Slang/C++ (traceTFwd + traceTBwdOrigin).
+All gradient computation happens in Slang/C++ via traceAD (single AD pass).
 Python only bridges into torch.optim.
 """
 import json, torch
@@ -24,13 +24,14 @@ class SlangTrace(torch.autograd.Function):
     @staticmethod
     def forward(ctx, oz):
         ctx.save_for_backward(oz)
-        return torch.tensor(M.traceTFwd(H, 0.25, 0.25, oz.item(), 0, 0, 1), device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.t, device=oz.device)
 
     @staticmethod
     def backward(ctx, g):
         oz, = ctx.saved_tensors
-        grad_o = M.traceTBwdOrigin(H, 0.25, 0.25, oz.item(), 0, 0, 1, g.item())
-        return torch.tensor(grad_o.z, device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.dt_do.z * g.item(), device=oz.device)
 
 
 oz = torch.tensor(-1.0, device="cuda", requires_grad=True)

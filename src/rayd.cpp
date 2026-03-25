@@ -312,6 +312,9 @@ NB_MODULE(rayd, m) {
             .def_prop_ro("sample_to_camera", &PerspectiveCamera::sample_to_camera)
             .def_prop_ro("world_to_sample", &PerspectiveCamera::world_to_sample)
             .def_prop_ro("sample_to_world", &PerspectiveCamera::sample_to_world)
+            .def_prop_ro("slang_handle", [](PerspectiveCamera &c) -> uint64_t {
+                return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&c));
+            })
             .def("__repr__", &PerspectiveCamera::to_string);
     });
 

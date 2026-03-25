@@ -4,7 +4,7 @@ SlangModuleTests         — rayd.slang Python module (paths, import)
 SlangInteropCompileTests — slangc -target cpp codegen verification
 SlangRaydInteropTests    — runtime detached queries (intersect, shadow)
 SlangRaydADTests         — IntersectionAD struct return + Dr.Jit AD gradients
-SlangRaydAutograd        — Slang-compiled fwd/bwd → torch.autograd integration
+SlangRaydAutograd        — traceAD → torch.autograd integration
 """
 
 import json

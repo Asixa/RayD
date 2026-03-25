@@ -32,8 +32,9 @@ struct Ray {
 struct Intersection {
     bool valid = false;
     float t = std::numeric_limits<float>::infinity();
-    Float3 p, n, geo_n, barycentric;
+    Float3 p, n, geo_n;
     Float2 uv;
+    Float3 barycentric;
     int shape_id = -1, prim_id = -1;
 };
 

@@ -1,6 +1,6 @@
 """Test: two independent Slang→rayd AD traces, combined loss, gradient composition.
 
-All gradient math in Slang/C++.  Python only orchestrates torch.autograd.
+All gradient math in Slang/C++ via traceAD.  Python only orchestrates torch.autograd.
 """
 import json, torch
 import rayd as rd, rayd.slang as rs
@@ -22,13 +22,14 @@ class SlangTrace(torch.autograd.Function):
     @staticmethod
     def forward(ctx, oz):
         ctx.save_for_backward(oz)
-        return torch.tensor(M.traceTFwd(H, 0.25, 0.25, oz.item(), 0, 0, 1), device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.t, device=oz.device)
 
     @staticmethod
     def backward(ctx, g):
         oz, = ctx.saved_tensors
-        grad_o = M.traceTBwdOrigin(H, 0.25, 0.25, oz.item(), 0, 0, 1, g.item())
-        return torch.tensor(grad_o.z, device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.dt_do.z * g.item(), device=oz.device)
 
 
 oz1 = torch.tensor(-1.0, device="cuda", requires_grad=True)

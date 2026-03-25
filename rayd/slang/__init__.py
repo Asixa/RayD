@@ -65,6 +65,36 @@ _PYBIND11_STRUCT_BINDINGS = r"""
         .def_readonly("prim_id", &IntersectionAD::prim_id)
         .def_readonly("dt_do", &IntersectionAD::dt_do)
         .def_readonly("dt_dd", &IntersectionAD::dt_dd);
+    py::class_<Ray>(m, "Ray")
+        .def_readonly("o", &Ray::o)
+        .def_readonly("d", &Ray::d)
+        .def_readonly("tmax", &Ray::tmax);
+    py::class_<NearestPointEdge>(m, "NearestPointEdge")
+        .def_readonly("valid", &NearestPointEdge::valid)
+        .def_readonly("distance", &NearestPointEdge::distance)
+        .def_readonly("point", &NearestPointEdge::point)
+        .def_readonly("edge_t", &NearestPointEdge::edge_t)
+        .def_readonly("edge_point", &NearestPointEdge::edge_point)
+        .def_readonly("shape_id", &NearestPointEdge::shape_id)
+        .def_readonly("edge_id", &NearestPointEdge::edge_id)
+        .def_readonly("is_boundary", &NearestPointEdge::is_boundary);
+    py::class_<NearestRayEdge>(m, "NearestRayEdge")
+        .def_readonly("valid", &NearestRayEdge::valid)
+        .def_readonly("distance", &NearestRayEdge::distance)
+        .def_readonly("ray_t", &NearestRayEdge::ray_t)
+        .def_readonly("point", &NearestRayEdge::point)
+        .def_readonly("edge_t", &NearestRayEdge::edge_t)
+        .def_readonly("edge_point", &NearestRayEdge::edge_point)
+        .def_readonly("shape_id", &NearestRayEdge::shape_id)
+        .def_readonly("edge_id", &NearestRayEdge::edge_id)
+        .def_readonly("is_boundary", &NearestRayEdge::is_boundary);
+    py::class_<PrimaryEdgeSample>(m, "PrimaryEdgeSample")
+        .def_readonly("valid", &PrimaryEdgeSample::valid)
+        .def_readonly("x_dot_n", &PrimaryEdgeSample::x_dot_n)
+        .def_readonly("idx", &PrimaryEdgeSample::idx)
+        .def_readonly("ray_n", &PrimaryEdgeSample::ray_n)
+        .def_readonly("ray_p", &PrimaryEdgeSample::ray_p)
+        .def_readonly("pdf", &PrimaryEdgeSample::pdf);
 """
 
 # ---------------------------------------------------------------------------
@@ -173,7 +203,13 @@ def _compile_host_module(slang_file: str, inc_paths: list[str]):
     slang_file = _os.path.abspath(slang_file)
     stem = _Path(slang_file).stem
 
-    content_hash = _hashlib.md5(_Path(slang_file).read_bytes()).hexdigest()[:12]
+    hasher = _hashlib.md5(_Path(slang_file).read_bytes())
+    _inc = include_dir()
+    for dep in ("rayd/slang/rayd.slang", "rayd/slang/interop_types.h"):
+        dep_path = _inc / dep
+        if dep_path.is_file():
+            hasher.update(dep_path.read_bytes())
+    content_hash = hasher.hexdigest()[:12]
     cache = _Path(slang_file).parent / ".rayd_slang_cache" / f"{stem}_{content_hash}"
     cache.mkdir(parents=True, exist_ok=True)
 

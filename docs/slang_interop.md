@@ -111,17 +111,37 @@ g++ -std=c++17 -o my_app my_shader.cpp my_main.cpp \
 - The query functions (`scene_intersect`, etc.) are implemented in `src/slang_interop.cpp` and compiled into `rayd_core`. They convert a scalar Slang query into a 1-lane detached Dr.Jit call and extract the result back into a POD struct.
 - Non-`cpp` targets (CUDA, HLSL, etc.) fall back to invalid sentinels — RayD's implementation depends on host-side Dr.Jit + OptiX and is not device-callable.
 
-## Scene Handles from Python
+## Handles from Python
 
-The `scene.slang_handle` property returns the raw C++ pointer as `uint64`, suitable for passing to Slang `export` functions:
+The `.slang_handle` property returns the raw C++ pointer as `uint64`, suitable for passing to Slang `export` functions:
 
 ```python
+# Scene handle
 scene = rd.Scene()
 scene.add_mesh(mesh)
 scene.configure()
+scene_handle = scene.slang_handle  # uint64
 
-handle = scene.slang_handle  # uint64 — pass this to your Slang functions
+# Camera handle
+camera = rd.Camera(45.0)
+camera.width, camera.height = 512, 512
+camera.configure()
+camera_handle = camera.slang_handle  # uint64
 ```
+
+## Performance Characteristics
+
+### Scalar-mode execution
+
+All Slang interop queries execute in **scalar mode**: each call constructs a 1-lane Dr.Jit array, launches a GPU kernel, and synchronizes (`drjit::sync_thread()`). This means every call incurs full GPU launch + sync overhead.
+
+For latency-sensitive applications (e.g., per-pixel queries in a rendering loop), batch your queries on the Dr.Jit side using the vectorized Python API instead of calling the Slang interop layer in a loop.
+
+### Handle lifetime
+
+`scene.slang_handle` and `camera.slang_handle` are raw C++ pointers encoded as `uint64`. They are **not** reference-counted. If the Python `Scene` or `Camera` object is garbage-collected while the handle is still in use, the pointer becomes dangling and any subsequent call through it is undefined behavior.
+
+**Best practice:** Keep a Python reference to the `Scene`/`Camera` object alive for as long as you use its `slang_handle`.
 
 ## Known Workarounds
 

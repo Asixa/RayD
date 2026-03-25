@@ -89,6 +89,10 @@ IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool activ
         result.dt_dd = detail::to_float3(grad_d);
     }
 
+    // Cleanup: detach ray variables from the AD tape.
+    drjit::disable_grad(ray_o);
+    drjit::disable_grad(ray_d);
+
     return result;
 }
 

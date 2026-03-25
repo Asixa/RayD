@@ -1,7 +1,5 @@
-"""Test: Slang-compiled forward (traceTFwd) + backward (traceTBwdOrigin)
-wrapped in torch.autograd.Function. The backward logic is in Slang/C++.
-
-Python only bridges fwd/bwd into torch autograd — no gradient math in Python.
+"""Test: Slang-compiled traceAD returns IntersectionAD with dt_do/dt_dd.
+Backward uses traceAD in a single call (no redundant AD passes).
 """
 import json, torch
 import rayd as rd, rayd.slang as rs
@@ -20,19 +18,18 @@ H = scene.slang_handle
 
 
 class SlangTrace(torch.autograd.Function):
-    """Forward and backward both call Slang-compiled host functions."""
+    """Forward and backward both use traceAD (single AD pass)."""
     @staticmethod
     def forward(ctx, oz):
         ctx.save_for_backward(oz)
-        t = M.traceTFwd(H, 0.25, 0.25, oz.item(), 0.0, 0.0, 1.0)
-        return torch.tensor(t, device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0.0, 0.0, 1.0)
+        return torch.tensor(hit.t, device=oz.device)
 
     @staticmethod
     def backward(ctx, g):
         oz, = ctx.saved_tensors
-        # Backward is computed in Slang/C++ via Dr.Jit AD
-        grad_o = M.traceTBwdOrigin(H, 0.25, 0.25, oz.item(), 0.0, 0.0, 1.0, g.item())
-        return torch.tensor(grad_o.z, device=oz.device)
+        hit = M.traceAD(H, 0.25, 0.25, oz.item(), 0.0, 0.0, 1.0)
+        return torch.tensor(hit.dt_do.z * g.item(), device=oz.device)
 
 
 oz = torch.tensor(-1.0, device="cuda", requires_grad=True)
