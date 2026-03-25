@@ -72,7 +72,7 @@ include_directories(
 
 set(RAYD_INCLUDE_DIR include/rayd)
 set(RAYD_SOURCE_DIR src)
-set(RAYD_SOURCE_FILES
+set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/rayd.h
     ${RAYD_INCLUDE_DIR}/constants.h
     ${RAYD_INCLUDE_DIR}/fwd.h
@@ -103,7 +103,6 @@ set(RAYD_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
-    ${RAYD_SOURCE_DIR}/rayd.cpp
 )
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
@@ -134,14 +133,13 @@ else()
                 -I"${CMAKE_CURRENT_SOURCE_DIR}"
                 -o "${RAYD_CUDA_OBJECT}"
         DEPENDS
-            "${RAYD_CUDA_BUILD_SCRIPT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
         VERBATIM
     )
 endif()
 set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_SOURCE_FILES "${RAYD_CUDA_OBJECT}")
+list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_CUDA_OBJECT}")
 
 set(RAYD_NANOBIND_ARGS NB_DOMAIN drjit)
 if(RAYD_NANOBIND_NOMINSIZE)
@@ -151,14 +149,20 @@ if(RAYD_ENABLE_LTO)
     list(APPEND RAYD_NANOBIND_ARGS LTO)
 endif()
 
-nanobind_add_module(rayd ${RAYD_NANOBIND_ARGS} ${RAYD_SOURCE_FILES})
-target_compile_definitions(rayd PRIVATE
+add_library(rayd_core STATIC ${RAYD_CORE_SOURCE_FILES})
+target_include_directories(rayd_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CUDA_INCLUDE_DIRS}
+)
+target_compile_definitions(rayd_core PRIVATE
     RAYD_OPTIX_MODULE_OPT_LEVEL=${RAYD_OPTIX_MODULE_OPT_LEVEL}
     RAYD_OPTIX_EXCEPTION_FLAGS=${RAYD_OPTIX_EXCEPTION_FLAGS}
 )
 
 if(WIN32)
-    target_compile_options(rayd PRIVATE
+    target_compile_options(rayd_core PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
         $<$<COMPILE_LANGUAGE:CXX>:/MP>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2>
@@ -171,9 +175,36 @@ set(PYRAYD_LIBRARIES drjit drjit-core drjit-extra nanothread)
 if(WIN32)
     list(APPEND PYRAYD_LIBRARIES version)
 endif()
-target_link_libraries(rayd PRIVATE ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
+target_link_libraries(rayd_core PUBLIC ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
+set_property(TARGET rayd_core PROPERTY CXX_STANDARD 17)
+set_target_properties(rayd_core PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+nanobind_add_module(rayd ${RAYD_NANOBIND_ARGS} ${RAYD_SOURCE_DIR}/rayd.cpp)
+target_link_libraries(rayd PRIVATE rayd_core)
+if(WIN32)
+    target_compile_options(rayd PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
+        $<$<COMPILE_LANGUAGE:CXX>:/MP>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RelWithDebInfo>>:/O2>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:MinSizeRel>>:/O2>
+    )
+endif()
 
 install(TARGETS rayd DESTINATION rayd)
+install(TARGETS rayd_core
+    ARCHIVE DESTINATION rayd/lib
+    LIBRARY DESTINATION rayd/lib
+    RUNTIME DESTINATION rayd/bin
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd
+    DESTINATION .
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.slang"
+)
 
 set_target_properties(rayd PROPERTIES
     SKIP_BUILD_RPATH FALSE

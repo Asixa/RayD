@@ -33,6 +33,37 @@ For intersection workloads, RayD targets Mitsuba-level performance and matching 
 - `scene.nearest_edge(query)`: nearest-edge queries for points and rays
 - edge acceleration data that is useful for edge sampling and edge diffraction methods
 
+## PyTorch Wrapper
+
+RayD also provides an optional `rayd.torch` module implemented at the Python package layer.
+
+Install it with:
+
+```bash
+pip install "rayd[torch]"
+```
+
+or install PyTorch separately and then import `rayd.torch`.
+
+`rayd.torch` mirrors the core `rayd` API:
+
+- `rayd.torch.Mesh`
+- `rayd.torch.Scene`
+- `rayd.torch.Camera`
+- `rayd.torch.Ray` / `rayd.torch.RayDetached`
+- the same intersection and nearest-edge result types
+
+Key conventions:
+
+- array inputs and outputs use CUDA `torch.Tensor`
+- vectors use shape `(N, 3)` or `(N, 2)`; `(3,)` and `(2,)` are accepted as batch size `1`
+- index tensors use shape `(F, 3)`
+- images use shape `(H, W)`
+- transforms use shape `(4, 4)`
+- CPU tensors are rejected; `rayd.torch` does not do implicit device transfers
+
+The original `rayd` Dr.Jit API remains unchanged and does not depend on PyTorch.
+
 ## Quick Examples
 
 If you only want to see the package in action, start here:
@@ -40,6 +71,7 @@ If you only want to see the package in action, start here:
 - [`examples/basics/ray_mesh_intersection.py`](examples/basics/ray_mesh_intersection.py): custom rays against a mesh
 - [`examples/basics/nearest_edge_query.py`](examples/basics/nearest_edge_query.py): nearest-edge queries
 - [`examples/basics/camera_edge_sampling_gradient.py`](examples/basics/camera_edge_sampling_gradient.py): camera-driven edge-sampling gradients
+- [`docs/slang_interop.md`](docs/slang_interop.md): Slang `cpp` target interop for host-side RayD scene queries
 
 Build meshes, put them in a scene, launch rays, define a loss, and backpropagate through geometry.
 
@@ -151,14 +183,23 @@ That is by design.
 - [`include/rayd/`](include/rayd): public C++ headers
 - [`src/`](src): C++ and CUDA implementation
 - [`src/rayd.cpp`](src/rayd.cpp): Python bindings
+- [`include/rayd/slang/interop.h`](include/rayd/slang/interop.h): C++ POD/handle bridge for Slang
+- [`include/rayd/slang/rayd.slang`](include/rayd/slang/rayd.slang): Slang declarations for the C++ interop layer
 - [`examples/`](examples): basic and renderer-side examples
 - [`tests/test_geometry.py`](tests/test_geometry.py): geometry regression tests
 - [`docs/api_reference.md`](docs/api_reference.md): Python API reference
+- [`docs/slang_interop.md`](docs/slang_interop.md): Slang interop notes and examples
 
 ## Testing
 
 ```powershell
 python -m unittest tests.test_geometry -v
+```
+
+Optional PyTorch wrapper tests:
+
+```powershell
+python -m unittest tests.test_torch_geometry -v
 ```
 
 ## Credits

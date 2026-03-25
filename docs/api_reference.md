@@ -2,6 +2,8 @@
 
 This document describes the current public Python API exposed by `rayd`.
 
+RayD also ships an optional parallel API under `rayd.torch`. It mirrors the same object model while using CUDA `torch.Tensor` inputs and outputs instead of Dr.Jit arrays.
+
 ## Module Overview
 
 RayD is a geometry-only differentiable ray-intersection package built on Dr.Jit and OptiX.
@@ -24,6 +26,16 @@ Public top-level exports:
 - `SecondaryEdgeInfo`
 
 All array-valued inputs and outputs use Dr.Jit CUDA arrays or tensors.
+
+For the optional `rayd.torch` module:
+
+- install with `pip install "rayd[torch]"`
+- all array inputs and outputs must be CUDA `torch.Tensor`
+- vectors use `(N, 3)` / `(N, 2)` layout
+- index tensors use `(F, 3)`
+- images use `(H, W)`
+- transforms use `(4, 4)`
+- CPU tensors are rejected instead of being moved implicitly
 
 ## Type Conventions
 
