@@ -35,8 +35,8 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-5 &&
-            ln -sfn /usr/local/cuda-12.5 /usr/local/cuda &&
+            dnf install -y cuda-toolkit-12-6 &&
+            ln -sfn /usr/local/cuda-12.6 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
             CUDA_HOME=/usr/local/cuda
