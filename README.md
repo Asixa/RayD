@@ -234,4 +234,4 @@ RayD is developed with reference to:
 
 ## License
 
-MIT
+BSD 3-Clause. See [LICENSE](LICENSE).
