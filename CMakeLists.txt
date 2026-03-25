@@ -209,6 +209,9 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd
         PATTERN "*.h"
         PATTERN "*.slang"
 )
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd_slang.slang
+    DESTINATION .
+)
 
 set_target_properties(rayd PROPERTIES
     SKIP_BUILD_RPATH FALSE

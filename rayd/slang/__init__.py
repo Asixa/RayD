@@ -105,13 +105,17 @@ def include_dir() -> _Path:
     """Directory to pass as ``-I`` to ``slangc``.
 
     Development layout → ``<repo>/include``
-    Installed wheel    → package root (``rayd/``)
+    Installed wheel    → site-packages root (parent of ``rayd/``)
+
+    The returned path must contain ``rayd/slang/rayd.slang`` so that
+    ``import rayd.slang.rayd;`` and ``import rayd_slang;`` both resolve.
     """
     dev = _REPO_ROOT / "include"
     if (dev / "rayd" / "slang" / "rayd.slang").is_file():
         return dev
-    installed = _PACKAGE_DIR.parent
-    if (_PACKAGE_DIR / "rayd.slang").is_file():
+    # Installed: _PACKAGE_DIR is rayd/slang/, go up two levels to site-packages/
+    installed = _PACKAGE_DIR.parents[1]
+    if (installed / "rayd" / "slang" / "rayd.slang").is_file():
         return installed
     raise FileNotFoundError(
         "Cannot locate rayd.slang module. "
