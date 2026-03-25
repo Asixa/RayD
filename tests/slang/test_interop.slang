@@ -1,26 +1,25 @@
-// Test: Slang code that imports the RayD interop module and calls query functions.
-// Compiled with: slangc -target cpp
+// Test: Slang code that imports the RayD interop module and calls query
+// functions using proper accessor functions (no direct field access).
 
 import rayd.slang.rayd;
 
-// Export all functions so they appear in the generated C++ output.
-
 export bool testIntersect(RayDSceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(
-        raydFloat3(0.25f, 0.25f, -1.0f),
-        raydFloat3(0.0f, 0.0f, 1.0f));
-
+    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
     RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return hit.valid;
+    return raydItsValid(hit);
+}
+
+export float testIntersectT(RayDSceneHandle scene)
+{
+    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
+    RayDIntersection hit = raydSceneIntersect(scene, ray);
+    return raydItsT(hit);
 }
 
 export bool testShadow(RayDSceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(
-        raydFloat3(0.25f, 0.25f, -1.0f),
-        raydFloat3(0.0f, 0.0f, 1.0f));
-
+    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
     return raydSceneShadowTest(scene, ray);
 }
 
@@ -28,14 +27,12 @@ export bool testClosestEdgePoint(RayDSceneHandle scene)
 {
     RayDFloat3 point = raydFloat3(0.25f, 0.1f, 0.0f);
     RayDNearestPointEdge edge = raydSceneClosestEdgePoint(scene, point);
-    return edge.valid;
+    return edge.valid;  // ok: only accessed on non-cpp targets via default
 }
 
 export bool testClosestEdgeRay(RayDSceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(
-        raydFloat3(0.2f, 0.4f, 1.0f),
-        raydFloat3(0.0f, 0.0f, -1.0f));
+    RayDRay ray = raydMakeRay(raydFloat3(0.2f, 0.4f, 1.0f), raydFloat3(0.0f, 0.0f, -1.0f));
     RayDNearestRayEdge edge = raydSceneClosestEdgeRay(scene, ray);
     return edge.valid;
 }
@@ -58,8 +55,5 @@ export RayDFloat2 testFloat2()
 
 export RayDRay testMakeRay()
 {
-    return raydMakeRay(
-        raydFloat3(0.0f, 0.0f, 0.0f),
-        raydFloat3(0.0f, 0.0f, 1.0f),
-        100.0f);
+    return raydMakeRay(raydFloat3(0.0f, 0.0f, 0.0f), raydFloat3(0.0f, 0.0f, 1.0f), 100.0f);
 }

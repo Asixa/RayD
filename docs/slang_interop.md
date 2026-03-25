@@ -1,95 +1,155 @@
 # Slang Interop
 
-RayD now includes a small Slang-facing host interop layer for the existing C++ API.
+RayD provides a Slang interop layer that lets Slang code call RayD scene queries (intersection, shadow test, nearest-edge, camera sampling) from host-side C++.
 
-Files:
+## Files
 
-- `include/rayd/slang/interop.h`
-- `include/rayd/slang/rayd.slang`
+| File | Purpose |
+|---|---|
+| `include/rayd/slang/rayd.slang` | Slang module — types, constructors, accessors, query wrappers |
+| `include/rayd/slang/interop.h` | Full C++ header (includes rayd internals + drjit) |
+| `include/rayd/slang/interop_types.h` | Lightweight C++ header (POD types + declarations only) |
+| `src/slang_interop.cpp` | Compiled implementations of query functions (in `rayd_core`) |
+| `rayd/slang/__init__.py` | Python helper: `include_dir()`, `load_module()` |
 
-The design follows Slang's target-specific interop model for the `cpp` target:
+## Quick Start (Python)
 
-- Slang-visible POD types (`RayDFloat3`, `RayDRay`, `RayDIntersection`, ...)
-- opaque host handles (`RayDSceneHandle`, `RayDCameraHandle`)
-- `__target_intrinsic(cpp, "...")` to map Slang types onto C++ wrapper types
-- `__intrinsic_asm` calls into `rayd::slang::*` helper functions
+```python
+import rayd.slang as rs
 
-## Scope
+# Compile a .slang file that calls raydSceneIntersect, link against rayd_core
+m = rs.load_module("my_shader.slang")
 
-This layer is intentionally narrow.
+# Create a scene and get its handle
+import rayd as rd, drjit.cuda as cuda
+scene = rd.Scene()
+scene.add_mesh(rd.Mesh(v, f))
+scene.configure()
 
-It is meant for **host-side scalar queries** from Slang-generated C++ code:
-
-- scene intersection
-- shadow test
-- closest-edge point query
-- closest-edge ray query
-- camera sample-ray
-- camera primary-edge preparation and sampling
-
-It does **not** expose the full Dr.Jit array API, batched queries, or differentiable AD plumbing to Slang. Internally the wrapper converts a scalar Slang query into a 1-lane detached Dr.Jit query and then extracts the result back into POD structs.
-
-## Host-side usage
-
-Create and configure RayD objects in normal C++, then pass handles to generated Slang/C++ entry points:
-
-```cpp
-#include <rayd/slang/interop.h>
-#include <rayd/scene/scene.h>
-#include <rayd/camera.h>
-
-rayd::Scene scene;
-// ... add meshes and configure ...
-
-rayd::PerspectiveCamera camera;
-// ... set resolution / configure ...
-
-rayd::slang::SceneHandle scene_handle = rayd::slang::make_scene_handle(scene);
-rayd::slang::CameraHandle camera_handle = rayd::slang::make_camera_handle(camera);
+# Call the Slang function from Python
+t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 ```
 
-The generated C++ should link against the exported `rayd_core` library from this build, because the interop helpers call into the existing RayD C++ implementation rather than re-implementing scene logic in the header.
+## Writing Slang Code
 
-## Slang-side usage
-
-Import the module and query through the wrapper functions:
+Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** — use the `raydIts*`, `raydF3*`, `raydRay*` accessors instead, because `slangc` mangles field names when targeting C++.
 
 ```slang
 import rayd.slang.rayd;
 
-RayDRay ray = raydMakeRay(
-    raydFloat3(0.25f, 0.25f, -1.0f),
-    raydFloat3(0.0f, 0.0f, 1.0f));
-
-RayDIntersection hit = raydSceneIntersect(sceneHandle, ray);
-if (hit.valid)
+export float traceRayT(uint64_t sceneHandle,
+                       float ox, float oy, float oz,
+                       float dx, float dy, float dz)
 {
-    float t = hit.t;
-    RayDFloat3 p = hit.p;
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    RayDIntersection hit = raydSceneIntersect(scene, ray);
+    return raydItsT(hit);       // NOT hit.t — use the accessor
 }
 ```
 
-For camera-side sampling:
+### Available Functions
 
-```slang
-raydCameraSetResolution(cameraHandle, 512, 512);
-raydCameraConfigure(cameraHandle);
-raydCameraPrepareEdges(cameraHandle, sceneHandle);
+**Constructors:**
+`raydFloat2(x,y)`, `raydFloat3(x,y,z)`, `raydMakeRay(o,d,tmax)`, `raydMakeSceneHandle(uint64)`, `raydMakeCameraHandle(uint64)`
 
-RayDRay primary = raydCameraSampleRay(cameraHandle, raydFloat2(0.5f, 0.5f));
-RayDPrimaryEdgeSample edgeSample = raydCameraSamplePrimaryEdge(cameraHandle, 0.25f);
+**Intersection accessors:**
+`raydItsValid(h)`, `raydItsT(h)`, `raydItsP(h)`, `raydItsN(h)`, `raydItsGeoN(h)`, `raydItsUV(h)`, `raydItsBarycentric(h)`, `raydItsShapeId(h)`, `raydItsPrimId(h)`
+
+**Float/Ray accessors:**
+`raydF2X/Y`, `raydF3X/Y/Z`, `raydRayO`, `raydRayD`, `raydRayTmax`
+
+**Scene queries:**
+`raydSceneIntersect(scene, ray)`, `raydSceneShadowTest(scene, ray)`, `raydSceneClosestEdgePoint(scene, point)`, `raydSceneClosestEdgeRay(scene, ray)`
+
+**Camera queries:**
+`raydCameraSampleRay(camera, sample)`, `raydCameraSamplePrimaryEdge(camera, s)`, `raydCameraSetResolution(camera, w, h)`, `raydCameraConfigure(camera)`, `raydCameraPrepareEdges(camera, scene)`
+
+## Compilation Pipeline
+
+`rayd.slang.load_module()` automates this entire pipeline:
+
+```
+my_shader.slang
+  │  slangc -target cpp -I $(python -c "import rayd.slang; print(rayd.slang.include_dir())")
+  ▼
+my_shader.cpp                  (generated C++, uses rayd::slang:: types)
+  │  prepend #include <rayd/slang/interop_types.h>
+  │  append PYBIND11_MODULE(...) with m.def() for each export function
+  ▼
+my_shader_patched.cpp          (self-contained compilable source)
+  │  torch.utils.cpp_extension.load(
+  │      sources=[patched.cpp],
+  │      extra_ldflags=[rayd_core, drjit-core, drjit-extra, nanothread, ...]
+  │  )
+  ▼
+my_shader.pyd / .so            (Python extension module)
 ```
 
-## Non-`cpp` targets
+### Manual Compilation (without Python)
 
-The module is intentionally wired for Slang's `cpp` target. Other targets fall back to invalid sentinel values or `false`, because RayD's current C++ implementation depends on host-side Dr.Jit and OptiX objects and is not device-callable through Slang.
+```bash
+# 1. Generate C++
+slangc my_shader.slang -target cpp -o my_shader.cpp \
+    -I $(python -c "import rayd.slang; print(rayd.slang.include_dir())") \
+    -ignore-capabilities
+
+# 2. Compile and link against rayd_core
+#    (you must provide your own main() or pybind11 module)
+g++ -std=c++17 -o my_app my_shader.cpp my_main.cpp \
+    -I$(python -c "import rayd.slang; print(rayd.slang.include_dir())") \
+    -I$(python -c "import drjit; import pathlib; print(pathlib.Path(drjit.__file__).parent / 'include')") \
+    -L<rayd_core_lib_dir> -lrayd_core \
+    -L<drjit_lib_dir> -ldrjit-core -ldrjit-extra -lnanothread \
+    -lcudart
+```
+
+## Architecture Notes
+
+- The Slang module uses `__target_intrinsic(cpp, "rayd::slang::Foo")` to map Slang struct types onto C++ POD structs.
+- All constructors and field accesses go through `__intrinsic_asm` on the `cpp` target, because `slangc` mangles Slang field names (e.g. `t` → `t_0`) which would not match the C++ struct definitions.
+- The query functions (`scene_intersect`, etc.) are implemented in `src/slang_interop.cpp` and compiled into `rayd_core`. They convert a scalar Slang query into a 1-lane detached Dr.Jit call and extract the result back into a POD struct.
+- Non-`cpp` targets (CUDA, HLSL, etc.) fall back to invalid sentinels — RayD's implementation depends on host-side Dr.Jit + OptiX and is not device-callable.
+
+## Scene Handles from Python
+
+The `scene.slang_handle` property returns the raw C++ pointer as `uint64`, suitable for passing to Slang `export` functions:
+
+```python
+scene = rd.Scene()
+scene.add_mesh(mesh)
+scene.configure()
+
+handle = scene.slang_handle  # uint64 — pass this to your Slang functions
+```
+
+## Known Workarounds
+
+### `__requirePrelude` not supported by slangc 2026.4
+
+The original `rayd.slang` used `__requirePrelude(R"(#include <rayd/slang/interop.h>)")` to inject the C++ header. This is not supported by slangc 2026.4. The workaround is to prepend the include when generating the patched C++ file (handled automatically by `load_module()`).
+
+### slangc field-name mangling
+
+`slangc` appends `_0`, `_1`, etc. to struct field names in generated C++ code, even for types annotated with `__target_intrinsic(cpp, ...)`. This means `hit.t` in Slang becomes `hit.t_0` in C++, which does not match the actual C++ struct. The solution is to **never access struct fields directly** in Slang — use the provided accessor functions (`raydItsT`, `raydF3X`, etc.) which use `__intrinsic_asm` to emit correct C++ field access.
+
+### Windows non-English locale
+
+MSVC outputs compilation messages in the system locale. The default OEM codec in Python cannot decode Chinese (or other non-Latin) text. `load_module()` patches `torch.utils.cpp_extension.SUBPROCESS_DECODE_ARGS` to `('utf-8', 'ignore')` automatically.
+
+### cl.exe / ninja not on PATH
+
+When running outside a Visual Studio Developer Command Prompt, `cl.exe` and `ninja` may not be on `PATH`. `load_module()` automatically locates them via `vswhere.exe` and the conda `Scripts/` directory.
+
+### setuptools.msvc VCRuntimeRedist is None
+
+On some Visual Studio installations, `setuptools.msvc.EnvironmentInfo.VCRuntimeRedist` returns `None`, causing `isfile(None)` to raise `TypeError`. `load_module()` patches `isfile` to tolerate `None`.
 
 ## Packaging
 
-The build now installs:
+The build installs:
 
-- the public `include/rayd/**` header tree into the package root
-- the Slang module under `rayd/slang/rayd.slang`
+- the public `include/rayd/**` header tree (`.h` + `.slang` files)
 - the linkable `rayd_core` library under `rayd/lib/`
 
-This lets a site-packages root act as the include root for `#include <rayd/...>` and as the module search root for `import rayd.slang.rayd;`.
+This lets the site-packages root serve as both the include root for `#include <rayd/...>` and the module search root for `import rayd.slang.rayd;`.

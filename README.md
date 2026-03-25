@@ -123,6 +123,43 @@ Key conventions:
 
 The native Dr.Jit API remains unchanged and does not depend on PyTorch.
 
+## Slang Frontend
+
+RayD ships a Slang interop layer for Slang's `cpp` target. Slang code can `import rayd.slang.rayd;` and call RayD scene queries directly.
+
+### Minimal Slang Example
+
+```slang
+import rayd.slang.rayd;
+
+export float traceRayT(uint64_t sceneHandle,
+                       float ox, float oy, float oz,
+                       float dx, float dy, float dz)
+{
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    RayDIntersection hit = raydSceneIntersect(scene, ray);
+    return raydItsT(hit);  // use accessor, not hit.t
+}
+```
+
+Load and call from Python:
+
+```python
+import rayd as rd
+import rayd.slang as rs
+
+m = rs.load_module("my_shader.slang")
+
+scene = rd.Scene()
+scene.add_mesh(mesh)
+scene.configure()
+
+t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
+```
+
+`load_module()` runs `slangc -target cpp`, auto-generates pybind11 bindings, and links against `rayd_core`. See [`docs/slang_interop.md`](docs/slang_interop.md) for the full compilation pipeline, API reference, and known workarounds.
+
 ## Edge Acceleration Structure
 
 RayD also provides a scene-level edge acceleration structure.
@@ -193,7 +230,7 @@ That is by design.
 - [`examples/`](examples): basic, renderer, and Slang examples
 - [`tests/drjit/`](tests/drjit): Dr.Jit native geometry tests
 - [`tests/torch/`](tests/torch): PyTorch frontend tests
-- [`tests/slang/`](tests/slang): slangtorch integration tests
+- [`tests/slang/`](tests/slang): Slang interop and gradient tests
 - [`docs/api_reference.md`](docs/api_reference.md): Python API reference
 - [`docs/slang_interop.md`](docs/slang_interop.md): Slang interop notes and examples
 
@@ -209,7 +246,7 @@ Optional PyTorch wrapper tests:
 python -m unittest tests.torch.test_geometry -v
 ```
 
-Optional Slang (slangtorch) integration tests:
+Optional Slang interop and gradient tests (requires `slangtorch`):
 
 ```powershell
 python -m unittest tests.slang.test_slang -v

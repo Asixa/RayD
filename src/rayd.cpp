@@ -368,6 +368,9 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def_prop_ro("num_meshes", &Scene::num_meshes)
+            .def_prop_ro("slang_handle", [](Scene &s) -> uint64_t {
+                return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&s));
+            })
             .def("__repr__", &Scene::to_string);
     });
 }

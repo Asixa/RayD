@@ -103,6 +103,10 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
+
+    ${RAYD_INCLUDE_DIR}/slang/interop.h
+    ${RAYD_INCLUDE_DIR}/slang/interop_types.h
+    ${RAYD_SOURCE_DIR}/slang_interop.cpp
 )
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")

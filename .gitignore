@@ -20,4 +20,5 @@ unit_test/result/
 .vscode/
 .claude
 .slangtorch_cache/
+.rayd_slang_cache/
 tests/slang/test_interop_gen.cpp
