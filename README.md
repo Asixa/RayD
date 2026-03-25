@@ -1,6 +1,6 @@
 # RayD
 
-RayD is a minimalist differentiable ray tracing package wrapping OptiX differentiability via Dr.Jit.
+RayD is a minimalist differentiable ray tracing package wrapping OptiX ray tracing with Dr.Jit autodiff.
 
 ```bash
 pip install rayd
