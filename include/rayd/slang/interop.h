@@ -265,8 +265,8 @@ void scene_commit_updates(SceneHandle handle);
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active = true);
 IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active = true);
-NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
-NearestRayEdge scene_closest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
+NearestPointEdge scene_nearest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
+NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
 
 // Camera query functions — implemented in src/slang_interop.cpp.
 bool camera_is_ready(CameraHandle handle);

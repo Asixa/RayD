@@ -23,17 +23,17 @@ export bool testShadow(RayDSceneHandle scene)
     return raydSceneShadowTest(scene, ray);
 }
 
-export bool testClosestEdgePoint(RayDSceneHandle scene)
+export bool testNearestEdgePoint(RayDSceneHandle scene)
 {
     RayDFloat3 point = raydFloat3(0.25f, 0.1f, 0.0f);
-    RayDNearestPointEdge edge = raydSceneClosestEdgePoint(scene, point);
+    RayDNearestPointEdge edge = raydSceneNearestEdgePoint(scene, point);
     return edge.valid;  // ok: only accessed on non-cpp targets via default
 }
 
-export bool testClosestEdgeRay(RayDSceneHandle scene)
+export bool testNearestEdgeRay(RayDSceneHandle scene)
 {
     RayDRay ray = raydMakeRay(raydFloat3(0.2f, 0.4f, 1.0f), raydFloat3(0.0f, 0.0f, -1.0f));
-    RayDNearestRayEdge edge = raydSceneClosestEdgeRay(scene, ray);
+    RayDNearestRayEdge edge = raydSceneNearestEdgeRay(scene, ray);
     return edge.valid;
 }
 

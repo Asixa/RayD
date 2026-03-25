@@ -290,6 +290,16 @@ NB_MODULE(rayd, m) {
             .def(nb::init<float, float, float>(), "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
             .def(nb::init<float, float, float, float, float, float>(),
                  "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
+            .def_static("perspective",
+                 [](float fov_x, float near_clip, float far_clip) {
+                     return PerspectiveCamera(fov_x, near_clip, far_clip);
+                 },
+                 "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
+            .def_static("from_intrinsics",
+                 [](float fx, float fy, float cx, float cy, float near_clip, float far_clip) {
+                     return PerspectiveCamera(fx, fy, cx, cy, near_clip, far_clip);
+                 },
+                 "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
             .def("configure", &PerspectiveCamera::configure, "cache"_a = true)
             .def("render", &PerspectiveCamera::render, "scene"_a, "background"_a = 0.f)
             .def("render_grad", &PerspectiveCamera::render_grad, "scene"_a, "spp"_a = 4, "background"_a = 0.f)
@@ -332,12 +342,12 @@ NB_MODULE(rayd, m) {
             .def_prop_ro("last_commit_profile", &Scene::last_commit_profile)
             .def("intersect",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
-                     return scene.ray_intersect<true>(ray, active);
+                     return scene.intersect<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("intersect",
                  [](const Scene &scene, const Ray &ray, rayd::Mask active) {
-                     return scene.ray_intersect<false>(ray, active);
+                     return scene.intersect<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("shadow_test",
@@ -352,22 +362,22 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, const Vector3f &point, rayd::Mask active) {
-                     return scene.closest_edge<false>(point, active);
+                     return scene.nearest_edge<false>(point, active);
                  },
                  nb::arg("point").noconvert(), "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, const Vector3fDetached &point, rayd::MaskDetached active) {
-                     return scene.closest_edge<true>(point, active);
+                     return scene.nearest_edge<true>(point, active);
                  },
                  nb::arg("point").noconvert(), "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
-                     return scene.closest_edge<true>(ray, active);
+                     return scene.nearest_edge<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, const Ray &ray, rayd::Mask active) {
-                     return scene.closest_edge<false>(ray, active);
+                     return scene.nearest_edge<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def_prop_ro("num_meshes", &Scene::num_meshes)

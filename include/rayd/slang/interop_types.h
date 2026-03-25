@@ -143,8 +143,8 @@ inline Float3 its_ad_dt_dd(const IntersectionAD &h) { return h.dt_dd; }
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active = true);
 IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active = true);
-NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
-NearestRayEdge scene_closest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
+NearestPointEdge scene_nearest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
+NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_is_ready(SceneHandle handle);
 bool scene_has_pending_updates(SceneHandle handle);
 void scene_configure(SceneHandle handle);

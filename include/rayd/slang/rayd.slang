@@ -229,11 +229,11 @@ int        raydItsADPrimId(RayDIntersectionAD h)      { __target_switch { case c
 RayDFloat3 raydItsADDtDo(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_do($0)";       default: return h.dt_do; } }
 RayDFloat3 raydItsADDtDd(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_dd($0)";       default: return h.dt_dd; } }
 
-RayDNearestPointEdge raydSceneClosestEdgePoint(RayDSceneHandle scene, RayDFloat3 point, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_closest_edge_point($0, $1, $2)"; default: return raydInvalidNearestPointEdge(); } }
+RayDNearestPointEdge raydSceneNearestEdgePoint(RayDSceneHandle scene, RayDFloat3 point, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_point($0, $1, $2)"; default: return raydInvalidNearestPointEdge(); } }
 
-RayDNearestRayEdge raydSceneClosestEdgeRay(RayDSceneHandle scene, RayDRay ray, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_closest_edge_ray($0, $1, $2)"; default: return raydInvalidNearestRayEdge(); } }
+RayDNearestRayEdge raydSceneNearestEdgeRay(RayDSceneHandle scene, RayDRay ray, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_ray($0, $1, $2)"; default: return raydInvalidNearestRayEdge(); } }
 
 // ---- Camera queries ----
 

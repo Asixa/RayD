@@ -624,7 +624,7 @@ bool OptixScene::is_ready() const {
 }
 
 template <bool Detached>
-OptixIntersection OptixScene::ray_intersect(const RayT<Detached> &ray, MaskT<Detached> &active) const {
+OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detached> &active) const {
     const int ray_count = static_cast<int>(slices(ray.o));
 
     OptixIntersection intersection;
@@ -833,8 +833,8 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     return hit;
 }
 
-template OptixIntersection OptixScene::ray_intersect<true>(const RayDetached &ray, MaskDetached &active) const;
-template OptixIntersection OptixScene::ray_intersect<false>(const Ray &ray, Mask &active) const;
+template OptixIntersection OptixScene::intersect<true>(const RayDetached &ray, MaskDetached &active) const;
+template OptixIntersection OptixScene::intersect<false>(const Ray &ray, Mask &active) const;
 template MaskDetached OptixScene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask OptixScene::shadow_test<false>(const Ray &ray, Mask active) const;
 

@@ -453,9 +453,9 @@ bool Scene::is_ready() const {
 }
 
 template <bool Detached>
-IntersectionT<Detached> Scene::ray_intersect(const RayT<Detached> &ray, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::ray_intersect(): scene is not configured.");
-    require(!pending_updates_, "Scene::ray_intersect(): scene has pending updates. Call Scene::commit_updates() first.");
+IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detached> active) const {
+    require(is_ready(), "Scene::intersect(): scene is not configured.");
+    require(!pending_updates_, "Scene::intersect(): scene has pending updates. Call Scene::commit_updates() first.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
 
@@ -470,7 +470,7 @@ IntersectionT<Detached> Scene::ray_intersect(const RayT<Detached> &ray, MaskT<De
     intersection.prim_id = full<IntT<Detached>>(-1, ray_count);
 
     MaskT<Detached> hit_mask = active;
-    OptixIntersection optix_hit = optix_scene_->template ray_intersect<Detached>(ray, hit_mask);
+    OptixIntersection optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
     if (drjit::none(hit_mask)) {
         return intersection;
     }
@@ -552,9 +552,9 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
 }
 
 template <bool Detached>
-NearestPointEdgeT<Detached> Scene::closest_edge(const Vector3fT<Detached> &point, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::closest_edge(point): scene is not configured.");
-    require(!pending_updates_, "Scene::closest_edge(point): scene has pending updates. Call Scene::commit_updates() first.");
+NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point, MaskT<Detached> active) const {
+    require(is_ready(), "Scene::nearest_edge(point): scene is not configured.");
+    require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::commit_updates() first.");
 
     const int query_count = static_cast<int>(slices(point));
     NearestPointEdgeT<Detached> result = initialize_nearest_point_edge_result<Detached>(query_count);
@@ -582,7 +582,7 @@ NearestPointEdgeT<Detached> Scene::closest_edge(const Vector3fT<Detached> &point
     }
 
     MaskT<Detached> query_mask = active;
-    ClosestEdgeCandidate candidate = edge_bvh_->template closest_edge<Detached>(point, query_mask);
+    ClosestEdgeCandidate candidate = edge_bvh_->template nearest_edge<Detached>(point, query_mask);
     const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
     if (drjit::none(valid_detached)) {
         return result;
@@ -638,9 +638,9 @@ NearestPointEdgeT<Detached> Scene::closest_edge(const Vector3fT<Detached> &point
 }
 
 template <bool Detached>
-NearestRayEdgeT<Detached> Scene::closest_edge(const RayT<Detached> &ray, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::closest_edge(ray): scene is not configured.");
-    require(!pending_updates_, "Scene::closest_edge(ray): scene has pending updates. Call Scene::commit_updates() first.");
+NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<Detached> active) const {
+    require(is_ready(), "Scene::nearest_edge(ray): scene is not configured.");
+    require(!pending_updates_, "Scene::nearest_edge(ray): scene has pending updates. Call Scene::commit_updates() first.");
 
     const int query_count = static_cast<int>(slices(ray.o));
     NearestRayEdgeT<Detached> result = initialize_nearest_ray_edge_result<Detached>(query_count);
@@ -681,7 +681,7 @@ NearestRayEdgeT<Detached> Scene::closest_edge(const RayT<Detached> &ray, MaskT<D
     }
 
     MaskT<Detached> query_mask = active;
-    ClosestEdgeCandidate candidate = edge_bvh_->template closest_edge<Detached>(ray, query_mask);
+    ClosestEdgeCandidate candidate = edge_bvh_->template nearest_edge<Detached>(ray, query_mask);
     const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
     if (drjit::none(valid_detached)) {
         return result;
@@ -813,14 +813,14 @@ NearestRayEdgeT<Detached> Scene::closest_edge(const RayT<Detached> &ray, MaskT<D
     return result;
 }
 
-template IntersectionDetached Scene::ray_intersect<true>(const RayDetached &ray, MaskDetached active) const;
-template Intersection Scene::ray_intersect<false>(const Ray &ray, Mask active) const;
+template IntersectionDetached Scene::intersect<true>(const RayDetached &ray, MaskDetached active) const;
+template Intersection Scene::intersect<false>(const Ray &ray, Mask active) const;
 template MaskDetached Scene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask Scene::shadow_test<false>(const Ray &ray, Mask active) const;
-template NearestPointEdgeDetached Scene::closest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
-template NearestPointEdge Scene::closest_edge<false>(const Vector3f &point, Mask active) const;
-template NearestRayEdgeDetached Scene::closest_edge<true>(const RayDetached &ray, MaskDetached active) const;
-template NearestRayEdge Scene::closest_edge<false>(const Ray &ray, Mask active) const;
+template NearestPointEdgeDetached Scene::nearest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
+template NearestPointEdge Scene::nearest_edge<false>(const Vector3f &point, Mask active) const;
+template NearestRayEdgeDetached Scene::nearest_edge<true>(const RayDetached &ray, MaskDetached active) const;
+template NearestRayEdge Scene::nearest_edge<false>(const Ray &ray, Mask active) const;
 
 } // namespace rayd
 

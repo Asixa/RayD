@@ -175,13 +175,15 @@ Fields:
 Construction with horizontal FOV:
 
 ```python
-camera = rd.Camera(45.0, 1e-4, 1e4)
+camera = rd.Camera.perspective(fov_x=45.0)
+camera = rd.Camera(45.0, 1e-4, 1e4)          # positional form also accepted
 ```
 
 Construction with calibrated intrinsics:
 
 ```python
-camera = rd.Camera(fx, fy, cx, cy, 1e-4, 1e4)
+camera = rd.Camera.from_intrinsics(fx=100, fy=100, cx=64, cy=64)
+camera = rd.Camera(fx, fy, cx, cy, 1e-4, 1e4)  # positional form also accepted
 ```
 
 Methods:
@@ -405,7 +407,7 @@ edge = scene.nearest_edge(ray)
 ```python
 import rayd as rd
 
-camera = rd.Camera(45.0, 1e-4, 1e4)
+camera = rd.Camera.perspective(fov_x=45.0)
 camera.width = 128
 camera.height = 128
 camera.configure()

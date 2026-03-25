@@ -1230,7 +1230,7 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
     drjit::sync_thread();
 }
 
-ClosestEdgeCandidate SceneEdge::closest_edge_point_detached(const Vector3fDetached &point,
+ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetached &point,
                                                                 const MaskDetached &active) const {
     const int query_count = static_cast<int>(slices(point));
 
@@ -1320,14 +1320,14 @@ ClosestEdgeCandidate SceneEdge::closest_edge_point_detached(const Vector3fDetach
             next_node = select(only_right, right, next_node);
             current_node = select(lane_active, next_node, current_node);
         },
-        "closest_edge_point_bvh");
+        "nearest_edge_point_bvh");
 
     result.global_edge_id = best_primitive;
     result.distance_sq = best_distance_sq;
     return result;
 }
 
-ClosestEdgeCandidate SceneEdge::closest_edge_finite_ray_detached(const Vector3fDetached &origin,
+ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
                                                                      const Vector3fDetached &segment,
                                                                      const MaskDetached &active) const {
     const int query_count = static_cast<int>(slices(origin));
@@ -1422,14 +1422,14 @@ ClosestEdgeCandidate SceneEdge::closest_edge_finite_ray_detached(const Vector3fD
             next_node = select(only_right, right, next_node);
             current_node = select(lane_active, next_node, current_node);
         },
-        "closest_edge_finite_ray_bvh");
+        "nearest_edge_finite_ray_bvh");
 
     result.global_edge_id = best_primitive;
     result.distance_sq = best_distance_sq;
     return result;
 }
 
-ClosestEdgeCandidate SceneEdge::closest_edge_infinite_ray_detached(const Vector3fDetached &origin,
+ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3fDetached &origin,
                                                                        const Vector3fDetached &direction,
                                                                        const MaskDetached &active) const {
     const int query_count = static_cast<int>(slices(origin));
@@ -1524,7 +1524,7 @@ ClosestEdgeCandidate SceneEdge::closest_edge_infinite_ray_detached(const Vector3
             next_node = select(only_right, right, next_node);
             current_node = select(lane_active, next_node, current_node);
         },
-        "closest_edge_infinite_ray_bvh");
+        "nearest_edge_infinite_ray_bvh");
 
     result.global_edge_id = best_primitive;
     result.distance_sq = best_distance_sq;
@@ -1532,9 +1532,9 @@ ClosestEdgeCandidate SceneEdge::closest_edge_infinite_ray_detached(const Vector3
 }
 
 template <bool Detached>
-ClosestEdgeCandidate SceneEdge::closest_edge(const Vector3fT<Detached> &point,
+ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
                                                  MaskT<Detached> &active) const {
-    require(ready_, "SceneEdge::closest_edge(point): BVH is not configured.");
+    require(ready_, "SceneEdge::nearest_edge(point): BVH is not configured.");
 
     const int query_count = static_cast<int>(slices(point));
     ClosestEdgeCandidate result;
@@ -1550,7 +1550,7 @@ ClosestEdgeCandidate SceneEdge::closest_edge(const Vector3fT<Detached> &point,
     }
 
     const MaskDetached active_detached = detach<false>(active);
-    result = closest_edge_point_detached(detach<false>(point), active_detached);
+    result = nearest_edge_point_detached(detach<false>(point), active_detached);
     if constexpr (!Detached) {
         active &= Mask(result.global_edge_id >= 0);
     } else {
@@ -1560,9 +1560,9 @@ ClosestEdgeCandidate SceneEdge::closest_edge(const Vector3fT<Detached> &point,
 }
 
 template <bool Detached>
-ClosestEdgeCandidate SceneEdge::closest_edge(const RayT<Detached> &ray,
+ClosestEdgeCandidate SceneEdge::nearest_edge(const RayT<Detached> &ray,
                                                  MaskT<Detached> &active) const {
-    require(ready_, "SceneEdge::closest_edge(ray): BVH is not configured.");
+    require(ready_, "SceneEdge::nearest_edge(ray): BVH is not configured.");
 
     const int query_count = static_cast<int>(slices(ray.o));
     ClosestEdgeCandidate result;
@@ -1590,14 +1590,14 @@ ClosestEdgeCandidate SceneEdge::closest_edge(const RayT<Detached> &ray,
 
     if (drjit::any(finite_mask)) {
         const ClosestEdgeCandidate finite_result =
-            closest_edge_finite_ray_detached(origin, direction * tmax, finite_mask);
+            nearest_edge_finite_ray_detached(origin, direction * tmax, finite_mask);
         result.global_edge_id = select(finite_mask, finite_result.global_edge_id, result.global_edge_id);
         result.distance_sq = select(finite_mask, finite_result.distance_sq, result.distance_sq);
     }
 
     if (drjit::any(infinite_mask)) {
         const ClosestEdgeCandidate infinite_result =
-            closest_edge_infinite_ray_detached(origin, direction, infinite_mask);
+            nearest_edge_infinite_ray_detached(origin, direction, infinite_mask);
         result.global_edge_id = select(infinite_mask, infinite_result.global_edge_id, result.global_edge_id);
         result.distance_sq = select(infinite_mask, infinite_result.distance_sq, result.distance_sq);
     }
@@ -1610,13 +1610,13 @@ ClosestEdgeCandidate SceneEdge::closest_edge(const RayT<Detached> &ray,
     return result;
 }
 
-template ClosestEdgeCandidate SceneEdge::closest_edge<true>(const Vector3fDetached &point,
+template ClosestEdgeCandidate SceneEdge::nearest_edge<true>(const Vector3fDetached &point,
                                                                 MaskDetached &active) const;
-template ClosestEdgeCandidate SceneEdge::closest_edge<false>(const Vector3f &point,
+template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const Vector3f &point,
                                                                  Mask &active) const;
-template ClosestEdgeCandidate SceneEdge::closest_edge<true>(const RayDetached &ray,
+template ClosestEdgeCandidate SceneEdge::nearest_edge<true>(const RayDetached &ray,
                                                                 MaskDetached &active) const;
-template ClosestEdgeCandidate SceneEdge::closest_edge<false>(const Ray &ray,
+template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const Ray &ray,
                                                                  Mask &active) const;
 
 } // namespace rayd

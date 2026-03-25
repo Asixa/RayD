@@ -43,14 +43,14 @@ public:
     const SceneCommitProfile &last_commit_profile() const { return last_commit_profile_; }
 
     template <bool Detached>
-    IntersectionT<Detached> ray_intersect(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
+    IntersectionT<Detached> intersect(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
-    NearestPointEdgeT<Detached> closest_edge(const Vector3fT<Detached> &point,
+    NearestPointEdgeT<Detached> nearest_edge(const Vector3fT<Detached> &point,
                                              MaskT<Detached> active = true) const;
     template <bool Detached>
-    NearestRayEdgeT<Detached> closest_edge(const RayT<Detached> &ray,
+    NearestRayEdgeT<Detached> nearest_edge(const RayT<Detached> &ray,
                                            MaskT<Detached> active = true) const;
 
     int num_meshes() const { return mesh_count_; }

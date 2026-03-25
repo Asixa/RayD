@@ -24,8 +24,29 @@ from .scene import Scene
 
 
 class Camera:
-    def __init__(self, *args: float):
-        if len(args) in (0, 3):
+    def __init__(self, *args: float, **kwargs: float):
+        # Support both positional (legacy) and keyword-arg styles.
+        # Prefer the classmethods Camera.perspective() / Camera.from_intrinsics().
+        if kwargs and not args:
+            # Pure keyword construction
+            if "fx" in kwargs:
+                self._state = _CameraState(
+                    mode="intrinsics",
+                    fx=float(kwargs["fx"]),
+                    fy=float(kwargs["fy"]),
+                    cx=float(kwargs["cx"]),
+                    cy=float(kwargs["cy"]),
+                    near_clip=float(kwargs.get("near_clip", 1e-4)),
+                    far_clip=float(kwargs.get("far_clip", 1e4)),
+                )
+            else:
+                self._state = _CameraState(
+                    mode="fov",
+                    fov_x=float(kwargs.get("fov_x", 45.0)),
+                    near_clip=float(kwargs.get("near_clip", 1e-4)),
+                    far_clip=float(kwargs.get("far_clip", 1e4)),
+                )
+        elif len(args) in (0, 3):
             fov_x = 45.0 if len(args) == 0 else float(args[0])
             near_clip = 1e-4 if len(args) == 0 else float(args[1])
             far_clip = 1e4 if len(args) == 0 else float(args[2])
@@ -47,7 +68,11 @@ class Camera:
                 far_clip=far_clip,
             )
         else:
-            raise TypeError("Camera() expects either (fov_x, near_clip, far_clip) or (fx, fy, cx, cy, near_clip, far_clip).")
+            raise TypeError(
+                "Camera() expects keyword args, (fov_x, near_clip, far_clip), "
+                "or (fx, fy, cx, cy, near_clip, far_clip). "
+                "Prefer Camera.perspective() or Camera.from_intrinsics()."
+            )
 
         self._configured = False
         self._version = 0
@@ -55,6 +80,15 @@ class Camera:
         self._prepared_scene_ref: Scene | None = None
         self._prepared_scene_version: int | None = None
         self._prepared_camera_version: int | None = None
+
+    @classmethod
+    def perspective(cls, fov_x: float = 45.0, near_clip: float = 1e-4, far_clip: float = 1e4) -> "Camera":
+        return cls(fov_x=fov_x, near_clip=near_clip, far_clip=far_clip)
+
+    @classmethod
+    def from_intrinsics(cls, fx: float, fy: float, cx: float, cy: float,
+                        near_clip: float = 1e-4, far_clip: float = 1e4) -> "Camera":
+        return cls(fx=fx, fy=fy, cx=cx, cy=cy, near_clip=near_clip, far_clip=far_clip)
 
     def _invalidate(self) -> None:
         self._configured = False

@@ -32,7 +32,7 @@ Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active) {
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
         "rayd::slang::scene_intersect(): null scene handle.");
     const IntersectionDetached hit =
-        scene.ray_intersect<true>(detail::to_cuda(ray), detail::scalar_mask(active));
+        scene.intersect<true>(detail::to_cuda(ray), detail::scalar_mask(active));
     drjit::eval(hit.t, hit.p, hit.n, hit.geo_n, hit.uv, hit.barycentric,
                 hit.shape_id, hit.prim_id);
     drjit::sync_thread();
@@ -61,7 +61,7 @@ IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool activ
     rayd::Mask ad_mask = drjit::full<rayd::Mask>(active, 1);
 
     // Forward: AD-enabled intersection (records on Dr.Jit tape).
-    rayd::Intersection hit = scene.ray_intersect<false>(ad_ray, ad_mask);
+    rayd::Intersection hit = scene.intersect<false>(ad_ray, ad_mask);
     drjit::eval(hit.t, hit.p, hit.n, hit.geo_n, hit.uv, hit.barycentric,
                 hit.shape_id, hit.prim_id);
     drjit::sync_thread();
@@ -106,11 +106,11 @@ bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active) {
     return detail::lane0<bool>(shadow);
 }
 
-NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &point, bool active) {
+NearestPointEdge scene_nearest_edge_point(SceneHandle handle, const Float3 &point, bool active) {
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
-        "rayd::slang::scene_closest_edge_point(): null scene handle.");
+        "rayd::slang::scene_nearest_edge_point(): null scene handle.");
     const NearestPointEdgeDetached hit =
-        scene.closest_edge<true>(detail::to_cuda(point), detail::scalar_mask(active));
+        scene.nearest_edge<true>(detail::to_cuda(point), detail::scalar_mask(active));
     drjit::eval(hit.distance, hit.point, hit.edge_t, hit.edge_point,
                 hit.shape_id, hit.edge_id, hit.is_boundary);
     drjit::sync_thread();
@@ -126,11 +126,11 @@ NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &poin
     return result;
 }
 
-NearestRayEdge scene_closest_edge_ray(SceneHandle handle, const Ray &ray, bool active) {
+NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool active) {
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
-        "rayd::slang::scene_closest_edge_ray(): null scene handle.");
+        "rayd::slang::scene_nearest_edge_ray(): null scene handle.");
     const NearestRayEdgeDetached hit =
-        scene.closest_edge<true>(detail::to_cuda(ray), detail::scalar_mask(active));
+        scene.nearest_edge<true>(detail::to_cuda(ray), detail::scalar_mask(active));
     drjit::eval(hit.distance, hit.ray_t, hit.point, hit.edge_t, hit.edge_point,
                 hit.shape_id, hit.edge_id, hit.is_boundary);
     drjit::sync_thread();

@@ -29,20 +29,20 @@ public:
     bool has_edges() const { return primitive_count_ > 0; }
 
     template <bool Detached>
-    ClosestEdgeCandidate closest_edge(const Vector3fT<Detached> &point,
+    ClosestEdgeCandidate nearest_edge(const Vector3fT<Detached> &point,
                                       MaskT<Detached> &active) const;
 
     template <bool Detached>
-    ClosestEdgeCandidate closest_edge(const RayT<Detached> &ray,
+    ClosestEdgeCandidate nearest_edge(const RayT<Detached> &ray,
                                       MaskT<Detached> &active) const;
 
 private:
-    ClosestEdgeCandidate closest_edge_point_detached(const Vector3fDetached &point,
+    ClosestEdgeCandidate nearest_edge_point_detached(const Vector3fDetached &point,
                                                      const MaskDetached &active) const;
-    ClosestEdgeCandidate closest_edge_finite_ray_detached(const Vector3fDetached &origin,
+    ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
                                                           const Vector3fDetached &segment,
                                                           const MaskDetached &active) const;
-    ClosestEdgeCandidate closest_edge_infinite_ray_detached(const Vector3fDetached &origin,
+    ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3fDetached &origin,
                                                             const Vector3fDetached &direction,
                                                             const MaskDetached &active) const;
 

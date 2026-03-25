@@ -67,7 +67,7 @@ export float traceRayT(uint64_t sceneHandle,
 `raydF2X/Y`, `raydF3X/Y/Z`, `raydRayO`, `raydRayD`, `raydRayTmax`
 
 **Scene queries:**
-`raydSceneIntersect(scene, ray)`, `raydSceneShadowTest(scene, ray)`, `raydSceneClosestEdgePoint(scene, point)`, `raydSceneClosestEdgeRay(scene, ray)`
+`raydSceneIntersect(scene, ray)`, `raydSceneShadowTest(scene, ray)`, `raydSceneNearestEdgePoint(scene, point)`, `raydSceneNearestEdgeRay(scene, ray)`
 
 **Camera queries:**
 `raydCameraSampleRay(camera, sample)`, `raydCameraSamplePrimaryEdge(camera, s)`, `raydCameraSetResolution(camera, w, h)`, `raydCameraConfigure(camera)`, `raydCameraPrepareEdges(camera, scene)`

@@ -52,8 +52,8 @@ public:
     const OptixCommitProfile &last_commit_profile() const { return last_commit_profile_; }
 
     template <bool Detached>
-    OptixIntersection ray_intersect(const RayT<Detached> &ray,
-                                     MaskT<Detached> &active) const;
+    OptixIntersection intersect(const RayT<Detached> &ray,
+                                MaskT<Detached> &active) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray,
                                 MaskT<Detached> active) const;

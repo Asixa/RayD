@@ -102,11 +102,11 @@ class SlangInteropCompileTests(unittest.TestCase):
     def test_shadow_test_call(self):
         self.assertIn("rayd::slang::scene_shadow_test", self.gen)
 
-    def test_closest_edge_point_call(self):
-        self.assertIn("rayd::slang::scene_closest_edge_point", self.gen)
+    def test_nearest_edge_point_call(self):
+        self.assertIn("rayd::slang::scene_nearest_edge_point", self.gen)
 
-    def test_closest_edge_ray_call(self):
-        self.assertIn("rayd::slang::scene_closest_edge_ray", self.gen)
+    def test_nearest_edge_ray_call(self):
+        self.assertIn("rayd::slang::scene_nearest_edge_ray", self.gen)
 
     def test_camera_sample_ray_call(self):
         self.assertIn("rayd::slang::camera_sample_ray", self.gen)
@@ -119,8 +119,8 @@ class SlangInteropCompileTests(unittest.TestCase):
                 self.assertIn(f"rayd::slang::{t}", self.gen)
 
     def test_all_exported_functions_present(self):
-        for fn in ["testIntersect", "testShadow", "testClosestEdgePoint",
-                    "testClosestEdgeRay", "testCameraSampleRay",
+        for fn in ["testIntersect", "testShadow", "testNearestEdgePoint",
+                    "testNearestEdgeRay", "testCameraSampleRay",
                     "testFloat3", "testFloat2", "testMakeRay"]:
             with self.subTest(fn=fn):
                 self.assertTrue(fn in self.gen or f"{fn}_0" in self.gen,
