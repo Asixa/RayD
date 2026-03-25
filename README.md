@@ -51,7 +51,7 @@ If you only want to see the package in action, start here:
 
 ### Differentiable Cornell Box with Edge Sampling
 
-GPU path tracing + interior/edge AD in ~200 lines ([`examples/renderer/optical.py`](examples/renderer/optical.py)):
+GPU path tracing + interior AD + [edge sampling (Li et al.)](https://people.csail.mit.edu/tzumao/diffrt/) in ~180 lines ([`examples/renderer/optical.py`](examples/renderer/optical.py)):
 
 ![Differentiable Cornell box render and edge-AD gradient](examples/renderer/optical.png)
 
