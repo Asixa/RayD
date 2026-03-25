@@ -6,6 +6,55 @@ from typing import Any
 
 import drjit as dr
 
+# ---------- drjit 1.3.x interop monkey-patch ----------
+# drjit.interop._flatten/_unflatten shadow the *desc* list parameter with the
+# DRJIT_STRUCT dict, breaking recursive traversal of struct fields.
+# Fix: use a separate local for the struct descriptor.
+import drjit.interop as _interop  # noqa: E402
+
+def _flatten_fixed(a, flat, desc, /):
+    tp = type(a)
+    desc.append(tp)
+    if tp is list or tp is tuple:
+        desc.append(len(a))
+        for v in a:
+            _flatten_fixed(v, flat, desc)
+    elif tp is dict:
+        desc.append(tuple(a.keys()))
+        for v in a.values():
+            _flatten_fixed(v, flat, desc)
+    else:
+        sd = getattr(tp, 'DRJIT_STRUCT', None)
+        if type(sd) is dict:
+            for k in sd:
+                _flatten_fixed(getattr(a, k), flat, desc)
+        else:
+            flat.append(a)
+
+def _unflatten_fixed(flat, desc, /):
+    tp = desc.pop()
+    if tp is list or tp is tuple:
+        n = desc.pop()
+        return tp(_unflatten_fixed(flat, desc) for _ in range(n))
+    elif tp is dict:
+        keys = desc.pop()
+        return {k: _unflatten_fixed(flat, desc) for k in keys}
+    else:
+        sd = getattr(tp, 'DRJIT_STRUCT', None)
+        if type(sd) is dict:
+            result = tp()
+            for k in sd:
+                setattr(result, k, _unflatten_fixed(flat, desc))
+            return result
+        else:
+            return flat.pop()
+
+# Only patch if the bug is present (desc parameter gets shadowed)
+if hasattr(_interop, '_flatten'):
+    _interop._flatten = _flatten_fixed
+    _interop._unflatten = _unflatten_fixed
+# ---------- end monkey-patch ----------
+
 try:
     import torch as _torch
 except ImportError as exc:  # pragma: no cover - exercised in subprocess tests
@@ -134,7 +183,7 @@ def _infer_diff(value: Any) -> bool:
         return bool(value.dtype.is_floating_point and value.requires_grad)
     tp = type(value)
     if dr.is_array_v(tp):
-        return bool(dr.is_diff_v(tp))
+        return bool(dr.is_diff_v(tp) and dr.grad_enabled(value))
     return False
 
 
@@ -214,7 +263,7 @@ def _tensor_to_vec2(value: Any, *, diff: bool | None = None, allow_none: bool = 
     shape = _shape_tuple(arr)
     if len(shape) != 2 or shape[1] != 2:
         raise ValueError(f"{name} must have shape (N, 2).")
-    return target(arr[:, 0], arr[:, 1])
+    return target(arr[:, 0].array, arr[:, 1].array)
 
 
 def _tensor_to_vec3(value: Any, *, diff: bool | None = None, allow_none: bool = False, name: str) -> Any:
@@ -231,7 +280,7 @@ def _tensor_to_vec3(value: Any, *, diff: bool | None = None, allow_none: bool = 
     shape = _shape_tuple(arr)
     if len(shape) != 2 or shape[1] != 3:
         raise ValueError(f"{name} must have shape (N, 3).")
-    return target(arr[:, 0], arr[:, 1], arr[:, 2])
+    return target(arr[:, 0].array, arr[:, 1].array, arr[:, 2].array)
 
 
 def _tensor_to_vec3i(value: Any, *, allow_none: bool = False, name: str) -> Any:
@@ -246,7 +295,7 @@ def _tensor_to_vec3i(value: Any, *, allow_none: bool = False, name: str) -> Any:
     shape = _shape_tuple(arr)
     if len(shape) != 2 or shape[1] != 3:
         raise ValueError(f"{name} must have shape (N, 3).")
-    return _cuda.Array3i(arr[:, 0], arr[:, 1], arr[:, 2])
+    return _cuda.Array3i(arr[:, 0].array, arr[:, 1].array, arr[:, 2].array)
 
 
 def _tensor_to_matrix4(value: Any, *, diff: bool | None = None, name: str, allow_none: bool = False) -> Any:
