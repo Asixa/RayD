@@ -184,26 +184,35 @@ That is by design.
 
 - [`rayd/`](rayd): Python package (flat layout)
 - [`rayd/torch/`](rayd/torch): PyTorch frontend
+- [`rayd/slang/`](rayd/slang): Slang / slangtorch interop utilities
 - [`include/rayd/`](include/rayd): public C++ headers
 - [`src/`](src): C++ and CUDA implementation
 - [`src/rayd.cpp`](src/rayd.cpp): Python bindings
 - [`include/rayd/slang/interop.h`](include/rayd/slang/interop.h): C++ POD/handle bridge for Slang
 - [`include/rayd/slang/rayd.slang`](include/rayd/slang/rayd.slang): Slang declarations for the C++ interop layer
-- [`examples/`](examples): basic and renderer-side examples
-- [`tests/`](tests): geometry and torch regression tests
+- [`examples/`](examples): basic, renderer, and Slang examples
+- [`tests/drjit/`](tests/drjit): Dr.Jit native geometry tests
+- [`tests/torch/`](tests/torch): PyTorch frontend tests
+- [`tests/slang/`](tests/slang): slangtorch integration tests
 - [`docs/api_reference.md`](docs/api_reference.md): Python API reference
 - [`docs/slang_interop.md`](docs/slang_interop.md): Slang interop notes and examples
 
 ## Testing
 
 ```powershell
-python -m unittest tests.test_geometry -v
+python -m unittest tests.drjit.test_geometry -v
 ```
 
 Optional PyTorch wrapper tests:
 
 ```powershell
-python -m unittest tests.test_torch_geometry -v
+python -m unittest tests.torch.test_geometry -v
+```
+
+Optional Slang (slangtorch) integration tests:
+
+```powershell
+python -m unittest tests.slang.test_slang -v
 ```
 
 ## Credits
