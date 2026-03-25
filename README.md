@@ -1,6 +1,6 @@
 # RayD
 
-RayD is a minimalist differentiable ray tracing package built on top of Dr.Jit and OptiX.
+RayD is a minimalist differentiable ray tracing package wrapping OptiX differentiability via Dr.Jit.
 
 ```bash
 pip install rayd
@@ -9,6 +9,12 @@ pip install rayd
 RayD is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
 
 The goal is simple: expose differentiable ray-mesh intersection on the GPU without bringing in a full graphics framework.
+
+RayD provides three frontends:
+
+- **Dr.Jit (Native)** — direct Dr.Jit array API, maximum control
+- **PyTorch** — `rayd.torch` module, CUDA `torch.Tensor` in/out, integrates with `torch.autograd`
+- **Slang** — C++ POD/handle bridge for Slang `cpp` target interop
 
 ## Why RayD?
 
@@ -30,31 +36,9 @@ For intersection workloads, RayD targets Mitsuba-level performance and matching 
 - `Mesh`: triangle geometry, transforms, UVs, and edge topology
 - `Scene`: a container of meshes plus OptiX acceleration
 - `scene.intersect(ray)`: differentiable ray-mesh intersection
+- `scene.shadow_test(ray)`: occlusion testing
 - `scene.nearest_edge(query)`: nearest-edge queries for points and rays
 - edge acceleration data that is useful for edge sampling and edge diffraction methods
-
-## PyTorch Wrapper
-
-RayD also provides an optional `rayd.torch` module implemented at the Python package layer.
-
-`rayd.torch` mirrors the core `rayd` API:
-
-- `rayd.torch.Mesh`
-- `rayd.torch.Scene`
-- `rayd.torch.Camera`
-- `rayd.torch.Ray` / `rayd.torch.RayDetached`
-- the same intersection and nearest-edge result types
-
-Key conventions:
-
-- array inputs and outputs use CUDA `torch.Tensor`
-- vectors use shape `(N, 3)` or `(N, 2)`; `(3,)` and `(2,)` are accepted as batch size `1`
-- index tensors use shape `(F, 3)`
-- images use shape `(H, W)`
-- transforms use shape `(4, 4)`
-- CPU tensors are rejected; `rayd.torch` does not do implicit device transfers
-
-The original `rayd` Dr.Jit API remains unchanged and does not depend on PyTorch.
 
 ## Quick Examples
 
@@ -112,6 +96,32 @@ print("grad z =", dr.grad(verts)[2])
 ```
 
 This is the core RayD workflow. Replace the single ray with your own batched rays, RF paths, acoustic paths, or edge-based objectives.
+
+## PyTorch Frontend
+
+`rayd.torch` is an optional Python-level wrapper that mirrors the native API using CUDA `torch.Tensor` inputs and outputs. AD mode is inferred automatically from `requires_grad`.
+
+```python
+import rayd.torch as rt
+
+verts = torch.tensor([...], device="cuda", requires_grad=True)
+mesh = rt.Mesh(verts, faces)
+scene = rt.Scene()
+scene.add_mesh(mesh)
+scene.configure()
+
+its = scene.intersect(rt.Ray(origins, directions))
+loss = (its.t - target).pow(2).mean()
+loss.backward()  # gradients flow to verts
+```
+
+Key conventions:
+
+- vectors use shape `(N, 3)` or `(N, 2)`; `(3,)` and `(2,)` are accepted as batch size `1`
+- index tensors use shape `(F, 3)`; images use shape `(H, W)`; transforms use shape `(4, 4)`
+- CPU tensors are rejected; `rayd.torch` does not do implicit device transfers
+
+The native Dr.Jit API remains unchanged and does not depend on PyTorch.
 
 ## Edge Acceleration Structure
 

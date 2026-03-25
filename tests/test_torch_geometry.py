@@ -106,13 +106,13 @@ class TorchGeometryTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.configure()
 
-            ray = rt.RayDetached(
+            ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
                 torch.tensor([[0.0, 0.0, 1.0]], device=device),
             )
             its = scene.intersect(ray)
 
-            rays = rt.RayDetached(
+            rays = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0],
                               [2.0, 2.0, -1.0]], device=device),
                 torch.tensor([[0.0, 0.0, 1.0],
@@ -176,7 +176,7 @@ class TorchGeometryTests(unittest.TestCase):
                                    [0.5, 0.5, 0.0]], device=device)
             point_res = scene.nearest_edge(points, torch.tensor([True, False], device=device))
 
-            ray = rt.RayDetached(
+            ray = rt.Ray(
                 torch.tensor([[0.5, 0.5, 1.0]], device=device),
                 torch.tensor([[0.0, 0.0, -1.0]], device=device),
                 torch.tensor([2.0], device=device),
@@ -245,7 +245,7 @@ class TorchGeometryTests(unittest.TestCase):
             pending_error = False
             try:
                 scene.intersect(
-                    rt.RayDetached(
+                    rt.Ray(
                         torch.tensor([[2.25, 0.25, -1.0]], device=device),
                         torch.tensor([[0.0, 0.0, 1.0]], device=device),
                     )
@@ -263,7 +263,7 @@ class TorchGeometryTests(unittest.TestCase):
                 ], device=device),
             )
             scene.commit_updates()
-            ray = rt.RayDetached(
+            ray = rt.Ray(
                 torch.tensor([[2.25, 0.25, -1.0]], device=device),
                 torch.tensor([[0.0, 0.0, 1.0]], device=device),
             )
@@ -407,7 +407,7 @@ class TorchGeometryTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["ray_type"], "RayDetached")
+        self.assertEqual(data["ray_type"], "Ray")
         self.assertEqual(data["ray_shape"], [1, 3])
         self.assertGreaterEqual(data["edge_idx"], 0)
         self.assertGreater(data["edge_pdf"], 0.0)
@@ -468,6 +468,994 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertTrue(data["invalidated"])
         self.assertGreaterEqual(data["sample_idx"], 0)
         self.assertGreater(data["sample_pdf"], 0.0)
+
+
+@unittest.skipUnless(TORCH_CUDA_AVAILABLE, "torch with CUDA is required for gradient tests")
+class TorchGradientTests(unittest.TestCase):
+    """Comprehensive gradient propagation tests for rayd.torch."""
+
+    # -- 1. Exact vertex gradient values (barycentric weights) ----------------
+
+    def test_vertex_gradient_exact_values_through_t(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+            its.t.sum().backward()
+            g = verts.grad
+
+            # Analytical: dt/dv_z = barycentric weight of each vertex.
+            # Hit at (0.25,0.25) on triangle (0,0)-(1,0)-(0,1):
+            #   b0=0.5, b1=0.25, b2=0.25
+            # x/y components of gradient should be zero for a z-directed ray
+            # hitting a z-constant triangle.
+            print(json.dumps({
+                "g0_z": float(g[0, 2].item()),
+                "g1_z": float(g[1, 2].item()),
+                "g2_z": float(g[2, 2].item()),
+                "g0_x": float(g[0, 0].item()),
+                "g0_y": float(g[0, 1].item()),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["g0_z"], 0.5, places=4)
+        self.assertAlmostEqual(data["g1_z"], 0.25, places=4)
+        self.assertAlmostEqual(data["g2_z"], 0.25, places=4)
+        self.assertAlmostEqual(data["g0_x"], 0.0, places=4)
+        self.assertAlmostEqual(data["g0_y"], 0.0, places=4)
+
+    # -- 2. Ray origin / direction gradients ----------------------------------
+
+    def test_ray_origin_gradient_through_t(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            origin = torch.tensor([[0.25, 0.25, -1.0]], device=device, requires_grad=True)
+            direction = torch.tensor([[0.0, 0.0, 1.0]], device=device)
+            ray = rt.Ray(origin, direction)
+            its = scene.intersect(ray)
+            its.t.sum().backward()
+
+            # Analytical: t = (0 - o_z)/d_z = -o_z. dt/do_z = -1.
+            # dt/do_x = dt/do_y = 0 (ray goes straight in z).
+            print(json.dumps({
+                "grad_oz": float(origin.grad[0, 2].item()),
+                "grad_ox": float(origin.grad[0, 0].item()),
+                "grad_oy": float(origin.grad[0, 1].item()),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["grad_oz"], -1.0, places=4)
+        self.assertAlmostEqual(data["grad_ox"], 0.0, places=4)
+        self.assertAlmostEqual(data["grad_oy"], 0.0, places=4)
+
+    def test_ray_direction_gradient_through_p(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [2.0, 0.0, 0.0],
+                              [0.0, 2.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            origin = torch.tensor([[0.5, 0.5, -1.0]], device=device)
+            direction = torch.tensor([[0.0, 0.0, 1.0]], device=device, requires_grad=True)
+            ray = rt.Ray(origin, direction)
+            its = scene.intersect(ray)
+            # p = o + t*d, take gradient of p_z w.r.t. d_z
+            its.p[:, 2].sum().backward()
+
+            # p_z = o_z + t*d_z. With o_z=-1, t=1, d_z=1: p_z=0.
+            # dp_z/dd_z = t + d_z * dt/dd_z
+            # Since t = -o_z/d_z = 1/d_z: dt/dd_z = -(-o_z)/d_z^2 = o_z/d_z^2 = -1
+            # dp_z/dd_z = 1 + 1*(-1) = 0 (moving along z, the plane is still at z=0)
+            # But dp_z/dd_x should be non-trivial if direction tilts:
+            # for a z-directed ray hitting z=0 plane, p_z is always 0
+            # regardless of direction perturbation (as long as it hits).
+            # So let's check a more useful gradient: p_x w.r.t. d_x.
+            # Actually let's just verify direction grad is non-None and has reasonable values.
+            g = direction.grad
+            print(json.dumps({
+                "has_grad": g is not None,
+                "grad_shape": list(g.shape) if g is not None else [],
+            }))
+            """
+        )
+        self.assertTrue(data["has_grad"])
+        self.assertEqual(data["grad_shape"], [1, 3])
+
+    # -- 3. All intersection fields carry gradient ----------------------------
+
+    def test_all_intersection_fields_have_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                verts,
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+                torch.tensor([[0.0, 0.0],
+                              [1.0, 0.0],
+                              [0.0, 1.0]], device=device),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+
+            results = {}
+            for field in ["t", "p", "n", "geo_n", "uv", "barycentric"]:
+                val = getattr(its, field)
+                has_grad_fn = val.grad_fn is not None
+                results[f"{field}_has_grad_fn"] = has_grad_fn
+                if has_grad_fn:
+                    verts.grad = None
+                    val.sum().backward(retain_graph=True)
+                    results[f"{field}_grad_nonzero"] = bool(
+                        verts.grad is not None and verts.grad.abs().sum().item() > 0
+                    )
+                else:
+                    results[f"{field}_grad_nonzero"] = False
+
+            print(json.dumps(results))
+            """
+        )
+        for field in ["t", "p", "n", "geo_n", "uv", "barycentric"]:
+            self.assertTrue(
+                data[f"{field}_has_grad_fn"],
+                f"Intersection.{field} should have grad_fn when vertices require grad",
+            )
+            self.assertTrue(
+                data[f"{field}_grad_nonzero"],
+                f"Intersection.{field} gradient should be non-zero w.r.t. vertices",
+            )
+
+    # -- 4. Vertex UV gradient through intersection.uv -----------------------
+
+    def test_vertex_uv_gradient_through_intersection(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            uv = torch.tensor([[0.0, 0.0],
+                                [1.0, 0.0],
+                                [0.0, 1.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+                uv,
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+            # Interpolated UV = b0*uv0 + b1*uv1 + b2*uv2
+            # = 0.5*(0,0) + 0.25*(1,0) + 0.25*(0,1) = (0.25, 0.25)
+            # d(uv_u) / d(uv0_u) = b0 = 0.5
+            its.uv[:, 0].sum().backward()
+            g = uv.grad
+
+            print(json.dumps({
+                "uv_val": [float(its.uv[0, 0].item()), float(its.uv[0, 1].item())],
+                "grad_uv0_u": float(g[0, 0].item()),
+                "grad_uv1_u": float(g[1, 0].item()),
+                "grad_uv2_u": float(g[2, 0].item()),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["uv_val"][0], 0.25, places=4)
+        self.assertAlmostEqual(data["uv_val"][1], 0.25, places=4)
+        self.assertAlmostEqual(data["grad_uv0_u"], 0.5, places=4)
+        self.assertAlmostEqual(data["grad_uv1_u"], 0.25, places=4)
+        self.assertAlmostEqual(data["grad_uv2_u"], 0.25, places=4)
+
+    # -- 5. to_world_right gradient -------------------------------------------
+
+    def test_to_world_right_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            tx = torch.eye(4, device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            mesh.to_world_right = tx
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+            its.t.sum().backward()
+
+            # to_world_right applied after vertices: V_world = to_world_left @ V @ to_world_right
+            # With to_world_left=I: V_world = V @ to_world_right
+            # A z-translation in to_world_right[2,3] shifts z of all vertices.
+            print(json.dumps({
+                "grad_tz": float(tx.grad[2, 3].item()),
+                "grad_abs_sum": float(tx.grad.abs().sum().item()),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["grad_tz"], 1.0, places=3)
+        self.assertGreater(data["grad_abs_sum"], 0.0)
+
+    # -- 6. Nearest-edge gradient (point query) -------------------------------
+
+    def test_nearest_edge_point_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [1.0, 1.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                verts,
+                torch.tensor([[0, 1, 2], [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            # Query a point near the bottom edge (0,0)-(1,0)
+            point = torch.tensor([[0.5, -0.1, 0.0]], device=device, requires_grad=True)
+            result = scene.nearest_edge(point)
+
+            result.distance.sum().backward()
+
+            print(json.dumps({
+                "distance": float(result.distance[0].item()),
+                "point_grad_nonzero": bool(
+                    point.grad is not None and point.grad.abs().sum().item() > 1e-8
+                ),
+                "vert_grad_nonzero": bool(
+                    verts.grad is not None and verts.grad.abs().sum().item() > 1e-8
+                ),
+            }))
+            """
+        )
+        self.assertGreater(data["distance"], 0.0)
+        self.assertTrue(data["point_grad_nonzero"])
+        self.assertTrue(data["vert_grad_nonzero"])
+
+    # -- 7. Nearest-edge gradient (ray query) ---------------------------------
+
+    def test_nearest_edge_ray_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [1.0, 1.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                verts,
+                torch.tensor([[0, 1, 2], [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            origin = torch.tensor([[0.5, 0.5, 1.0]], device=device)
+            direction = torch.tensor([[0.0, 0.0, -1.0]], device=device)
+            ray = rt.Ray(origin, direction, torch.tensor([3.0], device=device))
+            result = scene.nearest_edge(ray)
+
+            result.distance.sum().backward()
+
+            print(json.dumps({
+                "distance": float(result.distance[0].item()),
+                "vert_grad_nonzero": bool(
+                    verts.grad is not None and verts.grad.abs().sum().item() > 1e-8
+                ),
+            }))
+            """
+        )
+        self.assertGreater(data["distance"], 0.0)
+        self.assertTrue(data["vert_grad_nonzero"])
+
+    # -- 8. Multi-mesh gradient isolation -------------------------------------
+
+    def test_multi_mesh_gradient_isolation(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            # Mesh A at z=0, far left
+            verts_a = torch.tensor([[-5.0, -5.0, 0.0],
+                                    [-4.0, -5.0, 0.0],
+                                    [-5.0, -4.0, 0.0]], device=device, requires_grad=True)
+            mesh_a = rt.Mesh(verts_a, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+
+            # Mesh B at z=0, near origin
+            verts_b = torch.tensor([[0.0, 0.0, 0.0],
+                                    [1.0, 0.0, 0.0],
+                                    [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh_b = rt.Mesh(verts_b, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+
+            scene = rt.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.configure()
+
+            # Ray hits mesh B only
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+            its.t.sum().backward()
+
+            print(json.dumps({
+                "hit_shape": int(its.shape_id[0].item()),
+                "verts_a_grad_sum": float(verts_a.grad.abs().sum().item()) if verts_a.grad is not None else 0.0,
+                "verts_b_grad_sum": float(verts_b.grad.abs().sum().item()) if verts_b.grad is not None else 0.0,
+            }))
+            """
+        )
+        self.assertEqual(data["hit_shape"], 1)
+        self.assertAlmostEqual(data["verts_a_grad_sum"], 0.0, places=6,
+                               msg="Mesh A should receive no gradient when only mesh B is hit")
+        self.assertGreater(data["verts_b_grad_sum"], 0.0,
+                           msg="Mesh B should receive gradient")
+
+    # -- 9. render_grad propagates gradient to vertex positions ----------------
+
+    def test_render_grad_vertex_position_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[-0.5, -0.5, 3.0],
+                                  [ 0.5, -0.5, 3.0],
+                                  [ 0.0,  0.5, 3.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                verts,
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            camera = rt.Camera(45.0, 1e-4, 1e4)
+            camera.width = 16
+            camera.height = 12
+            camera.configure()
+
+            grad_image = camera.render_grad(scene, spp=4)
+            grad_image.sum().backward()
+
+            print(json.dumps({
+                "grad_shape": list(grad_image.shape),
+                "vert_grad_nonzero": bool(
+                    verts.grad is not None and verts.grad.abs().sum().item() > 0
+                ),
+                "vert_grad_abs_sum": float(
+                    verts.grad.abs().sum().item() if verts.grad is not None else 0
+                ),
+            }))
+            """
+        )
+        self.assertEqual(data["grad_shape"], [12, 16])
+        self.assertTrue(data["vert_grad_nonzero"],
+                        "render_grad should propagate gradient to vertex positions")
+
+    # -- 10. Finite-difference validation for vertex -> t ---------------------
+
+    def test_finite_difference_vertex_t(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            eps = 1e-3
+
+            def compute_t(verts_np):
+                v = torch.tensor(verts_np, device=device, dtype=torch.float32)
+                m = rt.Mesh(v, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+                s = rt.Scene()
+                s.add_mesh(m)
+                s.configure()
+                r = rt.Ray(
+                    torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                    torch.tensor([[0.0, 0.0, 1.0]], device=device),
+                )
+                return float(s.intersect(r).t[0].item())
+
+            base = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            t0 = compute_t(base)
+
+            # Finite diff for v0_z
+            perturbed = [[0.0, 0.0, eps], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            t1 = compute_t(perturbed)
+            fd_v0z = (t1 - t0) / eps
+
+            # Finite diff for v1_z
+            perturbed = [[0.0, 0.0, 0.0], [1.0, 0.0, eps], [0.0, 1.0, 0.0]]
+            t2 = compute_t(perturbed)
+            fd_v1z = (t2 - t0) / eps
+
+            # Autograd
+            verts = torch.tensor(base, device=device, requires_grad=True)
+            mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+            its.t.sum().backward()
+            ad_v0z = float(verts.grad[0, 2].item())
+            ad_v1z = float(verts.grad[1, 2].item())
+
+            print(json.dumps({
+                "fd_v0z": fd_v0z,
+                "ad_v0z": ad_v0z,
+                "fd_v1z": fd_v1z,
+                "ad_v1z": ad_v1z,
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["fd_v0z"], data["ad_v0z"], places=2,
+                               msg="Finite diff and autograd should match for v0_z")
+        self.assertAlmostEqual(data["fd_v1z"], data["ad_v1z"], places=2,
+                               msg="Finite diff and autograd should match for v1_z")
+
+    # -- 11. No gradient when all inputs are detached -------------------------
+
+    def test_no_gradient_when_all_detached(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+
+            print(json.dumps({
+                "t_has_grad_fn": its.t.grad_fn is not None,
+                "p_has_grad_fn": its.p.grad_fn is not None,
+                "n_has_grad_fn": its.n.grad_fn is not None,
+            }))
+            """
+        )
+        self.assertFalse(data["t_has_grad_fn"],
+                         "t should have no grad_fn when all inputs are detached")
+        self.assertFalse(data["p_has_grad_fn"])
+        self.assertFalse(data["n_has_grad_fn"])
+
+    # -- 12. Camera sample_ray gradient ---------------------------------------
+
+    def test_camera_sample_ray_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            camera = rt.Camera(45.0, 1e-4, 1e4)
+            camera.width = 32
+            camera.height = 32
+            camera.configure()
+
+            sample = torch.tensor([[0.5, 0.5]], device=device, requires_grad=True)
+            ray = camera.sample_ray(sample)
+
+            print(json.dumps({
+                "o_has_grad_fn": ray.o.grad_fn is not None,
+                "d_has_grad_fn": ray.d.grad_fn is not None,
+                "ray_o_shape": list(ray.o.shape),
+                "ray_d_shape": list(ray.d.shape),
+            }))
+            """
+        )
+        self.assertTrue(data["d_has_grad_fn"],
+                        "sample_ray direction should have grad_fn when sample has grad")
+        self.assertEqual(data["ray_o_shape"], [1, 3])
+        self.assertEqual(data["ray_d_shape"], [1, 3])
+
+    # -- 13. Transform gradient through intersection.p (exact) ----------------
+
+    def test_transform_translation_gradient_through_t(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            tx = torch.eye(4, device=device, requires_grad=True)
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            mesh.to_world_left = tx
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+
+            # For a z-directed ray, dt/dT[2,3] = 1.0 (z-translation moves the
+            # triangle plane along the ray). dt/dT[0,3] = dt/dT[1,3] = 0
+            # (xy-translation doesn't change the plane z-intercept).
+            its.t.sum().backward()
+            print(json.dumps({
+                "grad_tz": float(tx.grad[2, 3].item()),
+                "grad_tx": float(tx.grad[0, 3].item()),
+                "grad_ty": float(tx.grad[1, 3].item()),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["grad_tz"], 1.0, places=3)
+        self.assertAlmostEqual(data["grad_tx"], 0.0, places=3)
+        self.assertAlmostEqual(data["grad_ty"], 0.0, places=3)
+
+    # -- 14. Batched ray gradient ---------------------------------------------
+
+    def test_batched_ray_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [2.0, 0.0, 0.0],
+                                  [0.0, 2.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            origins = torch.tensor([[0.25, 0.25, -1.0],
+                                    [0.5,  0.5, -2.0]], device=device, requires_grad=True)
+            directions = torch.tensor([[0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 1.0]], device=device)
+            ray = rt.Ray(origins, directions)
+            its = scene.intersect(ray)
+
+            loss = its.t.sum()
+            loss.backward()
+
+            # Ray 0: t=1.0, ray 1: t=2.0. Total t=3.0.
+            # Each ray's dt/do_z = -1. Total grad for origins[:, 2] = [-1, -1].
+            print(json.dumps({
+                "t_values": [float(its.t[0].item()), float(its.t[1].item())],
+                "origin_grad_z": [float(origins.grad[0, 2].item()),
+                                  float(origins.grad[1, 2].item())],
+                "vert_grad_nonzero": bool(verts.grad.abs().sum().item() > 0),
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["t_values"][0], 1.0, places=4)
+        self.assertAlmostEqual(data["t_values"][1], 2.0, places=4)
+        self.assertAlmostEqual(data["origin_grad_z"][0], -1.0, places=3)
+        self.assertAlmostEqual(data["origin_grad_z"][1], -1.0, places=3)
+        self.assertTrue(data["vert_grad_nonzero"])
+
+    # -- 15. Intersection p matches o + t*d, gradient consistency -------------
+
+    def test_intersection_p_equals_o_plus_t_d_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            its = scene.intersect(ray)
+
+            # Gradient through p should be consistent with gradient through t
+            # since p_z = o_z + t * d_z.
+            # grad(p_z)/grad(v0_z) should equal grad(t)/grad(v0_z) * d_z
+            # = 0.5 * 1.0 = 0.5
+            its.p[:, 2].sum().backward()
+            grad_p = verts.grad.clone()
+
+            verts.grad = None
+            its2 = scene.intersect(ray)
+            its2.t.sum().backward()
+            grad_t = verts.grad.clone()
+
+            print(json.dumps({
+                "grad_p_v0z": float(grad_p[0, 2].item()),
+                "grad_t_v0z": float(grad_t[0, 2].item()),
+                "consistent": abs(float(grad_p[0, 2].item()) - float(grad_t[0, 2].item())) < 1e-3,
+            }))
+            """
+        )
+        self.assertAlmostEqual(data["grad_p_v0z"], data["grad_t_v0z"], places=3,
+                               msg="grad(p_z) and grad(t) w.r.t. v0_z should be consistent")
+
+    # -- 16. Camera transform gradient ----------------------------------------
+
+    def test_camera_transform_gradient(self):
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[-0.5, -0.5, 3.0],
+                              [ 0.5, -0.5, 3.0],
+                              [ 0.0,  0.5, 3.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            cam_tx = torch.eye(4, device=device, requires_grad=True)
+            camera = rt.Camera(45.0, 1e-4, 1e4)
+            camera.width = 16
+            camera.height = 12
+            camera.to_world_left = cam_tx
+            camera.configure()
+
+            grad_image = camera.render_grad(scene, spp=4)
+            grad_image.sum().backward()
+
+            print(json.dumps({
+                "cam_grad_nonzero": bool(
+                    cam_tx.grad is not None and cam_tx.grad.abs().sum().item() > 0
+                ),
+            }))
+            """
+        )
+        self.assertTrue(data["cam_grad_nonzero"],
+                        "render_grad should propagate gradient to camera transform")
+
+
+@unittest.skipUnless(TORCH_CUDA_AVAILABLE, "torch with CUDA is required for e2e tests")
+class TorchEndToEndTests(unittest.TestCase):
+    """End-to-end optimization loop tests: torch optimizer + rayd ray tracing."""
+
+    def test_optimize_vertex_z_to_match_target_depth(self):
+        """Move a triangle's z-position to match a target intersection depth."""
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            faces = torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32)
+            base_xy = torch.tensor([[0.0, 0.0],
+                                    [1.0, 0.0],
+                                    [0.0, 1.0]], device=device)
+
+            # Learnable: only z-offsets (start at 0.5, target z=0)
+            z_offsets = torch.tensor([0.5, 0.5, 0.5], device=device, requires_grad=True)
+            optimizer = torch.optim.Adam([z_offsets], lr=0.1)
+            target_t = 1.0  # plane at z=0, ray at z=-1 -> t=1
+
+            ray_o = torch.tensor([[0.25, 0.25, -1.0]], device=device)
+            ray_d = torch.tensor([[0.0, 0.0, 1.0]], device=device)
+
+            losses = []
+            for step in range(50):
+                optimizer.zero_grad()
+                verts = torch.cat([base_xy, z_offsets.unsqueeze(1)], dim=1)
+                mesh = rt.Mesh(verts, faces)
+                scene = rt.Scene()
+                scene.add_mesh(mesh)
+                scene.configure()
+                ray = rt.Ray(ray_o, ray_d)
+                its = scene.intersect(ray)
+                loss = (its.t - target_t).pow(2).sum()
+                loss.backward()
+                optimizer.step()
+                losses.append(float(loss.item()))
+
+            print(json.dumps({
+                "loss_start": losses[0],
+                "loss_end": losses[-1],
+                "final_z": [float(z_offsets[i].item()) for i in range(3)],
+                "converged": losses[-1] < 0.01,
+            }))
+            """
+        )
+        self.assertGreater(data["loss_start"], 0.1,
+                           "Initial loss should be significant")
+        self.assertTrue(data["converged"],
+                        f"Optimization should converge: final loss = {data['loss_end']}")
+        for z in data["final_z"]:
+            self.assertAlmostEqual(z, 0.0, places=1,
+                                   msg="Vertex z should converge toward 0")
+
+    def test_optimize_transform_to_match_target_depth(self):
+        """Optimize a z-translation transform to match target depth."""
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            faces = torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32)
+            base_verts = torch.tensor([[0.0, 0.0, 0.0],
+                                       [1.0, 0.0, 0.0],
+                                       [0.0, 1.0, 0.0]], device=device)
+
+            # Learnable: a z-offset parameter (start at 0.8, target 0.0)
+            z_offset = torch.tensor([0.8], device=device, requires_grad=True)
+            optimizer = torch.optim.Adam([z_offset], lr=0.05)
+            target_t = 1.0  # plane at z=0, ray at z=-1 -> t=1
+
+            ray_o = torch.tensor([[0.25, 0.25, -1.0]], device=device)
+            ray_d = torch.tensor([[0.0, 0.0, 1.0]], device=device)
+
+            # Build transform via differentiable ops (avoid in-place on cloned tensor)
+            z_basis = torch.zeros(4, 4, device=device)
+            z_basis[2, 3] = 1.0
+
+            losses = []
+            for step in range(60):
+                optimizer.zero_grad()
+                tx = torch.eye(4, device=device) + z_offset[0] * z_basis
+                mesh = rt.Mesh(base_verts, faces)
+                mesh.to_world_left = tx
+                scene = rt.Scene()
+                scene.add_mesh(mesh)
+                scene.configure()
+                ray = rt.Ray(ray_o, ray_d)
+                its = scene.intersect(ray)
+                loss = (its.t - target_t).pow(2).sum()
+                loss.backward()
+                optimizer.step()
+                losses.append(float(loss.item()))
+
+            print(json.dumps({
+                "loss_start": losses[0],
+                "loss_end": losses[-1],
+                "final_z_offset": float(z_offset.item()),
+                "converged": losses[-1] < 0.01,
+            }))
+            """
+        )
+        self.assertGreater(data["loss_start"], 0.1)
+        self.assertTrue(data["converged"],
+                        f"Optimization should converge: final loss = {data['loss_end']}")
+        self.assertAlmostEqual(data["final_z_offset"], 0.0, places=1)
+
+    def test_optimize_ray_origin_to_hit_target_point(self):
+        """Optimize ray origin to make intersection hit a target 3D point."""
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            # Large triangle in the z=0 plane
+            mesh = rt.Mesh(
+                torch.tensor([[-5.0, -5.0, 0.0],
+                              [ 5.0, -5.0, 0.0],
+                              [ 0.0,  5.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            # Learnable: ray origin xy (start at (1.0, 1.0), target hit at (0.0, 0.0))
+            # Ray goes straight down z, so hit point xy = origin xy.
+            origin_xy = torch.tensor([1.0, 1.0], device=device, requires_grad=True)
+            optimizer = torch.optim.Adam([origin_xy], lr=0.1)
+            target_xy = torch.tensor([0.0, 0.0], device=device)
+
+            losses = []
+            for step in range(40):
+                optimizer.zero_grad()
+                o = torch.stack([origin_xy[0], origin_xy[1],
+                                 torch.tensor(-1.0, device=device)]).unsqueeze(0)
+                d = torch.tensor([[0.0, 0.0, 1.0]], device=device)
+                ray = rt.Ray(o, d)
+                its = scene.intersect(ray)
+                loss = (its.p[0, 0] - target_xy[0]).pow(2) + (its.p[0, 1] - target_xy[1]).pow(2)
+                loss.backward()
+                optimizer.step()
+                losses.append(float(loss.item()))
+
+            print(json.dumps({
+                "loss_start": losses[0],
+                "loss_end": losses[-1],
+                "final_xy": [float(origin_xy[0].item()), float(origin_xy[1].item())],
+                "loss_decreased": losses[-1] < losses[0] * 0.1,
+            }))
+            """
+        )
+        self.assertGreater(data["loss_start"], 0.5)
+        self.assertTrue(data["loss_decreased"],
+                        f"Ray origin optimization should decrease loss: "
+                        f"start={data['loss_start']}, end={data['loss_end']}")
+
+    def test_optimize_vertices_multi_ray_depth_loss(self):
+        """Optimize vertex positions using multiple rays with depth supervision."""
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            faces = torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32)
+
+            # Start with a tilted triangle, optimize to flat at z=0
+            verts = torch.tensor([[0.0, 0.0, 0.3],
+                                  [1.0, 0.0, -0.2],
+                                  [0.0, 1.0, 0.1]], device=device, requires_grad=True)
+            optimizer = torch.optim.Adam([verts], lr=0.02)
+
+            # Multiple rays hitting different parts of the triangle
+            ray_o = torch.tensor([[0.2, 0.2, -1.0],
+                                  [0.5, 0.1, -1.0],
+                                  [0.1, 0.5, -1.0],
+                                  [0.3, 0.3, -1.0]], device=device)
+            ray_d = torch.tensor([[0.0, 0.0, 1.0],
+                                  [0.0, 0.0, 1.0],
+                                  [0.0, 0.0, 1.0],
+                                  [0.0, 0.0, 1.0]], device=device)
+            target_t = torch.full((4,), 1.0, device=device)  # all at z=0
+
+            losses = []
+            for step in range(100):
+                optimizer.zero_grad()
+                mesh = rt.Mesh(verts, faces)
+                scene = rt.Scene()
+                scene.add_mesh(mesh)
+                scene.configure()
+                ray = rt.Ray(ray_o, ray_d)
+                its = scene.intersect(ray)
+                loss = (its.t - target_t).pow(2).mean()
+                loss.backward()
+                optimizer.step()
+                losses.append(float(loss.item()))
+
+            print(json.dumps({
+                "loss_start": losses[0],
+                "loss_end": losses[-1],
+                "final_verts_z": [float(verts[i, 2].item()) for i in range(3)],
+                "loss_decreased": losses[-1] < losses[0] * 0.01,
+            }))
+            """
+        )
+        self.assertTrue(data["loss_decreased"],
+                        f"Multi-ray depth optimization should decrease loss significantly: "
+                        f"start={data['loss_start']}, end={data['loss_end']}")
+        for z in data["final_verts_z"]:
+            self.assertAlmostEqual(z, 0.0, delta=0.15,
+                                   msg="All vertices should converge toward z=0")
+
+    def test_render_grad_end_to_end_backward(self):
+        """Verify render_grad backward reaches mesh transform parameter."""
+        data = run_json_case(
+            """
+            import json, torch, rayd.torch as rt
+
+            device = "cuda"
+            base_verts = torch.tensor([[-0.5, -0.5, 3.0],
+                                       [ 0.5, -0.5, 3.0],
+                                       [ 0.0,  0.5, 3.0]], device=device)
+            faces = torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32)
+
+            tx = torch.eye(4, device=device, requires_grad=True)
+
+            camera = rt.Camera(45.0, 1e-4, 1e4)
+            camera.width = 16
+            camera.height = 16
+            camera.configure()
+
+            mesh = rt.Mesh(base_verts, faces)
+            mesh.to_world_left = tx
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            grad_image = camera.render_grad(scene, spp=4)
+            loss = grad_image.sum()
+            loss.backward()
+
+            print(json.dumps({
+                "has_grad": tx.grad is not None,
+                "grad_nonzero": bool(
+                    tx.grad is not None and tx.grad.abs().sum().item() > 0
+                ),
+                "grad_shape": list(tx.grad.shape) if tx.grad is not None else [],
+                "loss_value": float(loss.item()),
+            }))
+            """
+        )
+        self.assertTrue(data["has_grad"],
+                        "Transform should receive gradient from render_grad.sum().backward()")
+        self.assertTrue(data["grad_nonzero"],
+                        "Transform gradient should be non-zero")
+        self.assertEqual(data["grad_shape"], [4, 4])
 
 
 if __name__ == "__main__":

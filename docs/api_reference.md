@@ -15,13 +15,9 @@ Public top-level exports:
 - `SceneCommitProfile`
 - `Camera`
 - `Ray`
-- `RayDetached`
 - `Intersection`
-- `IntersectionDetached`
 - `NearestPointEdge`
-- `NearestPointEdgeDetached`
 - `NearestRayEdge`
-- `NearestRayEdgeDetached`
 - `PrimaryEdgeSample`
 - `SecondaryEdgeInfo`
 
@@ -39,10 +35,10 @@ For the optional `rayd.torch` module:
 
 ## Type Conventions
 
-RayD follows a simple naming rule:
+AD mode is inferred automatically from the inputs:
 
-- `Detached` suffix: query runs on detached values
-- no suffix: query participates in Dr.Jit AD
+- if any input tensor carries gradient (`requires_grad` in torch, or `dr.grad_enabled` in Dr.Jit), the operation runs in AD mode
+- otherwise, the operation runs detached
 
 Typical input types:
 
@@ -140,18 +136,9 @@ Methods:
   - pushes pending dynamic mesh updates into scene acceleration structures
 - `is_ready() -> bool`
 - `has_pending_updates() -> bool`
-- `intersect(ray, active=True)`
-  - overloads:
-    - `RayDetached -> IntersectionDetached`
-    - `Ray -> Intersection`
-- `nearest_edge(point, active=True)`
-  - overloads:
-    - `Array3fDetached -> NearestPointEdgeDetached`
-    - `Array3f -> NearestPointEdge`
-- `nearest_edge(ray, active=True)`
-  - overloads:
-    - `RayDetached -> NearestRayEdgeDetached`
-    - `Ray -> NearestRayEdge`
+- `intersect(ray, active=True) -> Intersection`
+- `nearest_edge(point, active=True) -> NearestPointEdge`
+- `nearest_edge(ray, active=True) -> NearestRayEdge`
 
 Properties:
 
@@ -203,10 +190,7 @@ Methods:
   - rebuilds projection and world/sample transform caches
 - `prepare_edges(scene)`
   - preprocesses primary image-space edges for the current scene
-- `sample_ray(sample)`
-  - overloads:
-    - `Array2fDetached -> RayDetached`
-    - `Array2f -> Ray`
+- `sample_ray(sample) -> Ray`
 - `sample_edge(sample1) -> PrimaryEdgeSample`
 - `render(scene, background=0.0) -> TensorXf`
   - point-sampled depth image
@@ -235,9 +219,9 @@ Notes:
 
 ## Ray Types
 
-### `RayDetached`
+### `Ray`
 
-Detached ray container.
+Ray container. AD mode is inferred from whether any field carries gradient.
 
 Fields:
 
@@ -249,15 +233,11 @@ Methods:
 
 - `reversed()`
 
-### `Ray`
-
-Differentiable ray container with the same field layout as `RayDetached`.
-
 ## Intersection Types
 
-### `IntersectionDetached`
+### `Intersection`
 
-Detached result of `Scene.intersect(RayDetached, ...)`.
+Result of `Scene.intersect(ray, ...)`.
 
 Fields:
 
@@ -274,15 +254,11 @@ Methods:
 
 - `is_valid()`
 
-### `Intersection`
-
-Differentiable result of `Scene.intersect(Ray, ...)` with the same field layout as `IntersectionDetached`.
-
 ## Nearest-Edge Types
 
-### `NearestPointEdgeDetached`
+### `NearestPointEdge`
 
-Detached result of `Scene.nearest_edge(point, ...)`.
+Result of `Scene.nearest_edge(point, ...)`.
 
 Fields:
 
@@ -303,13 +279,9 @@ Notes:
 - `point` is the original query point
 - `edge_t` is the closest-point parameter along the edge segment
 
-### `NearestPointEdge`
+### `NearestRayEdge`
 
-Differentiable point-query nearest-edge result with the same field layout as `NearestPointEdgeDetached`.
-
-### `NearestRayEdgeDetached`
-
-Detached result of `Scene.nearest_edge(ray, ...)`.
+Result of `Scene.nearest_edge(ray, ...)`.
 
 Fields:
 
@@ -330,10 +302,6 @@ Notes:
 
 - `ray_t` is the closest-point parameter along the query ray or finite ray segment
 - `point` is the closest point on the query ray
-
-### `NearestRayEdge`
-
-Differentiable ray-query nearest-edge result with the same field layout as `NearestRayEdgeDetached`.
 
 ## Edge Sampling Types
 
@@ -400,7 +368,7 @@ scene = rd.Scene()
 scene.add_mesh(mesh)
 scene.configure()
 
-ray = rd.RayDetached(
+ray = rd.Ray(
     cuda.Array3f([0.25], [0.25], [-1.0]),
     cuda.Array3f([0.0], [0.0], [1.0]),
 )
@@ -424,7 +392,7 @@ edge = scene.nearest_edge(points)
 import rayd as rd
 import drjit.cuda as cuda
 
-ray = rd.RayDetached(
+ray = rd.Ray(
     cuda.Array3f([0.2], [0.4], [1.0]),
     cuda.Array3f([0.0], [0.0], [-1.0]),
 )
