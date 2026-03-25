@@ -182,13 +182,15 @@ That is by design.
 
 ## Repository Layout
 
+- [`rayd/`](rayd): Python package (flat layout)
+- [`rayd/torch/`](rayd/torch): PyTorch frontend
 - [`include/rayd/`](include/rayd): public C++ headers
 - [`src/`](src): C++ and CUDA implementation
 - [`src/rayd.cpp`](src/rayd.cpp): Python bindings
 - [`include/rayd/slang/interop.h`](include/rayd/slang/interop.h): C++ POD/handle bridge for Slang
 - [`include/rayd/slang/rayd.slang`](include/rayd/slang/rayd.slang): Slang declarations for the C++ interop layer
 - [`examples/`](examples): basic and renderer-side examples
-- [`tests/test_geometry.py`](tests/test_geometry.py): geometry regression tests
+- [`tests/`](tests): geometry and torch regression tests
 - [`docs/api_reference.md`](docs/api_reference.md): Python API reference
 - [`docs/slang_interop.md`](docs/slang_interop.md): Slang interop notes and examples
 

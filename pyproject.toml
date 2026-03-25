@@ -18,5 +18,6 @@ torch = ["torch"]
 
 [tool.scikit-build]
 build.verbose = true
+wheel.packages = ["rayd"]
 wheel.expand-macos-universal-tags = true
 build-dir = "build/{wheel_tag}"
