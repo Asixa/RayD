@@ -5,7 +5,7 @@
 //
 // Python backward pass uses traceAD to get both dt_do and dt_dd in a single call.
 
-import rayd.slang.rayd;
+import rayd_slang;
 
 // ---- Full AD result (one-shot forward + backward) ----
 

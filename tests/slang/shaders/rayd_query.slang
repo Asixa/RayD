@@ -1,7 +1,7 @@
 // Slang module that calls rayd interop functions via the cpp target.
 // Uses accessor functions to avoid slangc field-name mangling.
 
-import rayd.slang.rayd;
+import rayd_slang;
 
 // ---- basic queries ----
 

@@ -125,12 +125,12 @@ The native Dr.Jit API remains unchanged and does not depend on PyTorch.
 
 ## Slang Frontend
 
-RayD ships a Slang interop layer for Slang's `cpp` target. Slang code can `import rayd.slang.rayd;` and call RayD scene queries directly.
+RayD ships a Slang interop layer for Slang's `cpp` target. Slang code can `import rayd_slang;` and call RayD scene queries directly.
 
 ### Minimal Slang Example
 
 ```slang
-import rayd.slang.rayd;
+import rayd_slang;
 
 export float traceRayT(uint64_t sceneHandle,
                        float ox, float oy, float oz,
@@ -163,7 +163,7 @@ t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 `raydSceneIntersectAD` returns an `IntersectionAD` with analytic gradients `dt_do` (∂t/∂origin) and `dt_dd` (∂t/∂direction):
 
 ```slang
-import rayd.slang.rayd;
+import rayd_slang;
 
 export RayDIntersectionAD traceAD(uint64_t sceneHandle,
                                   float ox, float oy, float oz,

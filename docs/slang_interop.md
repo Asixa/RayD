@@ -34,8 +34,15 @@ t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 
 Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** — use the `raydIts*`, `raydF3*`, `raydRay*` accessors instead, because `slangc` mangles field names when targeting C++.
 
+Two import styles are supported:
+
 ```slang
-import rayd.slang.rayd;
+import rayd_slang;           // shorthand (recommended)
+import rayd.slang.rayd;      // full path (also works)
+```
+
+```slang
+import rayd_slang;
 
 export float traceRayT(uint64_t sceneHandle,
                        float ox, float oy, float oz,
@@ -172,4 +179,4 @@ The build installs:
 - the public `include/rayd/**` header tree (`.h` + `.slang` files)
 - the linkable `rayd_core` library under `rayd/lib/`
 
-This lets the site-packages root serve as both the include root for `#include <rayd/...>` and the module search root for `import rayd.slang.rayd;`.
+This lets the site-packages root serve as both the include root for `#include <rayd/...>` and the module search root for `import rayd_slang;`.

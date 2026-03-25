@@ -1,7 +1,7 @@
 // Test: Slang code that imports the RayD interop module and calls query
 // functions using proper accessor functions (no direct field access).
 
-import rayd.slang.rayd;
+import rayd_slang;
 
 export bool testIntersect(RayDSceneHandle scene)
 {
