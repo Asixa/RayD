@@ -71,8 +71,10 @@ def build_scene(tx):
     add(quad(*lq), [1, 1, 1], LIGHT_E)                                                        # light
     add(box([-0.72, -1.0, 2.70], [-0.18, 0.25, 3.62]), [.82, .82, .82])                       # tall block
 
-    moving = box([0.18, -1.0, 1.82], [0.68, -0.34, 2.48])                                     # short block
-    moving.to_world_left = ad.Matrix4f([[1, 0, 0, tx], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+    moving = box([-0.25, -1.0, -0.33], [0.25, -0.34, 0.33])                                    # short block (centered at origin)
+    # Rotate ~20 deg around Y, then translate into position + apply tx
+    c, s = float(np.cos(np.radians(20))), float(np.sin(np.radians(20)))
+    moving.to_world_left = ad.Matrix4f([[c, 0, s, 0.35 + tx], [0, 1, 0, 0], [-s, 0, c, 2.6], [0, 0, 0, 1]])
     add(moving, [.86, .84, .80])
 
     scene.configure()
@@ -89,8 +91,9 @@ def ortho_frame(n):
     sign = dr.select(n[2] >= 0.0, 1.0, -1.0)
     a = -dr.rcp(sign + n[2])
     b = n[0] * n[1] * a
-    return (cuda.Array3f(1.0 + sign * n[0] * n[0] * a, sign * b, -sign * n[0]),
-            cuda.Array3f(b, sign + n[1] * n[1] * a, -n[1]))
+    V3 = type(n)
+    return (V3(1.0 + sign * n[0] * n[0] * a, sign * b, -sign * n[0]),
+            V3(b, sign + n[1] * n[1] * a, -n[1]))
 
 
 def cosine_hemisphere(n, rng):
@@ -101,12 +104,19 @@ def cosine_hemisphere(n, rng):
     return dr.normalize(t * (r * dr.cos(phi)) + s * (r * dr.sin(phi)) + n * dr.sqrt(dr.maximum(0.0, 1.0 - u1)))
 
 
-def trace(scene, albedo_t, emission_t, light_id, primary_ray, rng, max_depth=4):
+def trace(scene, albedo_t, emission_t, light_id, primary_ray, rng, max_depth=4, diff=False):
     n = dr.width(primary_ray.o[0])
-    beta = dr.full(cuda.Array3f, 1.0, n)
-    L = dr.zeros(cuda.Array3f, n)
-    ray = primary_ray
-    active = dr.full(cuda.Bool, True, n)
+
+    if diff:
+        F3, Bool_, MakeRay = ad.Array3f, ad.Bool, rd.Ray
+        ray = rd.Ray(ad.Array3f(primary_ray.o), ad.Array3f(primary_ray.d))
+    else:
+        F3, Bool_, MakeRay = cuda.Array3f, cuda.Bool, rd.RayDetached
+        ray = primary_ray
+
+    beta = dr.full(F3, 1.0, n)
+    L = dr.zeros(F3, n)
+    active = dr.full(Bool_, True, n)
 
     for depth in range(max_depth):
         its = scene.intersect(ray, active)
@@ -114,32 +124,35 @@ def trace(scene, albedo_t, emission_t, light_id, primary_ray, rng, max_depth=4):
 
         sn = dr.select(dr.dot(its.n, ray.d) > 0, -its.n, its.n)
         gn = dr.select(dr.dot(its.geo_n, ray.d) > 0, -its.geo_n, its.geo_n)
-        sid = dr.select(hit, its.shape_id, 0)
-        kd = dr.gather(cuda.Array3f, albedo_t, sid, hit)
-        Le = dr.gather(cuda.Array3f, emission_t, sid, hit)
+        # shape_id is discrete — gather with detached index/mask
+        sid = dr.detach(dr.select(hit, its.shape_id, 0))
+        hit_d = dr.detach(hit)
+        kd = F3(dr.gather(cuda.Array3f, albedo_t, sid, hit_d))
+        Le = F3(dr.gather(cuda.Array3f, emission_t, sid, hit_d))
 
-        # emission 鈥?first bounce only
+        # emission — first bounce only
         if depth == 0:
             L = dr.select(hit & (sid == light_id), L + beta * Le, L)
 
         surf = hit & ~(sid == light_id)
 
         # NEE: sample the area light
-        lp = cuda.Array3f(*(LIGHT_P0[i] + rng.next_float32() * LIGHT_U[i] + rng.next_float32() * LIGHT_V[i] for i in range(3)))
+        lp = F3(*(LIGHT_P0[i] + rng.next_float32() * LIGHT_U[i] + rng.next_float32() * LIGHT_V[i] for i in range(3)))
         to_l = lp - its.p
         d2 = dr.maximum(dr.squared_norm(to_l), 1e-8)
         wi = to_l * dr.rsqrt(d2)
         cos_s = dr.maximum(dr.dot(sn, wi), 0.0)
-        cos_l = dr.maximum(dr.dot(cuda.Array3f(*(-LIGHT_N).tolist()), wi), 0.0)
+        cos_l = dr.maximum(dr.dot(F3(*(-LIGHT_N).tolist()), wi), 0.0)
         can_shade = surf & (cos_s > 0) & (cos_l > 0)
-        shadow_ray = rd.RayDetached(its.p + gn * 1e-3, wi)
-        shadow_ray.tmax = dr.maximum(dr.sqrt(d2) - 2e-3, 1e-3)
-        vis = dr.select(~scene.intersect(shadow_ray, can_shade).is_valid(), 1.0, 0.0)
-        L = dr.select(surf, L + beta * kd * (cuda.Array3f(*LIGHT_E.tolist()) * (LIGHT_AREA * cos_s * cos_l * dr.rcp(PI * dr.maximum(d2, 1e-5)) * vis)), L)
+        # Shadow ray: always detached (visibility discontinuity → edge term)
+        shadow_ray = rd.RayDetached(dr.detach(its.p) + dr.detach(gn) * 1e-3, dr.detach(wi))
+        shadow_ray.tmax = dr.maximum(dr.sqrt(dr.detach(d2)) - 2e-3, 1e-3)
+        vis = dr.select(~scene.intersect(shadow_ray, dr.detach(can_shade)).is_valid(), 1.0, 0.0)
+        L = dr.select(surf, L + beta * kd * (F3(*LIGHT_E.tolist()) * (LIGHT_AREA * cos_s * cos_l * dr.rcp(PI * dr.maximum(d2, 1e-5)) * vis)), L)
 
         # bounce
         new_d = cosine_hemisphere(sn, rng)
-        ray = rd.RayDetached(dr.select(surf, its.p + gn * 1e-3, ray.o), dr.select(surf, new_d, ray.d))
+        ray = MakeRay(dr.select(surf, its.p + gn * 1e-3, ray.o), dr.select(surf, new_d, ray.d))
         beta = dr.select(surf, beta * kd, beta)
         active = surf
 
@@ -186,6 +199,36 @@ def render_edge_ad(scene, camera, albedo_t, emission_t, light_id, tx, seed=7, sp
     return grad
 
 # ---------------------------------------------------------------------------
+# Interior-AD: smooth shading gradient via AD-enabled path tracing
+# ---------------------------------------------------------------------------
+
+
+def render_interior_ad(scene, camera, albedo_t, emission_t, light_id, tx, seed=7, spp=64, max_depth=3):
+    w, h = camera.width, camera.height
+    n = w * h
+    sample_count = n * spp
+
+    rng = cuda.PCG32(size=sample_count)
+    rng.seed(initstate=dr.arange(cuda.UInt64, sample_count) + seed + 0x10000,
+             initseq=dr.full(cuda.UInt64, seed + 2, sample_count))
+    px = dr.repeat(cuda.Float(dr.arange(cuda.UInt, n) % w), spp)
+    py = dr.repeat(cuda.Float(dr.arange(cuda.UInt, n) // w), spp)
+    uv = cuda.Array2f((px + rng.next_float32()) / w, (py + rng.next_float32()) / h)
+    primary = camera.sample_ray(uv)
+
+    rgb = trace(scene, albedo_t, emission_t, light_id, primary, rng, max_depth, diff=True)
+    lum = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+    image = dr.block_sum(lum, spp) / float(spp)
+
+    dr.set_grad(tx, 0.0)
+    dr.set_grad(tx, 1.0)
+    dr.forward_to(image)
+    grad = dr.grad(image)
+    dr.eval(grad)
+    return grad
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -195,6 +238,7 @@ def main():
     ap.add_argument("--width", type=int, default=512)
     ap.add_argument("--height", type=int, default=512)
     ap.add_argument("--spp", type=int, default=256)
+    ap.add_argument("--interior-spp", type=int, default=64)
     ap.add_argument("--edge-spp", type=int, default=16)
     ap.add_argument("--max-depth", type=int, default=3)
     ap.add_argument("--seed", type=int, default=7)
@@ -215,7 +259,7 @@ def main():
     dr.sync_thread()
     t1 = time.perf_counter()
 
-    # render image
+    # render image (detached, for display only)
     rng = cuda.PCG32(size=n * args.spp)
     rng.seed(initstate=dr.arange(cuda.UInt64, n * args.spp) + args.seed,
              initseq=dr.full(cuda.UInt64, args.seed + 1, n * args.spp))
@@ -230,27 +274,36 @@ def main():
     dr.sync_thread()
     t2 = time.perf_counter()
 
-    # edge-AD gradient
-    grad = render_edge_ad(scene, camera, albedo_t, emission_t, light_id, tx,
-                          seed=args.seed, spp=args.edge_spp, max_depth=args.max_depth)
+    # interior-AD gradient (smooth shading term)
+    interior_grad = render_interior_ad(scene, camera, albedo_t, emission_t, light_id, tx,
+                                       seed=args.seed, spp=args.interior_spp, max_depth=args.max_depth)
     dr.sync_thread()
     t3 = time.perf_counter()
+
+    # edge-AD gradient (visibility boundary term)
+    edge_grad = render_edge_ad(scene, camera, albedo_t, emission_t, light_id, tx,
+                               seed=args.seed, spp=args.edge_spp, max_depth=args.max_depth)
+    dr.sync_thread()
+    t4 = time.perf_counter()
+
+    # combine
+    grad = interior_grad + edge_grad
 
     # show results
     rgb_np = np.stack([np.asarray(dr.detach(rgb[i])) for i in range(3)], axis=1).reshape(h, w, 3)
     grad_np = np.asarray(dr.detach(grad)).reshape(h, w)
 
-    print(f"resolution = {w}x{h}  spp = {args.spp}  edge_spp = {args.edge_spp}  max_depth = {args.max_depth}")
-    print(f"timing:  setup {(t1-t0)*1e3:.0f}ms  render {(t2-t1)*1e3:.0f}ms  edge_ad {(t3-t2)*1e3:.0f}ms")
+    print(f"resolution = {w}x{h}  spp = {args.spp}  interior_spp = {args.interior_spp}  edge_spp = {args.edge_spp}  max_depth = {args.max_depth}")
+    print(f"timing:  setup {(t1-t0)*1e3:.0f}ms  render {(t2-t1)*1e3:.0f}ms  interior_ad {(t3-t2)*1e3:.0f}ms  edge_ad {(t4-t3)*1e3:.0f}ms")
 
     out = Path(__file__).resolve().parent / "optical.png"
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
     ax1.imshow(np.clip(rgb_np, 0, 1))
     ax1.set_title("render")
     ax1.axis("off")
-    lim = max(float(np.max(np.abs(grad_np))), 1e-6)
+    lim = max(float(np.percentile(np.abs(grad_np), 99.5)), 1e-6)
     ax2.imshow(grad_np, cmap="coolwarm", vmin=-lim, vmax=lim)
-    ax2.set_title("edge-AD gradient")
+    ax2.set_title("d(luminance)/d(tx)  (interior + edge)")
     ax2.axis("off")
     plt.tight_layout()
     plt.savefig(out, dpi=150)

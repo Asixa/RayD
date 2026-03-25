@@ -49,6 +49,12 @@ If you only want to see the package in action, start here:
 - [`examples/basics/camera_edge_sampling_gradient.py`](examples/basics/camera_edge_sampling_gradient.py): camera-driven edge-sampling gradients
 - [`docs/slang_interop.md`](docs/slang_interop.md): Slang `cpp` target interop for host-side RayD scene queries
 
+### Differentiable Cornell Box with Edge Sampling
+
+GPU path tracing + interior/edge AD in ~200 lines ([`examples/renderer/optical.py`](examples/renderer/optical.py)):
+
+![Differentiable Cornell box render and edge-AD gradient](examples/renderer/optical.png)
+
 Build meshes, put them in a scene, launch rays, define a loss, and backpropagate through geometry.
 
 ## Minimal Differentiable Ray Tracing Example
