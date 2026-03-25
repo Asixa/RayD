@@ -149,13 +149,61 @@ Load and call from Python:
 import rayd as rd
 import rayd.slang as rs
 
-m = rs.load_module("my_shader.slang")
+m = rs.load_module("my_shader.slang")  # use rayd.slang.load_module, not slangtorch.loadModule
 
 scene = rd.Scene()
 scene.add_mesh(mesh)
 scene.configure()
 
 t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
+```
+
+### Differentiable Slang Example
+
+`raydSceneIntersectAD` returns an `IntersectionAD` with analytic gradients `dt_do` (∂t/∂origin) and `dt_dd` (∂t/∂direction):
+
+```slang
+import rayd.slang.rayd;
+
+export RayDIntersectionAD traceAD(uint64_t sceneHandle,
+                                  float ox, float oy, float oz,
+                                  float dx, float dy, float dz)
+{
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    return raydSceneIntersectAD(scene, ray);
+}
+```
+
+Use it from Python with `torch.autograd`:
+
+```python
+import torch
+import rayd as rd
+import rayd.slang as rs
+
+m = rs.load_module("my_shader.slang")
+scene = rd.Scene()
+scene.add_mesh(mesh)
+scene.configure()
+
+class DiffTrace(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, oz):
+        ctx.save_for_backward(oz)
+        hit = m.traceAD(scene.slang_handle, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.t, device=oz.device)
+
+    @staticmethod
+    def backward(ctx, g):
+        oz, = ctx.saved_tensors
+        hit = m.traceAD(scene.slang_handle, 0.25, 0.25, oz.item(), 0, 0, 1)
+        return torch.tensor(hit.dt_do.z * g.item(), device=oz.device)
+
+oz = torch.tensor(-1.0, device="cuda", requires_grad=True)
+t = DiffTrace.apply(oz)
+t.backward()
+print(f"t={t.item()}, dt/doz={oz.grad.item()}")  # t=1.0, dt/doz=-1.0
 ```
 
 `load_module()` runs `slangc -target cpp`, auto-generates pybind11 bindings, and links against `rayd_core`. See [`docs/slang_interop.md`](docs/slang_interop.md) for the full compilation pipeline, API reference, and known workarounds.

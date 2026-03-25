@@ -18,7 +18,7 @@ RayD provides a Slang interop layer that lets Slang code call RayD scene queries
 import rayd.slang as rs
 
 # Compile a .slang file that calls raydSceneIntersect, link against rayd_core
-m = rs.load_module("my_shader.slang")
+m = rs.load_module("my_shader.slang")  # use rayd.slang.load_module, not slangtorch.loadModule
 
 # Create a scene and get its handle
 import rayd as rd, drjit.cuda as cuda
