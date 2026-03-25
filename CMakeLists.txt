@@ -127,7 +127,7 @@ else()
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -std=c++17 -Xcompiler=-fPIC -c
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
                 -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
                 -I"${CMAKE_CURRENT_SOURCE_DIR}"

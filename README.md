@@ -14,7 +14,7 @@ The goal is simple: expose differentiable ray-mesh intersection on the GPU witho
 
 RayD is for users who want OptiX acceleration and autodiff, but do not want a full renderer.
 
-Why not Mitsuba? Mitsuba is excellent for graphics rendering, but often too high-level for RF, acoustics, sonar, or custom wave simulation. In those settings, direct access to ray-scene queries and geometry gradients is usually more useful than a full material-light-integrator stack.
+Why not `Mitsuba`? `Mitsuba` is excellent for graphics rendering, but often too high-level for RF, acoustics, sonar, or custom wave simulation. In those settings, direct access to ray-scene queries and geometry gradients is usually more useful than a full material-light-integrator stack.
 
 RayD keeps only the geometric core:
 
@@ -36,14 +36,6 @@ For intersection workloads, RayD targets Mitsuba-level performance and matching 
 ## PyTorch Wrapper
 
 RayD also provides an optional `rayd.torch` module implemented at the Python package layer.
-
-Install it with:
-
-```bash
-pip install "rayd[torch]"
-```
-
-or install PyTorch separately and then import `rayd.torch`.
 
 `rayd.torch` mirrors the core `rayd` API:
 
