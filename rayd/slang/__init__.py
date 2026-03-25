@@ -32,6 +32,41 @@ from pathlib import Path as _Path
 _PACKAGE_DIR = _Path(__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_DIR.parents[1]
 
+# pybind11 struct bindings injected into every compiled module.
+_PYBIND11_STRUCT_BINDINGS = r"""
+    namespace py = pybind11;
+    using namespace rayd::slang;
+    py::class_<Float2>(m, "Float2")
+        .def_readonly("x", &Float2::x)
+        .def_readonly("y", &Float2::y);
+    py::class_<Float3>(m, "Float3")
+        .def_readonly("x", &Float3::x)
+        .def_readonly("y", &Float3::y)
+        .def_readonly("z", &Float3::z);
+    py::class_<Intersection>(m, "Intersection")
+        .def_readonly("valid", &Intersection::valid)
+        .def_readonly("t", &Intersection::t)
+        .def_readonly("p", &Intersection::p)
+        .def_readonly("n", &Intersection::n)
+        .def_readonly("geo_n", &Intersection::geo_n)
+        .def_readonly("uv", &Intersection::uv)
+        .def_readonly("barycentric", &Intersection::barycentric)
+        .def_readonly("shape_id", &Intersection::shape_id)
+        .def_readonly("prim_id", &Intersection::prim_id);
+    py::class_<IntersectionAD>(m, "IntersectionAD")
+        .def_readonly("valid", &IntersectionAD::valid)
+        .def_readonly("t", &IntersectionAD::t)
+        .def_readonly("p", &IntersectionAD::p)
+        .def_readonly("n", &IntersectionAD::n)
+        .def_readonly("geo_n", &IntersectionAD::geo_n)
+        .def_readonly("uv", &IntersectionAD::uv)
+        .def_readonly("barycentric", &IntersectionAD::barycentric)
+        .def_readonly("shape_id", &IntersectionAD::shape_id)
+        .def_readonly("prim_id", &IntersectionAD::prim_id)
+        .def_readonly("dt_do", &IntersectionAD::dt_do)
+        .def_readonly("dt_dd", &IntersectionAD::dt_dd);
+"""
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -168,15 +203,19 @@ def _compile_host_module(slang_file: str, inc_paths: list[str]):
                  for m in func_re.finditer(gen)
                  if m.start() > len(gen) // 2]
 
-        bindings = "\n".join(
+        fn_defs = "\n".join(
             f'    m.def("{_re.sub(r"_[0-9]+$", "", fn)}", &{fn});'
             for _, fn in funcs)
+
+        # Register POD structs so pybind11 can return them from functions.
+        struct_defs = _PYBIND11_STRUCT_BINDINGS
 
         cpp_patched.write_text(
             f"#include <rayd/slang/interop_types.h>\n"
             f"{gen}\n"
             f"#include <pybind11/pybind11.h>\n"
-            f"PYBIND11_MODULE({mod_name}, m) {{\n{bindings}\n}}\n",
+            f"PYBIND11_MODULE({mod_name}, m) {{\n"
+            f"{struct_defs}\n{fn_defs}\n}}\n",
             encoding="utf-8")
 
     # ---- Step 3: collect include / lib / flags ----
@@ -284,3 +323,5 @@ def _add_msvc_to_path():
             _os.environ["PATH"] = bins[0] + _os.pathsep + _os.environ["PATH"]
     except Exception:
         pass
+
+

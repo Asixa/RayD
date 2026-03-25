@@ -1,7 +1,7 @@
-"""End-to-end optimization using Dr.Jit AD gradients from Slang→rayd.
+"""Test: Adam optimization using Slang-compiled forward + backward.
 
-Optimize ray origin z so that t matches a target depth.
-All rayd calls go through Slang. Backward uses AD (not FD).
+All gradient computation happens in Slang/C++ (traceTFwd + traceTBwdOrigin).
+Python only bridges into torch.optim.
 """
 import json, torch
 import rayd as rd, rayd.slang as rs
@@ -20,19 +20,17 @@ H = scene.slang_handle
 TARGET = 5.0
 
 
-class SlangTraceAD(torch.autograd.Function):
+class SlangTrace(torch.autograd.Function):
     @staticmethod
     def forward(ctx, oz):
         ctx.save_for_backward(oz)
-        return torch.tensor(M.traceT(H, 0.25, 0.25, oz.item(), 0, 0, 1),
-                            device=oz.device)
+        return torch.tensor(M.traceTFwd(H, 0.25, 0.25, oz.item(), 0, 0, 1), device=oz.device)
 
     @staticmethod
     def backward(ctx, g):
         oz, = ctx.saved_tensors
-        # Dr.Jit AD gradient — NOT finite differences
-        dtdoz = M.dtdoz(H, 0.25, 0.25, oz.item(), 0, 0, 1)
-        return g * dtdoz
+        grad_o = M.traceTBwdOrigin(H, 0.25, 0.25, oz.item(), 0, 0, 1, g.item())
+        return torch.tensor(grad_o.z, device=oz.device)
 
 
 oz = torch.tensor(-1.0, device="cuda", requires_grad=True)
@@ -40,14 +38,14 @@ opt = torch.optim.Adam([oz], lr=0.3)
 
 for _ in range(80):
     opt.zero_grad()
-    t = SlangTraceAD.apply(oz)
+    t = SlangTrace.apply(oz)
     loss = (t - TARGET) ** 2
     loss.backward()
     opt.step()
 
-final_t = M.traceT(H, 0.25, 0.25, oz.item(), 0, 0, 1)
+final = M.traceAD(H, 0.25, 0.25, oz.item(), 0, 0, 1)
 print(json.dumps({
     "oz": oz.item(),
-    "final_t": final_t,
-    "converged": abs(final_t - TARGET) < 0.2,
+    "final_t": final.t,
+    "converged": abs(final.t - TARGET) < 0.2,
 }))

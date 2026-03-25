@@ -1,74 +1,72 @@
-// AD-enabled rayd queries from Slang.
-// raydSceneIntersectAD runs forward + backward internally via Dr.Jit AD,
-// returning both the intersection result and dt/d(ray).
+// Differentiable rayd query from Slang.
+//
+// Provides a forward/backward pair:
+//   traceAD       — returns IntersectionAD (forward result + analytic gradients)
+//   traceT_fwd    — returns just t (for use as the forward pass)
+//   traceT_bwd    — given upstream gradient dresult, returns d(loss)/d(ray params)
+//
+// Both forward and backward logic are in Slang/C++.
+// Python only calls the compiled host functions — no Python-side autograd wrapper needed.
 
 import rayd.slang.rayd;
 
-// Forward result
-export float traceT(uint64_t sh, float ox, float oy, float oz,
-                    float dx, float dy, float dz)
+// ---- Full AD result (one-shot forward + backward) ----
+
+export RayDIntersectionAD traceAD(
+    uint64_t sceneHandle,
+    float ox, float oy, float oz,
+    float dx, float dy, float dz)
 {
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersectionAD h = raydSceneIntersectAD(s, r);
-    return raydItsADT(h);
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    return raydSceneIntersectAD(scene, ray);
 }
 
-export bool traceHit(uint64_t sh, float ox, float oy, float oz,
-                     float dx, float dy, float dz)
+// ---- Forward: returns t ----
+
+export float traceTFwd(
+    uint64_t sceneHandle,
+    float ox, float oy, float oz,
+    float dx, float dy, float dz)
 {
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersectionAD h = raydSceneIntersectAD(s, r);
-    return raydItsADValid(h);
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    return raydItsADT(raydSceneIntersectAD(scene, ray));
 }
 
-// Gradient: dt/d(ray_origin)
-export float dtdox(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
+// ---- Backward: given dresult = d(loss)/d(t), returns d(loss)/d(ray_params) ----
+// Returns a RayDFloat3 pair:  grad_origin and grad_direction.
+// grad_origin  = dresult * dt_do
+// grad_direction = dresult * dt_dd
+
+export RayDFloat3 traceTBwdOrigin(
+    uint64_t sceneHandle,
+    float ox, float oy, float oz,
+    float dx, float dy, float dz,
+    float dresult)
 {
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3X(raydItsADDtDo(raydSceneIntersectAD(s, r)));
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    RayDIntersectionAD hit = raydSceneIntersectAD(scene, ray);
+    RayDFloat3 dt_do = raydItsADDtDo(hit);
+    return raydFloat3(
+        dresult * raydF3X(dt_do),
+        dresult * raydF3Y(dt_do),
+        dresult * raydF3Z(dt_do));
 }
 
-export float dtdoy(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
+export RayDFloat3 traceTBwdDirection(
+    uint64_t sceneHandle,
+    float ox, float oy, float oz,
+    float dx, float dy, float dz,
+    float dresult)
 {
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3Y(raydItsADDtDo(raydSceneIntersectAD(s, r)));
-}
-
-export float dtdoz(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
-{
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3Z(raydItsADDtDo(raydSceneIntersectAD(s, r)));
-}
-
-// Gradient: dt/d(ray_direction)
-export float dtddx(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
-{
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3X(raydItsADDtDd(raydSceneIntersectAD(s, r)));
-}
-
-export float dtddy(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
-{
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3Y(raydItsADDtDd(raydSceneIntersectAD(s, r)));
-}
-
-export float dtddz(uint64_t sh, float ox, float oy, float oz,
-                   float dx, float dy, float dz)
-{
-    RayDSceneHandle s = raydMakeSceneHandle(sh);
-    RayDRay r = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydF3Z(raydItsADDtDd(raydSceneIntersectAD(s, r)));
+    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
+    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
+    RayDIntersectionAD hit = raydSceneIntersectAD(scene, ray);
+    RayDFloat3 dt_dd = raydItsADDtDd(hit);
+    return raydFloat3(
+        dresult * raydF3X(dt_dd),
+        dresult * raydF3Y(dt_dd),
+        dresult * raydF3Z(dt_dd));
 }
