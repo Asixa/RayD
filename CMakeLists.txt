@@ -20,7 +20,7 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 if(NOT DRJIT_CMAKE_DIR_RESULT EQUAL 0)
-    message(FATAL_ERROR "Could not locate the installed Dr.Jit CMake package. Ensure drjit>=1.3.0 is installed in the build environment.")
+    message(FATAL_ERROR "Could not locate the installed Dr.Jit CMake package. Ensure drjit>=1.2.0 is installed in the build environment.")
 endif()
 
 execute_process(

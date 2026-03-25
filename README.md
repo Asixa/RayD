@@ -225,7 +225,7 @@ In other words, RayD is not limited to triangle hits. It also gives you direct a
 
 RayD is a Python package with a C++/CUDA extension.
 
-You need Python `>=3.10`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit>=1.3.0`, `nanobind==2.11.0`, and `scikit-build-core`.
+You need Python `>=3.10`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit>=1.2.0`, `nanobind==2.11.0`, and `scikit-build-core`.
 
 On Windows, use Visual Studio 2022 with Desktop C++ tools. On Linux, use GCC or Clang with C++17 support.
 
@@ -236,7 +236,7 @@ conda create -n myenv python=3.10 -y
 conda activate myenv
 python -m pip install -U pip setuptools wheel
 python -m pip install cmake scikit-build-core nanobind==2.11.0
-python -m pip install "drjit>=1.3.0"
+python -m pip install "drjit>=1.2.0"
 ```
 
 ### Install
@@ -251,7 +251,7 @@ python -m pip install .
 RayD depends on:
 
 - Python `3.10+`
-- Dr.Jit `1.3.0+`
+- Dr.Jit `1.2.0+`
 - OptiX `8+`
 
 RayD does not include:
