@@ -31,12 +31,12 @@ jobs:
           CIBW_SKIP: "*-musllinux_*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
-            dnf install -y dnf-plugins-core &&
+            dnf install -y dnf-plugins-core gcc-toolset-13 &&
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-6 &&
-            ln -sfn /usr/local/cuda-12.6 /usr/local/cuda &&
+            dnf install -y cuda-toolkit-12-5 &&
+            ln -sfn /usr/local/cuda-12.5 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
             CUDA_HOME=/usr/local/cuda
@@ -44,6 +44,9 @@ jobs:
             CUDA_ROOT=/usr/local/cuda
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
+            CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            CUDAHOSTCXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
             PATH=/usr/local/cuda/bin:$PATH
             LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
