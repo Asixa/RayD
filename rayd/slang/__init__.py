@@ -1,30 +1,14 @@
-"""rayd.slang -- Slang / slangtorch interop utilities for RayD.
+"""rayd.slang -- Slang interop utilities for RayD.
 
-This module provides helpers for using RayD alongside slangtorch:
+``include_dir()`` returns the path to add with ``-I`` when compiling Slang
+code that does ``import rayd.slang.rayd;``.
 
-- ``include_dir()`` returns the directory containing the C++ interop header
-  and the Slang module so that custom ``.slang`` files can
-  ``import rayd.slang.rayd;``
-- ``shader_dir()`` returns the directory containing bundled Slang shaders
-  for common operations (shading, ray generation, etc.)
-- ``load_module(filename, **kw)`` is a thin wrapper around
-  ``slangtorch.loadModule`` that automatically adds the RayD include path.
-
-The C++ interop layer (``include/rayd/slang/interop.h`` and
-``include/rayd/slang/rayd.slang``) targets Slang's **cpp** backend for
-host-side scalar queries.  ``slangtorch`` compiles for the **CUDA** backend,
-so the host-side query functions (``raydSceneIntersect``, etc.) are **not**
-callable from slangtorch kernels.  The recommended pattern is:
-
-1. Use ``rayd.torch`` for geometry queries (intersection, nearest-edge, etc.)
-2. Pass the resulting ``torch.Tensor`` data to a slangtorch-compiled Slang
-   kernel for custom GPU processing (shading, field computation, etc.)
-3. Gradients flow through both ``rayd.torch`` and ``slangtorch`` via
-   ``torch.autograd``.
-
-Requires: ``pip install slangtorch``
+``load_module()`` is a thin ``slangtorch.loadModule`` wrapper that adds the
+RayD include path automatically (requires ``pip install slangtorch``).
 """
 
+import os as _os
+import sys as _sys
 from pathlib import Path as _Path
 
 _PACKAGE_DIR = _Path(__file__).resolve().parent
@@ -32,17 +16,15 @@ _REPO_ROOT = _PACKAGE_DIR.parents[1]
 
 
 def include_dir() -> _Path:
-    """Return the directory to add to Slang include paths.
+    """Return the directory to pass as ``-I`` to ``slangc``.
 
-    For an installed wheel this is the package root (``rayd/``).
     For a development checkout this is ``<repo>/include/``.
-    The returned path lets Slang resolve ``import rayd.slang.rayd;``.
+    For an installed wheel this is the package root (``rayd/``).
+    Either way Slang can resolve ``import rayd.slang.rayd;``.
     """
-    # Development layout: include/rayd/slang/rayd.slang exists
     dev = _REPO_ROOT / "include"
     if (dev / "rayd" / "slang" / "rayd.slang").is_file():
         return dev
-    # Installed layout: rayd/slang/rayd.slang sits next to this __init__.py
     installed = _PACKAGE_DIR.parent
     if (_PACKAGE_DIR / "rayd.slang").is_file():
         return installed
@@ -53,14 +35,6 @@ def include_dir() -> _Path:
     )
 
 
-def shader_dir() -> _Path:
-    """Return the directory containing bundled Slang shaders."""
-    d = _PACKAGE_DIR / "shaders"
-    if not d.is_dir():
-        raise FileNotFoundError(f"Shader directory not found: {d}")
-    return d
-
-
 def load_module(filename, *, include_paths=None, **kwargs):
     """Load a Slang module via ``slangtorch.loadModule`` with RayD paths.
 
@@ -69,14 +43,10 @@ def load_module(filename, *, include_paths=None, **kwargs):
     filename : str or Path
         Path to the ``.slang`` file.
     include_paths : list[str], optional
-        Additional include paths.  The RayD include directory is prepended
+        Extra include paths.  The RayD include directory is prepended
         automatically.
     **kwargs
         Forwarded to ``slangtorch.loadModule``.
-
-    Returns
-    -------
-    The compiled module object returned by ``slangtorch.loadModule``.
     """
     try:
         import slangtorch
@@ -86,6 +56,22 @@ def load_module(filename, *, include_paths=None, **kwargs):
             "Install it with: pip install slangtorch"
         ) from None
 
-    rayd_include = str(include_dir())
-    paths = [rayd_include] + (include_paths or [])
+    # Windows workarounds for non-English MSVC locale and missing ninja on PATH.
+    if _sys.platform == "win32":
+        scripts = _os.path.join(_os.path.dirname(_sys.executable), "Scripts")
+        if scripts not in _os.environ.get("PATH", ""):
+            _os.environ["PATH"] = scripts + _os.pathsep + _os.environ.get("PATH", "")
+        try:
+            import torch.utils.cpp_extension as _ce
+            _ce.SUBPROCESS_DECODE_ARGS = ('utf-8', 'ignore')
+        except Exception:
+            pass
+        try:
+            import setuptools.msvc as _msvc
+            _orig = _os.path.isfile
+            _msvc.isfile = lambda p: False if p is None else _orig(p)
+        except Exception:
+            pass
+
+    paths = [str(include_dir())] + (include_paths or [])
     return slangtorch.loadModule(str(filename), includePaths=paths, **kwargs)

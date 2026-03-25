@@ -19,3 +19,5 @@ unit_test/result/
 .ipynb_checkpoints
 .vscode/
 .claude
+.slangtorch_cache/
+tests/slang/test_interop_gen.cpp

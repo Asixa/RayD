@@ -1,7 +1,10 @@
 // Slang interop layer for RayD's host-side C++ API.
 // Intended for Slang's C++ target. Other targets return invalid sentinels.
 
-__requirePrelude(R"(#include <rayd/slang/interop.h>)");
+// NOTE: When compiling the generated C++ output, the build system must
+// ensure <rayd/slang/interop.h> is on the include path and that the
+// generated source includes it (e.g. via a force-include flag or by
+// prepending the directive to the generated .cpp file).
 
 __target_intrinsic(cpp, "rayd::slang::Float2")
 struct RayDFloat2
@@ -81,13 +84,13 @@ struct RayDPrimaryEdgeSample
 __target_intrinsic(cpp, "rayd::slang::SceneHandle")
 struct RayDSceneHandle
 {
-    uint64 value;
+    uint64_t value;
 };
 
 __target_intrinsic(cpp, "rayd::slang::CameraHandle")
 struct RayDCameraHandle
 {
-    uint64 value;
+    uint64_t value;
 };
 
 float raydInfinity()
