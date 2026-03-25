@@ -49,6 +49,49 @@ Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active) {
     return result;
 }
 
+IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool active) {
+    const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
+        "rayd::slang::scene_intersect_ad(): null scene handle.");
+
+    // Build AD-enabled 1-lane ray (gradient-tracked origin and direction).
+    rayd::Vector3f ray_o = detail::to_cuda_ad(ray.o);
+    rayd::Vector3f ray_d = detail::to_cuda_ad(ray.d);
+    rayd::Float ray_tmax = drjit::full<rayd::Float>(ray.tmax, 1);
+    rayd::Ray ad_ray(ray_o, ray_d, ray_tmax);
+    rayd::Mask ad_mask = drjit::full<rayd::Mask>(active, 1);
+
+    // Forward: AD-enabled intersection (records on Dr.Jit tape).
+    rayd::Intersection hit = scene.ray_intersect<false>(ad_ray, ad_mask);
+    drjit::eval(hit.t, hit.p, hit.n, hit.geo_n, hit.uv, hit.barycentric,
+                hit.shape_id, hit.prim_id);
+    drjit::sync_thread();
+
+    // Extract forward result.
+    IntersectionAD result;
+    result.shape_id = detail::lane0<int>(hit.shape_id);
+    result.prim_id  = detail::lane0<int>(hit.prim_id);
+    result.valid     = result.prim_id >= 0;
+    result.t         = detail::lane0<float>(hit.t);
+    result.p         = detail::to_float3(hit.p);
+    result.n         = detail::to_float3(hit.n);
+    result.geo_n     = detail::to_float3(hit.geo_n);
+    result.uv        = detail::to_float2(hit.uv);
+    result.barycentric = detail::to_float3(hit.barycentric);
+
+    // Backward: compute dt/d(ray_o) and dt/d(ray_d).
+    if (result.valid) {
+        drjit::backward_from(hit.t);
+        auto grad_o = drjit::grad(ray_o);
+        auto grad_d = drjit::grad(ray_d);
+        drjit::eval(grad_o, grad_d);
+        drjit::sync_thread();
+        result.dt_do = detail::to_float3(grad_o);
+        result.dt_dd = detail::to_float3(grad_d);
+    }
+
+    return result;
+}
+
 bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active) {
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
         "rayd::slang::scene_shadow_test(): null scene handle.");

@@ -49,6 +49,16 @@ struct Intersection {
     int prim_id = -1;
 };
 
+struct IntersectionAD {
+    bool valid = false;
+    float t = std::numeric_limits<float>::infinity();
+    Float3 p, n, geo_n, barycentric;
+    Float2 uv;
+    int shape_id = -1, prim_id = -1;
+    Float3 dt_do;
+    Float3 dt_dd;
+};
+
 struct NearestPointEdge {
     bool valid = false;
     float distance = std::numeric_limits<float>::infinity();
@@ -118,6 +128,19 @@ inline Float2 its_uv(const Intersection &h) { return h.uv; }
 inline Float3 its_barycentric(const Intersection &h) { return h.barycentric; }
 inline int    its_shape_id(const Intersection &h) { return h.shape_id; }
 inline int    its_prim_id(const Intersection &h) { return h.prim_id; }
+
+// IntersectionAD field accessors
+inline bool   its_ad_valid(const IntersectionAD &h) { return h.valid; }
+inline float  its_ad_t(const IntersectionAD &h) { return h.t; }
+inline Float3 its_ad_p(const IntersectionAD &h) { return h.p; }
+inline Float3 its_ad_n(const IntersectionAD &h) { return h.n; }
+inline Float3 its_ad_geo_n(const IntersectionAD &h) { return h.geo_n; }
+inline Float2 its_ad_uv(const IntersectionAD &h) { return h.uv; }
+inline Float3 its_ad_barycentric(const IntersectionAD &h) { return h.barycentric; }
+inline int    its_ad_shape_id(const IntersectionAD &h) { return h.shape_id; }
+inline int    its_ad_prim_id(const IntersectionAD &h) { return h.prim_id; }
+inline Float3 its_ad_dt_do(const IntersectionAD &h) { return h.dt_do; }
+inline Float3 its_ad_dt_dd(const IntersectionAD &h) { return h.dt_dd; }
 
 // Float2/3 field accessors
 inline float f2_x(const Float2 &v) { return v.x; }
@@ -212,6 +235,18 @@ inline Ray to_scalar(const RayDetached &value) {
     return Ray(to_float3(value.o), to_float3(value.d), lane0<float>(value.tmax));
 }
 
+// AD-enabled helpers: create 1-lane gradient-tracked arrays.
+inline rayd::Float scalar_ad_float(float value) {
+    rayd::Float arr = drjit::full<rayd::Float>(value, 1);
+    drjit::enable_grad(arr);
+    return arr;
+}
+inline rayd::Vector3f to_cuda_ad(const Float3 &value) {
+    return rayd::Vector3f(scalar_ad_float(value.x),
+                          scalar_ad_float(value.y),
+                          scalar_ad_float(value.z));
+}
+
 } // namespace detail
 
 inline SceneHandle make_scene_handle(rayd::Scene &scene) noexcept {
@@ -228,6 +263,7 @@ bool scene_has_pending_updates(SceneHandle handle);
 void scene_configure(SceneHandle handle);
 void scene_commit_updates(SceneHandle handle);
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active = true);
+IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active = true);
 NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
 NearestRayEdge scene_closest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);

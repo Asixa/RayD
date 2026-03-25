@@ -53,6 +53,16 @@ struct RayDPrimaryEdgeSample
     RayDRay ray_n; RayDRay ray_p; float pdf;
 };
 
+__target_intrinsic(cpp, "rayd::slang::IntersectionAD")
+struct RayDIntersectionAD
+{
+    bool valid; float t;
+    RayDFloat3 p; RayDFloat3 n; RayDFloat3 geo_n; RayDFloat3 barycentric;
+    RayDFloat2 uv;
+    int shape_id; int prim_id;
+    RayDFloat3 dt_do; RayDFloat3 dt_dd;
+};
+
 __target_intrinsic(cpp, "rayd::slang::SceneHandle")
 struct RayDSceneHandle { uint64_t value; };
 
@@ -141,6 +151,17 @@ RayDIntersection raydInvalidIntersection()
     return result;
 }
 
+RayDIntersectionAD raydInvalidIntersectionAD()
+{
+    RayDIntersectionAD r;
+    r.valid = false; r.t = raydInfinity();
+    r.p = raydFloat3(0,0,0); r.n = raydFloat3(0,0,0); r.geo_n = raydFloat3(0,0,0);
+    r.uv = raydFloat2(0,0); r.barycentric = raydFloat3(0,0,0);
+    r.shape_id = -1; r.prim_id = -1;
+    r.dt_do = raydFloat3(0,0,0); r.dt_dd = raydFloat3(0,0,0);
+    return r;
+}
+
 RayDNearestPointEdge raydInvalidNearestPointEdge()
 {
     RayDNearestPointEdge r;
@@ -188,6 +209,25 @@ RayDIntersection raydSceneIntersect(RayDSceneHandle scene, RayDRay ray, bool act
 
 bool raydSceneShadowTest(RayDSceneHandle scene, RayDRay ray, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_shadow_test($0, $1, $2)"; default: return false; } }
+
+// ---- AD scene query (forward + backward in one call) ----
+
+RayDIntersectionAD raydSceneIntersectAD(RayDSceneHandle scene, RayDRay ray, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect_ad($0, $1, $2)"; default: return raydInvalidIntersectionAD(); } }
+
+// ---- IntersectionAD field accessors ----
+
+bool       raydItsADValid(RayDIntersectionAD h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_valid($0)";       default: return h.valid; } }
+float      raydItsADT(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_t($0)";           default: return h.t; } }
+RayDFloat3 raydItsADP(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_p($0)";           default: return h.p; } }
+RayDFloat3 raydItsADN(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_n($0)";           default: return h.n; } }
+RayDFloat3 raydItsADGeoN(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_geo_n($0)";       default: return h.geo_n; } }
+RayDFloat2 raydItsADUV(RayDIntersectionAD h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_uv($0)";          default: return h.uv; } }
+RayDFloat3 raydItsADBarycentric(RayDIntersectionAD h) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_barycentric($0)"; default: return h.barycentric; } }
+int        raydItsADShapeId(RayDIntersectionAD h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_shape_id($0)";    default: return h.shape_id; } }
+int        raydItsADPrimId(RayDIntersectionAD h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_prim_id($0)";     default: return h.prim_id; } }
+RayDFloat3 raydItsADDtDo(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_do($0)";       default: return h.dt_do; } }
+RayDFloat3 raydItsADDtDd(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_dd($0)";       default: return h.dt_dd; } }
 
 RayDNearestPointEdge raydSceneClosestEdgePoint(RayDSceneHandle scene, RayDFloat3 point, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_closest_edge_point($0, $1, $2)"; default: return raydInvalidNearestPointEdge(); } }

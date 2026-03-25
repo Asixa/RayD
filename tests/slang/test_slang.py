@@ -3,8 +3,8 @@
 SlangModuleTests         — rayd.slang Python module (paths, import)
 SlangInteropCompileTests — slangc -target cpp codegen verification
 SlangRaydInteropTests    — load_module(link_rayd=True) runtime queries
-SlangRaydGradientTests   — fwd/bwd gradient through Slang→rayd (FD-based)
-SlangRaydE2ETests        — end-to-end optimization through Slang→rayd pipeline
+SlangRaydADTests         — Dr.Jit AD gradients through Slang→rayd interop
+SlangRaydADE2ETests      — end-to-end torch optimization via Slang AD
 """
 
 import json
@@ -128,7 +128,7 @@ class SlangInteropCompileTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Runtime interop: Slang calls raydSceneIntersect on a real scene
+# Runtime interop (detached): Slang calls raydSceneIntersect
 # ---------------------------------------------------------------------------
 
 @unittest.skipUnless(SLANGTORCH_AVAILABLE, "Requires slangtorch")
@@ -144,54 +144,49 @@ class SlangRaydInteropTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Gradient: fwd / bwd through Slang → rayd (FD-based backward)
+# AD gradient: Slang calls raydSceneIntersectAD (Dr.Jit backward, not FD)
 # ---------------------------------------------------------------------------
 
 @unittest.skipUnless(SLANGTORCH_AVAILABLE, "Requires slangtorch")
-class SlangRaydGradientTests(unittest.TestCase):
+class SlangRaydADTests(unittest.TestCase):
 
-    def test_trace_t_gradient(self):
-        """d(traceRayT)/d(oz) ≈ -1 (ray z-origin → hit distance)."""
-        d = _run_case("slang_rayd_gradient_fwd_bwd")
-        self.assertAlmostEqual(d["t"], 1.0, places=4)
-        self.assertTrue(d["grad_close_to_minus_one"],
-                        f"grad_oz={d['grad_oz']}, expected ≈ -1")
+    def test_dtdoz_equals_minus_one(self):
+        """dt/d(ray_origin_z) = -1 for z-directed ray hitting z=0 plane."""
+        d = _run_case("slang_rayd_gradient_ad")
+        self.assertTrue(d["t_correct"], f"t={d['t']}")
+        self.assertTrue(d["grad_correct"], f"dtdoz={d['dtdoz']}, expected -1")
 
-    def test_inverse_depth_gradient(self):
-        """d(1/t)/d(oz) ≈ 1 at oz=-1."""
-        d = _run_case("slang_rayd_gradient_inverse_depth")
-        self.assertAlmostEqual(d["inv_depth"], 1.0, places=4)
-        self.assertTrue(d["grad_close_to_one"],
-                        f"grad_oz={d['grad_oz']}, expected ≈ 1")
-
-    def test_squared_depth_gradient(self):
-        """d(t^2)/d(oz) ≈ -4 at oz=-2."""
-        d = _run_case("slang_rayd_gradient_squared_depth")
-        self.assertAlmostEqual(d["sq_depth"], 4.0, places=3)
-        self.assertTrue(d["match"],
-                        f"grad_oz={d['grad_oz']}, expected ≈ {d['expected_grad']}")
+    def test_all_six_gradient_components(self):
+        """Verify dt/d(ox,oy,oz) and dt/d(dx,dy,dz) against analytical values."""
+        d = _run_case("slang_rayd_gradient_ad_all")
+        self.assertTrue(d["origin_ok"],
+                        f"dt/do = ({d['dtdox']}, {d['dtdoy']}, {d['dtdoz']}), "
+                        f"expected (0, 0, -1)")
+        self.assertTrue(d["dir_ok"],
+                        f"dt/dd = ({d['dtddx']}, {d['dtddy']}, {d['dtddz']}), "
+                        f"expected (0, 0, 1)")
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: optimization loop through Slang → rayd
+# End-to-end: torch optimization via Slang AD (no FD, no rayd.torch)
 # ---------------------------------------------------------------------------
 
 @unittest.skipUnless(SLANGTORCH_AVAILABLE, "Requires slangtorch")
-class SlangRaydE2ETests(unittest.TestCase):
+class SlangRaydADE2ETests(unittest.TestCase):
 
     def test_optimize_origin_to_target_depth(self):
-        """Adam optimizes oz so traceRayT → target depth, all through Slang."""
-        d = _run_case("slang_rayd_e2e_optimize")
+        """Adam loop converges oz so traceT → target, using AD gradient."""
+        d = _run_case("slang_rayd_e2e_ad")
         self.assertTrue(d["converged"],
                         f"final_t={d['final_t']:.3f}, target=5.0")
 
     def test_multi_query_gradient_composition(self):
-        """Two Slang→rayd queries, combined loss, independent gradients."""
-        d = _run_case("slang_rayd_e2e_multi_query")
-        self.assertTrue(d["oz1_close"],
-                        f"grad_oz1={d['grad_oz1']}, expected ≈ 2")
-        self.assertTrue(d["oz2_close"],
-                        f"grad_oz2={d['grad_oz2']}, expected ≈ -2")
+        """Two Slang→rayd AD queries, combined loss, correct per-ray gradients."""
+        d = _run_case("slang_rayd_e2e_ad_multi")
+        self.assertTrue(d["oz1_correct"],
+                        f"grad_oz1={d['grad_oz1']}, expected 2.0")
+        self.assertTrue(d["oz2_correct"],
+                        f"grad_oz2={d['grad_oz2']}, expected -2.0")
 
 
 if __name__ == "__main__":

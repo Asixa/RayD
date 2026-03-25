@@ -37,6 +37,18 @@ struct Intersection {
     int shape_id = -1, prim_id = -1;
 };
 
+struct IntersectionAD {
+    // forward result
+    bool valid = false;
+    float t = std::numeric_limits<float>::infinity();
+    Float3 p, n, geo_n, barycentric;
+    Float2 uv;
+    int shape_id = -1, prim_id = -1;
+    // backward: d(t)/d(ray)
+    Float3 dt_do;  // d(t)/d(ray_origin)
+    Float3 dt_dd;  // d(t)/d(ray_direction)
+};
+
 struct NearestPointEdge {
     bool valid = false;
     float distance = std::numeric_limits<float>::infinity();
@@ -110,11 +122,25 @@ inline Float3 its_barycentric(const Intersection &h) { return h.barycentric; }
 inline int    its_shape_id(const Intersection &h) { return h.shape_id; }
 inline int    its_prim_id(const Intersection &h) { return h.prim_id; }
 
+// --- IntersectionAD accessors ---
+inline bool   its_ad_valid(const IntersectionAD &h) { return h.valid; }
+inline float  its_ad_t(const IntersectionAD &h) { return h.t; }
+inline Float3 its_ad_p(const IntersectionAD &h) { return h.p; }
+inline Float3 its_ad_n(const IntersectionAD &h) { return h.n; }
+inline Float3 its_ad_geo_n(const IntersectionAD &h) { return h.geo_n; }
+inline Float2 its_ad_uv(const IntersectionAD &h) { return h.uv; }
+inline Float3 its_ad_barycentric(const IntersectionAD &h) { return h.barycentric; }
+inline int    its_ad_shape_id(const IntersectionAD &h) { return h.shape_id; }
+inline int    its_ad_prim_id(const IntersectionAD &h) { return h.prim_id; }
+inline Float3 its_ad_dt_do(const IntersectionAD &h) { return h.dt_do; }
+inline Float3 its_ad_dt_dd(const IntersectionAD &h) { return h.dt_dd; }
+
 // --- Scene/Camera query stubs (linked at runtime from rayd_core) ---
 // These are declared here and defined in rayd_core (interop.h).
 // When link_rayd=True, load_module links rayd_core which provides the implementations.
 
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active = true);
+IntersectionAD scene_intersect_ad(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_shadow_test(SceneHandle handle, const Ray &ray, bool active = true);
 NearestPointEdge scene_closest_edge_point(SceneHandle handle, const Float3 &point, bool active = true);
 NearestRayEdge scene_closest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
