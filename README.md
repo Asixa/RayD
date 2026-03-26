@@ -71,7 +71,14 @@ GPU path tracing + interior AD + edge sampling [(Li et al.)](https://people.csai
 
 ![Differentiable Cornell box render and edge-AD gradient](examples/renderer/cornell_box.png)
 
-Build meshes, put them in a scene, launch rays, define a loss, and backpropagate through geometry.
+
+### Differentiable Radio Frequnecy Wave Propagation
+
+([`Mini-Differentiable-RF-Digital-Twin`](https://github.com/Asixa/Mini-Differentiable-RF-Digital-Twin)):
+
+![Differentiable Radio Frequnecy Wave Propagation](examples/renderer/rfdt.png)
+
+
 
 ## Minimal Differentiable Ray Tracing Example
 
