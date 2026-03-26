@@ -6,6 +6,7 @@
 
 #include <rayd/rayd.h>
 #include <rayd/edge.h>
+#include <rayd/intersection.h>
 #include <rayd/mesh.h>
 #include <rayd/scene/scene_edge.h>
 #include <rayd/scene/scene_optix.h>
@@ -43,7 +44,9 @@ public:
     const SceneCommitProfile &last_commit_profile() const { return last_commit_profile_; }
 
     template <bool Detached>
-    IntersectionT<Detached> intersect(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
+    IntersectionT<Detached> intersect(const RayT<Detached> &ray,
+                                       MaskT<Detached> active = true,
+                                       RayFlags flags = RayFlags::All) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>

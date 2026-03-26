@@ -161,6 +161,13 @@ NB_MODULE(rayd, m) {
             .def_ro("opposite", &SecondaryEdgeInfo::opposite)
             .def_ro("is_boundary", &SecondaryEdgeInfo::is_boundary);
 
+        nb::enum_<RayFlags>(m, "RayFlags", nb::is_arithmetic())
+            .value("None", RayFlags::None)
+            .value("Geometric", RayFlags::Geometric)
+            .value("ShadingN", RayFlags::ShadingN)
+            .value("UV", RayFlags::UV)
+            .value("All", RayFlags::All);
+
         nb::class_<IntersectionDetached>(m, "IntersectionDetached")
             .def("is_valid", &IntersectionDetached::is_valid)
             .def_ro("t", &IntersectionDetached::t)
@@ -341,15 +348,15 @@ NB_MODULE(rayd, m) {
             .def("has_pending_updates", &Scene::has_pending_updates)
             .def_prop_ro("last_commit_profile", &Scene::last_commit_profile)
             .def("intersect",
-                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
-                     return scene.intersect<true>(ray, active);
+                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active, RayFlags flags) {
+                     return scene.intersect<true>(ray, active, flags);
                  },
-                 nb::arg("ray").noconvert(), "active"_a = true)
+                 nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
             .def("intersect",
-                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
-                     return scene.intersect<false>(ray, active);
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active, RayFlags flags) {
+                     return scene.intersect<false>(ray, active, flags);
                  },
-                 nb::arg("ray").noconvert(), "active"_a = true)
+                 nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

@@ -4,6 +4,24 @@
 
 namespace rayd {
 
+enum class RayFlags : uint32_t {
+    None      = 0x00,
+    Geometric = 0x01,   // t, p, barycentric, shape_id, prim_id, geo_n
+    ShadingN  = 0x02,   // interpolated shading normal (n)
+    UV        = 0x04,   // interpolated texture UV (uv)
+    All       = Geometric | ShadingN | UV,
+};
+
+inline constexpr RayFlags operator|(RayFlags a, RayFlags b) {
+    return static_cast<RayFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+inline constexpr RayFlags operator&(RayFlags a, RayFlags b) {
+    return static_cast<RayFlags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+inline constexpr bool has_flag(RayFlags set, RayFlags flag) {
+    return (static_cast<uint32_t>(set) & static_cast<uint32_t>(flag)) != 0;
+}
+
 template <typename Float_>
 struct IntersectionData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;

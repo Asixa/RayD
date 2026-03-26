@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import math
+import os
 import statistics
 import sys
 import time
@@ -15,10 +16,17 @@ import drjit.cuda.ad as ad
 
 
 def _try_import_mitsuba(variant: str):
+    # Remove test directories from sys.path to avoid shadowing the real
+    # drjit/mitsuba packages with the empty ``tests/drjit`` subpackage.
+    _tests_dir = os.path.normcase(os.path.abspath(os.path.dirname(__file__)))
+    _saved_path = sys.path[:]
+    sys.path = [p for p in sys.path if os.path.normcase(os.path.abspath(p)) != _tests_dir]
     try:
         import mitsuba as mi  # type: ignore
     except ImportError:
         return None
+    finally:
+        sys.path = _saved_path
 
     mi.set_variant(variant)
     return mi
@@ -229,7 +237,7 @@ class RayDBackend:
         rays = self._ray_detached(ray_data)
 
         def run():
-            its = scene.intersect(rays)
+            its = scene.intersect(rays, flags=pj.RayFlags.Geometric)
             dr.eval(its.t)
 
         return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
@@ -281,7 +289,7 @@ class RayDBackend:
             current_rays = rays if use_updated else base_rays
             scene.update_mesh_vertices(mesh_id, current_positions)
             scene.commit_updates()
-            its = scene.intersect(current_rays)
+            its = scene.intersect(current_rays, flags=pj.RayFlags.Geometric)
             dr.eval(its.t)
 
         return _summarize_timings(_measure(run, repeats, warmup), len(updated_ray_data["ox"]))
@@ -425,7 +433,7 @@ class MitsubaBackend:
         ray_data: dict[str, list[float]],
     ) -> IntersectionSummary:
         scene, _ = self._scene(mesh_data)
-        its = scene.intersect(self._ray(ray_data, ad_mode=False))
+        its = scene.ray_intersect(self._ray(ray_data, ad_mode=False))
         dr.eval(its.t, its.p, its.uv, its.prim_index)
         dr.sync_thread()
         return IntersectionSummary(
@@ -447,7 +455,7 @@ class MitsubaBackend:
         rays = self._ray(ray_data, ad_mode=False)
 
         def run():
-            its = scene.intersect(rays)
+            its = scene.ray_intersect(rays)
             dr.eval(its.t)
 
         return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
@@ -464,7 +472,7 @@ class MitsubaBackend:
         )
         params.update()
 
-        its = scene.intersect(self._ray(updated_ray_data, ad_mode=False))
+        its = scene.ray_intersect(self._ray(updated_ray_data, ad_mode=False))
         dr.eval(its.t, its.p, its.uv, its.prim_index)
         dr.sync_thread()
         return IntersectionSummary(
@@ -500,7 +508,7 @@ class MitsubaBackend:
             use_updated = not use_updated
             params["mesh.vertex_positions"] = updated_positions if use_updated else base_positions
             params.update()
-            its = scene.intersect(rays if use_updated else base_rays)
+            its = scene.ray_intersect(rays if use_updated else base_rays)
             dr.eval(its.t)
 
         return _summarize_timings(_measure(run, repeats, warmup), len(updated_ray_data["ox"]))
@@ -519,7 +527,7 @@ class MitsubaBackend:
         params["mesh.vertex_positions"] = verts
         params.update()
 
-        its = scene.intersect(self._ray(ray_data, ad_mode=True))
+        its = scene.ray_intersect(self._ray(ray_data, ad_mode=True))
         loss = dr.sum(its.t)
         dr.backward(loss)
         grad = dr.grad(verts)
@@ -562,7 +570,7 @@ class MitsubaBackend:
                 params["mesh.vertex_positions"] = verts
                 params.set_dirty("mesh.vertex_positions")
                 params.update()
-            its = scene.intersect(rays)
+            its = scene.ray_intersect(rays)
             loss = dr.sum(its.t)
             dr.backward(loss)
             dr.eval(dr.grad(verts))

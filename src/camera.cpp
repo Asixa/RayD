@@ -60,9 +60,9 @@ Float render_edge_grad_flat(const Scene &scene,
     const Mask valid = Mask(valid_detached);
 
     const IntersectionDetached its_n =
-        scene.intersect<true>(edge_samples.ray_n, valid_detached);
+        scene.intersect<true>(edge_samples.ray_n, valid_detached, RayFlags::Geometric);
     const IntersectionDetached its_p =
-        scene.intersect<true>(edge_samples.ray_p, valid_detached);
+        scene.intersect<true>(edge_samples.ray_p, valid_detached, RayFlags::Geometric);
 
     const FloatDetached background_depth = full<FloatDetached>(background, sample_count);
     const FloatDetached depth_n = select(its_n.is_valid(), its_n.t, background_depth);
@@ -439,7 +439,7 @@ drjit::Tensor<Float> Camera::render(const Scene &scene, float background) const 
 
     const Vector2f samples = make_pixel_centers(image_width_, image_height_);
     const Ray rays = sample_primary_ray(samples);
-    const Intersection its = scene.intersect<false>(rays);
+    const Intersection its = scene.intersect<false>(rays, true, RayFlags::Geometric);
     const Float image = select(its.is_valid(), its.t, full<Float>(background, image_width_ * image_height_));
 
     const size_t shape[2] = {

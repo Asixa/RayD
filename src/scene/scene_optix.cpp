@@ -11,56 +11,7 @@
 
 namespace rayd {
 
-const char *miss_and_closesthit_ptx = R"(
-.version 7.4
-.target sm_52
-.address_size 64
-.entry __miss__ms() {
-    .reg .b32  %r<5>;
-
-    mov.b32 %r0, 0;
-    mov.b32 %r1, 1;
-    mov.b32 %r2, 2;
-    mov.b32 %r3, 3;
-    mov.b32 %r4, -1;
-
-    call _optix_set_payload, (%r0, %r4);
-    call _optix_set_payload, (%r1, %r4);
-
-    ret;
-}
-.entry __closesthit__ch() {
-    .reg .f32   %f<4>;
-    .reg .b32   %r<4>;
-    .reg .b32   %rr<8>;
-    .reg .b64   %rd<2>;
-    .reg .b32   %u<3>;
-    .reg .b32   %uu<3>;
-
-    mov.b32 %r0, 0;
-    mov.b32 %r1, 1;
-    mov.b32 %u0, 2;
-    mov.b32 %u1, 3;
-    mov.b32 %u2, 4;
-    call (%rd1), _optix_get_sbt_data_ptr_64, ();
-    ld.u32  %r2, [%rd1];
-    ld.u32  %r3, [%rd1+4];
-    call (%rr4), _optix_read_primitive_idx, ();
-    add.s32     %rr6, %r2, %rr4;
-
-    call (%f1, %f2), _optix_get_triangle_barycentrics, ();
-    call (%f3), _optix_get_ray_tmax, ();
-
-    mov.b32     %uu0, %f1;
-    mov.b32     %uu1, %f2;
-    mov.b32     %uu2, %f3;
-    call _optix_set_payload, (%r0, %r3);
-    call _optix_set_payload, (%r1, %rr6);
-    call _optix_set_payload, (%u0, %uu0);
-    call _optix_set_payload, (%u1, %uu1);
-    call _optix_set_payload, (%u2, %uu2);
-    ret;
-})";
+// No PTX module — HitObject API with invoke=0 never executes programs.
 
 namespace dr = drjit;
 
@@ -120,7 +71,6 @@ std::vector<RetiredOptixJitResources> &retired_optix_resources() {
 } // namespace
 
 struct OptixState {
-    OptixModule mod = nullptr;
     OptixDeviceContext context = 0;
 
     UInt64Detached handle;
@@ -128,7 +78,6 @@ struct OptixState {
     UIntDetached sbt_handle;
 
     OptixPipelineCompileOptions pipeline_compile_options = {};
-    OptixModuleCompileOptions module_compile_options = {};
     OptixProgramGroupOptions pgo = {};
     OptixProgramGroupDesc pgd[2] = {};
     OptixProgramGroup pg[2] = {};
@@ -488,43 +437,26 @@ void OptixScene::configure(const std::vector<OptixSceneMeshDesc> &meshes) {
     m_accel = new OptixState();
     m_accel->context = jit_optix_context();
 
-    m_accel->module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
-    m_accel->module_compile_options.optLevel = RAYD_OPTIX_MODULE_OPT_LEVEL;
-
     m_accel->pipeline_compile_options.usesMotionBlur = false;
     m_accel->pipeline_compile_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    m_accel->pipeline_compile_options.numPayloadValues = 5;
-    m_accel->pipeline_compile_options.numAttributeValues = 0;
+    m_accel->pipeline_compile_options.numPayloadValues = 0;
+    m_accel->pipeline_compile_options.numAttributeValues = 2;
     m_accel->pipeline_compile_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     m_accel->pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
     m_accel->pipeline_compile_options.usesPrimitiveTypeFlags =
         static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     m_accel->pipeline_compile_options.allowOpacityMicromaps = 0;
 
+    // No PTX module needed — built-in triangle intersection with HitObject API
+    // (invoke=0) never executes CH/miss programs.  Program groups with nullptr
+    // modules are valid for this configuration, matching Mitsuba's approach.
+    std::memset(m_accel->pgd, 0, sizeof(m_accel->pgd));
+    m_accel->pgd[0].kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    m_accel->pgd[1].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+
     char log[1024];
     size_t log_size = sizeof(log);
-    const int result = optixModuleCreate(m_accel->context,
-                                         &m_accel->module_compile_options,
-                                         &m_accel->pipeline_compile_options,
-                                         miss_and_closesthit_ptx,
-                                         std::strlen(miss_and_closesthit_ptx),
-                                         log,
-                                         &log_size,
-                                         &m_accel->mod);
-    if (result) {
-        std::fputs(log, stderr);
-        jit_optix_check(result);
-    }
-
-    m_accel->pgd[0].kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-    m_accel->pgd[0].miss.module = m_accel->mod;
-    m_accel->pgd[0].miss.entryFunctionName = "__miss__ms";
-    m_accel->pgd[1].kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    m_accel->pgd[1].hitgroup.moduleCH = m_accel->mod;
-    m_accel->pgd[1].hitgroup.entryFunctionNameCH = "__closesthit__ch";
-
-    log_size = sizeof(log);
     jit_optix_check(optixProgramGroupCreate(m_accel->context,
                                             m_accel->pgd,
                                             2,
@@ -559,7 +491,7 @@ void OptixScene::configure(const std::vector<OptixSceneMeshDesc> &meshes) {
         jit_malloc_migrate(reinterpret_cast<void *>(m_accel->sbt.hitgroupRecordBase), AllocType::Device, 1));
 
     m_accel->pipeline_handle = UIntDetached::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options,
-                                                                                m_accel->mod,
+                                                                                nullptr,
                                                                                 m_accel->pg,
                                                                                 2));
     m_accel->sbt_handle = UIntDetached::steal(
@@ -656,16 +588,6 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
     }
 
     MaskDetached active_detached = detach<false>(active);
-    active_detached &= drjit::isfinite(ox) && drjit::isfinite(oy) && drjit::isfinite(oz);
-    active_detached &= drjit::isfinite(dx) && drjit::isfinite(dy) && drjit::isfinite(dz);
-    active_detached &= squared_norm(Vector3fDetached(dx, dy, dz)) > 0.f;
-    active_detached &= t_max_input > 0.f;
-
-    if constexpr (!Detached) {
-        active &= Mask(active_detached);
-    } else {
-        active = active_detached;
-    }
 
     if (drjit::none(active_detached)) {
         return intersection;
@@ -677,15 +599,11 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
                                  full<FloatDetached>(1e8f, ray_count));
     FloatDetached time = 0.f;
     UIntDetached ray_mask(255);
-    UIntDetached ray_flags(0);
+    UIntDetached ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                           OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
     UIntDetached sbt_offset(0);
     UIntDetached sbt_stride(1);
     UIntDetached miss_sbt_index(0);
-    UIntDetached payload_0(0);
-    UIntDetached payload_1(0);
-    UIntDetached payload_u(0);
-    UIntDetached payload_v(0);
-    UIntDetached payload_t(0);
 
     m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
     uint32_t trace_args[] {
@@ -696,33 +614,54 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
         ray_mask.index(), ray_flags.index(),
         sbt_offset.index(), sbt_stride.index(),
         miss_sbt_index.index(),
-        payload_0.index(), payload_1.index(), payload_u.index(), payload_v.index(), payload_t.index()
     };
+
+    OptixHitObjectField fields[] {
+        OptixHitObjectField::IsHit,
+        OptixHitObjectField::RayTMax,
+        OptixHitObjectField::Attribute0,
+        OptixHitObjectField::Attribute1,
+        OptixHitObjectField::PrimitiveIndex,
+        OptixHitObjectField::SBTDataPointer,
+    };
+    uint32_t hitobject_out[6];
 
     jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t),
                         trace_args,
+                        6,
+                        fields,
+                        hitobject_out,
+                        0, 0, 0,
                         0,
-                        nullptr,
-                        nullptr,
-                        0,
-                        0,
-                        0,
-                        1,
                         active_detached.index(),
                         m_accel->pipeline_handle.index(),
                         m_accel->sbt_handle.index());
 
-    using Single = drjit::float32_array_t<FloatDetached>;
-    intersection.shape_id = IntDetached(UIntDetached::steal(trace_args[15]));
-    intersection.global_prim_id = IntDetached(UIntDetached::steal(trace_args[16]));
-    intersection.barycentric[0] =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(trace_args[17]));
-    intersection.barycentric[1] =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(trace_args[18]));
-    intersection.t =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(trace_args[19]));
+    MaskDetached is_hit = UIntDetached::steal(hitobject_out[0]) != 0u;
+    active_detached &= is_hit;
 
-    active_detached &= (intersection.shape_id >= 0) && (intersection.global_prim_id >= 0);
+    using Single = drjit::float32_array_t<FloatDetached>;
+    intersection.t =
+        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[1]));
+    intersection.barycentric[0] =
+        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[2]));
+    intersection.barycentric[1] =
+        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[3]));
+    UIntDetached raw_prim_index = UIntDetached::steal(hitobject_out[4]);
+
+    // Extract shape_offset and shape_id from the hit-group SBT data.
+    UInt64Detached sbt_data_ptr = UInt64Detached::steal(hitobject_out[5]);
+    IntDetached shape_offset = IntDetached(UIntDetached::steal(
+        jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 0, active_detached.index())));
+    intersection.shape_id = IntDetached(UIntDetached::steal(
+        jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 4, active_detached.index())));
+    intersection.global_prim_id = IntDetached(raw_prim_index) + shape_offset;
+
+    // Clear invalid lanes.
+    intersection.t[!active_detached] = Infinity;
+    intersection.shape_id[!active_detached] = -1;
+    intersection.global_prim_id[!active_detached] = -1;
+
     if constexpr (!Detached) {
         active &= Mask(active_detached);
     } else {
@@ -762,10 +701,6 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     }
 
     MaskDetached active_detached = detach<false>(active);
-    active_detached &= drjit::isfinite(ox) && drjit::isfinite(oy) && drjit::isfinite(oz);
-    active_detached &= drjit::isfinite(dx) && drjit::isfinite(dy) && drjit::isfinite(dz);
-    active_detached &= squared_norm(Vector3fDetached(dx, dy, dz)) > 0.f;
-    active_detached &= t_max_input > 0.f;
 
     if (drjit::none(active_detached)) {
         return hit;
@@ -783,11 +718,6 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     UIntDetached sbt_offset(0);
     UIntDetached sbt_stride(1);
     UIntDetached miss_sbt_index(0);
-    UIntDetached payload_0(0);
-    UIntDetached payload_1(0);
-    UIntDetached payload_u(0);
-    UIntDetached payload_v(0);
-    UIntDetached payload_t(0);
 
     m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
     uint32_t trace_args[] {
@@ -798,33 +728,23 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
         ray_mask.index(), ray_flags.index(),
         sbt_offset.index(), sbt_stride.index(),
         miss_sbt_index.index(),
-        payload_0.index(), payload_1.index(), payload_u.index(), payload_v.index(), payload_t.index()
     };
+
+    OptixHitObjectField fields[] { OptixHitObjectField::IsHit };
+    uint32_t hitobject_out[1];
 
     jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t),
                         trace_args,
-                        0,
-                        nullptr,
-                        nullptr,
-                        0,
-                        0,
-                        0,
                         1,
+                        fields,
+                        hitobject_out,
+                        0, 0, 0,
+                        0,
                         active_detached.index(),
                         m_accel->pipeline_handle.index(),
                         m_accel->sbt_handle.index());
 
-    const IntDetached hit_payload = IntDetached(UIntDetached::steal(trace_args[15]));
-    const auto unused_payload_1 = UIntDetached::steal(trace_args[16]);
-    const auto unused_payload_u = UIntDetached::steal(trace_args[17]);
-    const auto unused_payload_v = UIntDetached::steal(trace_args[18]);
-    const auto unused_payload_t = UIntDetached::steal(trace_args[19]);
-    (void) unused_payload_1;
-    (void) unused_payload_u;
-    (void) unused_payload_v;
-    (void) unused_payload_t;
-
-    const MaskDetached hit_detached = active_detached && (hit_payload >= 0);
+    const MaskDetached hit_detached = active_detached && (UIntDetached::steal(hitobject_out[0]) != 0u);
     if constexpr (!Detached) {
         hit = Mask(hit_detached);
     } else {

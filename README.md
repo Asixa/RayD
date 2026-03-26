@@ -8,7 +8,7 @@ RayD is a minimalist differentiable ray tracing package wrapping OptiX ray traci
 pip install rayd
 ```
 
-RayD is not a full renderer. It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
+**RayD is not a full renderer.** It is a thin wrapper around Dr.Jit and OptiX for building your own renderers and simulators.
 
 The goal is simple: expose differentiable ray-mesh intersection on the GPU without bringing in a full graphics framework.
 
