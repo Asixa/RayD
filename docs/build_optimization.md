@@ -28,7 +28,7 @@ Meaning:
   - removes nanobind's optimized-build `/Os` or `-Os`
   - lets the package stay speed-oriented instead of size-oriented
 
-## Where It Is Configured
+## Where It Is built
 
 - CMake options live in [CMakeLists.txt](/E:/Code/psdr-jit/CMakeLists.txt)
 - OptiX module config is consumed in [scene_optix.cpp](/E:/Code/psdr-jit/src/scene/scene_optix.cpp)

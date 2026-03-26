@@ -76,7 +76,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
             ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
@@ -118,7 +118,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
             ray = pj.RayDetached(cuda.Array3f([2.0], [2.0], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
@@ -152,7 +152,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
             none_flag = getattr(pj.RayFlags, "None")
 
             def vec3_rows(vec):
@@ -248,7 +248,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             rays = pj.RayDetached(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
                                   cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
@@ -277,7 +277,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             rays = pj.RayDetached(cuda.Array3f([0.25, 0.25], [0.25, 0.25], [-1.0, -1.0]),
                                   cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
@@ -327,7 +327,7 @@ class GeometryCoreTests(unittest.TestCase):
                               cuda.Array3i([0], [1], [2]))
                 scene = pj.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
                 return scene
 
             def run_forward():
@@ -359,7 +359,7 @@ class GeometryCoreTests(unittest.TestCase):
                 mesh.vertex_positions = verts
                 scene = pj.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
                 ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                              ad.Array3f([0.0], [0.0], [1.0]))
                 its = scene.intersect(ray)
@@ -430,7 +430,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
@@ -463,7 +463,7 @@ class GeometryCoreTests(unittest.TestCase):
                            cuda.Array3i([0], [1], [2]))
             scene0 = pj.Scene()
             scene0.add_mesh(mesh0)
-            scene0.configure()
+            scene0.build()
             its0 = scene0.intersect(ray)
 
             mesh1 = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -474,7 +474,7 @@ class GeometryCoreTests(unittest.TestCase):
                                         [0.0, 0.0, 1.0]))
             scene1 = pj.Scene()
             scene1.add_mesh(mesh1)
-            scene1.configure()
+            scene1.build()
             its1 = scene1.intersect(ray)
 
             print(json.dumps({
@@ -510,7 +510,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                           ad.Array3f([0.0], [0.0], [1.0]))
@@ -557,7 +557,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                           ad.Array3f([0.0], [0.0], [1.0]))
@@ -588,7 +588,7 @@ class GeometryCoreTests(unittest.TestCase):
                                        [0.0, 0.0, 1.0, 1.0],
                                        [0.0, 0.0, 0.0, 0.0]),
                           cuda.Array3i([0, 0], [1, 2], [2, 3]))
-            mesh.configure()
+            mesh.build()
             edge_indices = mesh.edge_indices()
             secondary_edges = mesh.secondary_edges()
 
@@ -598,12 +598,12 @@ class GeometryCoreTests(unittest.TestCase):
                                 cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(front_mesh)
-            scene.configure()
+            scene.build()
 
             camera = pj.Camera(45.0, 1e-4, 1e4)
             camera.width = 32
             camera.height = 32
-            camera.configure()
+            camera.build()
             camera.prepare_edges(scene)
             sample = camera.sample_edge(cuda.Float([0.25]))
 
@@ -638,7 +638,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             points = cuda.Array3f([0.25, -0.1],
                                   [-0.2, 0.25],
@@ -692,7 +692,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             rays = pj.RayDetached(cuda.Array3f([0.25, -0.2],
                                                [0.0, 0.25],
@@ -763,7 +763,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             edge = scene.nearest_edge(cuda.Array3f([2.2], [0.2], [0.3]))
             print(json.dumps({
@@ -794,7 +794,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             scene.update_mesh_vertices(mesh_id,
                                        cuda.Array3f([2.0, 3.0, 2.0],
@@ -807,7 +807,7 @@ class GeometryCoreTests(unittest.TestCase):
             except Exception as e:
                 pending_error = "pending updates" in str(e)
 
-            scene.commit_updates()
+            scene.sync()
             edge = scene.nearest_edge(cuda.Array3f([2.25], [-0.2], [0.1]))
 
             print(json.dumps({
@@ -854,7 +854,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             edge_info = scene.edge_info()
             topology = scene.edge_topology()
@@ -938,7 +938,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             version_before = int(scene.version)
             edge_version_before = int(scene.edge_version)
@@ -953,9 +953,9 @@ class GeometryCoreTests(unittest.TestCase):
             except Exception as exc:
                 pending_edge_info_error = "pending updates" in str(exc)
 
-            scene.commit_updates()
+            scene.sync()
             edge_info = scene.edge_info()
-            profile = scene.last_commit_profile
+            profile = scene.last_sync_profile
 
             print(json.dumps({
                 "pending_edge_info_error": pending_edge_info_error,
@@ -997,7 +997,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             edge_info = scene.edge_info()
             topology = scene.edge_topology()
@@ -1052,7 +1052,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             prim_ids = cuda.Int([-1, 0, 1, 2, 9])
             edge_ids = cuda.Int([-1, 1, 6, 99])
@@ -1103,7 +1103,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             version_before = int(scene.version)
             edge_version_before = int(scene.edge_version)
@@ -1124,21 +1124,21 @@ class GeometryCoreTests(unittest.TestCase):
             except Exception as exc:
                 pending_edge_info_error = "pending updates" in str(exc)
 
-            scene.commit_updates()
+            scene.sync()
             edge_info_after = scene.edge_info()
             topology_after = scene.edge_topology()
             tri_edges_after = scene.triangle_edge_indices(cuda.Int([0, 1]))
-            profile = scene.last_commit_profile
+            profile = scene.last_sync_profile
             profile_updated_transform_meshes = int(profile.updated_transform_meshes)
             profile_updated_edge_meshes = int(profile.updated_edge_meshes)
             profile_updated_edges = int(profile.updated_edges)
             version_after = int(scene.version)
             edge_version_after = int(scene.edge_version)
 
-            scene.commit_updates()
+            scene.sync()
             version_after_noop = int(scene.version)
             edge_version_after_noop = int(scene.edge_version)
-            noop_profile = scene.last_commit_profile
+            noop_profile = scene.last_sync_profile
 
             print(json.dumps({
                 "pending_edge_info_error": pending_edge_info_error,
@@ -1204,7 +1204,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             point_scene = pj.Scene()
             point_scene.add_mesh(point_mesh)
-            point_scene.configure()
+            point_scene.build()
             point_edge = point_scene.nearest_edge(point_query)
             dr.backward(point_edge.distance)
             point_grad = dr.grad(point_query)
@@ -1227,7 +1227,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             ray_scene = pj.Scene()
             ray_scene.add_mesh(ray_mesh)
-            ray_scene.configure()
+            ray_scene.build()
             ray = pj.Ray(ray_origin, ad.Array3f([0.0], [0.0], [-1.0]))
             ray.tmax = ad.Float([2.0])
             ray_edge = ray_scene.nearest_edge(ray)
@@ -1281,7 +1281,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             zero_tmax_ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [0.0]),
                                            cuda.Array3f([0.0], [0.0], [1.0]))
@@ -1327,22 +1327,22 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             try:
-                scene.configure()
+                scene.build()
             except Exception as e:
-                result["empty_scene_configure"] = "missing meshes" in str(e)
+                result["empty_scene_build"] = "missing meshes" in str(e)
 
             try:
                 ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [0.0]),
                               cuda.Array3f([0.0], [0.0], [1.0]))
                 scene.intersect(ray)
             except Exception as e:
-                result["unconfigured_scene_intersect"] = "not configured" in str(e)
+                result["unbuilt_scene_intersect"] = "not built" in str(e)
 
             camera = pj.Camera(45.0, 1e-4, 1e4)
             camera.width = 0
             camera.height = 32
             try:
-                camera.configure()
+                camera.build()
             except Exception as e:
                 result["camera_resolution"] = "width and height must be positive" in str(e)
 
@@ -1351,7 +1351,7 @@ class GeometryCoreTests(unittest.TestCase):
             zero_face_scene = pj.Scene()
             zero_face_scene.add_mesh(mesh)
             try:
-                zero_face_scene.configure()
+                zero_face_scene.build()
             except Exception as e:
                 result["zero_face_scene"] = "no faces" in str(e)
 
@@ -1359,8 +1359,8 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertTrue(data["empty_scene_configure"])
-        self.assertTrue(data["unconfigured_scene_intersect"])
+        self.assertTrue(data["empty_scene_build"])
+        self.assertTrue(data["unbuilt_scene_intersect"])
         self.assertTrue(data["camera_resolution"])
         self.assertTrue(data["zero_face_scene"])
 
@@ -1415,7 +1415,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0], [1], [2]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             def summarize(ray):
                 its = scene.intersect(ray)
@@ -1471,12 +1471,12 @@ class GeometryCoreTests(unittest.TestCase):
                                        [0.0, 0.0, 0.0],
                                        [0.0, 0.0, 0.0]),
                           cuda.Array3i([0], [1], [2]))
-            mesh.configure()
+            mesh.build()
             secondary_edges = mesh.secondary_edges()
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
             ray = pj.RayDetached(cuda.Array3f([0.5], [0.0], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
@@ -1528,7 +1528,7 @@ class GeometryCoreTests(unittest.TestCase):
                           cuda.Array3i([0, 0], [1, 2], [2, 3]))
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             rays = pj.RayDetached(cuda.Array3f(xs, ys, zs),
                            cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
@@ -1593,12 +1593,12 @@ class GeometryCoreTests(unittest.TestCase):
 
                 scene = pj.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
 
                 camera = pj.Camera(45.0, 1e-4, 1e4)
                 camera.width = 32
                 camera.height = 32
-                camera.configure()
+                camera.build()
                 camera.prepare_edges(scene)
                 sample = camera.sample_edge(cuda.Float([0.25]))
                 total_samples += int(sample.idx[0] >= 0)
@@ -1624,7 +1624,7 @@ class GeometryCoreTests(unittest.TestCase):
                 ])
                 grad_scene = pj.Scene()
                 grad_scene.add_mesh(grad_mesh)
-                grad_scene.configure()
+                grad_scene.build()
                 ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                               ad.Array3f([0.0], [0.0], [1.0]))
                 hit = grad_scene.intersect(ray)
@@ -1659,7 +1659,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             moved = cuda.Array3f([2.0, 3.0, 2.0],
                                  [0.0, 0.0, 1.0],
@@ -1675,7 +1675,7 @@ class GeometryCoreTests(unittest.TestCase):
             except Exception as e:
                 pending_error = "pending updates" in str(e)
 
-            scene.commit_updates()
+            scene.sync()
             ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
@@ -1715,11 +1715,11 @@ class GeometryCoreTests(unittest.TestCase):
 
             static_scene = pj.Scene()
             static_id = static_scene.add_mesh(mesh, dynamic=False)
-            static_scene.configure()
+            static_scene.build()
 
             dynamic_scene = pj.Scene()
             dynamic_id = dynamic_scene.add_mesh(mesh, dynamic=True)
-            dynamic_scene.configure()
+            dynamic_scene.build()
 
             result = {}
             try:
@@ -1763,7 +1763,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             scene.set_mesh_transform(
                 mesh_id,
@@ -1774,7 +1774,7 @@ class GeometryCoreTests(unittest.TestCase):
                     [0.0, 0.0, 0.0, 1.0],
                 ])
             )
-            scene.commit_updates()
+            scene.sync()
 
             ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
@@ -1810,14 +1810,14 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             verts = ad.Array3f([0.0, 1.0, 0.0],
                                [0.0, 0.0, 1.0],
                                [0.5, 0.5, 0.5])
             dr.enable_grad(verts)
             scene.update_mesh_vertices(mesh_id, verts)
-            scene.commit_updates()
+            scene.sync()
 
             ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
@@ -1849,12 +1849,12 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             camera = pj.Camera(45.0, 1e-4, 1e4)
             camera.width = 32
             camera.height = 32
-            camera.configure()
+            camera.build()
             camera.prepare_edges(scene)
 
             scene.update_mesh_vertices(
@@ -1863,7 +1863,7 @@ class GeometryCoreTests(unittest.TestCase):
                              [-0.5, -0.5, 0.5],
                              [3.0, 3.0, 3.0])
             )
-            scene.commit_updates()
+            scene.sync()
 
             invalidated = False
             try:
@@ -1985,12 +1985,12 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             camera = pj.Camera(45.0, 1e-4, 1e4)
             camera.width = width
             camera.height = height
-            camera.configure()
+            camera.build()
 
             image = camera.render_grad(scene, spp=4)
             dr.set_grad(tx, 1.0)
@@ -2032,12 +2032,12 @@ class GeometryCoreTests(unittest.TestCase):
 
             scene = pj.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             camera = pj.Camera(45.0, 1e-4, 1e4)
             camera.width = 16
             camera.height = 12
-            camera.configure()
+            camera.build()
 
             image = camera.render(scene)
             values = [float(v) for v in list(dr.detach(image.array))]

@@ -258,21 +258,21 @@ NB_MODULE(rayd, m) {
             .def_ro("edge_id", &NearestRayEdge::edge_id)
             .def_ro("is_boundary", &NearestRayEdge::is_boundary);
 
-        nb::class_<SceneCommitProfile>(m, "SceneCommitProfile")
-            .def_ro("mesh_update_ms", &SceneCommitProfile::mesh_update_ms)
-            .def_ro("triangle_scatter_ms", &SceneCommitProfile::triangle_scatter_ms)
-            .def_ro("triangle_eval_ms", &SceneCommitProfile::triangle_eval_ms)
-            .def_ro("edge_scatter_ms", &SceneCommitProfile::edge_scatter_ms)
-            .def_ro("edge_refit_ms", &SceneCommitProfile::edge_refit_ms)
-            .def_ro("optix_commit_ms", &SceneCommitProfile::optix_commit_ms)
-            .def_ro("total_ms", &SceneCommitProfile::total_ms)
-            .def_ro("optix_gas_update_ms", &SceneCommitProfile::optix_gas_update_ms)
-            .def_ro("optix_ias_update_ms", &SceneCommitProfile::optix_ias_update_ms)
-            .def_ro("updated_meshes", &SceneCommitProfile::updated_meshes)
-            .def_ro("updated_vertex_meshes", &SceneCommitProfile::updated_vertex_meshes)
-            .def_ro("updated_transform_meshes", &SceneCommitProfile::updated_transform_meshes)
-            .def_ro("updated_edge_meshes", &SceneCommitProfile::updated_edge_meshes)
-            .def_ro("updated_edges", &SceneCommitProfile::updated_edges);
+        nb::class_<SceneSyncProfile>(m, "SceneSyncProfile")
+            .def_ro("mesh_update_ms", &SceneSyncProfile::mesh_update_ms)
+            .def_ro("triangle_scatter_ms", &SceneSyncProfile::triangle_scatter_ms)
+            .def_ro("triangle_eval_ms", &SceneSyncProfile::triangle_eval_ms)
+            .def_ro("edge_scatter_ms", &SceneSyncProfile::edge_scatter_ms)
+            .def_ro("edge_refit_ms", &SceneSyncProfile::edge_refit_ms)
+            .def_ro("optix_sync_ms", &SceneSyncProfile::optix_sync_ms)
+            .def_ro("total_ms", &SceneSyncProfile::total_ms)
+            .def_ro("optix_gas_update_ms", &SceneSyncProfile::optix_gas_update_ms)
+            .def_ro("optix_ias_update_ms", &SceneSyncProfile::optix_ias_update_ms)
+            .def_ro("updated_meshes", &SceneSyncProfile::updated_meshes)
+            .def_ro("updated_vertex_meshes", &SceneSyncProfile::updated_vertex_meshes)
+            .def_ro("updated_transform_meshes", &SceneSyncProfile::updated_transform_meshes)
+            .def_ro("updated_edge_meshes", &SceneSyncProfile::updated_edge_meshes)
+            .def_ro("updated_edges", &SceneSyncProfile::updated_edges);
     });
 
     bind_section("mesh", [&]() {
@@ -292,7 +292,7 @@ NB_MODULE(rayd, m) {
                  "uv"_a = Vector2fDetached(),
                  "f_uv"_a = Vector3iDetached(),
                  "verbose"_a = false)
-            .def("configure", &Mesh::configure)
+            .def("build", &Mesh::build)
             .def("set_transform", &Mesh::set_transform, "mat"_a, "set_left"_a = true)
             .def("append_transform", &Mesh::append_transform, "mat"_a, "append_left"_a = true)
             .def("edge_indices", [](const Mesh &mesh) {
@@ -337,7 +337,7 @@ NB_MODULE(rayd, m) {
                      return Camera(fx, fy, cx, cy, near_clip, far_clip);
                  },
                  "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def("configure", &Camera::configure, "cache"_a = true)
+            .def("build", &Camera::build, "cache"_a = true)
             .def("render", &Camera::render, "scene"_a, "background"_a = 0.f)
             .def("render_grad", &Camera::render_grad, "scene"_a, "spp"_a = 4, "background"_a = 0.f)
             .def("prepare_edges", &Camera::prepare_primary_edges, "scene"_a)
@@ -369,14 +369,14 @@ NB_MODULE(rayd, m) {
         nb::class_<Scene>(m, "Scene")
             .def(nb::init<>())
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
-            .def("configure", &Scene::configure)
+            .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
             .def("set_mesh_transform", &Scene::set_mesh_transform, "mesh_id"_a, "mat"_a, "set_left"_a = true)
             .def("append_mesh_transform", &Scene::append_mesh_transform, "mesh_id"_a, "mat"_a, "append_left"_a = true)
-            .def("commit_updates", &Scene::commit_updates)
+            .def("sync", &Scene::sync)
             .def("is_ready", &Scene::is_ready)
             .def("has_pending_updates", &Scene::has_pending_updates)
-            .def_prop_ro("last_commit_profile", &Scene::last_commit_profile)
+            .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
             .def("edge_topology", &Scene::edge_topology)
             .def("mesh_face_offsets", &Scene::mesh_face_offsets)

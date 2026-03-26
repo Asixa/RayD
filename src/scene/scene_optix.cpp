@@ -428,8 +428,8 @@ OptixScene::~OptixScene() {
     destroy_optix_state(m_accel);
 }
 
-void OptixScene::configure(const std::vector<OptixSceneMeshDesc> &meshes) {
-    require(!meshes.empty(), "OptixScene::configure(): missing meshes.");
+void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes) {
+    require(!meshes.empty(), "OptixScene::build(): missing meshes.");
 
     destroy_optix_state(m_accel);
 
@@ -509,10 +509,10 @@ void OptixScene::configure(const std::vector<OptixSceneMeshDesc> &meshes) {
     build_ias(m_accel, meshes, false);
 }
 
-void OptixScene::commit_updates(const std::vector<OptixSceneMeshDesc> &meshes,
+void OptixScene::sync(const std::vector<OptixSceneMeshDesc> &meshes,
                                  const std::vector<OptixSceneMeshUpdate> &updates) {
-    require(m_accel != nullptr, "OptixScene::commit_updates(): scene is not configured.");
-    last_commit_profile_ = OptixCommitProfile();
+    require(m_accel != nullptr, "OptixScene::sync(): scene is not built.");
+    last_sync_profile_ = OptixSyncProfile();
 
     if (updates.empty()) {
         return;
@@ -523,12 +523,12 @@ void OptixScene::commit_updates(const std::vector<OptixSceneMeshDesc> &meshes,
 
     for (const OptixSceneMeshUpdate &update : updates) {
         require(update.mesh_id >= 0 && update.mesh_id < static_cast<int>(m_accel->mesh_states.size()),
-                "OptixScene::commit_updates(): mesh_id is out of range.");
+                "OptixScene::sync(): mesh_id is out of range.");
         if (update.vertices_dirty) {
-            ++last_commit_profile_.updated_vertex_meshes;
+            ++last_sync_profile_.updated_vertex_meshes;
         }
         if (update.transform_dirty) {
-            ++last_commit_profile_.updated_transform_meshes;
+            ++last_sync_profile_.updated_transform_meshes;
         }
         if (!update.vertices_dirty) {
             continue;
@@ -536,18 +536,18 @@ void OptixScene::commit_updates(const std::vector<OptixSceneMeshDesc> &meshes,
 
         OptixMeshState &mesh_state = m_accel->mesh_states[static_cast<size_t>(update.mesh_id)];
         require(mesh_state.dynamic,
-                "OptixScene::commit_updates(): attempted to update a non-dynamic mesh.");
+                "OptixScene::sync(): attempted to update a non-dynamic mesh.");
         const auto gas_start = Clock::now();
         update_gas(m_accel, mesh_state, *meshes[static_cast<size_t>(update.mesh_id)].mesh);
-        last_commit_profile_.gas_update_ms += std::chrono::duration<double, std::milli>(
+        last_sync_profile_.gas_update_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - gas_start).count();
     }
 
     const auto ias_start = Clock::now();
     build_ias(m_accel, meshes, true);
-    last_commit_profile_.ias_update_ms = std::chrono::duration<double, std::milli>(
+    last_sync_profile_.ias_update_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - ias_start).count();
-    last_commit_profile_.total_ms = std::chrono::duration<double, std::milli>(
+    last_sync_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();
 }
 

@@ -40,7 +40,7 @@ def build_scene(tx):
     c, s = float(np.cos(np.radians(20))), float(np.sin(np.radians(20)))
     moving.to_world_left = dr.cuda.ad.Matrix4f([[c,0,s,0.35+tx],[0,1,0,0],[-s,0,c,2.6],[0,0,0,1]])
     add(moving, [.86,.84,.80])
-    scene.configure()
+    scene.build()
     return scene, arr3(np.array(albedos, np.float32)), arr3(np.array(emissions, np.float32)), light_id
 
 # --- path tracer with NEE ---
@@ -144,7 +144,7 @@ def main():
     tx = dr.cuda.ad.Float([0.0]); dr.enable_grad(tx)
     scene, alb, emi, lid = build_scene(tx)
     camera = rd.Camera(55.0, 1e-4, 1e4); camera.width, camera.height = w, h
-    camera.configure(); camera.prepare_edges(scene); dr.sync_thread()
+    camera.build(); camera.prepare_edges(scene); dr.sync_thread()
     t1 = time.perf_counter()
 
     # render (detached, display only)

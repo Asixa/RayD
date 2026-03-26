@@ -28,7 +28,7 @@ def make_cube_scene(tx: dr.cuda.ad.Float) -> rd.Scene:
 
     scene = rd.Scene()
     scene.add_mesh(mesh)
-    scene.configure()
+    scene.build()
     return scene
 
 
@@ -36,7 +36,7 @@ def make_camera(width: int, height: int) -> rd.Camera:
     camera = rd.Camera(45.0, 1e-4, 1e4)
     camera.width = width
     camera.height = height
-    camera.configure()
+    camera.build()
     return camera
 
 

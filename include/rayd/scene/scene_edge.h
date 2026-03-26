@@ -22,7 +22,7 @@ public:
     SceneEdge() = default;
     ~SceneEdge() = default;
 
-    void configure(const SecondaryEdgeInfo &edge_info);
+    void build(const SecondaryEdgeInfo &edge_info);
     void refit(const SecondaryEdgeInfo &edge_info,
                const std::vector<EdgeDirtyRange> &dirty_ranges);
     bool is_ready() const { return ready_; }

@@ -186,7 +186,7 @@ std::vector<int> build_preorder_mapping(const std::vector<int> &left_child,
     }
 
     require(next_index == node_count,
-            "SceneEdge::configure(): GPU LBVH traversal did not cover every node.");
+            "SceneEdge::build(): GPU LBVH traversal did not cover every node.");
     return new_to_old;
 }
 
@@ -449,7 +449,7 @@ int build_top_level_bvh_recursive(std::vector<TopLevelBuildRecord> &records,
     }
 
     require(next_top_level_node < top_level_nodes.size(),
-            "SceneEdge::configure(): not enough nodes for hybrid top-level rebuild.");
+            "SceneEdge::build(): not enough nodes for hybrid top-level rebuild.");
 
     int split_index = begin + (end - begin) / 2;
     choose_sah_split(records, begin, end, split_index);
@@ -670,7 +670,7 @@ TreeletBuildResult rebuild_treelet_branch(
     std::vector<float> &subtree_costs,
     float inflation) {
     require(subset != 0u,
-            "SceneEdge::configure(): attempted to rebuild an empty treelet subset.");
+            "SceneEdge::build(): attempted to rebuild an empty treelet subset.");
 
     if (popcount_u32(subset) == 1) {
         const int frontier_index = first_set_bit_u32(subset);
@@ -684,12 +684,12 @@ TreeletBuildResult rebuild_treelet_branch(
     }
 
     require(next_reusable_node < reusable_count,
-            "SceneEdge::configure(): treelet rebuild ran out of internal nodes.");
+            "SceneEdge::build(): treelet rebuild ran out of internal nodes.");
     const int node_index = reusable_nodes[next_reusable_node++];
     const uint32_t left_subset = optimal_partitions[static_cast<size_t>(subset)];
     const uint32_t right_subset = subset ^ left_subset;
     require(left_subset != 0u && right_subset != 0u,
-            "SceneEdge::configure(): invalid treelet partition.");
+            "SceneEdge::build(): invalid treelet partition.");
 
     const TreeletBuildResult left_result = rebuild_treelet_branch(left_subset,
                                                                   frontier_nodes,
@@ -858,7 +858,7 @@ bool optimize_treelet_at_node(int node_index,
             }
 
             require(best_partition != 0u,
-            "SceneEdge::configure(): failed to find a valid treelet partition.");
+            "SceneEdge::build(): failed to find a valid treelet partition.");
             optimal_cost[static_cast<size_t>(subset)] =
                 subset_bbox_cost[static_cast<size_t>(subset)] + best_children_cost;
             optimal_partitions[static_cast<size_t>(subset)] =
@@ -874,7 +874,7 @@ bool optimize_treelet_at_node(int node_index,
     const uint32_t left_subset = optimal_partitions[static_cast<size_t>(full_mask)];
     const uint32_t right_subset = full_mask ^ left_subset;
     require(left_subset != 0u && right_subset != 0u,
-            "SceneEdge::configure(): invalid root treelet partition.");
+            "SceneEdge::build(): invalid root treelet partition.");
 
     size_t next_reusable_node = 0;
     const TreeletBuildResult left_result = rebuild_treelet_branch(left_subset,
@@ -907,7 +907,7 @@ bool optimize_treelet_at_node(int node_index,
                                                                    inflation);
 
     require(next_reusable_node == reusable_count,
-            "SceneEdge::configure(): treelet rebuild did not consume every internal node.");
+            "SceneEdge::build(): treelet rebuild did not consume every internal node.");
 
     left_child[static_cast<size_t>(node_index)] = left_result.node_index;
     right_child[static_cast<size_t>(node_index)] = right_result.node_index;
@@ -1047,7 +1047,7 @@ DRJIT_INLINE IntDetached node_leaf_begin(const IntDetached &encoded_left_child) 
 
 } // namespace
 
-void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
+void SceneEdge::build(const SecondaryEdgeInfo &edge_info) {
     primitive_count_ = edge_info.size();
     node_count_ = 0;
     ready_ = false;
@@ -1156,7 +1156,7 @@ void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
                 0, optimized_left_child, optimized_right_child, is_cluster_root, top_level_nodes);
 
             require(top_level_nodes.size() + 1 == cluster_roots.size(),
-            "SceneEdge::configure(): invalid hybrid top-level node count.");
+            "SceneEdge::build(): invalid hybrid top-level node count.");
 
             std::vector<TopLevelBuildRecord> records(cluster_roots.size());
             for (size_t index = 0; index < cluster_roots.size(); ++index) {
@@ -1182,9 +1182,9 @@ void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
                                                                   node_bbox_max);
 
             require(hybrid_root == 0,
-            "SceneEdge::configure(): hybrid top-level rebuild changed the root.");
+            "SceneEdge::build(): hybrid top-level rebuild changed the root.");
             require(next_top_level_node == top_level_nodes.size(),
-            "SceneEdge::configure(): hybrid top-level rebuild left unused nodes.");
+            "SceneEdge::build(): hybrid top-level rebuild left unused nodes.");
         }
     } else if (EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::Treelet &&
                primitive_count_ >= EdgeBVHTreeletMinPrimitives) {
@@ -1227,7 +1227,7 @@ void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
                                 compacted);
 
     require(compacted.leaf_primitives.size() == static_cast<size_t>(primitive_count_),
-            "SceneEdge::configure(): compacted BVH lost edge primitives.");
+            "SceneEdge::build(): compacted BVH lost edge primitives.");
 
     node_count_ = static_cast<int>(compacted.left_child.size());
     node_bbox_min_ = load_vector3(compacted.node_bbox_min);
@@ -1242,7 +1242,7 @@ void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
         0, compacted.left_child, compacted.right_child, compacted.is_leaf, heights);
 
     require(max_height + 1 <= static_cast<int>(EdgeBVHTraversalStackSize),
-            "SceneEdge::configure(): BVH depth exceeds traversal stack capacity.");
+            "SceneEdge::build(): BVH depth exceeds traversal stack capacity.");
 
     std::vector<std::vector<int>> refit_levels(static_cast<size_t>(max_height + 1));
     for (int node_index = 0; node_index < node_count_; ++node_index) {
@@ -1274,7 +1274,7 @@ void SceneEdge::configure(const SecondaryEdgeInfo &edge_info) {
 
 void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
                           const std::vector<EdgeDirtyRange> &dirty_ranges) {
-    require(ready_, "SceneEdge::refit(): BVH is not configured.");
+    require(ready_, "SceneEdge::refit(): BVH is not built.");
     if (primitive_count_ == 0 || dirty_ranges.empty()) {
         return;
     }
@@ -1670,7 +1670,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
 template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
                                                  MaskT<Detached> &active) const {
-    require(ready_, "SceneEdge::nearest_edge(point): BVH is not configured.");
+    require(ready_, "SceneEdge::nearest_edge(point): BVH is not built.");
 
     const int query_count = static_cast<int>(slices(point));
     ClosestEdgeCandidate result;
@@ -1698,7 +1698,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
 template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const RayT<Detached> &ray,
                                                  MaskT<Detached> &active) const {
-    require(ready_, "SceneEdge::nearest_edge(ray): BVH is not configured.");
+    require(ready_, "SceneEdge::nearest_edge(ray): BVH is not built.");
 
     const int query_count = static_cast<int>(slices(ray.o));
     ClosestEdgeCandidate result;

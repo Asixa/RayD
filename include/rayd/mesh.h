@@ -27,7 +27,7 @@ public:
               bool verbose = false);
 
     /// Build derived geometry caches and GPU buffers from the current mesh state.
-    void configure();
+    void build();
     void prepare_optix_buffers();
     void update_runtime_data(bool vertices_dirty, bool transform_dirty);
 

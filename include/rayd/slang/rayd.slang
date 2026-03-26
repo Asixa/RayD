@@ -198,11 +198,11 @@ bool sceneIsReady(SceneHandle scene)
 bool sceneHasPendingUpdates(SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_has_pending_updates($0)"; default: return false; } }
 
-void sceneConfigure(SceneHandle scene)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_configure($0)"; default: return; } }
+void sceneBuild(SceneHandle scene)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_build($0)"; default: return; } }
 
-void sceneCommitUpdates(SceneHandle scene)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_commit_updates($0)"; default: return; } }
+void sceneSync(SceneHandle scene)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_sync($0)"; default: return; } }
 
 Intersection sceneIntersect(SceneHandle scene, Ray ray, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect($0, $1, $2)"; default: return invalidIntersection(); } }
@@ -246,8 +246,8 @@ bool cameraPrimaryEdgesReady(CameraHandle camera)
 void cameraSetResolution(CameraHandle camera, int width, int height)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_set_resolution($0, $1, $2)"; default: return; } }
 
-void cameraConfigure(CameraHandle camera, bool cache = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_configure($0, $1)"; default: return; } }
+void cameraBuild(CameraHandle camera, bool cache = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_build($0, $1)"; default: return; } }
 
 void cameraPrepareEdges(CameraHandle camera, SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_prepare_edges($0, $1)"; default: return; } }

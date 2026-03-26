@@ -18,14 +18,14 @@ bool scene_has_pending_updates(SceneHandle handle) {
         "rayd::slang::scene_has_pending_updates(): null scene handle.").has_pending_updates();
 }
 
-void scene_configure(SceneHandle handle) {
+void scene_build(SceneHandle handle) {
     detail::handle_ref<rayd::Scene>(handle.value,
-        "rayd::slang::scene_configure(): null scene handle.").configure();
+        "rayd::slang::scene_build(): null scene handle.").build();
 }
 
-void scene_commit_updates(SceneHandle handle) {
+void scene_sync(SceneHandle handle) {
     detail::handle_ref<rayd::Scene>(handle.value,
-        "rayd::slang::scene_commit_updates(): null scene handle.").commit_updates();
+        "rayd::slang::scene_sync(): null scene handle.").sync();
 }
 
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active) {
@@ -164,9 +164,9 @@ void camera_set_resolution(CameraHandle handle, int width, int height) {
     camera.set_height(height);
 }
 
-void camera_configure(CameraHandle handle, bool cache) {
+void camera_build(CameraHandle handle, bool cache) {
     detail::handle_ref<rayd::Camera>(handle.value,
-        "rayd::slang::camera_configure(): null camera handle.").configure(cache);
+        "rayd::slang::camera_build(): null camera handle.").build(cache);
 }
 
 void camera_prepare_edges(CameraHandle camera_handle, SceneHandle scene_handle) {

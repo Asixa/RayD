@@ -32,7 +32,7 @@ struct OptixSceneMeshUpdate {
     bool transform_dirty = false;
 };
 
-struct OptixCommitProfile {
+struct OptixSyncProfile {
     double gas_update_ms = 0.0;
     double ias_update_ms = 0.0;
     double total_ms = 0.0;
@@ -45,11 +45,11 @@ public:
     OptixScene();
     ~OptixScene();
 
-    void configure(const std::vector<OptixSceneMeshDesc> &meshes);
-    void commit_updates(const std::vector<OptixSceneMeshDesc> &meshes,
-                        const std::vector<OptixSceneMeshUpdate> &updates);
+    void build(const std::vector<OptixSceneMeshDesc> &meshes);
+    void sync(const std::vector<OptixSceneMeshDesc> &meshes,
+              const std::vector<OptixSceneMeshUpdate> &updates);
     bool is_ready() const;
-    const OptixCommitProfile &last_commit_profile() const { return last_commit_profile_; }
+    const OptixSyncProfile &last_sync_profile() const { return last_sync_profile_; }
 
     template <bool Detached>
     OptixIntersection intersect(const RayT<Detached> &ray,
@@ -60,7 +60,7 @@ public:
 
 private:
     OptixState *m_accel = nullptr;
-    OptixCommitProfile last_commit_profile_;
+    OptixSyncProfile last_sync_profile_;
 };
 
 } // namespace rayd

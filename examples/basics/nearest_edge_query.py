@@ -11,11 +11,11 @@ def make_scene() -> tuple[rd.Scene, rd.Mesh]:
         ),
         dr.cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
-    mesh.configure()
+    mesh.build()
 
     scene = rd.Scene()
     scene.add_mesh(mesh)
-    scene.configure()
+    scene.build()
     return scene, mesh
 
 

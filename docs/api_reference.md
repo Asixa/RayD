@@ -12,7 +12,7 @@ Public top-level exports:
 
 - `Mesh`
 - `Scene`
-- `SceneCommitProfile`
+- `SceneSyncProfile`
 - `Camera`
 - `Ray`
 - `Intersection`
@@ -81,7 +81,7 @@ Parameters:
 
 Methods:
 
-- `configure()`
+- `build()`
   - builds derived geometry caches and GPU buffers
 - `set_transform(mat, set_left=True)`
 - `append_transform(mat, append_left=True)`
@@ -108,9 +108,9 @@ Properties:
 
 Notes:
 
-- call `configure()` before adding the mesh to a scene if you want mesh-local caches immediately
-- `Scene.configure()` will also configure meshes added to that scene
-- updating geometry or transforms marks derived data dirty until reconfigured or committed through `Scene`
+- call `build()` before adding the mesh to a scene if you want mesh-local caches immediately
+- `Scene.build()` will also build meshes added to that scene
+- updating geometry or transforms marks derived data dirty until rebuilt or synced through `Scene`
 
 ## Scene
 
@@ -126,13 +126,13 @@ Methods:
 
 - `add_mesh(mesh, dynamic=False) -> int`
   - adds a mesh and returns its scene-local mesh id
-- `configure()`
+- `build()`
   - builds scene-wide triangle and edge acceleration data
 - `update_mesh_vertices(mesh_id, positions)`
   - only valid for meshes added with `dynamic=True`
 - `set_mesh_transform(mesh_id, mat, set_left=True)`
 - `append_mesh_transform(mesh_id, mat, append_left=True)`
-- `commit_updates()`
+- `sync()`
   - pushes pending dynamic mesh updates into scene acceleration structures
 - `is_ready() -> bool`
 - `has_pending_updates() -> bool`
@@ -143,24 +143,24 @@ Methods:
 Properties:
 
 - `num_meshes`
-- `last_commit_profile`
+- `last_sync_profile`
 
 Notes:
 
-- a scene must be configured before queries
-- if `has_pending_updates()` is true, queries will raise until `commit_updates()` is called
-- camera primary-edge caches are invalidated when the scene is reconfigured or committed
+- a scene must be built before queries
+- if `has_pending_updates()` is true, queries will raise until `sync()` is called
+- camera primary-edge caches are invalidated when the scene is rebuilt or synced
 
-## SceneCommitProfile
+## SceneSyncProfile
 
-Timing and update counters from the last `Scene.commit_updates()` call.
+Timing and update counters from the last `Scene.sync()` call.
 
 Fields:
 
 - `mesh_update_ms`
 - `triangle_scatter_ms`
 - `triangle_eval_ms`
-- `optix_commit_ms`
+- `optix_sync_ms`
 - `total_ms`
 - `optix_gas_update_ms`
 - `optix_ias_update_ms`
@@ -188,7 +188,7 @@ camera = rd.Camera(fx, fy, cx, cy, 1e-4, 1e4)  # positional form also accepted
 
 Methods:
 
-- `configure(cache=True)`
+- `build(cache=True)`
   - rebuilds projection and world/sample transform caches
 - `prepare_edges(scene)`
   - preprocesses primary image-space edges for the current scene
@@ -215,7 +215,7 @@ Properties:
 
 Notes:
 
-- call `configure()` after changing camera parameters or transforms
+- call `build()` after changing camera parameters or transforms
 - `render_grad()` depends on the camera鈥檚 primary-edge pipeline and is connected directly to the Dr.Jit AD graph
 - `prepare_edges(scene)` must be rerun after scene updates that affect visibility
 
@@ -368,7 +368,7 @@ mesh = rd.Mesh(
 
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 
 ray = rd.Ray(
     dr.cuda.Array3f([0.25], [0.25], [-1.0]),
@@ -410,7 +410,7 @@ import rayd as rd
 camera = rd.Camera.perspective(fov_x=45.0)
 camera.width = 128
 camera.height = 128
-camera.configure()
+camera.build()
 
 depth = camera.render(scene)
 ```

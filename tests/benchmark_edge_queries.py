@@ -116,7 +116,7 @@ def _summarize_latency(times_s: list[float]) -> dict[str, float]:
     }
 
 
-def _measure_commit_updates(
+def _measure_sync(
     scene: Any,
     mesh_id: int,
     base_positions: cuda.Array3f,
@@ -129,7 +129,7 @@ def _measure_commit_updates(
         scene.update_mesh_vertices(mesh_id, positions)
         dr.sync_thread()
         start = time.perf_counter()
-        scene.commit_updates()
+        scene.sync()
         dr.sync_thread()
         return time.perf_counter() - start
 
@@ -145,7 +145,7 @@ def _measure_commit_updates(
     return times_s
 
 
-def _measure_configure(
+def _measure_build(
     mesh_data: dict[str, list[float] | list[int]],
     repeats: int,
     warmup: int,
@@ -153,7 +153,7 @@ def _measure_configure(
     def run() -> None:
         scene = pj.Scene()
         scene.add_mesh(_make_scene_mesh(mesh_data))
-        scene.configure()
+        scene.build()
 
     return _summarize_latency(_measure(run, repeats, warmup))
 
@@ -161,14 +161,14 @@ def _measure_configure(
 def _build_static_scene(mesh_data: dict[str, list[float] | list[int]]) -> Any:
     scene = pj.Scene()
     scene.add_mesh(_make_scene_mesh(mesh_data))
-    scene.configure()
+    scene.build()
     return scene
 
 
 def _build_dynamic_scene(mesh_data: dict[str, list[float] | list[int]]) -> tuple[Any, int]:
     scene = pj.Scene()
     mesh_id = scene.add_mesh(_make_scene_mesh(mesh_data), dynamic=True)
-    scene.configure()
+    scene.build()
     return scene, mesh_id
 
 
@@ -220,7 +220,7 @@ def _benchmark_forward_queries(
     return timings, sanity
 
 
-def _benchmark_commit_updates(
+def _benchmark_sync(
     mesh_data: dict[str, list[float] | list[int]],
     updated_mesh_data: dict[str, list[float] | list[int]],
     repeats: int,
@@ -234,7 +234,7 @@ def _benchmark_commit_updates(
         updated_mesh_data["z"],
     )
     return _summarize_latency(
-        _measure_commit_updates(scene, mesh_id, base_positions, updated_positions, repeats, warmup)
+        _measure_sync(scene, mesh_id, base_positions, updated_positions, repeats, warmup)
     )
 
 
@@ -262,7 +262,7 @@ def _benchmark_point_gradient(
 
     scene = pj.Scene()
     scene.add_mesh(mesh)
-    scene.configure()
+    scene.build()
     query_count = len(points[0])
 
     def run() -> None:
@@ -385,7 +385,7 @@ def run_edge_benchmark_case(
         "performance": {},
     }
 
-    results["performance"]["configure"] = _measure_configure(base_mesh, repeats, warmup)
+    results["performance"]["build"] = _measure_build(base_mesh, repeats, warmup)
     _cleanup_drjit()
 
     static_scene = _build_static_scene(base_mesh)
@@ -401,7 +401,7 @@ def run_edge_benchmark_case(
     results["performance"].update(forward_timings)
     _cleanup_drjit()
 
-    results["performance"]["commit_updates"] = _benchmark_commit_updates(
+    results["performance"]["sync"] = _benchmark_sync(
         base_mesh,
         updated_mesh,
         repeats,
@@ -440,8 +440,8 @@ def _write_json(path: str | os.PathLike[str], payload: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark RayDi edge-query performance for configure(), "
-            "point/ray nearest-edge queries, and commit_updates()."
+            "Benchmark RayDi edge-query performance for build(), "
+            "point/ray nearest-edge queries, and sync()."
         )
     )
     parser.add_argument("--mesh-resolution", type=int, default=192)

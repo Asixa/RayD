@@ -17,7 +17,7 @@ mesh = rd.Mesh(
 )
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 handle = scene.slang_handle
 
 # Hit

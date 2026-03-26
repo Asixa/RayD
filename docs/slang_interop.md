@@ -25,7 +25,7 @@ import rayd as rd
 import drjit as dr
 scene = rd.Scene()
 scene.add_mesh(rd.Mesh(v, f))
-scene.configure()
+scene.build()
 
 # Call the Slang function from Python
 t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
@@ -71,7 +71,7 @@ export float traceRayT(uint64_t sceneHandle,
 `sceneIntersect(scene, ray)`, `sceneShadowTest(scene, ray)`, `sceneNearestEdgePoint(scene, point)`, `sceneNearestEdgeRay(scene, ray)`
 
 **Camera queries:**
-`cameraSampleRay(camera, sample)`, `cameraSamplePrimaryEdge(camera, s)`, `cameraSetResolution(camera, w, h)`, `cameraConfigure(camera)`, `cameraPrepareEdges(camera, scene)`
+`cameraSampleRay(camera, sample)`, `cameraSamplePrimaryEdge(camera, s)`, `cameraSetResolution(camera, w, h)`, `cameraBuild(camera)`, `cameraPrepareEdges(camera, scene)`
 
 ## Compilation Pipeline
 
@@ -127,13 +127,13 @@ The `.slang_handle` property returns the raw C++ pointer as `uint64`, suitable f
 # Scene handle
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 scene_handle = scene.slang_handle  # uint64
 
 # Camera handle
 camera = rd.Camera(45.0)
 camera.width, camera.height = 512, 512
-camera.configure()
+camera.build()
 camera_handle = camera.slang_handle  # uint64
 ```
 

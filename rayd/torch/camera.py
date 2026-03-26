@@ -74,7 +74,7 @@ class Camera:
                 "Prefer Camera.perspective() or Camera.from_intrinsics()."
             )
 
-        self._configured = False
+        self._built = False
         self._version = 0
         self._prepared = False
         self._prepared_scene_ref: Scene | None = None
@@ -91,7 +91,7 @@ class Camera:
         return cls(fx=fx, fy=fy, cx=cx, cy=cy, near_clip=near_clip, far_clip=far_clip)
 
     def _invalidate(self) -> None:
-        self._configured = False
+        self._built = False
         self._version += 1
         self._prepared = False
         self._prepared_scene_ref = None
@@ -101,17 +101,17 @@ class Camera:
     def _native_detached(self) -> Any:
         return _build_native_camera(self._state, preserve_gradients=False)
 
-    def _require_configured(self) -> None:
-        if not self._configured:
-            raise RuntimeError("Camera is not configured. Call configure() before querying.")
+    def _require_built(self) -> None:
+        if not self._built:
+            raise RuntimeError("Camera is not built. Call build() before querying.")
 
     def _default_transform(self) -> _torch.Tensor:
         return _identity_matrix()
 
-    def configure(self, cache: bool = True) -> None:
+    def build(self, cache: bool = True) -> None:
         self._state.cache = bool(cache)
         self._native_detached()
-        self._configured = True
+        self._built = True
         self._version += 1
         self._prepared = False
         self._prepared_scene_ref = None
@@ -119,21 +119,21 @@ class Camera:
         self._prepared_camera_version = None
 
     def render(self, scene: Scene, background: float = 0.0) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render() expects a rayd.torch.Scene.")
         scene._require_query_ready()
         return _camera_render_impl(self._state, scene._mesh_states(), float(background))
 
     def render_grad(self, scene: Scene, spp: int = 4, background: float = 0.0) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render_grad() expects a rayd.torch.Scene.")
         scene._require_query_ready()
         return _camera_render_grad_impl(self._state, scene._mesh_states(), int(spp), float(background))
 
     def prepare_edges(self, scene: Scene) -> None:
-        self._require_configured()
+        self._require_built()
         if not isinstance(scene, Scene):
             raise TypeError("Camera.prepare_edges() expects a rayd.torch.Scene.")
         scene._require_query_ready()
@@ -146,11 +146,11 @@ class Camera:
         self._prepared_camera_version = self._version
 
     def sample_ray(self, sample: Any) -> Ray:
-        self._require_configured()
+        self._require_built()
         return _camera_sample_ray_impl(self._state, _normalize_vector_tensor(sample, "sample", 2, _torch.float32))
 
     def sample_edge(self, sample1: Any) -> PrimaryEdgeSample:
-        self._require_configured()
+        self._require_built()
         if (
             not self._prepared
             or self._prepared_scene_ref is None
@@ -226,23 +226,23 @@ class Camera:
 
     @property
     def camera_to_sample(self) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         return _matrix4_to_tensor(self._native_detached().camera_to_sample).torch()
 
     @property
     def sample_to_camera(self) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         return _matrix4_to_tensor(self._native_detached().sample_to_camera).torch()
 
     @property
     def world_to_sample(self) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         return _matrix4_to_tensor(self._native_detached().world_to_sample).torch()
 
     @property
     def sample_to_world(self) -> _torch.Tensor:
-        self._require_configured()
+        self._require_built()
         return _matrix4_to_tensor(self._native_detached().sample_to_world).torch()
 
     def __repr__(self) -> str:
-        return f"Camera(width={self.width}, height={self.height}, configured={self._configured})"
+        return f"Camera(width={self.width}, height={self.height}, built={self._built})"

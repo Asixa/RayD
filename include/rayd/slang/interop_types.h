@@ -147,15 +147,15 @@ NearestPointEdge scene_nearest_edge_point(SceneHandle handle, const Float3 &poin
 NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool active = true);
 bool scene_is_ready(SceneHandle handle);
 bool scene_has_pending_updates(SceneHandle handle);
-void scene_configure(SceneHandle handle);
-void scene_commit_updates(SceneHandle handle);
+void scene_build(SceneHandle handle);
+void scene_sync(SceneHandle handle);
 
 Ray camera_sample_ray(CameraHandle handle, const Float2 &sample);
 PrimaryEdgeSample camera_sample_primary_edge(CameraHandle handle, float sample);
 bool camera_is_ready(CameraHandle handle);
 bool camera_primary_edges_ready(CameraHandle handle);
 void camera_set_resolution(CameraHandle handle, int width, int height);
-void camera_configure(CameraHandle handle, bool cache = true);
+void camera_build(CameraHandle handle, bool cache = true);
 void camera_prepare_edges(CameraHandle camera_handle, SceneHandle scene_handle);
 
 } // namespace rayd::slang

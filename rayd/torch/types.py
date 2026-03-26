@@ -269,14 +269,14 @@ class SceneEdgeTopology(_StructRepr):
         return int(_shape_tuple(self.v0)[0])
 
 
-class SceneCommitProfile:
+class SceneSyncProfile:
     _FIELDS = (
         "mesh_update_ms",
         "triangle_scatter_ms",
         "triangle_eval_ms",
         "edge_scatter_ms",
         "edge_refit_ms",
-        "optix_commit_ms",
+        "optix_sync_ms",
         "total_ms",
         "optix_gas_update_ms",
         "optix_ias_update_ms",
@@ -293,4 +293,4 @@ class SceneCommitProfile:
 
     def __repr__(self) -> str:
         parts = ", ".join(f"{field}={getattr(self, field)!r}" for field in self._FIELDS)
-        return f"SceneCommitProfile({parts})"
+        return f"SceneSyncProfile({parts})"

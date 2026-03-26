@@ -270,9 +270,9 @@ void Mesh::init(const Vector3fDetached &vertex_positions,
     is_ready_ = false;
 }
 
-void Mesh::configure() {
-    require(vertex_count_ > 0, "Mesh::configure(): mesh has no vertices.");
-    require(face_count_ > 0, "Mesh::configure(): mesh has no faces.");
+void Mesh::build() {
+    require(vertex_count_ > 0, "Mesh::build(): mesh has no vertices.");
+    require(face_count_ > 0, "Mesh::build(): mesh has no faces.");
 
     if (!triangle_info_object_) {
         triangle_info_object_ = std::make_unique<TriangleInfo>();
@@ -309,11 +309,11 @@ void Mesh::update_runtime_data(bool vertices_dirty, bool transform_dirty) {
     require(vertex_count_ > 0, "Mesh::update_runtime_data(): mesh has no vertices.");
     require(face_count_ > 0, "Mesh::update_runtime_data(): mesh has no faces.");
     require(triangle_info_ != nullptr,
-            "Mesh::update_runtime_data(): mesh must be configured before applying incremental updates.");
+            "Mesh::update_runtime_data(): mesh must be built before applying incremental updates.");
 
     if (vertices_dirty) {
         require(triangle_info_object_ != nullptr,
-                "Mesh::update_runtime_data(): object-space geometry must be configured first.");
+                "Mesh::update_runtime_data(): object-space geometry must be built first.");
         std::tie(*triangle_info_object_, vertex_normals_object_) =
             process_mesh<false>(vertex_positions_object_, face_vertex_indices_);
     }
@@ -333,7 +333,7 @@ void Mesh::update_runtime_data(bool vertices_dirty, bool transform_dirty) {
 
 void Mesh::update_world_triangle_info() {
     require(triangle_info_object_ != nullptr,
-            "Mesh::update_world_triangle_info(): object-space geometry must be configured first.");
+            "Mesh::update_world_triangle_info(): object-space geometry must be built first.");
     require(triangle_info_ != nullptr,
             "Mesh::update_world_triangle_info(): world-space triangle cache must be allocated first.");
 
@@ -391,7 +391,7 @@ void Mesh::ensure_secondary_edge_info_ready() const {
 }
 
 void Mesh::prepare_optix_buffers() {
-    require(is_ready_, "Mesh::prepare_optix_buffers(): mesh must be configured first.");
+    require(is_ready_, "Mesh::prepare_optix_buffers(): mesh must be built first.");
 
     update_optix_vertex_buffer();
     ensure_optix_face_buffer_ready();

@@ -31,7 +31,7 @@ class Mesh:
         f_uv: Any = None,
         verbose: bool = False,
     ):
-        self._configured = False
+        self._built = False
         if v is None and f is None:
             self._state = _MeshState(verbose=bool(verbose))
             return
@@ -49,16 +49,16 @@ class Mesh:
         )
 
     def _invalidate(self) -> None:
-        self._configured = False
+        self._built = False
 
     def _native_detached(self) -> Any:
         mesh = _build_native_mesh(self._state, preserve_gradients=False)
-        mesh.configure()
+        mesh.build()
         return mesh
 
-    def configure(self) -> None:
+    def build(self) -> None:
         self._native_detached()
-        self._configured = True
+        self._built = True
 
     def set_transform(self, mat: Any, set_left: bool = True) -> None:
         if set_left:

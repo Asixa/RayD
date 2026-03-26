@@ -216,7 +216,7 @@ def _build_native_scene(mesh_states: list[_MeshState], *, preserve_gradients: bo
     scene = _native.Scene()
     for state in mesh_states:
         scene.add_mesh(_build_native_mesh(state, preserve_gradients=preserve_gradients))
-    scene.configure()
+    scene.build()
     return scene
 
 
@@ -243,7 +243,7 @@ def _build_native_camera(state: _CameraState, *, preserve_gradients: bool) -> An
         if state.to_world_right is not None and _infer_diff(state.to_world_right):
             camera.to_world_right = _tensor_to_matrix4(state.to_world_right, diff=True, name="camera.to_world_right")
 
-    camera.configure(bool(state.cache))
+    camera.build(bool(state.cache))
     return camera
 
 

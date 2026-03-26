@@ -14,7 +14,7 @@ def make_scene() -> rd.Scene:
 
     scene = rd.Scene()
     scene.add_mesh(mesh)
-    scene.configure()
+    scene.build()
     return scene
 
 

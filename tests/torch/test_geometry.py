@@ -104,7 +104,7 @@ class TorchGeometryTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -170,7 +170,7 @@ class TorchGeometryTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             points = torch.tensor([[0.5, -0.2, 0.0],
                                    [0.5, 0.5, 0.0]], device=device)
@@ -233,7 +233,7 @@ class TorchGeometryTests(unittest.TestCase):
             scene = rt.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             edge_info = scene.edge_info()
             topology = scene.edge_topology()
@@ -285,7 +285,7 @@ class TorchGeometryTests(unittest.TestCase):
 
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             edge_info = scene.edge_info()
             topology = scene.edge_topology()
@@ -343,7 +343,7 @@ class TorchGeometryTests(unittest.TestCase):
             scene = rt.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             prim_ids = torch.tensor([-1, 0, 1, 2, 9], device=device, dtype=torch.int32)
             edge_ids = torch.tensor([-1, 1, 6, 99], device=device, dtype=torch.int32)
@@ -403,11 +403,11 @@ class TorchGeometryTests(unittest.TestCase):
                 [0.0, 0.0, 1.0, 0.5],
                 [0.0, 0.0, 0.0, 1.0],
             ], device=device)
-            mesh.configure()
+            mesh.build()
 
             scene = rt.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
             version_before = scene.version
             edge_version_before = scene.edge_version
 
@@ -437,14 +437,14 @@ class TorchGeometryTests(unittest.TestCase):
                     [0.0, 0.0, 0.0, 1.0],
                 ], device=device),
             )
-            scene.commit_updates()
+            scene.sync()
             ray = rt.Ray(
                 torch.tensor([[2.25, 0.25, -1.0]], device=device),
                 torch.tensor([[0.0, 0.0, 1.0]], device=device),
             )
             its = scene.intersect(ray)
             edge_info = scene.edge_info()
-            profile = scene.last_commit_profile
+            profile = scene.last_sync_profile
 
             print(json.dumps({
                 "mesh_num_vertices": mesh.num_vertices,
@@ -511,7 +511,7 @@ class TorchGeometryTests(unittest.TestCase):
 
             scene = rt.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             version_before = scene.version
             edge_version_before = scene.edge_version
@@ -536,16 +536,16 @@ class TorchGeometryTests(unittest.TestCase):
             except Exception as exc:
                 pending_edge_info_error = "pending updates" in str(exc)
 
-            scene.commit_updates()
+            scene.sync()
             edge_info_after = scene.edge_info()
             tri_edges_after = scene.triangle_edge_indices(torch.tensor([0, 1], device=device, dtype=torch.int32))
             topology_after = scene.edge_topology()
-            profile = scene.last_commit_profile
+            profile = scene.last_sync_profile
 
             version_after = scene.version
             edge_version_after = scene.edge_version
-            scene.commit_updates()
-            noop_profile = scene.last_commit_profile
+            scene.sync()
+            noop_profile = scene.last_sync_profile
 
             print(json.dumps({
                 "pending_edge_info_error": pending_edge_info_error,
@@ -602,7 +602,7 @@ class TorchGeometryTests(unittest.TestCase):
             mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -627,7 +627,7 @@ class TorchGeometryTests(unittest.TestCase):
             mesh2.to_world_left = tx
             scene2 = rt.Scene()
             scene2.add_mesh(mesh2)
-            scene2.configure()
+            scene2.build()
             its2 = scene2.intersect(ray)
             its2.t.sum().backward()
 
@@ -669,12 +669,12 @@ class TorchGeometryTests(unittest.TestCase):
             mesh.to_world_left = tx
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 16
             camera.height = 12
-            camera.configure()
+            camera.build()
             sample_ray = camera.sample_ray(torch.tensor([[0.5, 0.5]], device=device))
             camera.prepare_edges(scene)
             edge_sample = camera.sample_edge(torch.tensor([0.25], device=device))
@@ -720,12 +720,12 @@ class TorchGeometryTests(unittest.TestCase):
             )
             scene = rt.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.configure()
+            scene.build()
 
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 32
             camera.height = 32
-            camera.configure()
+            camera.build()
             camera.prepare_edges(scene)
 
             scene.update_mesh_vertices(
@@ -734,7 +734,7 @@ class TorchGeometryTests(unittest.TestCase):
                               [ 0.75, -0.5, 3.0],
                               [ 0.25,  0.5, 3.0]], device=device),
             )
-            scene.commit_updates()
+            scene.sync()
 
             invalidated = False
             try:
@@ -776,7 +776,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -822,7 +822,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             origin = torch.tensor([[0.25, 0.25, -1.0]], device=device, requires_grad=True)
             direction = torch.tensor([[0.0, 0.0, 1.0]], device=device)
@@ -857,7 +857,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             origin = torch.tensor([[0.5, 0.5, -1.0]], device=device)
             direction = torch.tensor([[0.0, 0.0, 1.0]], device=device, requires_grad=True)
@@ -905,7 +905,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -960,7 +960,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -1005,7 +1005,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh.to_world_right = tx
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -1044,7 +1044,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             # Query a point near the bottom edge (0,0)-(1,0)
             point = torch.tensor([[0.5, -0.1, 0.0]], device=device, requires_grad=True)
@@ -1085,7 +1085,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             origin = torch.tensor([[0.5, 0.5, 1.0]], device=device)
             direction = torch.tensor([[0.0, 0.0, -1.0]], device=device)
@@ -1128,7 +1128,7 @@ class TorchGradientTests(unittest.TestCase):
             scene = rt.Scene()
             scene.add_mesh(mesh_a)
             scene.add_mesh(mesh_b)
-            scene.configure()
+            scene.build()
 
             # Ray hits mesh B only
             ray = rt.Ray(
@@ -1168,12 +1168,12 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 16
             camera.height = 12
-            camera.configure()
+            camera.build()
 
             grad_image = camera.render_grad(scene, spp=4)
             grad_image.sum().backward()
@@ -1208,7 +1208,7 @@ class TorchGradientTests(unittest.TestCase):
                 m = rt.Mesh(v, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
                 s = rt.Scene()
                 s.add_mesh(m)
-                s.configure()
+                s.build()
                 r = rt.Ray(
                     torch.tensor([[0.25, 0.25, -1.0]], device=device),
                     torch.tensor([[0.0, 0.0, 1.0]], device=device),
@@ -1233,7 +1233,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
                 torch.tensor([[0.0, 0.0, 1.0]], device=device),
@@ -1272,7 +1272,7 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -1303,7 +1303,7 @@ class TorchGradientTests(unittest.TestCase):
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 32
             camera.height = 32
-            camera.configure()
+            camera.build()
 
             sample = torch.tensor([[0.5, 0.5]], device=device, requires_grad=True)
             ray = camera.sample_ray(sample)
@@ -1339,7 +1339,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh.to_world_left = tx
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -1376,7 +1376,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             origins = torch.tensor([[0.25, 0.25, -1.0],
                                     [0.5,  0.5, -2.0]], device=device, requires_grad=True)
@@ -1418,7 +1418,7 @@ class TorchGradientTests(unittest.TestCase):
             mesh = rt.Mesh(verts, torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32))
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             ray = rt.Ray(
                 torch.tensor([[0.25, 0.25, -1.0]], device=device),
@@ -1464,14 +1464,14 @@ class TorchGradientTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             cam_tx = torch.eye(4, device=device, requires_grad=True)
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 16
             camera.height = 12
             camera.to_world_left = cam_tx
-            camera.configure()
+            camera.build()
 
             grad_image = camera.render_grad(scene, spp=4)
             grad_image.sum().backward()
@@ -1518,7 +1518,7 @@ class TorchEndToEndTests(unittest.TestCase):
                 mesh = rt.Mesh(verts, faces)
                 scene = rt.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
                 ray = rt.Ray(ray_o, ray_d)
                 its = scene.intersect(ray)
                 loss = (its.t - target_t).pow(2).sum()
@@ -1574,7 +1574,7 @@ class TorchEndToEndTests(unittest.TestCase):
                 mesh.to_world_left = tx
                 scene = rt.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
                 ray = rt.Ray(ray_o, ray_d)
                 its = scene.intersect(ray)
                 loss = (its.t - target_t).pow(2).sum()
@@ -1611,7 +1611,7 @@ class TorchEndToEndTests(unittest.TestCase):
             )
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             # Learnable: ray origin xy (start at (1.0, 1.0), target hit at (0.0, 0.0))
             # Ray goes straight down z, so hit point xy = origin xy.
@@ -1677,7 +1677,7 @@ class TorchEndToEndTests(unittest.TestCase):
                 mesh = rt.Mesh(verts, faces)
                 scene = rt.Scene()
                 scene.add_mesh(mesh)
-                scene.configure()
+                scene.build()
                 ray = rt.Ray(ray_o, ray_d)
                 its = scene.intersect(ray)
                 loss = (its.t - target_t).pow(2).mean()
@@ -1717,13 +1717,13 @@ class TorchEndToEndTests(unittest.TestCase):
             camera = rt.Camera(45.0, 1e-4, 1e4)
             camera.width = 16
             camera.height = 16
-            camera.configure()
+            camera.build()
 
             mesh = rt.Mesh(base_verts, faces)
             mesh.to_world_left = tx
             scene = rt.Scene()
             scene.add_mesh(mesh)
-            scene.configure()
+            scene.build()
 
             grad_image = camera.render_grad(scene, spp=4)
             loss = grad_image.sum()

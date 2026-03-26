@@ -21,7 +21,7 @@ public:
     ~Camera();
 
     /// Rebuild camera transforms and cached projection data.
-    void configure(bool cache = true);
+    void build(bool cache = true);
     /// Extract image-space edges that contribute to primary visibility changes.
     void prepare_primary_edges(const Scene &scene);
 

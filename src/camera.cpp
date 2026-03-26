@@ -150,9 +150,9 @@ void Camera::append_transform(const Matrix4f &matrix, bool append_left) {
     primary_edges_ready_ = false;
 }
 
-void Camera::configure(bool cache) {
+void Camera::build(bool cache) {
     require(image_width_ > 0 && image_height_ > 0,
-            "Camera::configure(): width and height must be positive.");
+            "Camera::build(): width and height must be positive.");
 
     aspect_ratio_ = static_cast<float>(image_width_) / static_cast<float>(image_height_);
 
@@ -204,10 +204,10 @@ void Camera::configure(bool cache) {
 }
 
 void Camera::prepare_primary_edges(const Scene &scene) {
-    require(is_ready_, "Camera::prepare_primary_edges(): camera is not configured.");
-    require(scene.is_ready(), "Camera::prepare_primary_edges(): scene is not configured.");
+    require(is_ready_, "Camera::prepare_primary_edges(): camera is not built.");
+    require(scene.is_ready(), "Camera::prepare_primary_edges(): scene is not built.");
     require(!scene.has_pending_updates(),
-            "Camera::prepare_primary_edges(): scene has pending updates. Call Scene::commit_updates() first.");
+            "Camera::prepare_primary_edges(): scene has pending updates. Call Scene::sync() first.");
 
     const std::vector<const Mesh *> meshes = scene.meshes();
     std::vector<VectoriT<5, true>> candidate_edges(meshes.size());
@@ -371,7 +371,7 @@ std::string Camera::to_string() const {
 }
 
 RayDetached Camera::sample_primary_ray(const Vector2fDetached &samples) const {
-    require(is_ready_, "Camera::sample_primary_ray(): camera is not configured.");
+    require(is_ready_, "Camera::sample_primary_ray(): camera is not built.");
 
     const Vector3fDetached sample_direction =
         normalize(transform_pos<FloatDetached>(detach<false>(sample_to_camera_),
@@ -382,7 +382,7 @@ RayDetached Camera::sample_primary_ray(const Vector2fDetached &samples) const {
 }
 
 Ray Camera::sample_primary_ray(const Vector2f &samples) const {
-    require(is_ready_, "Camera::sample_primary_ray(): camera is not configured.");
+    require(is_ready_, "Camera::sample_primary_ray(): camera is not built.");
 
     const Vector3f sample_direction =
         detach<false>(normalize(transform_pos<Float>(sample_to_camera_,
@@ -432,10 +432,10 @@ PrimaryEdgeSample Camera::sample_primary_edge(const FloatDetached &sample) const
 }
 
 drjit::Tensor<Float> Camera::render(const Scene &scene, float background) const {
-    require(is_ready_, "Camera::render(): camera is not configured.");
-    require(scene.is_ready(), "Camera::render(): scene is not configured.");
+    require(is_ready_, "Camera::render(): camera is not built.");
+    require(scene.is_ready(), "Camera::render(): scene is not built.");
     require(!scene.has_pending_updates(),
-            "Camera::render(): scene has pending updates. Call Scene::commit_updates() first.");
+            "Camera::render(): scene has pending updates. Call Scene::sync() first.");
 
     const Vector2f samples = make_pixel_centers(image_width_, image_height_);
     const Ray rays = sample_primary_ray(samples);
@@ -450,7 +450,7 @@ drjit::Tensor<Float> Camera::render(const Scene &scene, float background) const 
 }
 
 drjit::Tensor<Float> Camera::render_grad(const Scene &scene, int spp, float background) const {
-    require(is_ready_, "Camera::render_grad(): camera is not configured.");
+    require(is_ready_, "Camera::render_grad(): camera is not built.");
 
     const Float image = render_edge_grad_flat(scene, *this, spp, background);
     const size_t shape[2] = {

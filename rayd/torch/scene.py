@@ -10,7 +10,7 @@ from ._util import (
     _normalize_vector_tensor,
 )
 from ._convert import _scalar_array_to_tensor, _tensor_to_matrix4, _tensor_to_vec3, _to_torch_struct
-from .types import Intersection, Ray, SceneCommitProfile, SceneEdgeInfo, SceneEdgeTopology
+from .types import Intersection, Ray, SceneSyncProfile, SceneEdgeInfo, SceneEdgeTopology
 from ._state import _MeshState
 from ._native import (
     _build_native_mesh,
@@ -40,19 +40,19 @@ class Scene:
         self._version = 0
         self._edge_version = 0
         self._native_scene: Any | None = None
-        self._last_commit_profile = SceneCommitProfile()
+        self._last_sync_profile = SceneSyncProfile()
 
     def _mesh_states(self) -> list[_MeshState]:
         return [record.state for record in self._records]
 
     def _require_ready(self) -> None:
         if not self._ready:
-            raise RuntimeError("Scene is not configured. Call configure() before querying.")
+            raise RuntimeError("Scene is not built. Call build() before querying.")
 
     def _require_query_ready(self) -> None:
         self._require_ready()
         if self._pending_updates:
-            raise RuntimeError("Scene has pending updates. Call commit_updates() before querying.")
+            raise RuntimeError("Scene has pending updates. Call sync() before querying.")
 
     def _validate_mesh_id(self, mesh_id: int) -> _SceneMeshRecord:
         if mesh_id < 0 or mesh_id >= len(self._records):
@@ -68,17 +68,17 @@ class Scene:
         self._native_scene = None
         return len(self._records) - 1
 
-    def configure(self) -> None:
+    def build(self) -> None:
         from ._native import _build_native_scene as _build_detached
         native_scene = _build_detached([r.state for r in self._records], preserve_gradients=False)
-        # _build_native_scene calls scene.configure() internally, but we need
+        # _build_native_scene calls scene.build() internally, but we need
         # to keep a reference for dynamic updates; rebuild with add_mesh to
         # preserve the dynamic flag.
         from ._env import _native
         ns = _native.Scene()
         for record in self._records:
             ns.add_mesh(_build_native_mesh(record.state, preserve_gradients=False), record.dynamic)
-        ns.configure()
+        ns.build()
         self._native_scene = ns
         self._ready = True
         self._pending_updates = False
@@ -127,12 +127,12 @@ class Scene:
             self._native_scene.append_mesh_transform(mesh_id, _tensor_to_matrix4(matrix, diff=False, name="mat"), append_left)
         self._pending_updates = True
 
-    def commit_updates(self) -> None:
+    def sync(self) -> None:
         self._require_ready()
         if self._native_scene is None:
-            raise RuntimeError("Scene.commit_updates(): internal detached scene is unavailable.")
-        self._native_scene.commit_updates()
-        self._last_commit_profile = SceneCommitProfile(self._native_scene.last_commit_profile)
+            raise RuntimeError("Scene.sync(): internal detached scene is unavailable.")
+        self._native_scene.sync()
+        self._last_sync_profile = SceneSyncProfile(self._native_scene.last_sync_profile)
         self._pending_updates = False
         self._version = int(self._native_scene.version)
         self._edge_version = int(self._native_scene.edge_version)
@@ -144,8 +144,8 @@ class Scene:
         return self._pending_updates
 
     @property
-    def last_commit_profile(self) -> SceneCommitProfile:
-        return SceneCommitProfile(self._last_commit_profile)
+    def last_sync_profile(self) -> SceneSyncProfile:
+        return SceneSyncProfile(self._last_sync_profile)
 
     @property
     def num_meshes(self) -> int:

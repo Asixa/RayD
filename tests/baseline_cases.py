@@ -141,7 +141,7 @@ def collect_baseline_data():
     )
     scene = pj.Scene()
     scene.add_mesh(mesh)
-    scene.configure()
+    scene.build()
     hit_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     its = scene.intersect(hit_ray)
     geometry["constant_hit"] = {
@@ -177,7 +177,7 @@ def collect_baseline_data():
     multi_scene = pj.Scene()
     multi_scene.add_mesh(mesh_a)
     multi_scene.add_mesh(mesh_b)
-    multi_scene.configure()
+    multi_scene.build()
     its = multi_scene.intersect(
         pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     )
@@ -196,7 +196,7 @@ def collect_baseline_data():
     )
     scene_no_uv = pj.Scene()
     scene_no_uv.add_mesh(mesh_no_uv)
-    scene_no_uv.configure()
+    scene_no_uv.build()
     its_no_uv = scene_no_uv.intersect(uv_ray)
     mesh_with_uv = pj.Mesh(
         cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
@@ -205,7 +205,7 @@ def collect_baseline_data():
     )
     scene_with_uv = pj.Scene()
     scene_with_uv.add_mesh(mesh_with_uv)
-    scene_with_uv.configure()
+    scene_with_uv.build()
     its_with_uv = scene_with_uv.intersect(uv_ray)
     geometry["uv"] = {
         "missing": _vector_to_list(its_no_uv.uv, 2),
@@ -224,7 +224,7 @@ def collect_baseline_data():
     )
     batched_scene = pj.Scene()
     batched_scene.add_mesh(square_mesh)
-    batched_scene.configure()
+    batched_scene.build()
     rays = pj.RayDetached(cuda.Array3f(xs, ys, zs), cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
     its = batched_scene.intersect(rays)
     valid_flags = _bool_array_to_list(its.is_valid())
@@ -248,7 +248,7 @@ def collect_baseline_data():
     grad_mesh.vertex_positions = verts
     grad_scene = pj.Scene()
     grad_scene.add_mesh(grad_mesh)
-    grad_scene.configure()
+    grad_scene.build()
     ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
     its = grad_scene.intersect(ray)
     dr.backward(its.t)
@@ -275,7 +275,7 @@ def collect_baseline_data():
     )
     transform_scene = pj.Scene()
     transform_scene.add_mesh(transform_mesh)
-    transform_scene.configure()
+    transform_scene.build()
     ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
     its = transform_scene.intersect(ray)
     dr.backward(its.t)
@@ -283,7 +283,7 @@ def collect_baseline_data():
         cuda.Array3f([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
         cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
-    edge_mesh.configure()
+    edge_mesh.build()
 
     front_mesh = pj.Mesh(
         cuda.Array3f([-0.5, 0.5, 0.0], [-0.5, -0.5, 0.5], [3.0, 3.0, 3.0]),
@@ -291,12 +291,12 @@ def collect_baseline_data():
     )
     edge_scene = pj.Scene()
     edge_scene.add_mesh(front_mesh)
-    edge_scene.configure()
+    edge_scene.build()
 
     edge_camera = pj.Camera(45.0, 1e-4, 1e4)
     edge_camera.width = 32
     edge_camera.height = 32
-    edge_camera.configure(cache=False)
+    edge_camera.build(cache=False)
     edge_camera.prepare_edges(edge_scene)
     edge_sample = edge_camera.sample_edge(cuda.Float([0.25]))
 
@@ -320,12 +320,12 @@ def collect_baseline_data():
         )
         loop_scene = pj.Scene()
         loop_scene.add_mesh(loop_mesh)
-        loop_scene.configure()
+        loop_scene.build()
 
         loop_camera = pj.Camera(45.0, 1e-4, 1e4)
         loop_camera.width = 32
         loop_camera.height = 32
-        loop_camera.configure()
+        loop_camera.build()
         loop_camera.prepare_edges(loop_scene)
         sample = loop_camera.sample_edge(cuda.Float([0.25]))
         total_samples += int(_int_lane(sample.idx) >= 0)
@@ -355,7 +355,7 @@ def collect_baseline_data():
         )
         grad_scene = pj.Scene()
         grad_scene.add_mesh(grad_mesh)
-        grad_scene.configure()
+        grad_scene.build()
         hit = grad_scene.intersect(
             pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
         )

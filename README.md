@@ -100,7 +100,7 @@ mesh.vertex_positions = verts
 
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 
 ray = rd.Ray(
     dr.cuda.ad.Array3f([0.25], [0.25], [-1.0]),
@@ -128,7 +128,7 @@ verts = torch.tensor([...], device="cuda", requires_grad=True)
 mesh = rt.Mesh(verts, faces)
 scene = rt.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 
 its = scene.intersect(rt.Ray(origins, directions))
 loss = (its.t - target).pow(2).mean()
@@ -173,7 +173,7 @@ m = rs.load_module("my_shader.slang")  # use rayd.slang.load_module, not slangto
 
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 
 t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 ```
@@ -205,7 +205,7 @@ import rayd.slang as rs
 m = rs.load_module("my_shader.slang")
 scene = rd.Scene()
 scene.add_mesh(mesh)
-scene.configure()
+scene.build()
 
 class DiffTrace(torch.autograd.Function):
     @staticmethod

@@ -269,8 +269,8 @@ void Scene::invalidate_primary_edge_observers() {
     }
 }
 
-void Scene::configure() {
-    require(!mesh_records_.empty(), "Scene::configure(): missing meshes.");
+void Scene::build() {
+    require(!mesh_records_.empty(), "Scene::build(): missing meshes.");
 
     std::vector<int> face_offsets;
     face_offsets.reserve(mesh_records_.size() + 1);
@@ -296,7 +296,7 @@ void Scene::configure() {
         SceneMeshRecord &record = mesh_records_[mesh_index];
         Mesh &mesh = *record.mesh;
         mesh.set_mesh_id(static_cast<int>(mesh_index));
-        mesh.configure();
+        mesh.build();
         record.face_offset = face_offsets.back();
         const SecondaryEdgeInfo *mesh_edge_info = mesh.secondary_edge_info();
         const int mesh_edge_count = mesh_edge_info != nullptr ? mesh_edge_info->size() : 0;
@@ -312,7 +312,7 @@ void Scene::configure() {
 
     mesh_count_ = static_cast<int>(mesh_records_.size());
     const int total_face_count = face_offsets.back();
-    require(total_face_count > 0, "Scene::configure(): scene has no triangles.");
+    require(total_face_count > 0, "Scene::build(): scene has no triangles.");
 
     edge_count_ = edge_offsets.back();
     topology_v0.reserve(edge_count_);
@@ -448,8 +448,8 @@ void Scene::configure() {
                 edge_local_ids_);
     drjit::sync_thread();
 
-    optix_scene_->configure(mesh_descs);
-    edge_bvh_->configure(edge_info_);
+    optix_scene_->build(mesh_descs);
+    edge_bvh_->build(edge_info_);
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
     is_ready_ = true;
@@ -460,7 +460,7 @@ void Scene::configure() {
 }
 
 void Scene::update_mesh_vertices(int mesh_id, const Vector3f &positions) {
-    require(is_ready(), "Scene::update_mesh_vertices(): scene is not configured.");
+    require(is_ready(), "Scene::update_mesh_vertices(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::update_mesh_vertices(): target mesh is not dynamic.");
@@ -473,7 +473,7 @@ void Scene::update_mesh_vertices(int mesh_id, const Vector3f &positions) {
 }
 
 void Scene::set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_left) {
-    require(is_ready(), "Scene::set_mesh_transform(): scene is not configured.");
+    require(is_ready(), "Scene::set_mesh_transform(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::set_mesh_transform(): target mesh is not dynamic.");
@@ -484,7 +484,7 @@ void Scene::set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_lef
 }
 
 void Scene::append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left) {
-    require(is_ready(), "Scene::append_mesh_transform(): scene is not configured.");
+    require(is_ready(), "Scene::append_mesh_transform(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::append_mesh_transform(): target mesh is not dynamic.");
@@ -494,9 +494,9 @@ void Scene::append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool appe
     pending_updates_ = true;
 }
 
-void Scene::commit_updates() {
-    require(is_ready(), "Scene::commit_updates(): scene is not configured.");
-    last_commit_profile_ = SceneCommitProfile();
+void Scene::sync() {
+    require(is_ready(), "Scene::sync(): scene is not built.");
+    last_sync_profile_ = SceneSyncProfile();
 
     if (!pending_updates_) {
         return;
@@ -521,12 +521,12 @@ void Scene::commit_updates() {
 
         const auto mesh_update_start = Clock::now();
         record.mesh->update_runtime_data(record.vertices_dirty, record.transform_dirty);
-        last_commit_profile_.mesh_update_ms += std::chrono::duration<double, std::milli>(
+        last_sync_profile_.mesh_update_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - mesh_update_start).count();
 
         const auto scatter_start = Clock::now();
         scatter_mesh_data(record, false);
-        last_commit_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
+        last_sync_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - scatter_start).count();
 
         const int mesh_edge_count =
@@ -535,17 +535,17 @@ void Scene::commit_updates() {
             pending_edge_bvh_dirty_ranges_.push_back({ record.edge_offset, mesh_edge_count });
             record.edge_dirty = true;
             edge_bvh_dirty_ = true;
-            ++last_commit_profile_.updated_edge_meshes;
-            last_commit_profile_.updated_edges += mesh_edge_count;
+            ++last_sync_profile_.updated_edge_meshes;
+            last_sync_profile_.updated_edges += mesh_edge_count;
         }
 
         updates.push_back({ static_cast<int>(mesh_index), record.vertices_dirty, record.transform_dirty });
-        ++last_commit_profile_.updated_meshes;
+        ++last_sync_profile_.updated_meshes;
         if (record.vertices_dirty) {
-            ++last_commit_profile_.updated_vertex_meshes;
+            ++last_sync_profile_.updated_vertex_meshes;
         }
         if (record.transform_dirty) {
-            ++last_commit_profile_.updated_transform_meshes;
+            ++last_sync_profile_.updated_transform_meshes;
         }
         record.vertices_dirty = false;
         record.transform_dirty = false;
@@ -570,7 +570,7 @@ void Scene::commit_updates() {
                     triangle_info_detached_.face_normal,
                     triangle_info_detached_.face_area);
         drjit::sync_thread();
-        last_commit_profile_.triangle_eval_ms = std::chrono::duration<double, std::milli>(
+        last_sync_profile_.triangle_eval_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - eval_start).count();
     }
 
@@ -591,35 +591,35 @@ void Scene::commit_updates() {
             drjit::eval(edge_info_);
             drjit::sync_thread();
         }
-        last_commit_profile_.edge_scatter_ms = std::chrono::duration<double, std::milli>(
+        last_sync_profile_.edge_scatter_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - edge_scatter_start).count();
 
         const auto edge_refit_start = Clock::now();
         ensure_edge_bvh_ready();
-        last_commit_profile_.edge_refit_ms = std::chrono::duration<double, std::milli>(
+        last_sync_profile_.edge_refit_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - edge_refit_start).count();
     }
 
     const auto optix_start = Clock::now();
-    optix_scene_->commit_updates(mesh_descs, updates);
-    last_commit_profile_.optix_commit_ms = std::chrono::duration<double, std::milli>(
+    optix_scene_->sync(mesh_descs, updates);
+    last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - optix_start).count();
-    const OptixCommitProfile &optix_profile = optix_scene_->last_commit_profile();
-    last_commit_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
-    last_commit_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+    const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
+    last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
+    last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
     pending_updates_ = false;
     ++scene_version_;
-    if (last_commit_profile_.updated_edge_meshes > 0) {
+    if (last_sync_profile_.updated_edge_meshes > 0) {
         ++edge_version_;
     }
     invalidate_primary_edge_observers();
-    last_commit_profile_.total_ms = std::chrono::duration<double, std::milli>(
+    last_sync_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();
 }
 
 SceneEdgeInfo Scene::edge_info() const {
-    require(is_ready(), "Scene::edge_info(): scene is not configured.");
-    require(!pending_updates_, "Scene::edge_info(): scene has pending updates. Call Scene::commit_updates() first.");
+    require(is_ready(), "Scene::edge_info(): scene is not built.");
+    require(!pending_updates_, "Scene::edge_info(): scene has pending updates. Call Scene::sync() first.");
 
     ensure_scene_edge_data_ready();
 
@@ -638,12 +638,12 @@ SceneEdgeInfo Scene::edge_info() const {
 }
 
 const SceneEdgeTopology &Scene::edge_topology() const {
-    require(is_ready(), "Scene::edge_topology(): scene is not configured.");
+    require(is_ready(), "Scene::edge_topology(): scene is not built.");
     return edge_topology_;
 }
 
 VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool global) const {
-    require(is_ready(), "Scene::triangle_edge_indices(): scene is not configured.");
+    require(is_ready(), "Scene::triangle_edge_indices(): scene is not built.");
 
     const int query_count = static_cast<int>(slices(prim_id));
     VectoriT<3, true> result(full<IntDetached>(-1, query_count),
@@ -676,7 +676,7 @@ VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool 
 }
 
 VectoriT<2, true> Scene::edge_adjacent_faces(const IntDetached &edge_id, bool global) const {
-    require(is_ready(), "Scene::edge_adjacent_faces(): scene is not configured.");
+    require(is_ready(), "Scene::edge_adjacent_faces(): scene is not built.");
 
     const int query_count = static_cast<int>(slices(edge_id));
     VectoriT<2, true> result(full<IntDetached>(-1, query_count),
@@ -704,8 +704,8 @@ bool Scene::is_ready() const {
 
 template <bool Detached>
 IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detached> active, RayFlags flags) const {
-    require(is_ready(), "Scene::intersect(): scene is not configured.");
-    require(!pending_updates_, "Scene::intersect(): scene has pending updates. Call Scene::commit_updates() first.");
+    require(is_ready(), "Scene::intersect(): scene is not built.");
+    require(!pending_updates_, "Scene::intersect(): scene has pending updates. Call Scene::sync() first.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
     const bool want_geo_n   = has_flag(flags, RayFlags::Geometric);
@@ -821,16 +821,16 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
 template <bool Detached>
 MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::shadow_test(): scene is not configured.");
-    require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::commit_updates() first.");
+    require(is_ready(), "Scene::shadow_test(): scene is not built.");
+    require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
 
     return optix_scene_->template shadow_test<Detached>(ray, active);
 }
 
 template <bool Detached>
 NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::nearest_edge(point): scene is not configured.");
-    require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::commit_updates() first.");
+    require(is_ready(), "Scene::nearest_edge(point): scene is not built.");
+    require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::sync() first.");
 
     const int query_count = static_cast<int>(slices(point));
     NearestPointEdgeT<Detached> result = initialize_nearest_point_edge_result<Detached>(query_count);
@@ -915,8 +915,8 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
 
 template <bool Detached>
 NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<Detached> active) const {
-    require(is_ready(), "Scene::nearest_edge(ray): scene is not configured.");
-    require(!pending_updates_, "Scene::nearest_edge(ray): scene has pending updates. Call Scene::commit_updates() first.");
+    require(is_ready(), "Scene::nearest_edge(ray): scene is not built.");
+    require(!pending_updates_, "Scene::nearest_edge(ray): scene has pending updates. Call Scene::sync() first.");
 
     const int query_count = static_cast<int>(slices(ray.o));
     NearestRayEdgeT<Detached> result = initialize_nearest_ray_edge_result<Detached>(query_count);

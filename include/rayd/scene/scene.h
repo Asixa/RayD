@@ -13,13 +13,13 @@
 
 namespace rayd {
 
-struct SceneCommitProfile {
+struct SceneSyncProfile {
     double mesh_update_ms = 0.0;
     double triangle_scatter_ms = 0.0;
     double triangle_eval_ms = 0.0;
     double edge_scatter_ms = 0.0;
     double edge_refit_ms = 0.0;
-    double optix_commit_ms = 0.0;
+    double optix_sync_ms = 0.0;
     double total_ms = 0.0;
     double optix_gas_update_ms = 0.0;
     double optix_ias_update_ms = 0.0;
@@ -30,22 +30,22 @@ struct SceneCommitProfile {
     int updated_edges = 0;
 };
 
-/// Collection of configured meshes and the acceleration data required for intersection queries.
+/// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
 public:
     Scene();
     ~Scene();
 
     int add_mesh(const Mesh &mesh, bool dynamic = false);
-    void configure();
+    void build();
     bool is_ready() const;
     bool has_pending_updates() const { return pending_updates_; }
 
     void update_mesh_vertices(int mesh_id, const Vector3f &positions);
     void set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_left = true);
     void append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left = true);
-    void commit_updates();
-    const SceneCommitProfile &last_commit_profile() const { return last_commit_profile_; }
+    void sync();
+    const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
     SceneEdgeInfo edge_info() const;
     const SceneEdgeTopology &edge_topology() const;
     const IntDetached &mesh_face_offsets() const { return face_offsets_; }
@@ -121,7 +121,7 @@ private:
     std::vector<Camera *> primary_edge_observers_;
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<SceneEdge> edge_bvh_;
-    SceneCommitProfile last_commit_profile_;
+    SceneSyncProfile last_sync_profile_;
 
     friend class Camera;
 };

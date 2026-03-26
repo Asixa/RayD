@@ -13,7 +13,7 @@ mesh = rd.Mesh(
     cuda.Array3f([0, 1, 0], [0, 0, 1], [0, 0, 0]),
     cuda.Array3i([0], [1], [2]),
 )
-scene = rd.Scene(); scene.add_mesh(mesh); scene.configure()
+scene = rd.Scene(); scene.add_mesh(mesh); scene.build()
 H = scene.slang_handle
 
 

@@ -377,7 +377,7 @@ class RayDBackend:
         mesh = self._mesh(mesh_data)
         scene = pj.Scene()
         mesh_id = scene.add_mesh(mesh, dynamic=dynamic)
-        scene.configure()
+        scene.build()
         return scene, mesh_id
 
     def _ray_detached(self, ray_data: dict[str, list[float]]) -> Any:
@@ -448,7 +448,7 @@ class RayDBackend:
             mesh_id,
             cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"]),
         )
-        scene.commit_updates()
+        scene.sync()
 
         its = scene.intersect(self._ray_detached(updated_ray_data))
         dr.eval(its.t, its.p, its.barycentric, its.prim_id)
@@ -485,7 +485,7 @@ class RayDBackend:
                 current_positions = updated_positions if use_updated else base_positions
                 current_rays = rays if use_updated else base_rays
                 scene.update_mesh_vertices(mesh_id, current_positions)
-                scene.commit_updates()
+                scene.sync()
                 if mode == "full":
                     its = scene.intersect(current_rays)
                     dr.eval(its.t, its.p, its.n, its.uv, its.barycentric, its.prim_id)
@@ -528,11 +528,11 @@ class RayDBackend:
             mesh_id = scene.add_mesh(mesh, dynamic=True)
         else:
             mesh_id = scene.add_mesh(mesh, dynamic=False)
-        scene.configure()
+        scene.build()
 
         if dynamic_update:
             scene.update_mesh_vertices(mesh_id, verts)
-            scene.commit_updates()
+            scene.sync()
 
         its = scene.intersect(self._ray_ad(ray_data))
         loss = dr.sum(its.t)
@@ -572,14 +572,14 @@ class RayDBackend:
             mesh_id = scene.add_mesh(mesh, dynamic=True)
         else:
             mesh_id = scene.add_mesh(mesh, dynamic=False)
-        scene.configure()
+        scene.build()
         rays = self._ray_ad(ray_data)
 
         def run():
             dr.set_grad(verts, 0)
             if dynamic_update:
                 scene.update_mesh_vertices(mesh_id, verts)
-                scene.commit_updates()
+                scene.sync()
 
             its = scene.intersect(rays)
             loss = dr.sum(its.t)
