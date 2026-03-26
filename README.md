@@ -46,18 +46,6 @@ For intersection workloads, RayD targets Mitsuba-level performance and matching 
 
 The chart below was generated on March 25, 2026 on an `NVIDIA GeForce RTX 5080` and `AMD Ryzen 7 9800X3D`, comparing RayD (`drjit 1.3.1`) against Mitsuba `3.8.0` with the `cuda_ad_rgb` variant.
 
-Benchmark command:
-
-```powershell
-python -m tests.benchmark_support `
-  --scenario 64:128 `
-  --scenario 128:256 `
-  --scenario 192:384 `
-  --repeats 5 `
-  --warmup 2 `
-  --json-output docs/performance_benchmark.json `
-  --chart-output docs/performance_benchmark.png
-```
 
 Raw benchmark data is stored in [`docs/performance_benchmark.json`](docs/performance_benchmark.json).
 
