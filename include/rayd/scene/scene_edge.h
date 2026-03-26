@@ -59,8 +59,7 @@ private:
 
     IntDetached left_child_;
     IntDetached right_child_;
-    IntDetached leaf_primitive_;
-    IntDetached is_leaf_;
+    IntDetached leaf_primitives_;
     IntDetached primitive_leaf_node_;
 
     std::vector<IntDetached> refit_levels_;

@@ -251,6 +251,12 @@ DRJIT_INLINE auto point_aabb_distance_sq(const Array<Float_, 3> &point,
 }
 
 template <typename Float_>
+DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
+                                          const Array<Float_, 3> &direction,
+                                          const Array<Float_, 3> &bbox_min,
+                                          const Array<Float_, 3> &bbox_max);
+
+template <typename Float_>
 DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
                                               const Array<Float_, 3> &segment,
                                               const Array<Float_, 3> &bbox_min,
