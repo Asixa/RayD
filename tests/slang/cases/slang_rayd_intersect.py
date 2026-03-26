@@ -1,4 +1,4 @@
-"""Test: Slang code calls raydSceneIntersect on a real rayd scene."""
+"""Test: Slang code calls sceneIntersect on a real rayd scene."""
 import json
 import rayd as rd
 import rayd.slang as rs

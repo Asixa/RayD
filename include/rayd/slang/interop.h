@@ -253,7 +253,7 @@ inline SceneHandle make_scene_handle(rayd::Scene &scene) noexcept {
     return SceneHandle(detail::encode_handle(&scene));
 }
 
-inline CameraHandle make_camera_handle(rayd::PerspectiveCamera &camera) noexcept {
+inline CameraHandle make_camera_handle(rayd::Camera &camera) noexcept {
     return CameraHandle(detail::encode_handle(&camera));
 }
 

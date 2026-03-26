@@ -1,15 +1,15 @@
 import rayd as rd
-import drjit.cuda as cuda
+import drjit as dr
 
 
 def make_scene() -> tuple[rd.Scene, rd.Mesh]:
     mesh = rd.Mesh(
-        cuda.Array3f(
+        dr.cuda.Array3f(
             [0.0, 1.0, 1.0, 0.0],
             [0.0, 0.0, 1.0, 1.0],
             [0.0, 0.0, 0.0, 0.0],
         ),
-        cuda.Array3i([0, 0], [1, 2], [2, 3]),
+        dr.cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
     mesh.configure()
 
@@ -25,7 +25,7 @@ def main() -> None:
     secondary_edges = mesh.secondary_edges()
     boundary_count = sum(bool(v) for v in list(secondary_edges.is_boundary))
 
-    queries = cuda.Array3f(
+    queries = dr.cuda.Array3f(
         [0.25, 1.20, -0.15, 0.50],
         [0.25, 0.50, 0.70, 1.20],
         [0.10, 0.00, 0.00, 0.00],
@@ -50,4 +50,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

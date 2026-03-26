@@ -3,57 +3,57 @@
 
 import rayd_slang;
 
-export bool testIntersect(RayDSceneHandle scene)
+export bool testIntersect(SceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsValid(hit);
+    Ray ray = makeRay(float3(0.25f, 0.25f, -1.0f), float3(0.0f, 0.0f, 1.0f));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsValid(hit);
 }
 
-export float testIntersectT(RayDSceneHandle scene)
+export float testIntersectT(SceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsT(hit);
+    Ray ray = makeRay(float3(0.25f, 0.25f, -1.0f), float3(0.0f, 0.0f, 1.0f));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsT(hit);
 }
 
-export bool testShadow(RayDSceneHandle scene)
+export bool testShadow(SceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(raydFloat3(0.25f, 0.25f, -1.0f), raydFloat3(0.0f, 0.0f, 1.0f));
-    return raydSceneShadowTest(scene, ray);
+    Ray ray = makeRay(float3(0.25f, 0.25f, -1.0f), float3(0.0f, 0.0f, 1.0f));
+    return sceneShadowTest(scene, ray);
 }
 
-export bool testNearestEdgePoint(RayDSceneHandle scene)
+export bool testNearestEdgePoint(SceneHandle scene)
 {
-    RayDFloat3 point = raydFloat3(0.25f, 0.1f, 0.0f);
-    RayDNearestPointEdge edge = raydSceneNearestEdgePoint(scene, point);
+    Float3 point = float3(0.25f, 0.1f, 0.0f);
+    NearestPointEdge edge = sceneNearestEdgePoint(scene, point);
     return edge.valid;  // ok: only accessed on non-cpp targets via default
 }
 
-export bool testNearestEdgeRay(RayDSceneHandle scene)
+export bool testNearestEdgeRay(SceneHandle scene)
 {
-    RayDRay ray = raydMakeRay(raydFloat3(0.2f, 0.4f, 1.0f), raydFloat3(0.0f, 0.0f, -1.0f));
-    RayDNearestRayEdge edge = raydSceneNearestEdgeRay(scene, ray);
+    Ray ray = makeRay(float3(0.2f, 0.4f, 1.0f), float3(0.0f, 0.0f, -1.0f));
+    NearestRayEdge edge = sceneNearestEdgeRay(scene, ray);
     return edge.valid;
 }
 
-export RayDRay testCameraSampleRay(RayDCameraHandle camera)
+export Ray testCameraSampleRay(CameraHandle camera)
 {
-    RayDFloat2 sample = raydFloat2(0.5f, 0.5f);
-    return raydCameraSampleRay(camera, sample);
+    Float2 sample = float2(0.5f, 0.5f);
+    return cameraSampleRay(camera, sample);
 }
 
-export RayDFloat3 testFloat3()
+export Float3 testFloat3()
 {
-    return raydFloat3(1.0f, 2.0f, 3.0f);
+    return float3(1.0f, 2.0f, 3.0f);
 }
 
-export RayDFloat2 testFloat2()
+export Float2 testFloat2()
 {
-    return raydFloat2(4.0f, 5.0f);
+    return float2(4.0f, 5.0f);
 }
 
-export RayDRay testMakeRay()
+export Ray testMakeRay()
 {
-    return raydMakeRay(raydFloat3(0.0f, 0.0f, 0.0f), raydFloat3(0.0f, 0.0f, 1.0f), 100.0f);
+    return makeRay(float3(0.0f, 0.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), 100.0f);
 }

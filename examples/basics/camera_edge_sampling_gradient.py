@@ -2,24 +2,22 @@ from pathlib import Path
 
 import rayd as rd
 import drjit as dr
-import drjit.cuda as cuda
-import drjit.cuda.ad as ad
 
 
-def make_cube_scene(tx: ad.Float) -> rd.Scene:
+def make_cube_scene(tx: dr.cuda.ad.Float) -> rd.Scene:
     mesh = rd.Mesh(
-        cuda.Array3f(
+        dr.cuda.Array3f(
             [-0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5],
             [-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5],
             [3.5, 3.5, 3.5, 3.5, 4.5, 4.5, 4.5, 4.5],
         ),
-        cuda.Array3i(
+        dr.cuda.Array3i(
             [0, 0, 4, 4, 0, 0, 1, 1, 0, 0, 3, 3],
             [2, 3, 5, 6, 7, 4, 2, 6, 1, 5, 7, 6],
             [1, 2, 6, 7, 3, 7, 6, 5, 5, 4, 6, 2],
         ),
     )
-    mesh.to_world_left = ad.Matrix4f(
+    mesh.to_world_left = dr.cuda.ad.Matrix4f(
         [
             [1.0, 0.0, 0.0, tx],
             [0.0, 1.0, 0.0, 0.0],
@@ -42,7 +40,7 @@ def make_camera(width: int, height: int) -> rd.Camera:
     return camera
 
 
-def save_gradient_image(path: Path, image: ad.TensorXf) -> None:
+def save_gradient_image(path: Path, image: dr.cuda.ad.TensorXf) -> None:
     try:
         import matplotlib
 
@@ -74,7 +72,7 @@ def main() -> None:
     width = 128
     height = 128
 
-    tx = ad.Float([0.0])
+    tx = dr.cuda.ad.Float([0.0])
     dr.enable_grad(tx)
 
     scene = make_cube_scene(tx)
@@ -100,4 +98,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

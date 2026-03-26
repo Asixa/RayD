@@ -286,46 +286,46 @@ NB_MODULE(rayd, m) {
     });
 
     bind_section("camera", [&]() {
-        nb::class_<PerspectiveCamera>(m, "Camera")
+        nb::class_<Camera>(m, "Camera")
             .def(nb::init<float, float, float>(), "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
             .def(nb::init<float, float, float, float, float, float>(),
                  "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
             .def_static("perspective",
                  [](float fov_x, float near_clip, float far_clip) {
-                     return PerspectiveCamera(fov_x, near_clip, far_clip);
+                     return Camera(fov_x, near_clip, far_clip);
                  },
                  "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
             .def_static("from_intrinsics",
                  [](float fx, float fy, float cx, float cy, float near_clip, float far_clip) {
-                     return PerspectiveCamera(fx, fy, cx, cy, near_clip, far_clip);
+                     return Camera(fx, fy, cx, cy, near_clip, far_clip);
                  },
                  "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def("configure", &PerspectiveCamera::configure, "cache"_a = true)
-            .def("render", &PerspectiveCamera::render, "scene"_a, "background"_a = 0.f)
-            .def("render_grad", &PerspectiveCamera::render_grad, "scene"_a, "spp"_a = 4, "background"_a = 0.f)
-            .def("prepare_edges", &PerspectiveCamera::prepare_primary_edges, "scene"_a)
+            .def("configure", &Camera::configure, "cache"_a = true)
+            .def("render", &Camera::render, "scene"_a, "background"_a = 0.f)
+            .def("render_grad", &Camera::render_grad, "scene"_a, "spp"_a = 4, "background"_a = 0.f)
+            .def("prepare_edges", &Camera::prepare_primary_edges, "scene"_a)
             .def("sample_ray",
-                 nb::overload_cast<const Vector2fDetached &>(&PerspectiveCamera::sample_primary_ray, nb::const_),
+                 nb::overload_cast<const Vector2fDetached &>(&Camera::sample_primary_ray, nb::const_),
                  "sample"_a)
             .def("sample_ray",
-                 nb::overload_cast<const Vector2f &>(&PerspectiveCamera::sample_primary_ray, nb::const_),
+                 nb::overload_cast<const Vector2f &>(&Camera::sample_primary_ray, nb::const_),
                  "sample"_a)
-            .def("sample_edge", &PerspectiveCamera::sample_primary_edge, "sample1"_a)
-            .def("set_transform", &PerspectiveCamera::set_transform, "mat"_a, "set_left"_a = true)
-            .def("append_transform", &PerspectiveCamera::append_transform, "mat"_a, "append_left"_a = true)
-            .def_prop_rw("width", &PerspectiveCamera::width, &PerspectiveCamera::set_width)
-            .def_prop_rw("height", &PerspectiveCamera::height, &PerspectiveCamera::set_height)
-            .def_prop_rw("to_world", &PerspectiveCamera::to_world, &PerspectiveCamera::set_to_world)
-            .def_prop_rw("to_world_left", &PerspectiveCamera::to_world_left, &PerspectiveCamera::set_to_world_left)
-            .def_prop_rw("to_world_right", &PerspectiveCamera::to_world_right, &PerspectiveCamera::set_to_world_right)
-            .def_prop_ro("camera_to_sample", &PerspectiveCamera::camera_to_sample)
-            .def_prop_ro("sample_to_camera", &PerspectiveCamera::sample_to_camera)
-            .def_prop_ro("world_to_sample", &PerspectiveCamera::world_to_sample)
-            .def_prop_ro("sample_to_world", &PerspectiveCamera::sample_to_world)
-            .def_prop_ro("slang_handle", [](PerspectiveCamera &c) -> uint64_t {
+            .def("sample_edge", &Camera::sample_primary_edge, "sample1"_a)
+            .def("set_transform", &Camera::set_transform, "mat"_a, "set_left"_a = true)
+            .def("append_transform", &Camera::append_transform, "mat"_a, "append_left"_a = true)
+            .def_prop_rw("width", &Camera::width, &Camera::set_width)
+            .def_prop_rw("height", &Camera::height, &Camera::set_height)
+            .def_prop_rw("to_world", &Camera::to_world, &Camera::set_to_world)
+            .def_prop_rw("to_world_left", &Camera::to_world_left, &Camera::set_to_world_left)
+            .def_prop_rw("to_world_right", &Camera::to_world_right, &Camera::set_to_world_right)
+            .def_prop_ro("camera_to_sample", &Camera::camera_to_sample)
+            .def_prop_ro("sample_to_camera", &Camera::sample_to_camera)
+            .def_prop_ro("world_to_sample", &Camera::world_to_sample)
+            .def_prop_ro("sample_to_world", &Camera::sample_to_world)
+            .def_prop_ro("slang_handle", [](Camera &c) -> uint64_t {
                 return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&c));
             })
-            .def("__repr__", &PerspectiveCamera::to_string);
+            .def("__repr__", &Camera::to_string);
     });
 
     bind_section("scene", [&]() {

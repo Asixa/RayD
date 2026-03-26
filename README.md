@@ -1,5 +1,7 @@
 # RayD
 
+[![PyPI](https://img.shields.io/pypi/v/rayd)](https://pypi.org/project/rayd/) [![Downloads](https://img.shields.io/pypi/dm/rayd)](https://pypi.org/project/rayd/) ![Code Size](https://img.shields.io/github/languages/code-size/Asixa/RayD) ![Total Lines](https://tokei.tvj.one/b1/github/Asixa/RayD?style=flat) [![License](https://img.shields.io/github/license/Asixa/RayD)](LICENSE)
+
 RayD is a minimalist differentiable ray tracing package wrapping OptiX ray tracing with Dr.Jit autodiff.
 
 ```bash
@@ -51,9 +53,9 @@ If you only want to see the package in action, start here:
 
 ### Differentiable Cornell Box with Edge Sampling
 
-GPU path tracing + interior AD + [edge sampling (Li et al.)](https://people.csail.mit.edu/tzumao/diffrt/) in ~180 lines ([`examples/renderer/optical.py`](examples/renderer/optical.py)):
+GPU path tracing + interior AD + edge sampling [(Li et al.)](https://people.csail.mit.edu/tzumao/diffrt/) in ~180 lines ([`examples/renderer/cornell_box.py`](examples/renderer/cornell_box.py)):
 
-![Differentiable Cornell box render and edge-AD gradient](examples/renderer/optical.png)
+![Differentiable Cornell box render and edge-AD gradient](examples/renderer/cornell_box.png)
 
 Build meshes, put them in a scene, launch rays, define a loss, and backpropagate through geometry.
 
@@ -64,18 +66,16 @@ The example below traces a single ray against one triangle and backpropagates th
 ```python
 import rayd as rd
 import drjit as dr
-import drjit.cuda as cuda
-import drjit.cuda.ad as ad
 
 
 mesh = rd.Mesh(
-    cuda.Array3f([0.0, 1.0, 0.0],
-                 [0.0, 0.0, 1.0],
-                 [0.0, 0.0, 0.0]),
-    cuda.Array3i([0], [1], [2]),
+    dr.cuda.Array3f([0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, 0.0]),
+    dr.cuda.Array3i([0], [1], [2]),
 )
 
-verts = ad.Array3f(
+verts = dr.cuda.ad.Array3f(
     [0.0, 1.0, 0.0],
     [0.0, 0.0, 1.0],
     [0.0, 0.0, 0.0],
@@ -89,8 +89,8 @@ scene.add_mesh(mesh)
 scene.configure()
 
 ray = rd.Ray(
-    ad.Array3f([0.25], [0.25], [-1.0]),
-    ad.Array3f([0.0], [0.0], [1.0]),
+    dr.cuda.ad.Array3f([0.25], [0.25], [-1.0]),
+    dr.cuda.ad.Array3f([0.0], [0.0], [1.0]),
 )
 
 its = scene.intersect(ray)
@@ -142,10 +142,10 @@ export float traceRayT(uint64_t sceneHandle,
                        float ox, float oy, float oz,
                        float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsT(hit);  // use accessor, not hit.t
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsT(hit);  // use accessor, not hit.t
 }
 ```
 
@@ -166,18 +166,18 @@ t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 
 ### Differentiable Slang Example
 
-`raydSceneIntersectAD` returns an `IntersectionAD` with analytic gradients `dt_do` (∂t/∂origin) and `dt_dd` (∂t/∂direction):
+`sceneIntersectAD` returns an `IntersectionAD` with analytic gradients `dt_do` (∂t/∂origin) and `dt_dd` (∂t/∂direction):
 
 ```slang
 import rayd_slang;
 
-export RayDIntersectionAD traceAD(uint64_t sceneHandle,
-                                  float ox, float oy, float oz,
-                                  float dx, float dy, float dz)
+export IntersectionAD traceAD(uint64_t sceneHandle,
+                              float ox, float oy, float oz,
+                              float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydSceneIntersectAD(scene, ray);
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    return sceneIntersectAD(scene, ray);
 }
 ```
 

@@ -47,7 +47,7 @@ Scene::Scene()
       edge_bvh_(std::make_unique<SceneEdge>()) {}
 
 Scene::~Scene() {
-    for (PerspectiveCamera *camera : primary_edge_observers_) {
+    for (Camera *camera : primary_edge_observers_) {
         if (camera != nullptr) {
             camera->clear_primary_edge_scene_binding(this);
         }
@@ -218,20 +218,20 @@ void Scene::ensure_edge_bvh_ready() const {
     edge_bvh_dirty_ = false;
 }
 
-void Scene::register_primary_edge_observer(PerspectiveCamera *camera) {
+void Scene::register_primary_edge_observer(Camera *camera) {
     auto it = std::find(primary_edge_observers_.begin(), primary_edge_observers_.end(), camera);
     if (it == primary_edge_observers_.end()) {
         primary_edge_observers_.push_back(camera);
     }
 }
 
-void Scene::unregister_primary_edge_observer(PerspectiveCamera *camera) {
+void Scene::unregister_primary_edge_observer(Camera *camera) {
     auto it = std::remove(primary_edge_observers_.begin(), primary_edge_observers_.end(), camera);
     primary_edge_observers_.erase(it, primary_edge_observers_.end());
 }
 
 void Scene::invalidate_primary_edge_observers() {
-    for (PerspectiveCamera *camera : primary_edge_observers_) {
+    for (Camera *camera : primary_edge_observers_) {
         if (camera != nullptr) {
             camera->invalidate_primary_edges_from_scene(this);
         }

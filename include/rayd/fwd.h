@@ -32,7 +32,7 @@ struct PrimaryEdgeSample;
 struct OptixIntersection;
 
 class Mesh;
-class PerspectiveCamera;
+class Camera;
 class OptixScene;
 class SceneEdge;
 class Scene;

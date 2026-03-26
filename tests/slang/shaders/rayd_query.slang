@@ -9,29 +9,29 @@ export float traceRayT(uint64_t sceneHandle,
                        float ox, float oy, float oz,
                        float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsT(hit);
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsT(hit);
 }
 
 export bool traceRayHit(uint64_t sceneHandle,
                         float ox, float oy, float oz,
                         float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsValid(hit);
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsValid(hit);
 }
 
 export bool shadowTest(uint64_t sceneHandle,
                        float ox, float oy, float oz,
                        float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydSceneShadowTest(scene, ray);
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    return sceneShadowTest(scene, ray);
 }
 
 // ---- queries returning processed scalar results (for gradient tests) ----
@@ -41,11 +41,11 @@ export float inverseDepth(uint64_t sceneHandle,
                           float ox, float oy, float oz,
                           float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    float t = raydItsT(hit);
-    return raydItsValid(hit) ? 1.0f / t : 0.0f;
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    float t = itsT(hit);
+    return itsValid(hit) ? 1.0f / t : 0.0f;
 }
 
 // Hit-point z coordinate
@@ -53,11 +53,11 @@ export float hitPointZ(uint64_t sceneHandle,
                        float ox, float oy, float oz,
                        float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    RayDFloat3 p = raydItsP(hit);
-    return raydItsValid(hit) ? raydF3Z(p) : 0.0f;
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    Float3 p = itsP(hit);
+    return itsValid(hit) ? f3Z(p) : 0.0f;
 }
 
 // Squared depth: t^2
@@ -65,9 +65,9 @@ export float squaredDepth(uint64_t sceneHandle,
                           float ox, float oy, float oz,
                           float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    float t = raydItsT(hit);
-    return raydItsValid(hit) ? t * t : 0.0f;
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    float t = itsT(hit);
+    return itsValid(hit) ? t * t : 0.0f;
 }

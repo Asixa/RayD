@@ -17,11 +17,12 @@ RayD provides a Slang interop layer that lets Slang code call RayD scene queries
 ```python
 import rayd.slang as rs
 
-# Compile a .slang file that calls raydSceneIntersect, link against rayd_core
+# Compile a .slang file that calls sceneIntersect, link against rayd_core
 m = rs.load_module("my_shader.slang")  # use rayd.slang.load_module, not slangtorch.loadModule
 
 # Create a scene and get its handle
-import rayd as rd, drjit.cuda as cuda
+import rayd as rd
+import drjit as dr
 scene = rd.Scene()
 scene.add_mesh(rd.Mesh(v, f))
 scene.configure()
@@ -32,7 +33,7 @@ t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 
 ## Writing Slang Code
 
-Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** — use the `raydIts*`, `raydF3*`, `raydRay*` accessors instead, because `slangc` mangles field names when targeting C++.
+Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** — use the `its*`, `f3*`, `ray*` accessors instead, because `slangc` mangles field names when targeting C++.
 
 Two import styles are supported:
 
@@ -48,29 +49,29 @@ export float traceRayT(uint64_t sceneHandle,
                        float ox, float oy, float oz,
                        float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    RayDIntersection hit = raydSceneIntersect(scene, ray);
-    return raydItsT(hit);       // NOT hit.t — use the accessor
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    Intersection hit = sceneIntersect(scene, ray);
+    return itsT(hit);       // NOT hit.t — use the accessor
 }
 ```
 
 ### Available Functions
 
 **Constructors:**
-`raydFloat2(x,y)`, `raydFloat3(x,y,z)`, `raydMakeRay(o,d,tmax)`, `raydMakeSceneHandle(uint64)`, `raydMakeCameraHandle(uint64)`
+`float2(x,y)`, `float3(x,y,z)`, `makeRay(o,d,tmax)`, `makeSceneHandle(uint64)`, `makeCameraHandle(uint64)`
 
 **Intersection accessors:**
-`raydItsValid(h)`, `raydItsT(h)`, `raydItsP(h)`, `raydItsN(h)`, `raydItsGeoN(h)`, `raydItsUV(h)`, `raydItsBarycentric(h)`, `raydItsShapeId(h)`, `raydItsPrimId(h)`
+`itsValid(h)`, `itsT(h)`, `itsP(h)`, `itsN(h)`, `itsGeoN(h)`, `itsUV(h)`, `itsBarycentric(h)`, `itsShapeId(h)`, `itsPrimId(h)`
 
 **Float/Ray accessors:**
-`raydF2X/Y`, `raydF3X/Y/Z`, `raydRayO`, `raydRayD`, `raydRayTmax`
+`f2X/Y`, `f3X/Y/Z`, `rayO`, `rayD`, `rayTmax`
 
 **Scene queries:**
-`raydSceneIntersect(scene, ray)`, `raydSceneShadowTest(scene, ray)`, `raydSceneNearestEdgePoint(scene, point)`, `raydSceneNearestEdgeRay(scene, ray)`
+`sceneIntersect(scene, ray)`, `sceneShadowTest(scene, ray)`, `sceneNearestEdgePoint(scene, point)`, `sceneNearestEdgeRay(scene, ray)`
 
 **Camera queries:**
-`raydCameraSampleRay(camera, sample)`, `raydCameraSamplePrimaryEdge(camera, s)`, `raydCameraSetResolution(camera, w, h)`, `raydCameraConfigure(camera)`, `raydCameraPrepareEdges(camera, scene)`
+`cameraSampleRay(camera, sample)`, `cameraSamplePrimaryEdge(camera, s)`, `cameraSetResolution(camera, w, h)`, `cameraConfigure(camera)`, `cameraPrepareEdges(camera, scene)`
 
 ## Compilation Pipeline
 
@@ -158,7 +159,7 @@ The original `rayd.slang` used `__requirePrelude(R"(#include <rayd/slang/interop
 
 ### slangc field-name mangling
 
-`slangc` appends `_0`, `_1`, etc. to struct field names in generated C++ code, even for types annotated with `__target_intrinsic(cpp, ...)`. This means `hit.t` in Slang becomes `hit.t_0` in C++, which does not match the actual C++ struct. The solution is to **never access struct fields directly** in Slang — use the provided accessor functions (`raydItsT`, `raydF3X`, etc.) which use `__intrinsic_asm` to emit correct C++ field access.
+`slangc` appends `_0`, `_1`, etc. to struct field names in generated C++ code, even for types annotated with `__target_intrinsic(cpp, ...)`. This means `hit.t` in Slang becomes `hit.t_0` in C++, which does not match the actual C++ struct. The solution is to **never access struct fields directly** in Slang — use the provided accessor functions (`itsT`, `f3X`, etc.) which use `__intrinsic_asm` to emit correct C++ field access.
 
 ### Windows non-English locale
 

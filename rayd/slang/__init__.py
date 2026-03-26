@@ -172,7 +172,7 @@ def load_module(
         The ``.slang`` source file.
     link_rayd : bool
         ``True`` (default): compile to C++ host code via ``slangc`` and link
-        against ``rayd_core`` so that ``raydSceneIntersect`` etc. work.
+        against ``rayd_core`` so that ``sceneIntersect`` etc. work.
         ``False``: delegate to ``slangtorch.loadModule`` for CUDA kernels.
     include_paths : list[str], optional
         Additional ``-I`` paths for ``slangc``.

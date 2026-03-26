@@ -1,15 +1,15 @@
 import rayd as rd
-import drjit.cuda as cuda
+import drjit as dr
 
 
 def make_scene() -> rd.Scene:
     mesh = rd.Mesh(
-        cuda.Array3f(
+        dr.cuda.Array3f(
             [-1.0, 1.0, 1.0, -1.0],
             [-1.0, -1.0, 1.0, 1.0],
             [3.0, 3.0, 3.0, 3.0],
         ),
-        cuda.Array3i([0, 0], [1, 2], [2, 3]),
+        dr.cuda.Array3i([0, 0], [1, 2], [2, 3]),
     )
 
     scene = rd.Scene()
@@ -22,12 +22,12 @@ def main() -> None:
     scene = make_scene()
 
     rays = rd.RayDetached(
-        cuda.Array3f(
+        dr.cuda.Array3f(
             [0.0, 0.75, 1.5, -0.5],
             [0.0, 0.75, 0.0, -0.5],
             [-1.0, -1.0, -1.0, -1.0],
         ),
-        cuda.Array3f(
+        dr.cuda.Array3f(
             [0.0, 0.0, 0.0, 0.0],
             [0.0, 0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0, 1.0],
@@ -50,4 +50,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

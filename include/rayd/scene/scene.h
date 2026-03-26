@@ -75,8 +75,8 @@ private:
     void scatter_mesh_edge_data(const SceneMeshRecord &record);
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
-    void register_primary_edge_observer(PerspectiveCamera *camera);
-    void unregister_primary_edge_observer(PerspectiveCamera *camera);
+    void register_primary_edge_observer(Camera *camera);
+    void unregister_primary_edge_observer(Camera *camera);
     void invalidate_primary_edge_observers();
 
     int mesh_count_ = 0;
@@ -100,12 +100,12 @@ private:
     int edge_count_ = 0;
     mutable bool edge_bvh_dirty_ = false;
     mutable std::vector<EdgeDirtyRange> pending_edge_bvh_dirty_ranges_;
-    std::vector<PerspectiveCamera *> primary_edge_observers_;
+    std::vector<Camera *> primary_edge_observers_;
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     SceneCommitProfile last_commit_profile_;
 
-    friend class PerspectiveCamera;
+    friend class Camera;
 };
 
 } // namespace rayd

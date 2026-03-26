@@ -24,14 +24,14 @@ FloatDetached compute_cdf(const FloatDetached &pmf) {
     const size_t size = pmf.size();
     const ScalarFloat *pmf_ptr = pmf.data();
 
-    require(size > 0, "PerspectiveCamera::DiscreteDistribution::init(): empty distribution.");
+    require(size > 0, "Camera::DiscreteDistribution::init(): empty distribution.");
 
     std::vector<ScalarFloat> cdf(size);
     double sum = 0.0;
     for (uint32_t index = 0; index < size; ++index) {
         const double value = static_cast<double>(*pmf_ptr++);
         require(value >= 0.0,
-                "PerspectiveCamera::DiscreteDistribution::init(): entries must be non-negative.");
+                "Camera::DiscreteDistribution::init(): entries must be non-negative.");
 
         sum += value;
         cdf[index] = static_cast<ScalarFloat>(sum);
@@ -41,18 +41,18 @@ FloatDetached compute_cdf(const FloatDetached &pmf) {
 }
 
 Float render_edge_grad_flat(const Scene &scene,
-                            const PerspectiveCamera &camera,
+                            const Camera &camera,
                             int spp,
                             float background) {
-    require(spp > 0, "PerspectiveCamera::render_grad(): spp must be positive.");
+    require(spp > 0, "Camera::render_grad(): spp must be positive.");
     require(camera.width() > 0 && camera.height() > 0,
-            "PerspectiveCamera::render_grad(): camera resolution must be positive.");
+            "Camera::render_grad(): camera resolution must be positive.");
 
     const int sample_count = camera.width() * camera.height() * spp;
     const FloatDetached samples =
         (arange<FloatDetached>(sample_count) + 0.5f) / static_cast<float>(sample_count);
 
-    PerspectiveCamera prepared_camera(camera);
+    Camera prepared_camera(camera);
     prepared_camera.prepare_primary_edges(scene);
 
     const PrimaryEdgeSample edge_samples = prepared_camera.sample_primary_edge(samples);
@@ -80,13 +80,13 @@ Float render_edge_grad_flat(const Scene &scene,
 
 } // namespace
 
-PerspectiveCamera::PerspectiveCamera(float fov_x, float near_clip, float far_clip)
+Camera::Camera(float fov_x, float near_clip, float far_clip)
     : field_of_view_x_(fov_x),
       near_clip_(near_clip),
       far_clip_(far_clip),
       uses_intrinsics_(false) {}
 
-PerspectiveCamera::PerspectiveCamera(float fx, float fy, float cx, float cy,
+Camera::Camera(float fx, float fy, float cx, float cy,
                                      float near_clip, float far_clip)
     : focal_length_x_(fx),
       focal_length_y_(fy),
@@ -96,14 +96,14 @@ PerspectiveCamera::PerspectiveCamera(float fx, float fy, float cx, float cy,
       far_clip_(far_clip),
       uses_intrinsics_(true) {}
 
-PerspectiveCamera::~PerspectiveCamera() {
+Camera::~Camera() {
     if (primary_edge_scene_ != nullptr) {
         const_cast<Scene *>(primary_edge_scene_)->unregister_primary_edge_observer(this);
         primary_edge_scene_ = nullptr;
     }
 }
 
-void PerspectiveCamera::DiscreteDistribution::init(const FloatDetached &pmf) {
+void Camera::DiscreteDistribution::init(const FloatDetached &pmf) {
     size_ = static_cast<int>(pmf.size());
     sum_ = sum(pmf);
     pmf_ = pmf;
@@ -116,7 +116,7 @@ void PerspectiveCamera::DiscreteDistribution::init(const FloatDetached &pmf) {
 }
 
 std::pair<IntDetached, FloatDetached>
-PerspectiveCamera::DiscreteDistribution::sample(const FloatDetached &samples) const {
+Camera::DiscreteDistribution::sample(const FloatDetached &samples) const {
     if (size_ == 1) {
         return { zeros<IntDetached>(), full<FloatDetached>(1.f) };
     }
@@ -130,7 +130,7 @@ PerspectiveCamera::DiscreteDistribution::sample(const FloatDetached &samples) co
     return { indices, gather<FloatDetached>(pmf_, indices) / sum_ };
 }
 
-void PerspectiveCamera::set_transform(const Matrix4f &matrix, bool set_left) {
+void Camera::set_transform(const Matrix4f &matrix, bool set_left) {
     if (set_left) {
         left_transform_ = matrix;
     } else {
@@ -140,7 +140,7 @@ void PerspectiveCamera::set_transform(const Matrix4f &matrix, bool set_left) {
     primary_edges_ready_ = false;
 }
 
-void PerspectiveCamera::append_transform(const Matrix4f &matrix, bool append_left) {
+void Camera::append_transform(const Matrix4f &matrix, bool append_left) {
     if (append_left) {
         left_transform_ = matrix * left_transform_;
     } else {
@@ -150,9 +150,9 @@ void PerspectiveCamera::append_transform(const Matrix4f &matrix, bool append_lef
     primary_edges_ready_ = false;
 }
 
-void PerspectiveCamera::configure(bool cache) {
+void Camera::configure(bool cache) {
     require(image_width_ > 0 && image_height_ > 0,
-            "PerspectiveCamera::configure(): width and height must be positive.");
+            "Camera::configure(): width and height must be positive.");
 
     aspect_ratio_ = static_cast<float>(image_width_) / static_cast<float>(image_height_);
 
@@ -203,11 +203,11 @@ void PerspectiveCamera::configure(bool cache) {
     primary_edges_ready_ = false;
 }
 
-void PerspectiveCamera::prepare_primary_edges(const Scene &scene) {
-    require(is_ready_, "PerspectiveCamera::prepare_primary_edges(): camera is not configured.");
-    require(scene.is_ready(), "PerspectiveCamera::prepare_primary_edges(): scene is not configured.");
+void Camera::prepare_primary_edges(const Scene &scene) {
+    require(is_ready_, "Camera::prepare_primary_edges(): camera is not configured.");
+    require(scene.is_ready(), "Camera::prepare_primary_edges(): scene is not configured.");
     require(!scene.has_pending_updates(),
-            "PerspectiveCamera::prepare_primary_edges(): scene has pending updates. Call Scene::commit_updates() first.");
+            "Camera::prepare_primary_edges(): scene has pending updates. Call Scene::commit_updates() first.");
 
     const std::vector<const Mesh *> meshes = scene.meshes();
     std::vector<VectoriT<5, true>> candidate_edges(meshes.size());
@@ -327,7 +327,7 @@ void PerspectiveCamera::prepare_primary_edges(const Scene &scene) {
     attach_primary_edge_scene(scene);
 }
 
-void PerspectiveCamera::attach_primary_edge_scene(const Scene &scene) {
+void Camera::attach_primary_edge_scene(const Scene &scene) {
     if (primary_edge_scene_ == &scene) {
         const_cast<Scene &>(scene).register_primary_edge_observer(this);
         return;
@@ -341,20 +341,20 @@ void PerspectiveCamera::attach_primary_edge_scene(const Scene &scene) {
     const_cast<Scene &>(scene).register_primary_edge_observer(this);
 }
 
-void PerspectiveCamera::invalidate_primary_edges_from_scene(const Scene *scene) {
+void Camera::invalidate_primary_edges_from_scene(const Scene *scene) {
     if (primary_edge_scene_ == scene) {
         primary_edges_ready_ = false;
     }
 }
 
-void PerspectiveCamera::clear_primary_edge_scene_binding(const Scene *scene) {
+void Camera::clear_primary_edge_scene_binding(const Scene *scene) {
     if (primary_edge_scene_ == scene) {
         primary_edge_scene_ = nullptr;
         primary_edges_ready_ = false;
     }
 }
 
-std::string PerspectiveCamera::to_string() const {
+std::string Camera::to_string() const {
     std::stringstream stream;
     stream << "Camera[width=" << image_width_
            << ", height=" << image_height_;
@@ -370,8 +370,8 @@ std::string PerspectiveCamera::to_string() const {
     return stream.str();
 }
 
-RayDetached PerspectiveCamera::sample_primary_ray(const Vector2fDetached &samples) const {
-    require(is_ready_, "PerspectiveCamera::sample_primary_ray(): camera is not configured.");
+RayDetached Camera::sample_primary_ray(const Vector2fDetached &samples) const {
+    require(is_ready_, "Camera::sample_primary_ray(): camera is not configured.");
 
     const Vector3fDetached sample_direction =
         normalize(transform_pos<FloatDetached>(detach<false>(sample_to_camera_),
@@ -381,8 +381,8 @@ RayDetached PerspectiveCamera::sample_primary_ray(const Vector2fDetached &sample
                 transform_dir<FloatDetached>(to_world_matrix, sample_direction));
 }
 
-Ray PerspectiveCamera::sample_primary_ray(const Vector2f &samples) const {
-    require(is_ready_, "PerspectiveCamera::sample_primary_ray(): camera is not configured.");
+Ray Camera::sample_primary_ray(const Vector2f &samples) const {
+    require(is_ready_, "Camera::sample_primary_ray(): camera is not configured.");
 
     const Vector3f sample_direction =
         detach<false>(normalize(transform_pos<Float>(sample_to_camera_,
@@ -392,9 +392,9 @@ Ray PerspectiveCamera::sample_primary_ray(const Vector2f &samples) const {
                 transform_dir<Float>(to_world_matrix, sample_direction));
 }
 
-PrimaryEdgeSample PerspectiveCamera::sample_primary_edge(const FloatDetached &sample) const {
+PrimaryEdgeSample Camera::sample_primary_edge(const FloatDetached &sample) const {
     require(primary_edges_ready_,
-            "PerspectiveCamera::sample_primary_edge(): primary edges are not prepared.");
+            "Camera::sample_primary_edge(): primary edges are not prepared.");
 
     FloatDetached edge_sample = sample;
     PrimaryEdgeSample result;
@@ -431,11 +431,11 @@ PrimaryEdgeSample PerspectiveCamera::sample_primary_edge(const FloatDetached &sa
     return result;
 }
 
-drjit::Tensor<Float> PerspectiveCamera::render(const Scene &scene, float background) const {
-    require(is_ready_, "PerspectiveCamera::render(): camera is not configured.");
-    require(scene.is_ready(), "PerspectiveCamera::render(): scene is not configured.");
+drjit::Tensor<Float> Camera::render(const Scene &scene, float background) const {
+    require(is_ready_, "Camera::render(): camera is not configured.");
+    require(scene.is_ready(), "Camera::render(): scene is not configured.");
     require(!scene.has_pending_updates(),
-            "PerspectiveCamera::render(): scene has pending updates. Call Scene::commit_updates() first.");
+            "Camera::render(): scene has pending updates. Call Scene::commit_updates() first.");
 
     const Vector2f samples = make_pixel_centers(image_width_, image_height_);
     const Ray rays = sample_primary_ray(samples);
@@ -449,8 +449,8 @@ drjit::Tensor<Float> PerspectiveCamera::render(const Scene &scene, float backgro
     return drjit::Tensor<Float>(image, 2, shape);
 }
 
-drjit::Tensor<Float> PerspectiveCamera::render_grad(const Scene &scene, int spp, float background) const {
-    require(is_ready_, "PerspectiveCamera::render_grad(): camera is not configured.");
+drjit::Tensor<Float> Camera::render_grad(const Scene &scene, int spp, float background) const {
+    require(is_ready_, "Camera::render_grad(): camera is not configured.");
 
     const Float image = render_edge_grad_flat(scene, *this, spp, background);
     const size_t shape[2] = {

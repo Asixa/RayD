@@ -13,12 +13,12 @@ namespace rayd {
 class Scene;
 
 /// Perspective camera with optional intrinsic calibration and primary-edge sampling.
-class PerspectiveCamera final {
+class Camera final {
 public:
-    PerspectiveCamera(float fov_x = 45.f, float near_clip = 1e-4f, float far_clip = 1e4f);
-    PerspectiveCamera(float fx, float fy, float cx, float cy,
-                      float near_clip = 1e-4f, float far_clip = 1e4f);
-    ~PerspectiveCamera();
+    Camera(float fov_x = 45.f, float near_clip = 1e-4f, float far_clip = 1e4f);
+    Camera(float fx, float fy, float cx, float cy,
+           float near_clip = 1e-4f, float far_clip = 1e4f);
+    ~Camera();
 
     /// Rebuild camera transforms and cached projection data.
     void configure(bool cache = true);

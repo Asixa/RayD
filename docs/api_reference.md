@@ -357,13 +357,13 @@ Interpretation:
 
 ```python
 import rayd as rd
-import drjit.cuda as cuda
+import drjit as dr
 
 mesh = rd.Mesh(
-    cuda.Array3f([0.0, 1.0, 0.0],
-                 [0.0, 0.0, 1.0],
-                 [0.0, 0.0, 0.0]),
-    cuda.Array3i([0], [1], [2]),
+    dr.cuda.Array3f([0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, 0.0, 0.0]),
+    dr.cuda.Array3i([0], [1], [2]),
 )
 
 scene = rd.Scene()
@@ -371,8 +371,8 @@ scene.add_mesh(mesh)
 scene.configure()
 
 ray = rd.Ray(
-    cuda.Array3f([0.25], [0.25], [-1.0]),
-    cuda.Array3f([0.0], [0.0], [1.0]),
+    dr.cuda.Array3f([0.25], [0.25], [-1.0]),
+    dr.cuda.Array3f([0.0], [0.0], [1.0]),
 )
 
 its = scene.intersect(ray)
@@ -382,9 +382,9 @@ its = scene.intersect(ray)
 
 ```python
 import rayd as rd
-import drjit.cuda as cuda
+import drjit as dr
 
-points = cuda.Array3f([0.25], [0.1], [0.0])
+points = dr.cuda.Array3f([0.25], [0.1], [0.0])
 edge = scene.nearest_edge(points)
 ```
 
@@ -392,13 +392,13 @@ edge = scene.nearest_edge(points)
 
 ```python
 import rayd as rd
-import drjit.cuda as cuda
+import drjit as dr
 
 ray = rd.Ray(
-    cuda.Array3f([0.2], [0.4], [1.0]),
-    cuda.Array3f([0.0], [0.0], [-1.0]),
+    dr.cuda.Array3f([0.2], [0.4], [1.0]),
+    dr.cuda.Array3f([0.0], [0.0], [-1.0]),
 )
-ray.tmax = cuda.Float([2.0])
+ray.tmax = dr.cuda.Float([2.0])
 edge = scene.nearest_edge(ray)
 ```
 

@@ -9,14 +9,14 @@ import rayd_slang;
 
 // ---- Full AD result (one-shot forward + backward) ----
 
-export RayDIntersectionAD traceAD(
+export IntersectionAD traceAD(
     uint64_t sceneHandle,
     float ox, float oy, float oz,
     float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydSceneIntersectAD(scene, ray);
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    return sceneIntersectAD(scene, ray);
 }
 
 // ---- Forward: returns t ----
@@ -26,8 +26,7 @@ export float traceTFwd(
     float ox, float oy, float oz,
     float dx, float dy, float dz)
 {
-    RayDSceneHandle scene = raydMakeSceneHandle(sceneHandle);
-    RayDRay ray = raydMakeRay(raydFloat3(ox, oy, oz), raydFloat3(dx, dy, dz));
-    return raydItsADT(raydSceneIntersectAD(scene, ray));
+    SceneHandle scene = makeSceneHandle(sceneHandle);
+    Ray ray = makeRay(float3(ox, oy, oz), float3(dx, dy, dz));
+    return itsADT(sceneIntersectAD(scene, ray));
 }
-

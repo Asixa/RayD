@@ -2,7 +2,7 @@
 
 import argparse, time
 from pathlib import Path
-import drjit as dr, drjit.cuda as cuda, drjit.cuda.ad as ad
+import drjit as dr
 import matplotlib.pyplot as plt, numpy as np
 import rayd as rd
 
@@ -12,15 +12,15 @@ LIGHT_N, LIGHT_AREA, LIGHT_E = np.float32([0, -1, 0]), 0.30, np.float32([18, 16,
 
 def arr3(v):
     v = np.asarray(v, dtype=np.float32)
-    return cuda.Array3f(v[:, 0].tolist(), v[:, 1].tolist(), v[:, 2].tolist())
+    return dr.cuda.Array3f(v[:, 0].tolist(), v[:, 1].tolist(), v[:, 2].tolist())
 
 def quad(a, b, c, d):
-    return rd.Mesh(arr3([a, b, c, d]), cuda.Array3i([0, 0], [1, 2], [2, 3]))
+    return rd.Mesh(arr3([a, b, c, d]), dr.cuda.Array3i([0, 0], [1, 2], [2, 3]))
 
 def box(lo, hi):
     x0, y0, z0 = lo; x1, y1, z1 = hi
     v = arr3([[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]])
-    f = cuda.Array3i([0,0,4,4,0,0,1,1,0,0,3,3],[2,3,5,6,7,4,2,6,1,5,7,6],[1,2,6,7,3,7,6,5,5,4,6,2])
+    f = dr.cuda.Array3i([0,0,4,4,0,0,1,1,0,0,3,3],[2,3,5,6,7,4,2,6,1,5,7,6],[1,2,6,7,3,7,6,5,5,4,6,2])
     m = rd.Mesh(v, f); m.use_face_normals = True; return m
 
 def build_scene(tx):
@@ -38,7 +38,7 @@ def build_scene(tx):
     add(box([-0.72,-1.0,2.70],[-0.18,0.25,3.62]), [.82,.82,.82])             # tall block
     moving = box([-0.25,-1.0,-0.33],[0.25,-0.34,0.33])                        # short block
     c, s = float(np.cos(np.radians(20))), float(np.sin(np.radians(20)))
-    moving.to_world_left = ad.Matrix4f([[c,0,s,0.35+tx],[0,1,0,0],[-s,0,c,2.6],[0,0,0,1]])
+    moving.to_world_left = dr.cuda.ad.Matrix4f([[c,0,s,0.35+tx],[0,1,0,0],[-s,0,c,2.6],[0,0,0,1]])
     add(moving, [.86,.84,.80])
     scene.configure()
     return scene, arr3(np.array(albedos, np.float32)), arr3(np.array(emissions, np.float32)), light_id
@@ -57,10 +57,10 @@ def cosine_hemisphere(n, rng):
 def trace(scene, alb, emi, light_id, primary_ray, rng, max_depth=4, diff=False):
     n = dr.width(primary_ray.o[0])
     if diff:
-        F3, B, MkR = ad.Array3f, ad.Bool, rd.Ray
-        ray = rd.Ray(ad.Array3f(primary_ray.o), ad.Array3f(primary_ray.d))
+        F3, B, MkR = dr.cuda.ad.Array3f, dr.cuda.ad.Bool, rd.Ray
+        ray = rd.Ray(dr.cuda.ad.Array3f(primary_ray.o), dr.cuda.ad.Array3f(primary_ray.d))
     else:
-        F3, B, MkR = cuda.Array3f, cuda.Bool, rd.RayDetached; ray = primary_ray
+        F3, B, MkR = dr.cuda.Array3f, dr.cuda.Bool, rd.RayDetached; ray = primary_ray
     beta, L, active = dr.full(F3, 1, n), dr.zeros(F3, n), dr.full(B, True, n)
 
     for depth in range(max_depth):
@@ -68,8 +68,8 @@ def trace(scene, alb, emi, light_id, primary_ray, rng, max_depth=4, diff=False):
         sn = dr.select(dr.dot(its.n, ray.d) > 0, -its.n, its.n)
         gn = dr.select(dr.dot(its.geo_n, ray.d) > 0, -its.geo_n, its.geo_n)
         sid, hit_d = dr.detach(dr.select(hit, its.shape_id, 0)), dr.detach(hit)
-        kd = F3(dr.gather(cuda.Array3f, alb, sid, hit_d))
-        Le = F3(dr.gather(cuda.Array3f, emi, sid, hit_d))
+        kd = F3(dr.gather(dr.cuda.Array3f, alb, sid, hit_d))
+        Le = F3(dr.gather(dr.cuda.Array3f, emi, sid, hit_d))
         if depth == 0:
             L = dr.select(hit & (sid == light_id), L + beta * Le, L)
         surf = hit & ~(sid == light_id)
@@ -95,15 +95,15 @@ def trace(scene, alb, emi, light_id, primary_ray, rng, max_depth=4, diff=False):
 # --- gradient passes ---
 
 def _make_rng(count, seed, seq=1):
-    rng = cuda.PCG32(size=count)
-    rng.seed(initstate=dr.arange(cuda.UInt64, count)+seed, initseq=dr.full(cuda.UInt64, seq, count))
+    rng = dr.cuda.PCG32(size=count)
+    rng.seed(initstate=dr.arange(dr.cuda.UInt64, count)+seed, initseq=dr.full(dr.cuda.UInt64, seq, count))
     return rng
 
 def _pixel_uv(w, h, spp, rng):
     n = w * h
-    px = dr.repeat(cuda.Float(dr.arange(cuda.UInt, n) % w), spp)
-    py = dr.repeat(cuda.Float(dr.arange(cuda.UInt, n) // w), spp)
-    return cuda.Array2f((px+rng.next_float32())/w, (py+rng.next_float32())/h)
+    px = dr.repeat(dr.cuda.Float(dr.arange(dr.cuda.UInt, n) % w), spp)
+    py = dr.repeat(dr.cuda.Float(dr.arange(dr.cuda.UInt, n) // w), spp)
+    return dr.cuda.Array2f((px+rng.next_float32())/w, (py+rng.next_float32())/h)
 
 def _forward_grad(tx, image):
     dr.set_grad(tx, 0.0); dr.set_grad(tx, 1.0)
@@ -118,16 +118,16 @@ def render_interior_ad(scene, camera, alb, emi, lid, tx, seed=7, spp=64, md=3):
 
 def render_edge_ad(scene, camera, alb, emi, lid, tx, seed=7, spp=16, md=4):
     n, sc = camera.width*camera.height, camera.width*camera.height*spp
-    edge = camera.sample_edge((dr.arange(cuda.Float, sc)+0.5)/float(sc))
-    valid, safe_pdf = ad.Bool(edge.idx >= 0), dr.maximum(edge.pdf, 1e-8)
+    edge = camera.sample_edge((dr.arange(dr.cuda.Float, sc)+0.5)/float(sc))
+    valid, safe_pdf = dr.cuda.ad.Bool(edge.idx >= 0), dr.maximum(edge.pdf, 1e-8)
     def lum(ray):
         rng = _make_rng(sc, seed, seed+1)
         rgb = trace(scene, alb, emi, lid, ray, rng, md)
         return 0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2]
-    c = edge.x_dot_n * ad.Float((lum(edge.ray_n)-lum(edge.ray_p))/safe_pdf)
-    c = dr.select(valid, c/float(spp), 0.0); c -= ad.Float(dr.detach(c))
-    image = dr.zeros(ad.Float, n)
-    dr.scatter_reduce(dr.ReduceOp.Add, image, c, ad.UInt(edge.idx), valid)
+    c = edge.x_dot_n * dr.cuda.ad.Float((lum(edge.ray_n)-lum(edge.ray_p))/safe_pdf)
+    c = dr.select(valid, c/float(spp), 0.0); c -= dr.cuda.ad.Float(dr.detach(c))
+    image = dr.zeros(dr.cuda.ad.Float, n)
+    dr.scatter_reduce(dr.ReduceOp.Add, image, c, dr.cuda.ad.UInt(edge.idx), valid)
     return _forward_grad(tx, image)
 
 # --- main ---
@@ -141,7 +141,7 @@ def main():
     args = ap.parse_args(); w, h, n = args.width, args.height, args.width*args.height
 
     t0 = time.perf_counter()
-    tx = ad.Float([0.0]); dr.enable_grad(tx)
+    tx = dr.cuda.ad.Float([0.0]); dr.enable_grad(tx)
     scene, alb, emi, lid = build_scene(tx)
     camera = rd.Camera(55.0, 1e-4, 1e4); camera.width, camera.height = w, h
     camera.configure(); camera.prepare_edges(scene); dr.sync_thread()
@@ -167,7 +167,7 @@ def main():
     grad_np = np.asarray(dr.detach(grad)).reshape(h, w)
     print(f"res={w}x{h} spp={args.spp} int_spp={args.interior_spp} edge_spp={args.edge_spp} depth={args.max_depth}")
     print(f"setup {(t1-t0)*1e3:.0f}ms  render {(t2-t1)*1e3:.0f}ms  interior {(t3-t2)*1e3:.0f}ms  edge {(t4-t3)*1e3:.0f}ms")
-    out = Path(__file__).resolve().parent / "optical.png"
+    out = Path(__file__).resolve().parent / "cornell_box.png"
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 5))
     a1.imshow(np.clip(rgb_np, 0, 1)); a1.set_title("render"); a1.axis("off")
     lim = max(float(np.percentile(np.abs(grad_np), 99.5)), 1e-6)

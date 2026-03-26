@@ -13,247 +13,247 @@
 // ---- POD types ----
 
 __target_intrinsic(cpp, "rayd::slang::Float2")
-struct RayDFloat2 { float x; float y; };
+struct Float2 { float x; float y; };
 
 __target_intrinsic(cpp, "rayd::slang::Float3")
-struct RayDFloat3 { float x; float y; float z; };
+struct Float3 { float x; float y; float z; };
 
 __target_intrinsic(cpp, "rayd::slang::Ray")
-struct RayDRay { RayDFloat3 o; RayDFloat3 d; float tmax; };
+struct Ray { Float3 o; Float3 d; float tmax; };
 
 __target_intrinsic(cpp, "rayd::slang::Intersection")
-struct RayDIntersection
+struct Intersection
 {
     bool valid; float t;
-    RayDFloat3 p; RayDFloat3 n; RayDFloat3 geo_n;
-    RayDFloat2 uv; RayDFloat3 barycentric;
+    Float3 p; Float3 n; Float3 geo_n;
+    Float2 uv; Float3 barycentric;
     int shape_id; int prim_id;
 };
 
 __target_intrinsic(cpp, "rayd::slang::NearestPointEdge")
-struct RayDNearestPointEdge
+struct NearestPointEdge
 {
     bool valid; float distance;
-    RayDFloat3 point; float edge_t; RayDFloat3 edge_point;
+    Float3 point; float edge_t; Float3 edge_point;
     int shape_id; int edge_id; bool is_boundary;
 };
 
 __target_intrinsic(cpp, "rayd::slang::NearestRayEdge")
-struct RayDNearestRayEdge
+struct NearestRayEdge
 {
     bool valid; float distance; float ray_t;
-    RayDFloat3 point; float edge_t; RayDFloat3 edge_point;
+    Float3 point; float edge_t; Float3 edge_point;
     int shape_id; int edge_id; bool is_boundary;
 };
 
 __target_intrinsic(cpp, "rayd::slang::PrimaryEdgeSample")
-struct RayDPrimaryEdgeSample
+struct PrimaryEdgeSample
 {
     bool valid; float x_dot_n; int idx;
-    RayDRay ray_n; RayDRay ray_p; float pdf;
+    Ray ray_n; Ray ray_p; float pdf;
 };
 
 __target_intrinsic(cpp, "rayd::slang::IntersectionAD")
-struct RayDIntersectionAD
+struct IntersectionAD
 {
     bool valid; float t;
-    RayDFloat3 p; RayDFloat3 n; RayDFloat3 geo_n; RayDFloat3 barycentric;
-    RayDFloat2 uv;
+    Float3 p; Float3 n; Float3 geo_n; Float3 barycentric;
+    Float2 uv;
     int shape_id; int prim_id;
-    RayDFloat3 dt_do; RayDFloat3 dt_dd;
+    Float3 dt_do; Float3 dt_dd;
 };
 
 __target_intrinsic(cpp, "rayd::slang::SceneHandle")
-struct RayDSceneHandle { uint64_t value; };
+struct SceneHandle { uint64_t value; };
 
 __target_intrinsic(cpp, "rayd::slang::CameraHandle")
-struct RayDCameraHandle { uint64_t value; };
+struct CameraHandle { uint64_t value; };
 
 // ---- Constructors ----
 
-float raydInfinity() { return 1.0f / 0.0f; }
+float infinity() { return 1.0f / 0.0f; }
 
-RayDFloat2 raydFloat2(float x, float y)
+Float2 float2(float x, float y)
 {
     __target_switch {
     case cpp: __intrinsic_asm "rayd::slang::make_float2($0, $1)";
-    default:  RayDFloat2 r; r.x = x; r.y = y; return r;
+    default:  Float2 r; r.x = x; r.y = y; return r;
     }
 }
 
-RayDFloat3 raydFloat3(float x, float y, float z)
+Float3 float3(float x, float y, float z)
 {
     __target_switch {
     case cpp: __intrinsic_asm "rayd::slang::make_float3($0, $1, $2)";
-    default:  RayDFloat3 r; r.x = x; r.y = y; r.z = z; return r;
+    default:  Float3 r; r.x = x; r.y = y; r.z = z; return r;
     }
 }
 
-RayDRay raydMakeRay(RayDFloat3 origin, RayDFloat3 direction, float tmax = raydInfinity())
+Ray makeRay(Float3 origin, Float3 direction, float tmax = infinity())
 {
     __target_switch {
     case cpp: __intrinsic_asm "rayd::slang::make_ray($0, $1, $2)";
-    default:  RayDRay r; r.o = origin; r.d = direction; r.tmax = tmax; return r;
+    default:  Ray r; r.o = origin; r.d = direction; r.tmax = tmax; return r;
     }
 }
 
-RayDSceneHandle raydMakeSceneHandle(uint64_t v)
+SceneHandle makeSceneHandle(uint64_t v)
 {
     __target_switch {
     case cpp: __intrinsic_asm "rayd::slang::make_scene_handle_raw($0)";
-    default:  RayDSceneHandle h; h.value = v; return h;
+    default:  SceneHandle h; h.value = v; return h;
     }
 }
 
-RayDCameraHandle raydMakeCameraHandle(uint64_t v)
+CameraHandle makeCameraHandle(uint64_t v)
 {
     __target_switch {
     case cpp: __intrinsic_asm "rayd::slang::make_camera_handle_raw($0)";
-    default:  RayDCameraHandle h; h.value = v; return h;
+    default:  CameraHandle h; h.value = v; return h;
     }
 }
 
 // ---- Float2/3 field accessors ----
 
-float raydF2X(RayDFloat2 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f2_x($0)"; default: return v.x; } }
-float raydF2Y(RayDFloat2 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f2_y($0)"; default: return v.y; } }
-float raydF3X(RayDFloat3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_x($0)"; default: return v.x; } }
-float raydF3Y(RayDFloat3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_y($0)"; default: return v.y; } }
-float raydF3Z(RayDFloat3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_z($0)"; default: return v.z; } }
+float f2X(Float2 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f2_x($0)"; default: return v.x; } }
+float f2Y(Float2 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f2_y($0)"; default: return v.y; } }
+float f3X(Float3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_x($0)"; default: return v.x; } }
+float f3Y(Float3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_y($0)"; default: return v.y; } }
+float f3Z(Float3 v) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::f3_z($0)"; default: return v.z; } }
 
 // ---- Ray field accessors ----
 
-RayDFloat3 raydRayO(RayDRay r)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_o($0)";    default: return r.o; } }
-RayDFloat3 raydRayD(RayDRay r)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_d($0)";    default: return r.d; } }
-float      raydRayTmax(RayDRay r) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_tmax($0)"; default: return r.tmax; } }
+Float3 rayO(Ray r)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_o($0)";    default: return r.o; } }
+Float3 rayD(Ray r)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_d($0)";    default: return r.d; } }
+float  rayTmax(Ray r) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::ray_tmax($0)"; default: return r.tmax; } }
 
 // ---- Intersection field accessors ----
 
-bool       raydItsValid(RayDIntersection h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_valid($0)";       default: return h.valid; } }
-float      raydItsT(RayDIntersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_t($0)";           default: return h.t; } }
-RayDFloat3 raydItsP(RayDIntersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_p($0)";           default: return h.p; } }
-RayDFloat3 raydItsN(RayDIntersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_n($0)";           default: return h.n; } }
-RayDFloat3 raydItsGeoN(RayDIntersection h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_geo_n($0)";       default: return h.geo_n; } }
-RayDFloat2 raydItsUV(RayDIntersection h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_uv($0)";          default: return h.uv; } }
-RayDFloat3 raydItsBarycentric(RayDIntersection h) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_barycentric($0)"; default: return h.barycentric; } }
-int        raydItsShapeId(RayDIntersection h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_shape_id($0)";    default: return h.shape_id; } }
-int        raydItsPrimId(RayDIntersection h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_prim_id($0)";     default: return h.prim_id; } }
+bool   itsValid(Intersection h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_valid($0)";       default: return h.valid; } }
+float  itsT(Intersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_t($0)";           default: return h.t; } }
+Float3 itsP(Intersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_p($0)";           default: return h.p; } }
+Float3 itsN(Intersection h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_n($0)";           default: return h.n; } }
+Float3 itsGeoN(Intersection h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_geo_n($0)";       default: return h.geo_n; } }
+Float2 itsUV(Intersection h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_uv($0)";          default: return h.uv; } }
+Float3 itsBarycentric(Intersection h) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_barycentric($0)"; default: return h.barycentric; } }
+int    itsShapeId(Intersection h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_shape_id($0)";    default: return h.shape_id; } }
+int    itsPrimId(Intersection h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_prim_id($0)";     default: return h.prim_id; } }
 
 // ---- Invalid-result constructors (non-cpp targets) ----
 
-RayDIntersection raydInvalidIntersection()
+Intersection invalidIntersection()
 {
-    RayDIntersection result;
-    result.valid = false; result.t = raydInfinity();
-    result.p = raydFloat3(0,0,0); result.n = raydFloat3(0,0,0); result.geo_n = raydFloat3(0,0,0);
-    result.uv = raydFloat2(0,0); result.barycentric = raydFloat3(0,0,0);
+    Intersection result;
+    result.valid = false; result.t = infinity();
+    result.p = float3(0,0,0); result.n = float3(0,0,0); result.geo_n = float3(0,0,0);
+    result.uv = float2(0,0); result.barycentric = float3(0,0,0);
     result.shape_id = -1; result.prim_id = -1;
     return result;
 }
 
-RayDIntersectionAD raydInvalidIntersectionAD()
+IntersectionAD invalidIntersectionAD()
 {
-    RayDIntersectionAD r;
-    r.valid = false; r.t = raydInfinity();
-    r.p = raydFloat3(0,0,0); r.n = raydFloat3(0,0,0); r.geo_n = raydFloat3(0,0,0);
-    r.uv = raydFloat2(0,0); r.barycentric = raydFloat3(0,0,0);
+    IntersectionAD r;
+    r.valid = false; r.t = infinity();
+    r.p = float3(0,0,0); r.n = float3(0,0,0); r.geo_n = float3(0,0,0);
+    r.uv = float2(0,0); r.barycentric = float3(0,0,0);
     r.shape_id = -1; r.prim_id = -1;
-    r.dt_do = raydFloat3(0,0,0); r.dt_dd = raydFloat3(0,0,0);
+    r.dt_do = float3(0,0,0); r.dt_dd = float3(0,0,0);
     return r;
 }
 
-RayDNearestPointEdge raydInvalidNearestPointEdge()
+NearestPointEdge invalidNearestPointEdge()
 {
-    RayDNearestPointEdge r;
-    r.valid = false; r.distance = raydInfinity();
-    r.point = raydFloat3(0,0,0); r.edge_t = 0; r.edge_point = raydFloat3(0,0,0);
+    NearestPointEdge r;
+    r.valid = false; r.distance = infinity();
+    r.point = float3(0,0,0); r.edge_t = 0; r.edge_point = float3(0,0,0);
     r.shape_id = -1; r.edge_id = -1; r.is_boundary = false;
     return r;
 }
 
-RayDNearestRayEdge raydInvalidNearestRayEdge()
+NearestRayEdge invalidNearestRayEdge()
 {
-    RayDNearestRayEdge r;
-    r.valid = false; r.distance = raydInfinity(); r.ray_t = 0;
-    r.point = raydFloat3(0,0,0); r.edge_t = 0; r.edge_point = raydFloat3(0,0,0);
+    NearestRayEdge r;
+    r.valid = false; r.distance = infinity(); r.ray_t = 0;
+    r.point = float3(0,0,0); r.edge_t = 0; r.edge_point = float3(0,0,0);
     r.shape_id = -1; r.edge_id = -1; r.is_boundary = false;
     return r;
 }
 
-RayDPrimaryEdgeSample raydInvalidPrimaryEdgeSample()
+PrimaryEdgeSample invalidPrimaryEdgeSample()
 {
-    RayDPrimaryEdgeSample r;
+    PrimaryEdgeSample r;
     r.valid = false; r.x_dot_n = 0; r.idx = -1;
-    r.ray_n = raydMakeRay(raydFloat3(0,0,0), raydFloat3(0,0,1));
-    r.ray_p = raydMakeRay(raydFloat3(0,0,0), raydFloat3(0,0,1));
+    r.ray_n = makeRay(float3(0,0,0), float3(0,0,1));
+    r.ray_p = makeRay(float3(0,0,0), float3(0,0,1));
     r.pdf = 0;
     return r;
 }
 
 // ---- Scene queries ----
 
-bool raydSceneIsReady(RayDSceneHandle scene)
+bool sceneIsReady(SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_is_ready($0)"; default: return false; } }
 
-bool raydSceneHasPendingUpdates(RayDSceneHandle scene)
+bool sceneHasPendingUpdates(SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_has_pending_updates($0)"; default: return false; } }
 
-void raydSceneConfigure(RayDSceneHandle scene)
+void sceneConfigure(SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_configure($0)"; default: return; } }
 
-void raydSceneCommitUpdates(RayDSceneHandle scene)
+void sceneCommitUpdates(SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_commit_updates($0)"; default: return; } }
 
-RayDIntersection raydSceneIntersect(RayDSceneHandle scene, RayDRay ray, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect($0, $1, $2)"; default: return raydInvalidIntersection(); } }
+Intersection sceneIntersect(SceneHandle scene, Ray ray, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect($0, $1, $2)"; default: return invalidIntersection(); } }
 
-bool raydSceneShadowTest(RayDSceneHandle scene, RayDRay ray, bool active = true)
+bool sceneShadowTest(SceneHandle scene, Ray ray, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_shadow_test($0, $1, $2)"; default: return false; } }
 
 // ---- AD scene query (forward + backward in one call) ----
 
-RayDIntersectionAD raydSceneIntersectAD(RayDSceneHandle scene, RayDRay ray, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect_ad($0, $1, $2)"; default: return raydInvalidIntersectionAD(); } }
+IntersectionAD sceneIntersectAD(SceneHandle scene, Ray ray, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_intersect_ad($0, $1, $2)"; default: return invalidIntersectionAD(); } }
 
 // ---- IntersectionAD field accessors ----
 
-bool       raydItsADValid(RayDIntersectionAD h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_valid($0)";       default: return h.valid; } }
-float      raydItsADT(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_t($0)";           default: return h.t; } }
-RayDFloat3 raydItsADP(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_p($0)";           default: return h.p; } }
-RayDFloat3 raydItsADN(RayDIntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_n($0)";           default: return h.n; } }
-RayDFloat3 raydItsADGeoN(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_geo_n($0)";       default: return h.geo_n; } }
-RayDFloat2 raydItsADUV(RayDIntersectionAD h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_uv($0)";          default: return h.uv; } }
-RayDFloat3 raydItsADBarycentric(RayDIntersectionAD h) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_barycentric($0)"; default: return h.barycentric; } }
-int        raydItsADShapeId(RayDIntersectionAD h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_shape_id($0)";    default: return h.shape_id; } }
-int        raydItsADPrimId(RayDIntersectionAD h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_prim_id($0)";     default: return h.prim_id; } }
-RayDFloat3 raydItsADDtDo(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_do($0)";       default: return h.dt_do; } }
-RayDFloat3 raydItsADDtDd(RayDIntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_dd($0)";       default: return h.dt_dd; } }
+bool   itsADValid(IntersectionAD h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_valid($0)";       default: return h.valid; } }
+float  itsADT(IntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_t($0)";           default: return h.t; } }
+Float3 itsADP(IntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_p($0)";           default: return h.p; } }
+Float3 itsADN(IntersectionAD h)           { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_n($0)";           default: return h.n; } }
+Float3 itsADGeoN(IntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_geo_n($0)";       default: return h.geo_n; } }
+Float2 itsADUV(IntersectionAD h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_uv($0)";          default: return h.uv; } }
+Float3 itsADBarycentric(IntersectionAD h) { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_barycentric($0)"; default: return h.barycentric; } }
+int    itsADShapeId(IntersectionAD h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_shape_id($0)";    default: return h.shape_id; } }
+int    itsADPrimId(IntersectionAD h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_prim_id($0)";     default: return h.prim_id; } }
+Float3 itsADDtDo(IntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_do($0)";       default: return h.dt_do; } }
+Float3 itsADDtDd(IntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_dd($0)";       default: return h.dt_dd; } }
 
-RayDNearestPointEdge raydSceneNearestEdgePoint(RayDSceneHandle scene, RayDFloat3 point, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_point($0, $1, $2)"; default: return raydInvalidNearestPointEdge(); } }
+NearestPointEdge sceneNearestEdgePoint(SceneHandle scene, Float3 point, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_point($0, $1, $2)"; default: return invalidNearestPointEdge(); } }
 
-RayDNearestRayEdge raydSceneNearestEdgeRay(RayDSceneHandle scene, RayDRay ray, bool active = true)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_ray($0, $1, $2)"; default: return raydInvalidNearestRayEdge(); } }
+NearestRayEdge sceneNearestEdgeRay(SceneHandle scene, Ray ray, bool active = true)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_ray($0, $1, $2)"; default: return invalidNearestRayEdge(); } }
 
 // ---- Camera queries ----
 
-bool raydCameraIsReady(RayDCameraHandle camera)
+bool cameraIsReady(CameraHandle camera)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_is_ready($0)"; default: return false; } }
 
-bool raydCameraPrimaryEdgesReady(RayDCameraHandle camera)
+bool cameraPrimaryEdgesReady(CameraHandle camera)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_primary_edges_ready($0)"; default: return false; } }
 
-void raydCameraSetResolution(RayDCameraHandle camera, int width, int height)
+void cameraSetResolution(CameraHandle camera, int width, int height)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_set_resolution($0, $1, $2)"; default: return; } }
 
-void raydCameraConfigure(RayDCameraHandle camera, bool cache = true)
+void cameraConfigure(CameraHandle camera, bool cache = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_configure($0, $1)"; default: return; } }
 
-void raydCameraPrepareEdges(RayDCameraHandle camera, RayDSceneHandle scene)
+void cameraPrepareEdges(CameraHandle camera, SceneHandle scene)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_prepare_edges($0, $1)"; default: return; } }
 
-RayDRay raydCameraSampleRay(RayDCameraHandle camera, RayDFloat2 sample)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_sample_ray($0, $1)"; default: return raydMakeRay(raydFloat3(0,0,0), raydFloat3(0,0,1)); } }
+Ray cameraSampleRay(CameraHandle camera, Float2 sample)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_sample_ray($0, $1)"; default: return makeRay(float3(0,0,0), float3(0,0,1)); } }
 
-RayDPrimaryEdgeSample raydCameraSamplePrimaryEdge(RayDCameraHandle camera, float sample)
-{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_sample_primary_edge($0, $1)"; default: return raydInvalidPrimaryEdgeSample(); } }
+PrimaryEdgeSample cameraSamplePrimaryEdge(CameraHandle camera, float sample)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::camera_sample_primary_edge($0, $1)"; default: return invalidPrimaryEdgeSample(); } }

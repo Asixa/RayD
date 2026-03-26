@@ -6,5 +6,5 @@
   Queries the closest mesh edge for a batch of custom points.
 - [`basics/camera_edge_sampling_gradient.py`](basics/camera_edge_sampling_gradient.py)
   Uses `Camera` primary-edge sampling to produce and save a gradient image.
-- [`renderer/optical.py`](renderer/optical.py)
+- [`renderer/cornell_box.py`](renderer/cornell_box.py)
   Renders a compact colored Cornell Box with simple direct lighting and saves a moving-box forward-gradient heatmap.

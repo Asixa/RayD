@@ -148,29 +148,29 @@ NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool a
 }
 
 bool camera_is_ready(CameraHandle handle) {
-    return detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    return detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_is_ready(): null camera handle.").is_ready();
 }
 
 bool camera_primary_edges_ready(CameraHandle handle) {
-    return detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    return detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_primary_edges_ready(): null camera handle.").primary_edges_ready();
 }
 
 void camera_set_resolution(CameraHandle handle, int width, int height) {
-    rayd::PerspectiveCamera &camera = detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    rayd::Camera &camera = detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_set_resolution(): null camera handle.");
     camera.set_width(width);
     camera.set_height(height);
 }
 
 void camera_configure(CameraHandle handle, bool cache) {
-    detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_configure(): null camera handle.").configure(cache);
 }
 
 void camera_prepare_edges(CameraHandle camera_handle, SceneHandle scene_handle) {
-    rayd::PerspectiveCamera &camera = detail::handle_ref<rayd::PerspectiveCamera>(camera_handle.value,
+    rayd::Camera &camera = detail::handle_ref<rayd::Camera>(camera_handle.value,
         "rayd::slang::camera_prepare_edges(): null camera handle.");
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(scene_handle.value,
         "rayd::slang::camera_prepare_edges(): null scene handle.");
@@ -178,13 +178,13 @@ void camera_prepare_edges(CameraHandle camera_handle, SceneHandle scene_handle) 
 }
 
 Ray camera_sample_ray(CameraHandle handle, const Float2 &sample) {
-    const rayd::PerspectiveCamera &camera = detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    const rayd::Camera &camera = detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_sample_ray(): null camera handle.");
     return detail::to_scalar(camera.sample_primary_ray(detail::to_cuda(sample)));
 }
 
 PrimaryEdgeSample camera_sample_primary_edge(CameraHandle handle, float sample) {
-    const rayd::PerspectiveCamera &camera = detail::handle_ref<rayd::PerspectiveCamera>(handle.value,
+    const rayd::Camera &camera = detail::handle_ref<rayd::Camera>(handle.value,
         "rayd::slang::camera_sample_primary_edge(): null camera handle.");
     const rayd::PrimaryEdgeSample sample_result =
         camera.sample_primary_edge(detail::scalar_float(sample));
