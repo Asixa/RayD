@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "cmake>=3.22", "ninja", "nanobind==2.9.2", "drjit>=1.2.0"]
+requires = ["scikit-build-core>=0.10", "cmake>=3.22", "ninja", "nanobind==2.9.2", "drjit==1.2.0"]
 build-backend = "scikit_build_core.build"
 
 
@@ -12,7 +12,7 @@ authors = [{ name = "Xingyu Chen", email = "xic063@ucsd.edu" }]
 license = { text = "BSD-3-Clause" }
 
 requires-python = ">=3.10"
-dependencies = ["drjit>=1.2.0"]
+dependencies = ["drjit==1.2.0"]
 
 [project.optional-dependencies]
 torch = ["torch"]
