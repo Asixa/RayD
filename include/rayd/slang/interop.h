@@ -182,9 +182,7 @@ inline T lane0(const Value &value) {
 template <typename T, typename ArrayT,
           std::enable_if_t<!std::is_convertible_v<ArrayT, T>, int> = 0>
 inline T lane0(const ArrayT &value) {
-    T result{};
-    drjit::store(&result, value);
-    return result;
+    return drjit::slice<T>(value, 0);
 }
 
 template <typename DrVector>

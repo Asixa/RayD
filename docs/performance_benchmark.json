@@ -1,0 +1,552 @@
+{
+  "suite_config": {
+    "repeats": 5,
+    "warmup": 2,
+    "dynamic_x_offset": 2.0,
+    "forward_performance_modes": {
+      "full": "Detailed high-level intersection fields shared by both backends (RayD: eval t/p/n/uv-or-bary/prim on Scene.intersect(flags=RayFlags.All), Mitsuba: eval t/p/n/uv/prim on Scene.ray_intersect()).",
+      "reduced": "Smallest public high-level intersection path on each backend (t only; RayD: Scene.intersect(flags=RayFlags.None), Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
+    }
+  },
+  "environment": {
+    "rayd": {
+      "backend": "rayd",
+      "drjit_version": "1.3.1"
+    },
+    "mitsuba": {
+      "backend": "mitsuba",
+      "variant": "cuda_ad_rgb",
+      "version": "3.8.0"
+    }
+  },
+  "scenarios": [
+    {
+      "config": {
+        "label": "64x64 mesh / 128x128 rays",
+        "mesh_resolution": 64,
+        "triangle_count": 8192,
+        "vertex_count": 4225,
+        "ray_grid_side": 128,
+        "ray_count": 16384
+      },
+      "results": {
+        "config": {
+          "mesh_resolution": 64,
+          "triangle_count": 8192,
+          "vertex_count": 4225,
+          "ray_grid_side": 128,
+          "ray_count": 16384,
+          "repeats": 5,
+          "warmup": 2,
+          "dynamic_x_offset": 2.0,
+          "forward_performance_modes": {
+            "full": "Detailed high-level intersection fields shared by both backends (RayD: eval t/p/n/uv-or-bary/prim on Scene.intersect(flags=RayFlags.All), Mitsuba: eval t/p/n/uv/prim on Scene.ray_intersect()).",
+            "reduced": "Smallest public high-level intersection path on each backend (t only; RayD: Scene.intersect(flags=RayFlags.None), Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
+          }
+        },
+        "backends": {
+          "rayd": {
+            "forward_static_correctness": {
+              "num_rays": 16384,
+              "num_hits": 16384,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.12340000830590725,
+                "avg_ms": 0.13113999739289284,
+                "qps_m": 124.93518625682033
+              },
+              "reduced": {
+                "min_ms": 0.10449998080730438,
+                "avg_ms": 0.10549994185566902,
+                "qps_m": 155.29866378897546
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 16384,
+              "num_hits": 16384,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.6446999032050371,
+                "avg_ms": 0.7103200070559978,
+                "qps_m": 23.065660318235093
+              },
+              "reduced": {
+                "min_ms": 0.5944999866187572,
+                "avg_ms": 0.637020030990243,
+                "qps_m": 25.7197563701901
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 16384.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 4225
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.18889992497861385,
+              "avg_ms": 0.36869999021291733,
+              "qps_m": 44.43721300491098
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 16384.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 4225
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.1528998147696257,
+              "avg_ms": 1.3193399645388126,
+              "qps_m": 12.418330711089448
+            }
+          },
+          "mitsuba": {
+            "forward_static_correctness": {
+              "num_rays": 16384,
+              "num_hits": 16384,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.14970009215176105,
+                "avg_ms": 0.19344002939760685,
+                "qps_m": 84.69808472952339
+              },
+              "reduced": {
+                "min_ms": 0.21450011990964413,
+                "avg_ms": 0.22800001315772533,
+                "qps_m": 71.85964497583565
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 16384,
+              "num_hits": 16384,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.5188998766243458,
+                "avg_ms": 0.5682599730789661,
+                "qps_m": 28.831874100207404
+              },
+              "reduced": {
+                "min_ms": 0.5012999754399061,
+                "avg_ms": 0.5480199586600065,
+                "qps_m": 29.89672135310804
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 16384.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 4225
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.453100074082613,
+              "avg_ms": 0.4973799921572208,
+              "qps_m": 32.940609309473494
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 16384.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 4225
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.1380999349057674,
+              "avg_ms": 1.1646599974483252,
+              "qps_m": 14.06762491705391
+            }
+          }
+        },
+        "comparisons": {
+          "forward_static": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 0.0,
+            "mean_abs_p": 0.0,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "forward_dynamic": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 0.0,
+            "mean_abs_p": 0.0,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "gradient_static": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 0.0,
+            "mean_abs_grad_diff": 0.0
+          },
+          "gradient_dynamic": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 0.0,
+            "mean_abs_grad_diff": 0.0
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "label": "128x128 mesh / 256x256 rays",
+        "mesh_resolution": 128,
+        "triangle_count": 32768,
+        "vertex_count": 16641,
+        "ray_grid_side": 256,
+        "ray_count": 65536
+      },
+      "results": {
+        "config": {
+          "mesh_resolution": 128,
+          "triangle_count": 32768,
+          "vertex_count": 16641,
+          "ray_grid_side": 256,
+          "ray_count": 65536,
+          "repeats": 5,
+          "warmup": 2,
+          "dynamic_x_offset": 2.0,
+          "forward_performance_modes": {
+            "full": "Detailed high-level intersection fields shared by both backends (RayD: eval t/p/n/uv-or-bary/prim on Scene.intersect(flags=RayFlags.All), Mitsuba: eval t/p/n/uv/prim on Scene.ray_intersect()).",
+            "reduced": "Smallest public high-level intersection path on each backend (t only; RayD: Scene.intersect(flags=RayFlags.None), Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
+          }
+        },
+        "backends": {
+          "rayd": {
+            "forward_static_correctness": {
+              "num_rays": 65536,
+              "num_hits": 65536,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.12310012243688107,
+                "avg_ms": 0.1441400032490492,
+                "qps_m": 454.6690614871504
+              },
+              "reduced": {
+                "min_ms": 0.10580010712146759,
+                "avg_ms": 0.11938000097870827,
+                "qps_m": 548.9696721621615
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 65536,
+              "num_hits": 65536,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.6913000252097845,
+                "avg_ms": 0.7591600064188242,
+                "qps_m": 86.32699226234551
+              },
+              "reduced": {
+                "min_ms": 0.6223998498171568,
+                "avg_ms": 0.6433800328522921,
+                "qps_m": 101.86203589418173
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 65536.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 16641
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.18940004520118237,
+              "avg_ms": 0.3934400621801615,
+              "qps_m": 166.5717508197988
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 65536.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 16641
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.1245999485254288,
+              "avg_ms": 1.2635000050067902,
+              "qps_m": 51.86861871017389
+            }
+          },
+          "mitsuba": {
+            "forward_static_correctness": {
+              "num_rays": 65536,
+              "num_hits": 65536,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.14919997192919254,
+                "avg_ms": 0.1796999480575323,
+                "qps_m": 364.6968221661263
+              },
+              "reduced": {
+                "min_ms": 0.1759000588208437,
+                "avg_ms": 0.19748001359403133,
+                "qps_m": 331.8614314799742
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 65536,
+              "num_hits": 65536,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.5861998070031404,
+                "avg_ms": 0.6279200315475464,
+                "qps_m": 104.36997819369229
+              },
+              "reduced": {
+                "min_ms": 0.5940999835729599,
+                "avg_ms": 0.6339399609714746,
+                "qps_m": 103.37887502717142
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 65536.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 16641
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.5586999468505383,
+              "avg_ms": 0.6074999924749136,
+              "qps_m": 107.8781906366958
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 65536.0,
+              "grad_abs_max": 4.0,
+              "num_vertices": 16641
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.3614001218229532,
+              "avg_ms": 1.421779952943325,
+              "qps_m": 46.094333982083086
+            }
+          }
+        },
+        "comparisons": {
+          "forward_static": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 0.0,
+            "mean_abs_p": 0.0,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "forward_dynamic": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 0.0,
+            "mean_abs_p": 0.0,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "gradient_static": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 0.0,
+            "mean_abs_grad_diff": 0.0
+          },
+          "gradient_dynamic": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 0.0,
+            "mean_abs_grad_diff": 0.0
+          }
+        }
+      }
+    },
+    {
+      "config": {
+        "label": "192x192 mesh / 384x384 rays",
+        "mesh_resolution": 192,
+        "triangle_count": 73728,
+        "vertex_count": 37249,
+        "ray_grid_side": 384,
+        "ray_count": 147456
+      },
+      "results": {
+        "config": {
+          "mesh_resolution": 192,
+          "triangle_count": 73728,
+          "vertex_count": 37249,
+          "ray_grid_side": 384,
+          "ray_count": 147456,
+          "repeats": 5,
+          "warmup": 2,
+          "dynamic_x_offset": 2.0,
+          "forward_performance_modes": {
+            "full": "Detailed high-level intersection fields shared by both backends (RayD: eval t/p/n/uv-or-bary/prim on Scene.intersect(flags=RayFlags.All), Mitsuba: eval t/p/n/uv/prim on Scene.ray_intersect()).",
+            "reduced": "Smallest public high-level intersection path on each backend (t only; RayD: Scene.intersect(flags=RayFlags.None), Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
+          }
+        },
+        "backends": {
+          "rayd": {
+            "forward_static_correctness": {
+              "num_rays": 147456,
+              "num_hits": 147456,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.1287998165935278,
+                "avg_ms": 0.16201999969780445,
+                "qps_m": 910.1098646773926
+              },
+              "reduced": {
+                "min_ms": 0.11790008284151554,
+                "avg_ms": 0.12365998700261116,
+                "qps_m": 1192.4309841378713
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 147456,
+              "num_hits": 147456,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.6846000906080008,
+                "avg_ms": 0.7414600346237421,
+                "qps_m": 198.87248552085123
+              },
+              "reduced": {
+                "min_ms": 0.637400196865201,
+                "avg_ms": 0.688759982585907,
+                "qps_m": 214.08909304861982
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 147456.0,
+              "grad_abs_max": 4.0000176429748535,
+              "num_vertices": 37249
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.2055000513792038,
+              "avg_ms": 0.4110999871045351,
+              "qps_m": 358.6864622365086
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 147456.0,
+              "grad_abs_max": 4.000017166137695,
+              "num_vertices": 37249
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.1091998312622309,
+              "avg_ms": 1.32359997369349,
+              "qps_m": 111.4052606003956
+            }
+          },
+          "mitsuba": {
+            "forward_static_correctness": {
+              "num_rays": 147456,
+              "num_hits": 147456,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_static_performance": {
+              "full": {
+                "min_ms": 0.15050009824335575,
+                "avg_ms": 0.1901999581605196,
+                "qps_m": 775.2683093418677
+              },
+              "reduced": {
+                "min_ms": 0.15520001761615276,
+                "avg_ms": 0.22431998513638973,
+                "qps_m": 657.346691202501
+              }
+            },
+            "forward_dynamic_correctness": {
+              "num_rays": 147456,
+              "num_hits": 147456,
+              "t_min": 1.0,
+              "t_max": 1.0
+            },
+            "forward_dynamic_performance": {
+              "full": {
+                "min_ms": 0.705299898982048,
+                "avg_ms": 0.7398799993097782,
+                "qps_m": 199.29718351294704
+              },
+              "reduced": {
+                "min_ms": 0.6844999734312296,
+                "avg_ms": 0.7140799891203642,
+                "qps_m": 206.49787453313587
+              }
+            },
+            "gradient_static_correctness": {
+              "loss": 147456.0,
+              "grad_abs_max": 4.0000176429748535,
+              "num_vertices": 37249
+            },
+            "gradient_static_performance": {
+              "min_ms": 0.7090000435709953,
+              "avg_ms": 0.7569799665361643,
+              "qps_m": 194.7951154833572
+            },
+            "gradient_dynamic_correctness": {
+              "loss": 147456.0,
+              "grad_abs_max": 4.0000176429748535,
+              "num_vertices": 37249
+            },
+            "gradient_dynamic_performance": {
+              "min_ms": 1.3695000670850277,
+              "avg_ms": 1.4131599571555853,
+              "qps_m": 104.34487564790619
+            }
+          }
+        },
+        "comparisons": {
+          "forward_static": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 5.960464477539063e-08,
+            "mean_abs_p": 2.770024802127106e-09,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "forward_dynamic": {
+            "valid_mismatch_count": 0,
+            "prim_index_mismatch_count": 0,
+            "max_abs_t": 0.0,
+            "mean_abs_t": 0.0,
+            "max_abs_p": 2.384185791015625e-07,
+            "mean_abs_p": 4.706028751873721e-09,
+            "max_abs_bary_uv": 0.0,
+            "mean_abs_bary_uv": 0.0
+          },
+          "gradient_static": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 9.5367431640625e-07,
+            "mean_abs_grad_diff": 3.017169759427707e-08
+          },
+          "gradient_dynamic": {
+            "loss_abs_diff": 0.0,
+            "max_abs_grad_diff": 4.76837158203125e-07,
+            "mean_abs_grad_diff": 2.7994399638393887e-08
+          }
+        }
+      }
+    }
+  ]
+}

@@ -148,6 +148,18 @@ def _lib_dir() -> _Path:
         "Ensure the package is built (pip install -e .) or installed.")
 
 
+def _rayd_core_cache_artifacts() -> list[_Path]:
+    """Binary artifacts that should invalidate cached Slang host modules."""
+    artifacts = [
+        path for path in sorted(_lib_dir().glob("rayd_core*"))
+        if path.is_file() and path.suffix.lower() not in {".exp", ".pdb"}
+    ]
+    if not artifacts:
+        raise FileNotFoundError(
+            "Cannot locate rayd_core build artifacts for Slang cache invalidation.")
+    return artifacts
+
+
 def _drjit_dir() -> _Path:
     import drjit
     return _Path(drjit.__file__).resolve().parent
@@ -213,6 +225,11 @@ def _compile_host_module(slang_file: str, inc_paths: list[str]):
         dep_path = _inc / dep
         if dep_path.is_file():
             hasher.update(dep_path.read_bytes())
+    for artifact in _rayd_core_cache_artifacts():
+        stat = artifact.stat()
+        hasher.update(artifact.name.encode("utf-8"))
+        hasher.update(str(stat.st_size).encode("utf-8"))
+        hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
     content_hash = hasher.hexdigest()[:12]
     cache = _Path(slang_file).parent / ".rayd_slang_cache" / f"{stem}_{content_hash}"
     cache.mkdir(parents=True, exist_ok=True)
@@ -363,5 +380,4 @@ def _add_msvc_to_path():
             _os.environ["PATH"] = bins[0] + _os.pathsep + _os.environ["PATH"]
     except Exception:
         pass
-
 
