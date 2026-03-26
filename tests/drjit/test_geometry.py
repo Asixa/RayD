@@ -136,6 +136,105 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["prim"], -1)
         self.assertTrue(data["t_is_inf"])
 
+    def test_intersect_preserves_batch_shapes_across_flags_and_miss_modes(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+            none_flag = getattr(pj.RayFlags, "None")
+
+            def vec3_rows(vec):
+                return [
+                    [float(vec[0][i]), float(vec[1][i]), float(vec[2][i])]
+                    for i in range(dr.width(vec[0]))
+                ]
+
+            def vec2_rows(vec):
+                return [
+                    [float(vec[0][i]), float(vec[1][i])]
+                    for i in range(dr.width(vec[0]))
+                ]
+
+            def summarize(its):
+                return {
+                    "widths": {
+                        "t": dr.width(its.t),
+                        "p": dr.width(its.p[0]),
+                        "n": dr.width(its.n[0]),
+                        "geo_n": dr.width(its.geo_n[0]),
+                        "uv": dr.width(its.uv[0]),
+                        "barycentric": dr.width(its.barycentric[0]),
+                        "shape_id": dr.width(its.shape_id),
+                        "prim_id": dr.width(its.prim_id),
+                    },
+                    "valid": [bool(v) for v in list(its.is_valid())],
+                    "t_inf": [math.isinf(float(v)) for v in list(its.t)],
+                    "p": vec3_rows(its.p),
+                    "n": vec3_rows(its.n),
+                    "geo_n": vec3_rows(its.geo_n),
+                    "uv": vec2_rows(its.uv),
+                    "bary": vec3_rows(its.barycentric),
+                }
+
+            mixed_rays = pj.RayDetached(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
+                                        cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
+            miss_rays = pj.RayDetached(cuda.Array3f([2.0, 3.0], [2.0, 3.0], [-1.0, -1.0]),
+                                       cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
+            tmax_rays = pj.RayDetached(cuda.Array3f([0.25, 0.75], [0.25, 0.1], [-1.0, -1.0]),
+                                       cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
+            tmax_rays.tmax = cuda.Float([0.5, 0.5])
+
+            ad_rays = pj.Ray(ad.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
+                             ad.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
+
+            print(json.dumps({
+                "detached_none": summarize(scene.intersect(mixed_rays, flags=none_flag)),
+                "detached_geometric": summarize(scene.intersect(mixed_rays, flags=pj.RayFlags.Geometric)),
+                "detached_spatial_miss": summarize(scene.intersect(miss_rays, flags=pj.RayFlags.Geometric)),
+                "detached_tmax_miss": summarize(scene.intersect(tmax_rays, flags=pj.RayFlags.Geometric)),
+                "ad_none": summarize(scene.intersect(ad_rays, flags=none_flag)),
+            }))
+            """
+        )
+
+        expected_fields = {"t", "p", "n", "geo_n", "uv", "barycentric", "shape_id", "prim_id"}
+        for case_name, case in data.items():
+            self.assertEqual(set(case["widths"].keys()), expected_fields, msg=case_name)
+            for field_name, width in case["widths"].items():
+                self.assertEqual(width, 2, msg=f"{case_name}:{field_name}")
+
+        self.assertEqual(data["detached_none"]["valid"], [True, False])
+        self.assertEqual(data["ad_none"]["valid"], [True, False])
+        self.assertEqual(data["detached_none"]["n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        self.assertEqual(data["detached_none"]["geo_n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        self.assertEqual(data["detached_none"]["uv"], [[0.0, 0.0], [0.0, 0.0]])
+        self.assertEqual(data["ad_none"]["n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        self.assertEqual(data["ad_none"]["geo_n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+        self.assertEqual(data["ad_none"]["uv"], [[0.0, 0.0], [0.0, 0.0]])
+        self.assertAlmostEqual(data["detached_geometric"]["geo_n"][0][2], 1.0, places=5)
+        self.assertEqual(data["detached_geometric"]["uv"], [[0.0, 0.0], [0.0, 0.0]])
+
+        for miss_case in ("detached_spatial_miss", "detached_tmax_miss"):
+            self.assertEqual(data[miss_case]["valid"], [False, False], msg=miss_case)
+            self.assertEqual(data[miss_case]["t_inf"], [True, True], msg=miss_case)
+            self.assertEqual(data[miss_case]["p"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], msg=miss_case)
+            self.assertEqual(data[miss_case]["n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], msg=miss_case)
+            self.assertEqual(data[miss_case]["geo_n"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], msg=miss_case)
+            self.assertEqual(data[miss_case]["uv"], [[0.0, 0.0], [0.0, 0.0]], msg=miss_case)
+            self.assertEqual(data[miss_case]["bary"], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], msg=miss_case)
+
     def test_shadow_test_returns_hit_mask_without_intersection_payload(self):
         data = run_json_case(
             """
@@ -1464,6 +1563,45 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertGreater(data["min_ms"], 0.0)
         self.assertGreater(data["avg_ms"], 0.0)
         self.assertGreater(data["qps_m"], 0.0)
+
+    def test_forward_benchmark_reports_full_and_reduced_modes(self):
+        data = run_json_case(
+            """
+            import json
+            from tests.benchmark_support import RayDBackend, _make_grid_mesh_data, _make_ray_data
+
+            backend = RayDBackend()
+            mesh = _make_grid_mesh_data(8)
+            updated_mesh = _make_grid_mesh_data(8, x_offset=2.0)
+            rays = _make_ray_data(8)
+            updated_rays = _make_ray_data(8, x_offset=2.0)
+
+            static_result = backend.forward_performance(mesh, rays, repeats=2, warmup=1)
+            dynamic_result = backend.dynamic_forward_performance(
+                mesh,
+                updated_mesh,
+                rays,
+                updated_rays,
+                repeats=2,
+                warmup=1,
+            )
+
+            print(json.dumps({
+                "static_keys": sorted(static_result.keys()),
+                "dynamic_keys": sorted(dynamic_result.keys()),
+                "static": static_result,
+                "dynamic": dynamic_result,
+            }))
+            """
+        )
+
+        self.assertEqual(data["static_keys"], ["full", "reduced"])
+        self.assertEqual(data["dynamic_keys"], ["full", "reduced"])
+        for bucket in ("static", "dynamic"):
+            for mode in ("full", "reduced"):
+                self.assertGreater(data[bucket][mode]["min_ms"], 0.0, msg=f"{bucket}:{mode}")
+                self.assertGreater(data[bucket][mode]["avg_ms"], 0.0, msg=f"{bucket}:{mode}")
+                self.assertGreater(data[bucket][mode]["qps_m"], 0.0, msg=f"{bucket}:{mode}")
 
     def test_primary_edge_helper_produces_nonzero_visibility_gradient(self):
         data = run_json_case(

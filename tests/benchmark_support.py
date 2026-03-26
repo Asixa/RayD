@@ -15,6 +15,23 @@ import drjit.cuda as cuda
 import drjit.cuda.ad as ad
 
 
+RAYD_FLAGS_NONE = getattr(pj.RayFlags, "None")
+
+
+FORWARD_PERFORMANCE_MODES = {
+    "full": (
+        "Detailed high-level intersection fields shared by both backends "
+        "(RayD: eval t/p/n/uv-or-bary/prim on Scene.intersect(flags=RayFlags.All), "
+        "Mitsuba: eval t/p/n/uv/prim on Scene.ray_intersect())."
+    ),
+    "reduced": (
+        "Smallest public high-level intersection path on each backend "
+        "(t only; RayD: Scene.intersect(flags=RayFlags.None), "
+        "Mitsuba: Scene.ray_intersect(ray, RayFlags.Minimal, coherent=False))."
+    ),
+}
+
+
 def _try_import_mitsuba(variant: str):
     # Remove test directories from sys.path to avoid shadowing the real
     # drjit/mitsuba packages with the empty ``tests/drjit`` subpackage.
@@ -126,6 +143,18 @@ def _summarize_timings(times_s: list[float], query_count: int) -> dict[str, floa
     }
 
 
+def _measure_forward_modes(
+    query_count: int,
+    repeats: int,
+    warmup: int,
+    runs: dict[str, Any],
+) -> dict[str, dict[str, float]]:
+    return {
+        mode: _summarize_timings(_measure(run, repeats, warmup), query_count)
+        for mode, run in runs.items()
+    }
+
+
 def _measure(fn, repeats: int, warmup: int) -> list[float]:
     for _ in range(warmup):
         fn()
@@ -232,15 +261,27 @@ class RayDBackend:
         ray_data: dict[str, list[float]],
         repeats: int,
         warmup: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, dict[str, float]]:
         scene, _ = self._scene(mesh_data, dynamic=False)
         rays = self._ray_detached(ray_data)
 
-        def run():
-            its = scene.intersect(rays, flags=pj.RayFlags.Geometric)
+        def run_full():
+            its = scene.intersect(rays)
+            dr.eval(its.t, its.p, its.n, its.uv, its.barycentric, its.prim_id)
+
+        def run_reduced():
+            its = scene.intersect(rays, flags=RAYD_FLAGS_NONE)
             dr.eval(its.t)
 
-        return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
+        return _measure_forward_modes(
+            len(ray_data["ox"]),
+            repeats,
+            warmup,
+            {
+                "full": run_full,
+                "reduced": run_reduced,
+            },
+        )
 
     def dynamic_forward_correctness(
         self,
@@ -274,25 +315,41 @@ class RayDBackend:
         updated_ray_data: dict[str, list[float]],
         repeats: int,
         warmup: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, dict[str, float]]:
         scene, mesh_id = self._scene(mesh_data, dynamic=True)
         base_positions = cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
         updated_positions = cuda.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
         base_rays = self._ray_detached(ray_data)
         rays = self._ray_detached(updated_ray_data)
-        use_updated = False
 
-        def run():
-            nonlocal use_updated
-            use_updated = not use_updated
-            current_positions = updated_positions if use_updated else base_positions
-            current_rays = rays if use_updated else base_rays
-            scene.update_mesh_vertices(mesh_id, current_positions)
-            scene.commit_updates()
-            its = scene.intersect(current_rays, flags=pj.RayFlags.Geometric)
-            dr.eval(its.t)
+        def make_run(mode: str):
+            use_updated = False
 
-        return _summarize_timings(_measure(run, repeats, warmup), len(updated_ray_data["ox"]))
+            def run():
+                nonlocal use_updated
+                use_updated = not use_updated
+                current_positions = updated_positions if use_updated else base_positions
+                current_rays = rays if use_updated else base_rays
+                scene.update_mesh_vertices(mesh_id, current_positions)
+                scene.commit_updates()
+                if mode == "full":
+                    its = scene.intersect(current_rays)
+                    dr.eval(its.t, its.p, its.n, its.uv, its.barycentric, its.prim_id)
+                else:
+                    its = scene.intersect(current_rays, flags=RAYD_FLAGS_NONE)
+                    dr.eval(its.t)
+
+            return run
+
+        return _measure_forward_modes(
+            len(updated_ray_data["ox"]),
+            repeats,
+            warmup,
+            {
+                "full": make_run("full"),
+                "reduced": make_run("reduced"),
+            },
+        )
 
     def gradient_correctness(
         self,
@@ -450,15 +507,28 @@ class MitsubaBackend:
         ray_data: dict[str, list[float]],
         repeats: int,
         warmup: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, dict[str, float]]:
         scene, _ = self._scene(mesh_data)
         rays = self._ray(ray_data, ad_mode=False)
+        mi = self.mi
 
-        def run():
+        def run_full():
             its = scene.ray_intersect(rays)
+            dr.eval(its.t, its.p, its.n, its.uv, its.prim_index)
+
+        def run_reduced():
+            its = scene.ray_intersect(rays, mi.RayFlags.Minimal, False)
             dr.eval(its.t)
 
-        return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
+        return _measure_forward_modes(
+            len(ray_data["ox"]),
+            repeats,
+            warmup,
+            {
+                "full": run_full,
+                "reduced": run_reduced,
+            },
+        )
 
     def dynamic_forward_correctness(
         self,
@@ -491,7 +561,7 @@ class MitsubaBackend:
         updated_ray_data: dict[str, list[float]],
         repeats: int,
         warmup: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, dict[str, float]]:
         scene, params = self._scene(mesh_data)
         base_positions = dr.ravel(
             self.mi.Point3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
@@ -501,17 +571,35 @@ class MitsubaBackend:
         )
         base_rays = self._ray(ray_data, ad_mode=False)
         rays = self._ray(updated_ray_data, ad_mode=False)
-        use_updated = False
+        mi = self.mi
 
-        def run():
-            nonlocal use_updated
-            use_updated = not use_updated
-            params["mesh.vertex_positions"] = updated_positions if use_updated else base_positions
-            params.update()
-            its = scene.ray_intersect(rays if use_updated else base_rays)
-            dr.eval(its.t)
+        def make_run(mode: str):
+            use_updated = False
 
-        return _summarize_timings(_measure(run, repeats, warmup), len(updated_ray_data["ox"]))
+            def run():
+                nonlocal use_updated
+                use_updated = not use_updated
+                params["mesh.vertex_positions"] = updated_positions if use_updated else base_positions
+                params.update()
+                current_rays = rays if use_updated else base_rays
+                if mode == "full":
+                    its = scene.ray_intersect(current_rays)
+                    dr.eval(its.t, its.p, its.n, its.uv, its.prim_index)
+                else:
+                    its = scene.ray_intersect(current_rays, mi.RayFlags.Minimal, False)
+                    dr.eval(its.t)
+
+            return run
+
+        return _measure_forward_modes(
+            len(updated_ray_data["ox"]),
+            repeats,
+            warmup,
+            {
+                "full": make_run("full"),
+                "reduced": make_run("reduced"),
+            },
+        )
 
     def gradient_correctness(
         self,
@@ -657,6 +745,7 @@ def main() -> int:
             "repeats": args.repeats,
             "warmup": args.warmup,
             "dynamic_x_offset": args.dynamic_x_offset,
+            "forward_performance_modes": FORWARD_PERFORMANCE_MODES,
         },
         "environment": {backend.name: backend.environment() for backend in backends},
         "backends": {},

@@ -464,11 +464,19 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
     IntersectionT<Detached> intersection;
     intersection.t = full<FloatT<Detached>>(Infinity, ray_count);
+    intersection.p = zeros<Vector3fT<Detached>>(ray_count);
+    intersection.n = zeros<Vector3fT<Detached>>(ray_count);
+    intersection.geo_n = zeros<Vector3fT<Detached>>(ray_count);
+    intersection.uv = zeros<Vector2fT<Detached>>(ray_count);
+    intersection.barycentric = zeros<Vector3fT<Detached>>(ray_count);
     intersection.shape_id = full<IntT<Detached>>(-1, ray_count);
     intersection.prim_id = full<IntT<Detached>>(-1, ray_count);
 
     MaskT<Detached> hit_mask = active;
     OptixIntersection optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
+    if (drjit::none(hit_mask)) {
+        return intersection;
+    }
 
     const IntDetached shape_id = optix_hit.shape_id;
     const IntDetached global_primitive_id = optix_hit.global_prim_id;
@@ -495,21 +503,23 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
                 Vector3fT<Detached> shading_n1 = gather<Vector3f>(triangle_info_.n1, global_primitive_id_ad, hit_mask);
                 Vector3fT<Detached> shading_n2 = gather<Vector3f>(triangle_info_.n2, global_primitive_id_ad, hit_mask);
                 MaskT<Detached> use_face_normal_mask = gather<Mask>(triangle_face_normal_mask_, global_primitive_id_ad, hit_mask);
+                const Vector2fT<Detached> safe_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
                 Vector3fT<Detached> shading_normal =
-                    normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, triangle_uv_coords));
+                    normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, safe_uv));
                 shading_normal = select(use_face_normal_mask, geometric_normal, shading_normal);
-                intersection.n = select(hit_mask, shading_normal, zeros<Vector3fT<Detached>>(ray_count));
+                intersection.n = select(hit_mask, shading_normal, intersection.n);
             }
             if (want_geo_n) {
-                intersection.geo_n = select(hit_mask, geometric_normal, zeros<Vector3fT<Detached>>(ray_count));
+                intersection.geo_n = select(hit_mask, geometric_normal, intersection.geo_n);
             }
         }
 
         if (want_uv) {
             TriangleUVT<Detached> triangle_uv_data = gather<TriangleUV>(triangle_uv_, global_primitive_id_ad, hit_mask);
+            const Vector2fT<Detached> safe_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
             const Vector2fT<Detached> uv =
-                bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], triangle_uv_coords);
-            intersection.uv = select(hit_mask, uv, zeros<Vector2fT<Detached>>(ray_count));
+                bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], safe_uv);
+            intersection.uv = select(hit_mask, uv, intersection.uv);
         }
     } else {
         // Detached path: use OptiX results directly, gather only what is needed.
@@ -524,25 +534,30 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
                 Vector3fT<Detached> shading_n1 = gather<Vector3fDetached>(triangle_info_detached_.n1, global_primitive_id, hit_mask_detached);
                 Vector3fT<Detached> shading_n2 = gather<Vector3fDetached>(triangle_info_detached_.n2, global_primitive_id, hit_mask_detached);
                 MaskT<Detached> use_face_normal_mask = gather<MaskDetached>(triangle_face_normal_mask_detached_, global_primitive_id, hit_mask_detached);
+                const Vector2fT<Detached> safe_uv = select(hit_mask_detached, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
                 Vector3fT<Detached> shading_normal =
-                    normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, triangle_uv_coords));
+                    normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, safe_uv));
                 shading_normal = select(use_face_normal_mask, geometric_normal, shading_normal);
-                intersection.n = select(hit_mask_detached, shading_normal, zeros<Vector3fT<Detached>>(ray_count));
+                intersection.n = select(hit_mask_detached, shading_normal, intersection.n);
             }
             if (want_geo_n) {
-                intersection.geo_n = select(hit_mask_detached, geometric_normal, zeros<Vector3fT<Detached>>(ray_count));
+                intersection.geo_n = select(hit_mask_detached, geometric_normal, intersection.geo_n);
             }
         }
 
         if (want_uv) {
             TriangleUVT<Detached> triangle_uv_data = gather<TriangleUVDetached>(triangle_uv_detached_, global_primitive_id, hit_mask_detached);
+            const Vector2fT<Detached> safe_uv = select(hit_mask_detached, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
             const Vector2fT<Detached> uv =
-                bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], triangle_uv_coords);
-            intersection.uv = select(hit_mask_detached, uv, zeros<Vector2fT<Detached>>(ray_count));
+                bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], safe_uv);
+            intersection.uv = select(hit_mask_detached, uv, intersection.uv);
         }
     }
 
     hit_mask &= drjit::isfinite(hit_distance) && (hit_distance < ray.tmax);
+    if (drjit::none(hit_mask)) {
+        return intersection;
+    }
 
     const FloatT<Detached> safe_hit_distance = select(hit_mask, hit_distance, zeros<FloatT<Detached>>(ray_count));
     const Vector2fT<Detached> safe_triangle_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
