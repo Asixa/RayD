@@ -44,6 +44,7 @@ jobs:
             CUDA_ROOT=/usr/local/cuda
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
+            PIP_CONSTRAINT=/project/.github/constraints/drjit-build.txt
             CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
             CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
             CUDAHOSTCXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
@@ -104,6 +105,7 @@ jobs:
       - name: Build wheel
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
+          PIP_CONSTRAINT: ${{ github.workspace }}\.github\constraints\drjit-build.txt
         run: python -m build --wheel
 
       - name: Upload Windows wheel artifacts
