@@ -14,11 +14,11 @@ from .types import PrimaryEdgeSample, Ray
 from ._state import _CameraState
 from ._native import (
     _build_native_camera,
-    _build_native_scene,
     _camera_render_grad_impl,
     _camera_render_impl,
     _camera_sample_edge_impl,
     _camera_sample_ray_impl,
+    _prepare_native_scene_cache,
 )
 from .scene import Scene
 
@@ -123,21 +123,56 @@ class Camera:
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        return _camera_render_impl(self._state, scene._mesh_states(), float(background))
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = scene._query_cache_inputs()
+        return _camera_render_impl(
+            self._state,
+            scene._query_cache_id,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+            mesh_states,
+            float(background),
+        )
 
     def render_grad(self, scene: Scene, spp: int = 4, background: float = 0.0) -> _torch.Tensor:
         self._require_built()
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render_grad() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        return _camera_render_grad_impl(self._state, scene._mesh_states(), int(spp), float(background))
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = scene._query_cache_inputs()
+        return _camera_render_grad_impl(
+            self._state,
+            scene._query_cache_id,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+            mesh_states,
+            int(spp),
+            float(background),
+        )
 
     def prepare_edges(self, scene: Scene) -> None:
         self._require_built()
         if not isinstance(scene, Scene):
             raise TypeError("Camera.prepare_edges() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        native_scene = _build_native_scene(scene._mesh_states(), preserve_gradients=False)
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = scene._query_cache_inputs()
+        native_scene = _prepare_native_scene_cache(
+            scene._query_cache_id,
+            mesh_states,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+        )
         native_camera = self._native_detached()
         native_camera.prepare_edges(native_scene)
         self._prepared = True
@@ -160,9 +195,17 @@ class Camera:
             or self._prepared_scene_ref.has_pending_updates()
         ):
             raise RuntimeError("Camera.sample_edge(): camera is not prepared for the current scene state.")
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = self._prepared_scene_ref._query_cache_inputs()
         return _camera_sample_edge_impl(
             self._state,
-            self._prepared_scene_ref._mesh_states(),
+            self._prepared_scene_ref._query_cache_id,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+            mesh_states,
             _normalize_scalar_tensor(sample1, "sample1", _torch.float32),
         )
 

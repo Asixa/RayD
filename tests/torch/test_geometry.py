@@ -207,6 +207,75 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertGreaterEqual(data["ray_edge"], 0)
         self.assertGreaterEqual(data["ray_distance"], 0.0)
 
+    def test_scene_query_cache_reuses_native_scene_and_syncs_inplace_tensor_updates(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+            import rayd.torch._native as native
+
+            device = "cuda"
+            verts = torch.tensor([[0.0, 0.0, 0.0],
+                                  [1.0, 0.0, 0.0],
+                                  [0.0, 1.0, 0.0]], device=device)
+            mesh = rt.Mesh(
+                verts,
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            point = torch.tensor([[0.25, 0.10, 0.0]], device=device)
+
+            its0 = scene.intersect(ray)
+            entry0 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+            build_after_first = int(entry0.build_count)
+            sync_after_first = int(entry0.sync_count)
+
+            shadow = scene.shadow_test(ray)
+            nearest = scene.nearest_edge(point)
+            entry1 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+            build_after_reuse = int(entry1.build_count)
+            sync_after_reuse = int(entry1.sync_count)
+
+            with torch.no_grad():
+                verts[:, 2].add_(0.2)
+
+            its1 = scene.intersect(ray)
+            entry2 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+
+            print(json.dumps({
+                "build_after_first": build_after_first,
+                "sync_after_first": sync_after_first,
+                "build_after_reuse": build_after_reuse,
+                "sync_after_reuse": sync_after_reuse,
+                "build_after_update": int(entry2.build_count),
+                "sync_after_update": int(entry2.sync_count),
+                "shadow_hit": bool(shadow[0].item()),
+                "nearest_valid": bool(nearest.is_valid()[0].item()),
+                "t_before": float(its0.t[0].item()),
+                "t_after": float(its1.t[0].item()),
+            }))
+            """
+        )
+
+        self.assertEqual(data["build_after_first"], 1)
+        self.assertEqual(data["sync_after_first"], 0)
+        self.assertEqual(data["build_after_reuse"], 1)
+        self.assertEqual(data["sync_after_reuse"], 0)
+        self.assertEqual(data["build_after_update"], 1)
+        self.assertEqual(data["sync_after_update"], 1)
+        self.assertTrue(data["shadow_hit"])
+        self.assertTrue(data["nearest_valid"])
+        self.assertAlmostEqual(data["t_before"], 1.0, places=4)
+        self.assertAlmostEqual(data["t_after"], 1.2, places=4)
+
     def test_scene_edge_metadata_interfaces(self):
         data = run_json_case(
             """

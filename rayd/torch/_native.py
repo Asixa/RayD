@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import itertools
 from typing import Any
 
 from ._env import dr, _native
@@ -9,6 +11,7 @@ from ._util import (
     _has_diff_fields,
     _identity_matrix,
     _infer_diff,
+    _is_torch_tensor,
 )
 from ._convert import (
     _float_scalar_type,
@@ -64,6 +67,225 @@ def _mesh_to_world_tensor(state: _MeshState, attr: str) -> _torch.Tensor:
     if value is not None:
         return value
     return _identity_matrix(_mesh_device(state))
+
+
+@dataclass
+class _NativeSceneCacheEntry:
+    scene: Any
+    topology_token: tuple[Any, ...]
+    rebuild_token: tuple[Any, ...]
+    vertex_tokens: tuple[Any, ...]
+    left_tokens: tuple[Any, ...]
+    right_tokens: tuple[Any, ...]
+    build_count: int = 0
+    sync_count: int = 0
+
+
+_SCENE_QUERY_CACHE: dict[int, _NativeSceneCacheEntry] = {}
+_SCENE_QUERY_CACHE_IDS = itertools.count(1)
+
+
+def _allocate_native_scene_cache_id() -> int:
+    return next(_SCENE_QUERY_CACHE_IDS)
+
+
+def _reset_native_scene_cache(cache_id: int) -> None:
+    _SCENE_QUERY_CACHE.pop(cache_id, None)
+
+
+def _release_native_scene_cache(cache_id: int) -> None:
+    _reset_native_scene_cache(cache_id)
+
+
+def _tensor_layout_token(value: Any) -> Any:
+    if value is None:
+        return None
+    if _is_torch_tensor(value):
+        return (
+            "torch-layout",
+            tuple(int(v) for v in value.shape),
+            tuple(int(v) for v in value.stride()),
+            str(value.dtype),
+            value.device.type,
+            value.device.index,
+        )
+    return ("value-layout", type(value))
+
+
+def _tensor_state_token(value: Any) -> Any:
+    if value is None:
+        return None
+    if _is_torch_tensor(value):
+        return (
+            "torch-state",
+            id(value),
+            int(getattr(value, "_version", 0)),
+            int(value.data_ptr()) if value.numel() > 0 else 0,
+            tuple(int(v) for v in value.shape),
+            tuple(int(v) for v in value.stride()),
+            str(value.dtype),
+            value.device.type,
+            value.device.index,
+            bool(value.requires_grad),
+        )
+    return ("value-state", type(value), value)
+
+
+def _scene_topology_token(mesh_states: list[_MeshState]) -> tuple[Any, ...]:
+    return tuple(
+        (
+            _tensor_layout_token(state.vertex_positions),
+            _tensor_state_token(state.face_indices),
+            _tensor_layout_token(state.vertex_uv),
+            _tensor_state_token(state.face_uv_indices),
+            bool(state.use_face_normals),
+            bool(state.edges_enabled),
+            bool(state.verbose),
+        )
+        for state in mesh_states
+    )
+
+
+def _scene_rebuild_token(mesh_states: list[_MeshState]) -> tuple[Any, ...]:
+    return tuple(
+        (
+            _tensor_state_token(state.vertex_uv),
+            _tensor_state_token(state.to_world),
+        )
+        for state in mesh_states
+    )
+
+
+def _scene_vertex_tokens(mesh_states: list[_MeshState]) -> tuple[Any, ...]:
+    return tuple(_tensor_state_token(state.vertex_positions) for state in mesh_states)
+
+
+def _scene_transform_tokens(mesh_states: list[_MeshState], attr: str) -> tuple[Any, ...]:
+    return tuple(_tensor_state_token(getattr(state, attr)) for state in mesh_states)
+
+
+def _scene_cache_tokens(
+    mesh_states: list[_MeshState],
+) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]:
+    return (
+        _scene_topology_token(mesh_states),
+        _scene_rebuild_token(mesh_states),
+        _scene_vertex_tokens(mesh_states),
+        _scene_transform_tokens(mesh_states, "to_world_left"),
+        _scene_transform_tokens(mesh_states, "to_world_right"),
+    )
+
+
+def _scene_cache_refresh_policy(
+    mesh_states: list[_MeshState],
+) -> tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]]:
+    return (
+        any(_infer_diff(state.vertex_uv) or _infer_diff(state.to_world) for state in mesh_states),
+        tuple(_infer_diff(state.vertex_positions) for state in mesh_states),
+        tuple(_infer_diff(state.to_world_left) for state in mesh_states),
+        tuple(_infer_diff(state.to_world_right) for state in mesh_states),
+    )
+
+
+def _build_query_native_scene(mesh_states: list[_MeshState]) -> Any:
+    scene = _native.Scene()
+    for state in mesh_states:
+        scene.add_mesh(_build_native_mesh(state, preserve_gradients=True), True)
+    scene.build()
+    return scene
+
+
+def _sync_query_native_scene(
+    entry: _NativeSceneCacheEntry,
+    mesh_states: list[_MeshState],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    force_vertex_refresh: tuple[bool, ...],
+    force_left_refresh: tuple[bool, ...],
+    force_right_refresh: tuple[bool, ...],
+) -> None:
+    dirty = False
+
+    for mesh_id, state in enumerate(mesh_states):
+        if entry.vertex_tokens[mesh_id] != vertex_tokens[mesh_id] or force_vertex_refresh[mesh_id]:
+            entry.scene.update_mesh_vertices(
+                mesh_id,
+                _tensor_to_vec3(state.vertex_positions, diff=True, name=f"mesh_states[{mesh_id}].vertex_positions"),
+            )
+            dirty = True
+
+        if entry.left_tokens[mesh_id] != left_tokens[mesh_id] or force_left_refresh[mesh_id]:
+            entry.scene.set_mesh_transform(
+                mesh_id,
+                _tensor_to_matrix4(
+                    state.to_world_left if state.to_world_left is not None else _identity_matrix(_mesh_device(state)),
+                    diff=True,
+                    name=f"mesh_states[{mesh_id}].to_world_left",
+                ),
+                True,
+            )
+            dirty = True
+
+        if entry.right_tokens[mesh_id] != right_tokens[mesh_id] or force_right_refresh[mesh_id]:
+            entry.scene.set_mesh_transform(
+                mesh_id,
+                _tensor_to_matrix4(
+                    state.to_world_right if state.to_world_right is not None else _identity_matrix(_mesh_device(state)),
+                    diff=True,
+                    name=f"mesh_states[{mesh_id}].to_world_right",
+                ),
+                False,
+            )
+            dirty = True
+
+    if dirty:
+        entry.scene.sync()
+        entry.sync_count += 1
+
+
+def _prepare_native_scene_cache(
+    cache_id: int,
+    mesh_states: list[_MeshState],
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+) -> Any:
+    force_rebuild, force_vertex_refresh, force_left_refresh, force_right_refresh = refresh_policy
+    entry = _SCENE_QUERY_CACHE.get(cache_id)
+    if force_rebuild or entry is None or entry.topology_token != topology_token or entry.rebuild_token != rebuild_token:
+        build_count = 1 if entry is None else entry.build_count + 1
+        sync_count = 0 if entry is None else entry.sync_count
+        entry = _NativeSceneCacheEntry(
+            scene=_build_query_native_scene(mesh_states),
+            topology_token=topology_token,
+            rebuild_token=rebuild_token,
+            vertex_tokens=vertex_tokens,
+            left_tokens=left_tokens,
+            right_tokens=right_tokens,
+            build_count=build_count,
+            sync_count=sync_count,
+        )
+        _SCENE_QUERY_CACHE[cache_id] = entry
+        return entry.scene
+
+    _sync_query_native_scene(
+        entry,
+        mesh_states,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        force_vertex_refresh,
+        force_left_refresh,
+        force_right_refresh,
+    )
+    entry.vertex_tokens = vertex_tokens
+    entry.left_tokens = left_tokens
+    entry.right_tokens = right_tokens
+    return entry.scene
 
 
 # ---------------------------------------------------------------------------
@@ -252,32 +474,112 @@ def _build_native_camera(state: _CameraState, *, preserve_gradients: bool) -> An
 # ---------------------------------------------------------------------------
 
 @dr.wrap(source="torch", target="drjit")
-def _scene_intersect_impl(mesh_states: list[_MeshState], ray: Ray, active: Any) -> Any:
+def _scene_intersect_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    ray: Ray,
+    active: Any,
+) -> Any:
     diff = _has_diff_fields(ray) or any(_has_diff_fields(s) for s in mesh_states)
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     its = scene.intersect(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff))
     return _intersection_from_native(its)
 
 
 @dr.wrap(source="torch", target="drjit")
-def _scene_shadow_test_impl(mesh_states: list[_MeshState], ray: Ray, active: Any) -> Any:
+def _scene_shadow_test_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    ray: Ray,
+    active: Any,
+) -> Any:
     diff = _has_diff_fields(ray) or any(_has_diff_fields(s) for s in mesh_states)
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     return _scalar_array_to_tensor(scene.shadow_test(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff)))
 
 
 @dr.wrap(source="torch", target="drjit")
-def _scene_nearest_point_impl(mesh_states: list[_MeshState], point: Any, active: Any) -> Any:
+def _scene_nearest_point_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    point: Any,
+    active: Any,
+) -> Any:
     diff = _infer_diff(point) or any(_has_diff_fields(s) for s in mesh_states)
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     result = scene.nearest_edge(_tensor_to_vec3(point, diff=diff, name="point"), _tensor_to_mask(active, diff=diff))
     return _nearest_point_from_native(result)
 
 
 @dr.wrap(source="torch", target="drjit")
-def _scene_nearest_ray_impl(mesh_states: list[_MeshState], ray: Ray, active: Any) -> Any:
+def _scene_nearest_ray_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    ray: Ray,
+    active: Any,
+) -> Any:
     diff = _has_diff_fields(ray) or any(_has_diff_fields(s) for s in mesh_states)
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     result = scene.nearest_edge(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff))
     return _nearest_ray_from_native(result)
 
@@ -291,22 +593,83 @@ def _camera_sample_ray_impl(state: _CameraState, sample: Any) -> Any:
 
 
 @dr.wrap(source="torch", target="drjit")
-def _camera_sample_edge_impl(state: _CameraState, mesh_states: list[_MeshState], sample1: Any) -> Any:
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+def _camera_sample_edge_impl(
+    state: _CameraState,
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    sample1: Any,
+) -> Any:
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     camera = _build_native_camera(state, preserve_gradients=True)
     camera.prepare_edges(scene)
     return _primary_edge_sample_from_native(camera.sample_edge(_tensor_to_scalar_array(sample1, diff=False, name="sample1")))
 
 
 @dr.wrap(source="torch", target="drjit")
-def _camera_render_impl(state: _CameraState, mesh_states: list[_MeshState], background: float) -> Any:
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+def _camera_render_impl(
+    state: _CameraState,
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    background: float,
+) -> Any:
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     camera = _build_native_camera(state, preserve_gradients=True)
     return camera.render(scene, background)
 
 
 @dr.wrap(source="torch", target="drjit")
-def _camera_render_grad_impl(state: _CameraState, mesh_states: list[_MeshState], spp: int, background: float) -> Any:
-    scene = _build_native_scene(mesh_states, preserve_gradients=True)
+def _camera_render_grad_impl(
+    state: _CameraState,
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    spp: int,
+    background: float,
+) -> Any:
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+    )
     camera = _build_native_camera(state, preserve_gradients=True)
     return camera.render_grad(scene, spp, background)
