@@ -474,9 +474,6 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
     MaskT<Detached> hit_mask = active;
     OptixIntersection optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
-    if (drjit::none(hit_mask)) {
-        return intersection;
-    }
 
     const IntDetached shape_id = optix_hit.shape_id;
     const IntDetached global_primitive_id = optix_hit.global_prim_id;
@@ -555,9 +552,6 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     }
 
     hit_mask &= drjit::isfinite(hit_distance) && (hit_distance < ray.tmax);
-    if (drjit::none(hit_mask)) {
-        return intersection;
-    }
 
     const FloatT<Detached> safe_hit_distance = select(hit_mask, hit_distance, zeros<FloatT<Detached>>(ray_count));
     const Vector2fT<Detached> safe_triangle_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
