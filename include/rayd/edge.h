@@ -139,4 +139,54 @@ struct SecondaryEdgeInfoData {
 using SecondaryEdgeInfo = SecondaryEdgeInfoData<Float>;
 using SecondaryEdgeInfoDetached = SecondaryEdgeInfoData<FloatDetached>;
 
+struct SceneEdgeInfo {
+    Vector3f start;
+    Vector3f edge;
+    Vector3f end;
+    Float length;
+    Vector3f normal0;
+    Vector3f normal1;
+    Mask is_boundary;
+    IntDetached shape_id;
+    IntDetached local_edge_id;
+    IntDetached global_edge_id;
+
+    int size() const { return global_edge_id.size(); }
+
+    DRJIT_STRUCT(SceneEdgeInfo,
+                 start,
+                 edge,
+                 end,
+                 length,
+                 normal0,
+                 normal1,
+                 is_boundary,
+                 shape_id,
+                 local_edge_id,
+                 global_edge_id)
+};
+
+struct SceneEdgeTopology {
+    IntDetached v0;
+    IntDetached v1;
+    IntDetached face0_local;
+    IntDetached face1_local;
+    IntDetached face0_global;
+    IntDetached face1_global;
+    IntDetached opposite_vertex0;
+    IntDetached opposite_vertex1;
+
+    int size() const { return v0.size(); }
+
+    DRJIT_STRUCT(SceneEdgeTopology,
+                 v0,
+                 v1,
+                 face0_local,
+                 face1_local,
+                 face0_global,
+                 face1_global,
+                 opposite_vertex0,
+                 opposite_vertex1)
+};
+
 } // namespace rayd

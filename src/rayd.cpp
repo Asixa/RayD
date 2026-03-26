@@ -161,6 +161,32 @@ NB_MODULE(rayd, m) {
             .def_ro("opposite", &SecondaryEdgeInfo::opposite)
             .def_ro("is_boundary", &SecondaryEdgeInfo::is_boundary);
 
+        nb::class_<SceneEdgeInfo>(m, "SceneEdgeInfo")
+            .def(nb::init<>())
+            .def("size", &SceneEdgeInfo::size)
+            .def_ro("start", &SceneEdgeInfo::start)
+            .def_ro("edge", &SceneEdgeInfo::edge)
+            .def_ro("end", &SceneEdgeInfo::end)
+            .def_ro("length", &SceneEdgeInfo::length)
+            .def_ro("normal0", &SceneEdgeInfo::normal0)
+            .def_ro("normal1", &SceneEdgeInfo::normal1)
+            .def_ro("is_boundary", &SceneEdgeInfo::is_boundary)
+            .def_ro("shape_id", &SceneEdgeInfo::shape_id)
+            .def_ro("local_edge_id", &SceneEdgeInfo::local_edge_id)
+            .def_ro("global_edge_id", &SceneEdgeInfo::global_edge_id);
+
+        nb::class_<SceneEdgeTopology>(m, "SceneEdgeTopology")
+            .def(nb::init<>())
+            .def("size", &SceneEdgeTopology::size)
+            .def_ro("v0", &SceneEdgeTopology::v0)
+            .def_ro("v1", &SceneEdgeTopology::v1)
+            .def_ro("face0_local", &SceneEdgeTopology::face0_local)
+            .def_ro("face1_local", &SceneEdgeTopology::face1_local)
+            .def_ro("face0_global", &SceneEdgeTopology::face0_global)
+            .def_ro("face1_global", &SceneEdgeTopology::face1_global)
+            .def_ro("opposite_vertex0", &SceneEdgeTopology::opposite_vertex0)
+            .def_ro("opposite_vertex1", &SceneEdgeTopology::opposite_vertex1);
+
         nb::enum_<RayFlags>(m, "RayFlags", nb::is_arithmetic())
             .value("None", RayFlags::None)
             .value("Geometric", RayFlags::Geometric)
@@ -236,13 +262,17 @@ NB_MODULE(rayd, m) {
             .def_ro("mesh_update_ms", &SceneCommitProfile::mesh_update_ms)
             .def_ro("triangle_scatter_ms", &SceneCommitProfile::triangle_scatter_ms)
             .def_ro("triangle_eval_ms", &SceneCommitProfile::triangle_eval_ms)
+            .def_ro("edge_scatter_ms", &SceneCommitProfile::edge_scatter_ms)
+            .def_ro("edge_refit_ms", &SceneCommitProfile::edge_refit_ms)
             .def_ro("optix_commit_ms", &SceneCommitProfile::optix_commit_ms)
             .def_ro("total_ms", &SceneCommitProfile::total_ms)
             .def_ro("optix_gas_update_ms", &SceneCommitProfile::optix_gas_update_ms)
             .def_ro("optix_ias_update_ms", &SceneCommitProfile::optix_ias_update_ms)
             .def_ro("updated_meshes", &SceneCommitProfile::updated_meshes)
             .def_ro("updated_vertex_meshes", &SceneCommitProfile::updated_vertex_meshes)
-            .def_ro("updated_transform_meshes", &SceneCommitProfile::updated_transform_meshes);
+            .def_ro("updated_transform_meshes", &SceneCommitProfile::updated_transform_meshes)
+            .def_ro("updated_edge_meshes", &SceneCommitProfile::updated_edge_meshes)
+            .def_ro("updated_edges", &SceneCommitProfile::updated_edges);
     });
 
     bind_section("mesh", [&]() {
@@ -347,6 +377,24 @@ NB_MODULE(rayd, m) {
             .def("is_ready", &Scene::is_ready)
             .def("has_pending_updates", &Scene::has_pending_updates)
             .def_prop_ro("last_commit_profile", &Scene::last_commit_profile)
+            .def("edge_info", &Scene::edge_info)
+            .def("edge_topology", &Scene::edge_topology)
+            .def("mesh_face_offsets", &Scene::mesh_face_offsets)
+            .def("mesh_edge_offsets", &Scene::mesh_edge_offsets)
+            .def("triangle_edge_indices",
+                 [](const Scene &scene, const IntDetached &prim_id, bool global) {
+                     const auto edge_ids = scene.triangle_edge_indices(prim_id, global);
+                     return nb::make_tuple(edge_ids[0], edge_ids[1], edge_ids[2]);
+                 },
+                 "prim_id"_a,
+                 "global_"_a = true)
+            .def("edge_adjacent_faces",
+                 [](const Scene &scene, const IntDetached &edge_id, bool global) {
+                     const auto face_ids = scene.edge_adjacent_faces(edge_id, global);
+                     return nb::make_tuple(face_ids[0], face_ids[1]);
+                 },
+                 "edge_id"_a,
+                 "global_"_a = true)
             .def("intersect",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active, RayFlags flags) {
                      return scene.intersect<true>(ray, active, flags);
@@ -388,6 +436,8 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def_prop_ro("num_meshes", &Scene::num_meshes)
+            .def_prop_ro("version", &Scene::version)
+            .def_prop_ro("edge_version", &Scene::edge_version)
             .def_prop_ro("slang_handle", [](Scene &s) -> uint64_t {
                 return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&s));
             })

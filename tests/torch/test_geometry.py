@@ -207,6 +207,179 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertGreaterEqual(data["ray_edge"], 0)
         self.assertGreaterEqual(data["ray_distance"], 0.0)
 
+    def test_scene_edge_metadata_interfaces(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            mesh_a = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [1.0, 1.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            mesh_b = rt.Mesh(
+                torch.tensor([[2.0, 0.0, 0.0],
+                              [3.0, 0.0, 0.0],
+                              [2.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.configure()
+
+            edge_info = scene.edge_info()
+            topology = scene.edge_topology()
+            tri0_edges = scene.triangle_edge_indices(torch.tensor([0], device=device, dtype=torch.int32))
+            adj_faces = scene.edge_adjacent_faces(torch.tensor([1], device=device, dtype=torch.int32))
+
+            print(json.dumps({
+                "version": int(scene.version),
+                "edge_version": int(scene.edge_version),
+                "edge_count": int(edge_info.size()),
+                "topology_count": int(topology.size()),
+                "face_offsets": [int(v) for v in scene.mesh_face_offsets().tolist()],
+                "edge_offsets": [int(v) for v in scene.mesh_edge_offsets().tolist()],
+                "shape_ids": [int(v) for v in edge_info.shape_id.tolist()],
+                "global_edge_ids": [int(v) for v in edge_info.global_edge_id.tolist()],
+                "tri0_edges": [int(v) for v in [tri0_edges[0][0].item(), tri0_edges[1][0].item(), tri0_edges[2][0].item()]],
+                "adj_faces": [int(v) for v in [adj_faces[0][0].item(), adj_faces[1][0].item()]],
+            }))
+            """
+        )
+
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["edge_version"], 1)
+        self.assertEqual(data["edge_count"], 8)
+        self.assertEqual(data["topology_count"], 8)
+        self.assertEqual(data["face_offsets"], [0, 2, 3])
+        self.assertEqual(data["edge_offsets"], [0, 5, 8])
+        self.assertEqual(data["shape_ids"], [0, 0, 0, 0, 0, 1, 1, 1])
+        self.assertEqual(data["global_edge_ids"], list(range(8)))
+        self.assertEqual(data["tri0_edges"], [0, 3, 1])
+        self.assertEqual(data["adj_faces"], [0, 1])
+
+    def test_scene_edge_interfaces_handle_empty_and_invalid_edge_queries(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            mesh.edges_enabled = False
+
+            scene = rt.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            edge_info = scene.edge_info()
+            topology = scene.edge_topology()
+            tri_edges = scene.triangle_edge_indices(torch.tensor([0, 3], device=device, dtype=torch.int32))
+            adj_faces = scene.edge_adjacent_faces(torch.tensor([0, 4], device=device, dtype=torch.int32))
+            nearest = scene.nearest_edge(torch.tensor([[0.2, 0.1, 0.3]], device=device))
+
+            print(json.dumps({
+                "edge_count": int(edge_info.size()),
+                "topology_count": int(topology.size()),
+                "edge_offsets": [int(v) for v in scene.mesh_edge_offsets().tolist()],
+                "tri_edges": [[int(tri_edges[i][j].item()) for j in range(2)] for i in range(3)],
+                "adj_faces": [[int(adj_faces[i][j].item()) for j in range(2)] for i in range(2)],
+                "nearest_valid": bool(nearest.is_valid()[0].item()),
+                "nearest_shape": int(nearest.shape_id[0].item()),
+                "nearest_edge": int(nearest.edge_id[0].item()),
+                "nearest_distance_inf": math.isinf(float(nearest.distance[0].item())),
+            }))
+            """
+        )
+
+        self.assertEqual(data["edge_count"], 0)
+        self.assertEqual(data["topology_count"], 0)
+        self.assertEqual(data["edge_offsets"], [0, 0])
+        self.assertEqual(data["tri_edges"], [[-1, -1], [-1, -1], [-1, -1]])
+        self.assertEqual(data["adj_faces"], [[-1, -1], [-1, -1]])
+        self.assertFalse(data["nearest_valid"])
+        self.assertEqual(data["nearest_shape"], -1)
+        self.assertEqual(data["nearest_edge"], -1)
+        self.assertTrue(data["nearest_distance_inf"])
+
+    def test_scene_edge_index_queries_support_batched_valid_invalid_and_kw_alias(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            mesh_a = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [1.0, 1.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            mesh_b = rt.Mesh(
+                torch.tensor([[2.0, 0.0, 0.0],
+                              [3.0, 0.0, 0.0],
+                              [2.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.configure()
+
+            prim_ids = torch.tensor([-1, 0, 1, 2, 9], device=device, dtype=torch.int32)
+            edge_ids = torch.tensor([-1, 1, 6, 99], device=device, dtype=torch.int32)
+            tri_edges_global = scene.triangle_edge_indices(prim_ids)
+            tri_edges_local = scene.triangle_edge_indices(prim_ids, **{"global": False})
+            adj_faces_global = scene.edge_adjacent_faces(edge_ids)
+            adj_faces_local = scene.edge_adjacent_faces(edge_ids, **{"global": False})
+
+            print(json.dumps({
+                "tri_edges_global": [[int(tri_edges_global[i][j].item()) for j in range(5)] for i in range(3)],
+                "tri_edges_local": [[int(tri_edges_local[i][j].item()) for j in range(5)] for i in range(3)],
+                "adj_faces_global": [[int(adj_faces_global[i][j].item()) for j in range(4)] for i in range(2)],
+                "adj_faces_local": [[int(adj_faces_local[i][j].item()) for j in range(4)] for i in range(2)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["tri_edges_global"], [
+            [-1, 0, 1, 5, -1],
+            [-1, 3, 4, 7, -1],
+            [-1, 1, 2, 6, -1],
+        ])
+        self.assertEqual(data["tri_edges_local"], [
+            [-1, 0, 1, 0, -1],
+            [-1, 3, 4, 2, -1],
+            [-1, 1, 2, 1, -1],
+        ])
+        self.assertEqual(data["adj_faces_global"], [
+            [-1, 0, 2, -1],
+            [-1, 1, -1, -1],
+        ])
+        self.assertEqual(data["adj_faces_local"], [
+            [-1, 0, 0, -1],
+            [-1, 1, -1, -1],
+        ])
+
     def test_mesh_properties_and_dynamic_commit_flow(self):
         data = run_json_case(
             """
@@ -235,6 +408,8 @@ class TorchGeometryTests(unittest.TestCase):
             scene = rt.Scene()
             mesh_id = scene.add_mesh(mesh, dynamic=True)
             scene.configure()
+            version_before = scene.version
+            edge_version_before = scene.edge_version
 
             scene.update_mesh_vertices(
                 mesh_id,
@@ -268,6 +443,7 @@ class TorchGeometryTests(unittest.TestCase):
                 torch.tensor([[0.0, 0.0, 1.0]], device=device),
             )
             its = scene.intersect(ray)
+            edge_info = scene.edge_info()
             profile = scene.last_commit_profile
 
             print(json.dumps({
@@ -281,8 +457,17 @@ class TorchGeometryTests(unittest.TestCase):
                 "pending_after": scene.has_pending_updates(),
                 "valid_after": bool(its.is_valid()[0].item()),
                 "shape_after": int(its.shape_id[0].item()),
+                "version_before": int(version_before),
+                "version_after": int(scene.version),
+                "edge_version_before": int(edge_version_before),
+                "edge_version_after": int(scene.edge_version),
+                "edge0_start_after": [float(v) for v in edge_info.start[0].tolist()],
                 "profile_total_ms": float(profile.total_ms),
                 "profile_updated_meshes": int(profile.updated_meshes),
+                "profile_edge_scatter_ms": float(profile.edge_scatter_ms),
+                "profile_edge_refit_ms": float(profile.edge_refit_ms),
+                "profile_updated_edge_meshes": int(profile.updated_edge_meshes),
+                "profile_updated_edges": int(profile.updated_edges),
             }))
             """
         )
@@ -297,8 +482,111 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertFalse(data["pending_after"])
         self.assertTrue(data["valid_after"])
         self.assertEqual(data["shape_after"], 0)
+        self.assertEqual(data["version_after"], data["version_before"] + 1)
+        self.assertEqual(data["edge_version_after"], data["edge_version_before"] + 1)
+        self.assertEqual(data["edge0_start_after"], [2.0, 0.0, 0.0])
         self.assertGreaterEqual(data["profile_total_ms"], 0.0)
         self.assertGreaterEqual(data["profile_updated_meshes"], 1)
+        self.assertGreaterEqual(data["profile_edge_scatter_ms"], 0.0)
+        self.assertGreaterEqual(data["profile_edge_refit_ms"], 0.0)
+        self.assertEqual(data["profile_updated_edge_meshes"], 1)
+        self.assertEqual(data["profile_updated_edges"], 3)
+
+    def test_scene_transform_updates_preserve_topology_and_noop_commit_keeps_versions(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [1.0, 1.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.configure()
+
+            version_before = scene.version
+            edge_version_before = scene.edge_version
+            tri_edges_before = scene.triangle_edge_indices(torch.tensor([0, 1], device=device, dtype=torch.int32))
+            topology_before = scene.edge_topology()
+
+            scene.set_mesh_transform(
+                mesh_id,
+                torch.tensor([
+                    [1.0, 0.0, 0.0, 3.0],
+                    [0.0, 1.0, 0.0, 0.5],
+                    [0.0, 0.0, 1.0, 1.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ], device=device),
+            )
+
+            tri_edges_pending = scene.triangle_edge_indices(torch.tensor([0, 1], device=device, dtype=torch.int32))
+            topology_pending = scene.edge_topology()
+            pending_edge_info_error = False
+            try:
+                scene.edge_info()
+            except Exception as exc:
+                pending_edge_info_error = "pending updates" in str(exc)
+
+            scene.commit_updates()
+            edge_info_after = scene.edge_info()
+            tri_edges_after = scene.triangle_edge_indices(torch.tensor([0, 1], device=device, dtype=torch.int32))
+            topology_after = scene.edge_topology()
+            profile = scene.last_commit_profile
+
+            version_after = scene.version
+            edge_version_after = scene.edge_version
+            scene.commit_updates()
+            noop_profile = scene.last_commit_profile
+
+            print(json.dumps({
+                "pending_edge_info_error": pending_edge_info_error,
+                "version_before": int(version_before),
+                "version_after": int(version_after),
+                "edge_version_before": int(edge_version_before),
+                "edge_version_after": int(edge_version_after),
+                "version_after_noop": int(scene.version),
+                "edge_version_after_noop": int(scene.edge_version),
+                "tri_edges_before": [[int(tri_edges_before[i][j].item()) for j in range(2)] for i in range(3)],
+                "tri_edges_pending": [[int(tri_edges_pending[i][j].item()) for j in range(2)] for i in range(3)],
+                "tri_edges_after": [[int(tri_edges_after[i][j].item()) for j in range(2)] for i in range(3)],
+                "topology_before_face1": int(topology_before.face1_global[1].item()),
+                "topology_pending_face1": int(topology_pending.face1_global[1].item()),
+                "topology_after_face1": int(topology_after.face1_global[1].item()),
+                "edge0_start_after": [float(v) for v in edge_info_after.start[0].tolist()],
+                "profile_updated_transform_meshes": int(profile.updated_transform_meshes),
+                "profile_updated_edge_meshes": int(profile.updated_edge_meshes),
+                "profile_updated_edges": int(profile.updated_edges),
+                "noop_profile_total_ms": float(noop_profile.total_ms),
+                "noop_profile_updated_edges": int(noop_profile.updated_edges),
+            }))
+            """
+        )
+
+        self.assertTrue(data["pending_edge_info_error"])
+        self.assertEqual(data["tri_edges_before"], data["tri_edges_pending"])
+        self.assertEqual(data["tri_edges_before"], data["tri_edges_after"])
+        self.assertEqual(data["topology_before_face1"], 1)
+        self.assertEqual(data["topology_pending_face1"], 1)
+        self.assertEqual(data["topology_after_face1"], 1)
+        self.assertEqual(data["edge0_start_after"], [3.0, 0.5, 1.0])
+        self.assertEqual(data["version_after"], data["version_before"] + 1)
+        self.assertEqual(data["edge_version_after"], data["edge_version_before"] + 1)
+        self.assertEqual(data["version_after_noop"], data["version_after"])
+        self.assertEqual(data["edge_version_after_noop"], data["edge_version_after"])
+        self.assertEqual(data["profile_updated_transform_meshes"], 1)
+        self.assertEqual(data["profile_updated_edge_meshes"], 1)
+        self.assertEqual(data["profile_updated_edges"], 5)
+        self.assertEqual(data["noop_profile_total_ms"], 0.0)
+        self.assertEqual(data["noop_profile_updated_edges"], 0)
 
     def test_intersection_gradients_reach_vertices_and_transforms(self):
         data = run_json_case(

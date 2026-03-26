@@ -17,6 +17,8 @@ struct SceneCommitProfile {
     double mesh_update_ms = 0.0;
     double triangle_scatter_ms = 0.0;
     double triangle_eval_ms = 0.0;
+    double edge_scatter_ms = 0.0;
+    double edge_refit_ms = 0.0;
     double optix_commit_ms = 0.0;
     double total_ms = 0.0;
     double optix_gas_update_ms = 0.0;
@@ -24,6 +26,8 @@ struct SceneCommitProfile {
     int updated_meshes = 0;
     int updated_vertex_meshes = 0;
     int updated_transform_meshes = 0;
+    int updated_edge_meshes = 0;
+    int updated_edges = 0;
 };
 
 /// Collection of configured meshes and the acceleration data required for intersection queries.
@@ -42,6 +46,14 @@ public:
     void append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left = true);
     void commit_updates();
     const SceneCommitProfile &last_commit_profile() const { return last_commit_profile_; }
+    SceneEdgeInfo edge_info() const;
+    const SceneEdgeTopology &edge_topology() const;
+    const IntDetached &mesh_face_offsets() const { return face_offsets_; }
+    const IntDetached &mesh_edge_offsets() const { return edge_offsets_; }
+    uint64_t version() const { return scene_version_; }
+    uint64_t edge_version() const { return edge_version_; }
+    VectoriT<3, true> triangle_edge_indices(const IntDetached &prim_id, bool global = true) const;
+    VectoriT<2, true> edge_adjacent_faces(const IntDetached &edge_id, bool global = true) const;
 
     template <bool Detached>
     IntersectionT<Detached> intersect(const RayT<Detached> &ray,
@@ -75,7 +87,7 @@ private:
     SceneMeshRecord &mesh_record(int mesh_id);
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);
-    void scatter_mesh_edge_data(const SceneMeshRecord &record);
+    void scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_static_ids);
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
     void register_primary_edge_observer(Camera *camera);
@@ -94,12 +106,15 @@ private:
     Mask triangle_face_normal_mask_;
     MaskDetached triangle_face_normal_mask_detached_;
     SecondaryEdgeInfo edge_info_;
+    SceneEdgeTopology edge_topology_;
     IntDetached edge_shape_ids_;
     IntDetached edge_local_ids_;
+    VectoriT<3, true> triangle_edge_ids_;
 
     bool is_ready_ = false;
     bool pending_updates_ = false;
     uint64_t scene_version_ = 0;
+    uint64_t edge_version_ = 0;
     int edge_count_ = 0;
     mutable bool edge_bvh_dirty_ = false;
     mutable std::vector<EdgeDirtyRange> pending_edge_bvh_dirty_ranges_;

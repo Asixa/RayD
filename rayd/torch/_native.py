@@ -30,6 +30,8 @@ from .types import (
     NearestRayEdge,
     PrimaryEdgeSample,
     Ray,
+    SceneEdgeInfo,
+    SceneEdgeTopology,
     SecondaryEdgeInfo,
 )
 from ._state import _MeshState, _CameraState
@@ -122,6 +124,34 @@ def _secondary_edges_from_native(info: Any) -> SecondaryEdgeInfo:
         normal1=_vec3_to_tensor(info.normal1),
         opposite=_vec3_to_tensor(info.opposite),
         is_boundary=_scalar_array_to_tensor(info.is_boundary),
+    )
+
+
+def _scene_edge_info_from_native(info: Any) -> SceneEdgeInfo:
+    return SceneEdgeInfo(
+        start=_vec3_to_tensor(info.start),
+        edge=_vec3_to_tensor(info.edge),
+        end=_vec3_to_tensor(info.end),
+        length=_scalar_array_to_tensor(info.length),
+        normal0=_vec3_to_tensor(info.normal0),
+        normal1=_vec3_to_tensor(info.normal1),
+        is_boundary=_scalar_array_to_tensor(info.is_boundary),
+        shape_id=_scalar_array_to_tensor(info.shape_id),
+        local_edge_id=_scalar_array_to_tensor(info.local_edge_id),
+        global_edge_id=_scalar_array_to_tensor(info.global_edge_id),
+    )
+
+
+def _scene_edge_topology_from_native(info: Any) -> SceneEdgeTopology:
+    return SceneEdgeTopology(
+        v0=_scalar_array_to_tensor(info.v0),
+        v1=_scalar_array_to_tensor(info.v1),
+        face0_local=_scalar_array_to_tensor(info.face0_local),
+        face1_local=_scalar_array_to_tensor(info.face1_local),
+        face0_global=_scalar_array_to_tensor(info.face0_global),
+        face1_global=_scalar_array_to_tensor(info.face1_global),
+        opposite_vertex0=_scalar_array_to_tensor(info.opposite_vertex0),
+        opposite_vertex1=_scalar_array_to_tensor(info.opposite_vertex1),
     )
 
 

@@ -185,11 +185,97 @@ class SecondaryEdgeInfo(_StructRepr):
         return int(_shape_tuple(self.is_boundary)[0])
 
 
+class SceneEdgeInfo(_StructRepr):
+    DRJIT_STRUCT = {
+        "start": object,
+        "edge": object,
+        "end": object,
+        "length": object,
+        "normal0": object,
+        "normal1": object,
+        "is_boundary": object,
+        "shape_id": object,
+        "local_edge_id": object,
+        "global_edge_id": object,
+    }
+
+    def __init__(
+        self,
+        start: Any = None,
+        edge: Any = None,
+        end: Any = None,
+        length: Any = None,
+        normal0: Any = None,
+        normal1: Any = None,
+        is_boundary: Any = None,
+        shape_id: Any = None,
+        local_edge_id: Any = None,
+        global_edge_id: Any = None,
+    ):
+        self.start = start
+        self.edge = edge
+        self.end = end
+        self.length = length
+        self.normal0 = normal0
+        self.normal1 = normal1
+        self.is_boundary = is_boundary
+        self.shape_id = shape_id
+        self.local_edge_id = local_edge_id
+        self.global_edge_id = global_edge_id
+
+    def size(self) -> int:
+        if self.global_edge_id is None:
+            return 0
+        from ._util import _shape_tuple
+        return int(_shape_tuple(self.global_edge_id)[0])
+
+
+class SceneEdgeTopology(_StructRepr):
+    DRJIT_STRUCT = {
+        "v0": object,
+        "v1": object,
+        "face0_local": object,
+        "face1_local": object,
+        "face0_global": object,
+        "face1_global": object,
+        "opposite_vertex0": object,
+        "opposite_vertex1": object,
+    }
+
+    def __init__(
+        self,
+        v0: Any = None,
+        v1: Any = None,
+        face0_local: Any = None,
+        face1_local: Any = None,
+        face0_global: Any = None,
+        face1_global: Any = None,
+        opposite_vertex0: Any = None,
+        opposite_vertex1: Any = None,
+    ):
+        self.v0 = v0
+        self.v1 = v1
+        self.face0_local = face0_local
+        self.face1_local = face1_local
+        self.face0_global = face0_global
+        self.face1_global = face1_global
+        self.opposite_vertex0 = opposite_vertex0
+        self.opposite_vertex1 = opposite_vertex1
+
+    def size(self) -> int:
+        if self.v0 is None:
+            return 0
+        from ._util import _shape_tuple
+        return int(_shape_tuple(self.v0)[0])
+
+
 class SceneCommitProfile:
     _FIELDS = (
         "mesh_update_ms",
         "triangle_scatter_ms",
         "triangle_eval_ms",
+        "edge_scatter_ms",
+        "edge_refit_ms",
         "optix_commit_ms",
         "total_ms",
         "optix_gas_update_ms",
@@ -197,6 +283,8 @@ class SceneCommitProfile:
         "updated_meshes",
         "updated_vertex_meshes",
         "updated_transform_meshes",
+        "updated_edge_meshes",
+        "updated_edges",
     )
 
     def __init__(self, native_profile: Any | None = None):

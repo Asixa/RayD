@@ -834,6 +834,353 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["edge_point"][2], 0.0, places=5)
         self.assertFalse(data["pending_after_commit"])
 
+    def test_scene_edge_metadata_and_topology_are_exposed(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh_a = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
+                                         [0.0, 0.0, 1.0, 1.0],
+                                         [0.0, 0.0, 0.0, 0.0]),
+                             cuda.Array3i([0, 0], [1, 2], [2, 3]))
+            mesh_b = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                         [0.0, 0.0, 1.0],
+                                         [0.0, 0.0, 0.0]),
+                             cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.configure()
+
+            edge_info = scene.edge_info()
+            topology = scene.edge_topology()
+            tri0_edges = scene.triangle_edge_indices(cuda.Int([0]))
+            tri1_edges = scene.triangle_edge_indices(cuda.Int([1]))
+            tri2_edges_local = scene.triangle_edge_indices(cuda.Int([2]), False)
+            adj_faces = scene.edge_adjacent_faces(cuda.Int([1]))
+            adj_faces_local = scene.edge_adjacent_faces(cuda.Int([1]), False)
+
+            print(json.dumps({
+                "version": int(scene.version),
+                "edge_version": int(scene.edge_version),
+                "edge_count": edge_info.size(),
+                "topology_count": topology.size(),
+                "shape_ids": [int(v) for v in list(edge_info.shape_id)],
+                "local_edge_ids": [int(v) for v in list(edge_info.local_edge_id)],
+                "global_edge_ids": [int(v) for v in list(edge_info.global_edge_id)],
+                "length_edge0": float(edge_info.length[0]),
+                "length_edge1": float(edge_info.length[1]),
+                "edge1_start": [float(edge_info.start[0][1]), float(edge_info.start[1][1]), float(edge_info.start[2][1])],
+                "edge1_end": [float(edge_info.end[0][1]), float(edge_info.end[1][1]), float(edge_info.end[2][1])],
+                "edge1_boundary": bool(edge_info.is_boundary[1]),
+                "face_offsets": [int(v) for v in list(scene.mesh_face_offsets())],
+                "edge_offsets": [int(v) for v in list(scene.mesh_edge_offsets())],
+                "topology_edge1": {
+                    "v0": int(topology.v0[1]),
+                    "v1": int(topology.v1[1]),
+                    "face0_global": int(topology.face0_global[1]),
+                    "face1_global": int(topology.face1_global[1]),
+                    "opposite0": int(topology.opposite_vertex0[1]),
+                    "opposite1": int(topology.opposite_vertex1[1]),
+                },
+                "tri0_edges": [int(tri0_edges[i][0]) for i in range(3)],
+                "tri1_edges": [int(tri1_edges[i][0]) for i in range(3)],
+                "tri2_edges_local": [int(tri2_edges_local[i][0]) for i in range(3)],
+                "adj_faces": [int(adj_faces[i][0]) for i in range(2)],
+                "adj_faces_local": [int(adj_faces_local[i][0]) for i in range(2)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["edge_version"], 1)
+        self.assertEqual(data["edge_count"], 8)
+        self.assertEqual(data["topology_count"], 8)
+        self.assertEqual(data["shape_ids"], [0, 0, 0, 0, 0, 1, 1, 1])
+        self.assertEqual(data["local_edge_ids"], [0, 1, 2, 3, 4, 0, 1, 2])
+        self.assertEqual(data["global_edge_ids"], list(range(8)))
+        self.assertAlmostEqual(data["length_edge0"], 1.0, places=5)
+        self.assertAlmostEqual(data["length_edge1"], math.sqrt(2.0), places=5)
+        self.assertEqual(data["edge1_start"], [0.0, 0.0, 0.0])
+        self.assertEqual(data["edge1_end"], [1.0, 1.0, 0.0])
+        self.assertFalse(data["edge1_boundary"])
+        self.assertEqual(data["face_offsets"], [0, 2, 3])
+        self.assertEqual(data["edge_offsets"], [0, 5, 8])
+        self.assertEqual(data["topology_edge1"], {
+            "v0": 0,
+            "v1": 2,
+            "face0_global": 0,
+            "face1_global": 1,
+            "opposite0": 1,
+            "opposite1": 3,
+        })
+        self.assertEqual(data["tri0_edges"], [0, 3, 1])
+        self.assertEqual(data["tri1_edges"], [1, 4, 2])
+        self.assertEqual(data["tri2_edges_local"], [0, 2, 1])
+        self.assertEqual(data["adj_faces"], [0, 1])
+        self.assertEqual(data["adj_faces_local"], [0, 1])
+
+    def test_scene_edge_version_and_commit_profile_track_dynamic_updates(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.configure()
+
+            version_before = int(scene.version)
+            edge_version_before = int(scene.edge_version)
+            pending_edge_info_error = False
+
+            scene.update_mesh_vertices(mesh_id,
+                                       cuda.Array3f([2.0, 3.0, 2.0],
+                                                    [0.0, 0.0, 1.0],
+                                                    [0.0, 0.0, 0.0]))
+            try:
+                scene.edge_info()
+            except Exception as exc:
+                pending_edge_info_error = "pending updates" in str(exc)
+
+            scene.commit_updates()
+            edge_info = scene.edge_info()
+            profile = scene.last_commit_profile
+
+            print(json.dumps({
+                "pending_edge_info_error": pending_edge_info_error,
+                "version_before": version_before,
+                "version_after": int(scene.version),
+                "edge_version_before": edge_version_before,
+                "edge_version_after": int(scene.edge_version),
+                "edge0_start_after": [float(edge_info.start[0][0]), float(edge_info.start[1][0]), float(edge_info.start[2][0])],
+                "profile_edge_scatter_ms": float(profile.edge_scatter_ms),
+                "profile_edge_refit_ms": float(profile.edge_refit_ms),
+                "profile_updated_edge_meshes": int(profile.updated_edge_meshes),
+                "profile_updated_edges": int(profile.updated_edges),
+            }))
+            """
+        )
+
+        self.assertTrue(data["pending_edge_info_error"])
+        self.assertEqual(data["version_after"], data["version_before"] + 1)
+        self.assertEqual(data["edge_version_after"], data["edge_version_before"] + 1)
+        self.assertEqual(data["edge0_start_after"], [2.0, 0.0, 0.0])
+        self.assertGreaterEqual(data["profile_edge_scatter_ms"], 0.0)
+        self.assertGreaterEqual(data["profile_edge_refit_ms"], 0.0)
+        self.assertEqual(data["profile_updated_edge_meshes"], 1)
+        self.assertEqual(data["profile_updated_edges"], 3)
+
+    def test_scene_edge_interfaces_handle_edges_disabled_and_empty_edge_sets(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+            mesh.edges_enabled = False
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.configure()
+
+            edge_info = scene.edge_info()
+            topology = scene.edge_topology()
+            tri_edges = scene.triangle_edge_indices(cuda.Int([0]))
+            adj_faces = scene.edge_adjacent_faces(cuda.Int([0]))
+            nearest = scene.nearest_edge(cuda.Array3f([0.2], [0.1], [0.3]))
+
+            print(json.dumps({
+                "edge_count": edge_info.size(),
+                "topology_count": topology.size(),
+                "version": int(scene.version),
+                "edge_version": int(scene.edge_version),
+                "edge_offsets": [int(v) for v in list(scene.mesh_edge_offsets())],
+                "tri_edges": [int(tri_edges[i][0]) for i in range(3)],
+                "adj_faces": [int(adj_faces[i][0]) for i in range(2)],
+                "nearest_valid": bool(nearest.is_valid()[0]),
+                "nearest_shape": int(nearest.shape_id[0]),
+                "nearest_edge": int(nearest.edge_id[0]),
+                "nearest_distance_inf": math.isinf(float(nearest.distance[0])),
+            }))
+            """
+        )
+
+        self.assertEqual(data["edge_count"], 0)
+        self.assertEqual(data["topology_count"], 0)
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["edge_version"], 1)
+        self.assertEqual(data["edge_offsets"], [0, 0])
+        self.assertEqual(data["tri_edges"], [-1, -1, -1])
+        self.assertEqual(data["adj_faces"], [-1, -1])
+        self.assertFalse(data["nearest_valid"])
+        self.assertEqual(data["nearest_shape"], -1)
+        self.assertEqual(data["nearest_edge"], -1)
+        self.assertTrue(data["nearest_distance_inf"])
+
+    def test_scene_edge_index_queries_support_batched_valid_and_invalid_ids(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh_a = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
+                                         [0.0, 0.0, 1.0, 1.0],
+                                         [0.0, 0.0, 0.0, 0.0]),
+                             cuda.Array3i([0, 0], [1, 2], [2, 3]))
+            mesh_b = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                         [0.0, 0.0, 1.0],
+                                         [0.0, 0.0, 0.0]),
+                             cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.configure()
+
+            prim_ids = cuda.Int([-1, 0, 1, 2, 9])
+            edge_ids = cuda.Int([-1, 1, 6, 99])
+            tri_edges_global = scene.triangle_edge_indices(prim_ids)
+            tri_edges_local = scene.triangle_edge_indices(prim_ids, False)
+            adj_faces_global = scene.edge_adjacent_faces(edge_ids)
+            adj_faces_local = scene.edge_adjacent_faces(edge_ids, False)
+
+            print(json.dumps({
+                "tri_edges_global": [[int(tri_edges_global[i][j]) for j in range(5)] for i in range(3)],
+                "tri_edges_local": [[int(tri_edges_local[i][j]) for j in range(5)] for i in range(3)],
+                "adj_faces_global": [[int(adj_faces_global[i][j]) for j in range(4)] for i in range(2)],
+                "adj_faces_local": [[int(adj_faces_local[i][j]) for j in range(4)] for i in range(2)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["tri_edges_global"], [
+            [-1, 0, 1, 5, -1],
+            [-1, 3, 4, 7, -1],
+            [-1, 1, 2, 6, -1],
+        ])
+        self.assertEqual(data["tri_edges_local"], [
+            [-1, 0, 1, 0, -1],
+            [-1, 3, 4, 2, -1],
+            [-1, 1, 2, 1, -1],
+        ])
+        self.assertEqual(data["adj_faces_global"], [
+            [-1, 0, 2, -1],
+            [-1, 1, -1, -1],
+        ])
+        self.assertEqual(data["adj_faces_local"], [
+            [-1, 0, 0, -1],
+            [-1, 1, -1, -1],
+        ])
+
+    def test_scene_edge_topology_stays_stable_across_pending_and_transform_updates(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0, 1.0],
+                                       [0.0, 0.0, 0.0, 0.0]),
+                          cuda.Array3i([0, 0], [1, 2], [2, 3]))
+
+            scene = pj.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.configure()
+
+            version_before = int(scene.version)
+            edge_version_before = int(scene.edge_version)
+            tri_edges_before = scene.triangle_edge_indices(cuda.Int([0, 1]))
+            topology_before = scene.edge_topology()
+
+            translate = cuda.Matrix4f([[1.0, 0.0, 0.0, 3.0],
+                                       [0.0, 1.0, 0.0, 0.5],
+                                       [0.0, 0.0, 1.0, 1.0],
+                                       [0.0, 0.0, 0.0, 1.0]])
+            scene.set_mesh_transform(mesh_id, translate)
+
+            topology_pending = scene.edge_topology()
+            tri_edges_pending = scene.triangle_edge_indices(cuda.Int([0, 1]))
+            pending_edge_info_error = False
+            try:
+                scene.edge_info()
+            except Exception as exc:
+                pending_edge_info_error = "pending updates" in str(exc)
+
+            scene.commit_updates()
+            edge_info_after = scene.edge_info()
+            topology_after = scene.edge_topology()
+            tri_edges_after = scene.triangle_edge_indices(cuda.Int([0, 1]))
+            profile = scene.last_commit_profile
+            profile_updated_transform_meshes = int(profile.updated_transform_meshes)
+            profile_updated_edge_meshes = int(profile.updated_edge_meshes)
+            profile_updated_edges = int(profile.updated_edges)
+            version_after = int(scene.version)
+            edge_version_after = int(scene.edge_version)
+
+            scene.commit_updates()
+            version_after_noop = int(scene.version)
+            edge_version_after_noop = int(scene.edge_version)
+            noop_profile = scene.last_commit_profile
+
+            print(json.dumps({
+                "pending_edge_info_error": pending_edge_info_error,
+                "version_before": version_before,
+                "version_after": version_after,
+                "edge_version_before": edge_version_before,
+                "edge_version_after": edge_version_after,
+                "version_after_noop": version_after_noop,
+                "edge_version_after_noop": edge_version_after_noop,
+                "tri_edges_before": [[int(tri_edges_before[i][j]) for j in range(2)] for i in range(3)],
+                "tri_edges_pending": [[int(tri_edges_pending[i][j]) for j in range(2)] for i in range(3)],
+                "tri_edges_after": [[int(tri_edges_after[i][j]) for j in range(2)] for i in range(3)],
+                "topology_before_face1": int(topology_before.face1_global[1]),
+                "topology_pending_face1": int(topology_pending.face1_global[1]),
+                "topology_after_face1": int(topology_after.face1_global[1]),
+                "edge0_start_after": [float(edge_info_after.start[0][0]), float(edge_info_after.start[1][0]), float(edge_info_after.start[2][0])],
+                "profile_updated_transform_meshes": profile_updated_transform_meshes,
+                "profile_updated_edge_meshes": profile_updated_edge_meshes,
+                "profile_updated_edges": profile_updated_edges,
+                "noop_profile_total_ms": float(noop_profile.total_ms),
+                "noop_profile_updated_edges": int(noop_profile.updated_edges),
+            }))
+            """
+        )
+
+        self.assertTrue(data["pending_edge_info_error"])
+        self.assertEqual(data["tri_edges_before"], data["tri_edges_pending"])
+        self.assertEqual(data["tri_edges_before"], data["tri_edges_after"])
+        self.assertEqual(data["topology_before_face1"], 1)
+        self.assertEqual(data["topology_pending_face1"], 1)
+        self.assertEqual(data["topology_after_face1"], 1)
+        self.assertEqual(data["edge0_start_after"], [3.0, 0.5, 1.0])
+        self.assertEqual(data["version_after"], data["version_before"] + 1)
+        self.assertEqual(data["edge_version_after"], data["edge_version_before"] + 1)
+        self.assertEqual(data["version_after_noop"], data["version_after"])
+        self.assertEqual(data["edge_version_after_noop"], data["edge_version_after"])
+        self.assertEqual(data["profile_updated_transform_meshes"], 1)
+        self.assertEqual(data["profile_updated_edge_meshes"], 1)
+        self.assertEqual(data["profile_updated_edges"], 5)
+        self.assertEqual(data["noop_profile_total_ms"], 0.0)
+        self.assertEqual(data["noop_profile_updated_edges"], 0)
+
     def test_scene_nearest_edge_gradients_flow_for_point_and_ray_queries(self):
         data = run_json_case(
             """

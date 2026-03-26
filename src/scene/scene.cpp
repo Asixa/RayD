@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <vector>
@@ -38,6 +39,32 @@ NearestRayEdgeT<Detached> initialize_nearest_ray_edge_result(int query_count) {
     result.edge_id = full<IntT<Detached>>(-1, query_count);
     result.is_boundary = full<MaskT<Detached>>(false, query_count);
     return result;
+}
+
+int face_edge_slot(const std::array<int, 3> &face_vertices, int v0, int v1) {
+    auto matches = [v0, v1](int a, int b) {
+        return (a == v0 && b == v1) || (a == v1 && b == v0);
+    };
+
+    if (matches(face_vertices[0], face_vertices[1])) {
+        return 0;
+    }
+    if (matches(face_vertices[1], face_vertices[2])) {
+        return 1;
+    }
+    if (matches(face_vertices[2], face_vertices[0])) {
+        return 2;
+    }
+    return -1;
+}
+
+int face_opposite_vertex(const std::array<int, 3> &face_vertices, int v0, int v1) {
+    for (int vertex : face_vertices) {
+        if (vertex != v0 && vertex != v1) {
+            return vertex;
+        }
+    }
+    return -1;
 }
 
 } // namespace
@@ -158,7 +185,7 @@ void Scene::scatter_mesh_data(const SceneMeshRecord &record, bool include_static
     }
 }
 
-void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record) {
+void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_static_ids) {
     const Mesh &mesh = *record.mesh;
     const SecondaryEdgeInfo *mesh_edge_info = mesh.secondary_edge_info();
     const int mesh_edge_count = mesh_edge_info != nullptr ? mesh_edge_info->size() : 0;
@@ -173,6 +200,10 @@ void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record) {
     scatter(edge_info_.normal1, mesh_edge_info->normal1, scatter_indices);
     scatter(edge_info_.opposite, mesh_edge_info->opposite, scatter_indices);
     scatter(edge_info_.is_boundary, mesh_edge_info->is_boundary, scatter_indices);
+
+    if (!include_static_ids) {
+        return;
+    }
 
     const IntDetached scatter_indices_detached = arange<IntDetached>(mesh_edge_count) + record.edge_offset;
     scatter(edge_shape_ids_,
@@ -194,7 +225,7 @@ void Scene::ensure_scene_edge_data_ready() const {
             continue;
         }
 
-        const_cast<Scene *>(this)->scatter_mesh_edge_data(record);
+        const_cast<Scene *>(this)->scatter_mesh_edge_data(record, false);
         record.edge_dirty = false;
         updated_edge_data = true;
     }
@@ -252,6 +283,15 @@ void Scene::configure() {
     std::vector<OptixSceneMeshDesc> mesh_descs;
     mesh_descs.reserve(mesh_records_.size());
 
+    std::vector<int> topology_v0;
+    std::vector<int> topology_v1;
+    std::vector<int> topology_face0_local;
+    std::vector<int> topology_face1_local;
+    std::vector<int> topology_face0_global;
+    std::vector<int> topology_face1_global;
+    std::vector<int> topology_opposite0;
+    std::vector<int> topology_opposite1;
+
     for (size_t mesh_index = 0; mesh_index < mesh_records_.size(); ++mesh_index) {
         SceneMeshRecord &record = mesh_records_[mesh_index];
         Mesh &mesh = *record.mesh;
@@ -274,6 +314,88 @@ void Scene::configure() {
     const int total_face_count = face_offsets.back();
     require(total_face_count > 0, "Scene::configure(): scene has no triangles.");
 
+    edge_count_ = edge_offsets.back();
+    topology_v0.reserve(edge_count_);
+    topology_v1.reserve(edge_count_);
+    topology_face0_local.reserve(edge_count_);
+    topology_face1_local.reserve(edge_count_);
+    topology_face0_global.reserve(edge_count_);
+    topology_face1_global.reserve(edge_count_);
+    topology_opposite0.reserve(edge_count_);
+    topology_opposite1.reserve(edge_count_);
+
+    std::array<std::vector<int>, 3> triangle_edge_ids_cpu;
+    for (auto &triangle_edge_ids : triangle_edge_ids_cpu) {
+        triangle_edge_ids.assign(total_face_count, -1);
+    }
+
+    for (const SceneMeshRecord &record : mesh_records_) {
+        const Mesh &mesh = *record.mesh;
+        const auto &mesh_edge_indices = mesh.edge_indices();
+        const int mesh_edge_count = mesh.edges_enabled() ? static_cast<int>(slices(mesh_edge_indices)) : 0;
+        if (mesh_edge_count == 0) {
+            continue;
+        }
+
+        std::array<std::vector<int>, 5> mesh_edge_cpu;
+        copy_cuda_array(mesh_edge_indices, mesh_edge_cpu);
+
+        const Vector3iDetached mesh_face_indices(detach<false>(mesh.face_indices()[0]),
+                                                 detach<false>(mesh.face_indices()[1]),
+                                                 detach<false>(mesh.face_indices()[2]));
+        std::array<std::vector<int>, 3> mesh_face_cpu;
+        copy_cuda_array(mesh_face_indices, mesh_face_cpu);
+
+        for (int local_edge_id = 0; local_edge_id < mesh_edge_count; ++local_edge_id) {
+            const int v0 = mesh_edge_cpu[0][local_edge_id];
+            const int v1 = mesh_edge_cpu[1][local_edge_id];
+            const int face0_local = mesh_edge_cpu[2][local_edge_id];
+            const int face1_local = mesh_edge_cpu[3][local_edge_id];
+            const int face0_global = record.face_offset + face0_local;
+            const int face1_global = face1_local >= 0 ? record.face_offset + face1_local : -1;
+            const int opposite0 = mesh_edge_cpu[4][local_edge_id];
+            const int global_edge_id = record.edge_offset + local_edge_id;
+
+            const std::array<int, 3> face0_vertices {
+                mesh_face_cpu[0][face0_local],
+                mesh_face_cpu[1][face0_local],
+                mesh_face_cpu[2][face0_local]
+            };
+
+            int opposite1 = -1;
+            if (face1_local >= 0) {
+                const std::array<int, 3> face1_vertices {
+                    mesh_face_cpu[0][face1_local],
+                    mesh_face_cpu[1][face1_local],
+                    mesh_face_cpu[2][face1_local]
+                };
+                opposite1 = face_opposite_vertex(face1_vertices, v0, v1);
+                const int face1_slot = face_edge_slot(face1_vertices, v0, v1);
+                if (face1_slot >= 0) {
+                    triangle_edge_ids_cpu[face1_slot][face1_global] = global_edge_id;
+                }
+            }
+
+            const int face0_slot = face_edge_slot(face0_vertices, v0, v1);
+            if (face0_slot >= 0) {
+                triangle_edge_ids_cpu[face0_slot][face0_global] = global_edge_id;
+            }
+
+            topology_v0.push_back(v0);
+            topology_v1.push_back(v1);
+            topology_face0_local.push_back(face0_local);
+            topology_face1_local.push_back(face1_local);
+            topology_face0_global.push_back(face0_global);
+            topology_face1_global.push_back(face1_global);
+            topology_opposite0.push_back(opposite0);
+            topology_opposite1.push_back(opposite1);
+        }
+    }
+
+    auto load_or_empty = [](const std::vector<int> &values) {
+        return values.empty() ? IntDetached() : load<IntDetached>(values.data(), values.size());
+    };
+
     face_offsets_ = load<IntDetached>(face_offsets.data(), face_offsets.size());
     edge_offsets_ = load<IntDetached>(edge_offsets.data(), edge_offsets.size());
     triangle_info_ = empty<TriangleInfo>(total_face_count);
@@ -282,20 +404,33 @@ void Scene::configure() {
     triangle_uv_detached_ = zeros<TriangleUVDetached>(total_face_count);
     triangle_face_normal_mask_ = empty<Mask>(total_face_count);
     triangle_face_normal_mask_detached_ = empty<MaskDetached>(total_face_count);
-    edge_count_ = edge_offsets.back();
+    triangle_edge_ids_ = VectoriT<3, true>(load<IntDetached>(triangle_edge_ids_cpu[0].data(), total_face_count),
+                                           load<IntDetached>(triangle_edge_ids_cpu[1].data(), total_face_count),
+                                           load<IntDetached>(triangle_edge_ids_cpu[2].data(), total_face_count));
     if (edge_count_ > 0) {
         edge_info_ = empty<SecondaryEdgeInfo>(edge_count_);
+        edge_topology_ = SceneEdgeTopology {
+            load_or_empty(topology_v0),
+            load_or_empty(topology_v1),
+            load_or_empty(topology_face0_local),
+            load_or_empty(topology_face1_local),
+            load_or_empty(topology_face0_global),
+            load_or_empty(topology_face1_global),
+            load_or_empty(topology_opposite0),
+            load_or_empty(topology_opposite1)
+        };
         edge_shape_ids_ = empty<IntDetached>(edge_count_);
         edge_local_ids_ = empty<IntDetached>(edge_count_);
     } else {
         edge_info_ = SecondaryEdgeInfo();
+        edge_topology_ = SceneEdgeTopology();
         edge_shape_ids_ = IntDetached();
         edge_local_ids_ = IntDetached();
     }
 
     for (const SceneMeshRecord &record : mesh_records_) {
         scatter_mesh_data(record, true);
-        scatter_mesh_edge_data(record);
+        scatter_mesh_edge_data(record, true);
     }
 
     drjit::eval(face_offsets_,
@@ -306,7 +441,9 @@ void Scene::configure() {
                 triangle_face_normal_mask_,
                 triangle_face_normal_mask_detached_,
                 edge_offsets_,
+                triangle_edge_ids_,
                 edge_info_,
+                edge_topology_,
                 edge_shape_ids_,
                 edge_local_ids_);
     drjit::sync_thread();
@@ -318,6 +455,7 @@ void Scene::configure() {
     is_ready_ = true;
     pending_updates_ = false;
     ++scene_version_;
+    ++edge_version_;
     invalidate_primary_edge_observers();
 }
 
@@ -390,12 +528,15 @@ void Scene::commit_updates() {
         scatter_mesh_data(record, false);
         last_commit_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - scatter_start).count();
+
         const int mesh_edge_count =
             record.mesh->edges_enabled() ? static_cast<int>(slices(record.mesh->edge_indices())) : 0;
         if (mesh_edge_count > 0 && !record.edge_dirty) {
             pending_edge_bvh_dirty_ranges_.push_back({ record.edge_offset, mesh_edge_count });
             record.edge_dirty = true;
             edge_bvh_dirty_ = true;
+            ++last_commit_profile_.updated_edge_meshes;
+            last_commit_profile_.updated_edges += mesh_edge_count;
         }
 
         updates.push_back({ static_cast<int>(mesh_index), record.vertices_dirty, record.transform_dirty });
@@ -433,6 +574,32 @@ void Scene::commit_updates() {
             Clock::now() - eval_start).count();
     }
 
+    if (edge_bvh_dirty_) {
+        const auto edge_scatter_start = Clock::now();
+        bool updated_edge_data = false;
+        for (SceneMeshRecord &record : mesh_records_) {
+            if (!record.edge_dirty) {
+                continue;
+            }
+
+            scatter_mesh_edge_data(record, false);
+            record.edge_dirty = false;
+            updated_edge_data = true;
+        }
+
+        if (updated_edge_data) {
+            drjit::eval(edge_info_);
+            drjit::sync_thread();
+        }
+        last_commit_profile_.edge_scatter_ms = std::chrono::duration<double, std::milli>(
+            Clock::now() - edge_scatter_start).count();
+
+        const auto edge_refit_start = Clock::now();
+        ensure_edge_bvh_ready();
+        last_commit_profile_.edge_refit_ms = std::chrono::duration<double, std::milli>(
+            Clock::now() - edge_refit_start).count();
+    }
+
     const auto optix_start = Clock::now();
     optix_scene_->commit_updates(mesh_descs, updates);
     last_commit_profile_.optix_commit_ms = std::chrono::duration<double, std::milli>(
@@ -442,9 +609,92 @@ void Scene::commit_updates() {
     last_commit_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
     pending_updates_ = false;
     ++scene_version_;
+    if (last_commit_profile_.updated_edge_meshes > 0) {
+        ++edge_version_;
+    }
     invalidate_primary_edge_observers();
     last_commit_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();
+}
+
+SceneEdgeInfo Scene::edge_info() const {
+    require(is_ready(), "Scene::edge_info(): scene is not configured.");
+    require(!pending_updates_, "Scene::edge_info(): scene has pending updates. Call Scene::commit_updates() first.");
+
+    ensure_scene_edge_data_ready();
+
+    SceneEdgeInfo info;
+    info.start = edge_info_.start;
+    info.edge = edge_info_.edge;
+    info.end = edge_info_.start + edge_info_.edge;
+    info.length = norm(edge_info_.edge);
+    info.normal0 = edge_info_.normal0;
+    info.normal1 = edge_info_.normal1;
+    info.is_boundary = edge_info_.is_boundary;
+    info.shape_id = edge_shape_ids_;
+    info.local_edge_id = edge_local_ids_;
+    info.global_edge_id = arange<IntDetached>(edge_count_);
+    return info;
+}
+
+const SceneEdgeTopology &Scene::edge_topology() const {
+    require(is_ready(), "Scene::edge_topology(): scene is not configured.");
+    return edge_topology_;
+}
+
+VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool global) const {
+    require(is_ready(), "Scene::triangle_edge_indices(): scene is not configured.");
+
+    const int query_count = static_cast<int>(slices(prim_id));
+    VectoriT<3, true> result(full<IntDetached>(-1, query_count),
+                             full<IntDetached>(-1, query_count),
+                             full<IntDetached>(-1, query_count));
+    if (query_count == 0) {
+        return result;
+    }
+
+    const int face_count = static_cast<int>(slices(triangle_edge_ids_[0]));
+    const MaskDetached valid = prim_id >= 0 && prim_id < face_count;
+    const IntDetached edge0 = gather<IntDetached>(triangle_edge_ids_[0], prim_id, valid);
+    const IntDetached edge1 = gather<IntDetached>(triangle_edge_ids_[1], prim_id, valid);
+    const IntDetached edge2 = gather<IntDetached>(triangle_edge_ids_[2], prim_id, valid);
+
+    if (global) {
+        result[0] = select(valid, edge0, result[0]);
+        result[1] = select(valid, edge1, result[1]);
+        result[2] = select(valid, edge2, result[2]);
+        return result;
+    }
+
+    const MaskDetached valid0 = valid && edge0 >= 0;
+    const MaskDetached valid1 = valid && edge1 >= 0;
+    const MaskDetached valid2 = valid && edge2 >= 0;
+    result[0] = select(valid0, gather<IntDetached>(edge_local_ids_, edge0, valid0), result[0]);
+    result[1] = select(valid1, gather<IntDetached>(edge_local_ids_, edge1, valid1), result[1]);
+    result[2] = select(valid2, gather<IntDetached>(edge_local_ids_, edge2, valid2), result[2]);
+    return result;
+}
+
+VectoriT<2, true> Scene::edge_adjacent_faces(const IntDetached &edge_id, bool global) const {
+    require(is_ready(), "Scene::edge_adjacent_faces(): scene is not configured.");
+
+    const int query_count = static_cast<int>(slices(edge_id));
+    VectoriT<2, true> result(full<IntDetached>(-1, query_count),
+                             full<IntDetached>(-1, query_count));
+    if (query_count == 0 || edge_count_ == 0) {
+        return result;
+    }
+
+    const MaskDetached valid = edge_id >= 0 && edge_id < edge_count_;
+    const IntDetached face0 = global
+        ? gather<IntDetached>(edge_topology_.face0_global, edge_id, valid)
+        : gather<IntDetached>(edge_topology_.face0_local, edge_id, valid);
+    const IntDetached face1 = global
+        ? gather<IntDetached>(edge_topology_.face1_global, edge_id, valid)
+        : gather<IntDetached>(edge_topology_.face1_local, edge_id, valid);
+    result[0] = select(valid, face0, result[0]);
+    result[1] = select(valid, face1, result[1]);
+    return result;
 }
 
 bool Scene::is_ready() const {

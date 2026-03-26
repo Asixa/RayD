@@ -65,6 +65,8 @@ from .types import (
     PrimaryEdgeSample,
     Ray,
     SceneCommitProfile,
+    SceneEdgeInfo,
+    SceneEdgeTopology,
     SecondaryEdgeInfo,
 )
 from .mesh import Mesh
@@ -81,5 +83,7 @@ __all__ = [
     "Ray",
     "Scene",
     "SceneCommitProfile",
+    "SceneEdgeInfo",
+    "SceneEdgeTopology",
     "SecondaryEdgeInfo",
 ]

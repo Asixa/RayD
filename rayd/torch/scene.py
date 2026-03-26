@@ -9,13 +9,15 @@ from ._util import (
     _normalize_matrix_tensor,
     _normalize_vector_tensor,
 )
-from ._convert import _tensor_to_matrix4, _tensor_to_vec3
-from .types import Intersection, Ray, SceneCommitProfile
+from ._convert import _scalar_array_to_tensor, _tensor_to_matrix4, _tensor_to_vec3, _to_torch_struct
+from .types import Intersection, Ray, SceneCommitProfile, SceneEdgeInfo, SceneEdgeTopology
 from ._state import _MeshState
 from ._native import (
     _build_native_mesh,
     _mesh_to_world_tensor,
     _ray_batch_size,
+    _scene_edge_info_from_native,
+    _scene_edge_topology_from_native,
     _scene_intersect_impl,
     _scene_nearest_point_impl,
     _scene_nearest_ray_impl,
@@ -36,6 +38,7 @@ class Scene:
         self._ready = False
         self._pending_updates = False
         self._version = 0
+        self._edge_version = 0
         self._native_scene: Any | None = None
         self._last_commit_profile = SceneCommitProfile()
 
@@ -79,7 +82,8 @@ class Scene:
         self._native_scene = ns
         self._ready = True
         self._pending_updates = False
-        self._version += 1
+        self._version = int(ns.version)
+        self._edge_version = int(ns.edge_version)
 
     def update_mesh_vertices(self, mesh_id: int, positions: Any) -> None:
         record = self._validate_mesh_id(mesh_id)
@@ -130,7 +134,8 @@ class Scene:
         self._native_scene.commit_updates()
         self._last_commit_profile = SceneCommitProfile(self._native_scene.last_commit_profile)
         self._pending_updates = False
-        self._version += 1
+        self._version = int(self._native_scene.version)
+        self._edge_version = int(self._native_scene.edge_version)
 
     def is_ready(self) -> bool:
         return self._ready
@@ -145,6 +150,60 @@ class Scene:
     @property
     def num_meshes(self) -> int:
         return len(self._records)
+
+    @property
+    def version(self) -> int:
+        if self._native_scene is not None:
+            return int(self._native_scene.version)
+        return self._version
+
+    @property
+    def edge_version(self) -> int:
+        if self._native_scene is not None:
+            return int(self._native_scene.edge_version)
+        return self._edge_version
+
+    def edge_info(self) -> SceneEdgeInfo:
+        self._require_query_ready()
+        if self._native_scene is None:
+            raise RuntimeError("Scene.edge_info(): internal detached scene is unavailable.")
+        return _to_torch_struct(_scene_edge_info_from_native(self._native_scene.edge_info()))
+
+    def edge_topology(self) -> SceneEdgeTopology:
+        self._require_ready()
+        if self._native_scene is None:
+            raise RuntimeError("Scene.edge_topology(): internal detached scene is unavailable.")
+        return _to_torch_struct(_scene_edge_topology_from_native(self._native_scene.edge_topology()))
+
+    def mesh_face_offsets(self) -> _torch.Tensor:
+        self._require_ready()
+        if self._native_scene is None:
+            raise RuntimeError("Scene.mesh_face_offsets(): internal detached scene is unavailable.")
+        return _scalar_array_to_tensor(self._native_scene.mesh_face_offsets()).torch()
+
+    def mesh_edge_offsets(self) -> _torch.Tensor:
+        self._require_ready()
+        if self._native_scene is None:
+            raise RuntimeError("Scene.mesh_edge_offsets(): internal detached scene is unavailable.")
+        return _scalar_array_to_tensor(self._native_scene.mesh_edge_offsets()).torch()
+
+    def triangle_edge_indices(self, prim_id: Any, global_: bool = True, **kwargs: Any) -> tuple[_torch.Tensor, _torch.Tensor, _torch.Tensor]:
+        self._require_ready()
+        if "global" in kwargs:
+            global_ = kwargs["global"]
+        if self._native_scene is None:
+            raise RuntimeError("Scene.triangle_edge_indices(): internal detached scene is unavailable.")
+        edge_ids = self._native_scene.triangle_edge_indices(prim_id, bool(global_))
+        return tuple(_scalar_array_to_tensor(value).torch() for value in edge_ids)
+
+    def edge_adjacent_faces(self, edge_id: Any, global_: bool = True, **kwargs: Any) -> tuple[_torch.Tensor, _torch.Tensor]:
+        self._require_ready()
+        if "global" in kwargs:
+            global_ = kwargs["global"]
+        if self._native_scene is None:
+            raise RuntimeError("Scene.edge_adjacent_faces(): internal detached scene is unavailable.")
+        face_ids = self._native_scene.edge_adjacent_faces(edge_id, bool(global_))
+        return tuple(_scalar_array_to_tensor(value).torch() for value in face_ids)
 
     def intersect(self, ray: Ray, active: Any = True) -> Intersection:
         self._require_query_ready()
