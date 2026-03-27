@@ -11,9 +11,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  unit_tests:
+    name: unit tests
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Run lightweight unit tests
+        run: python -m unittest tests.test_torch_interop_patch tests.test_project_metadata -v
+
   build_linux_wheels:
     name: linux / manylinux_2_28
     runs-on: ubuntu-22.04
+    needs: unit_tests
 
     steps:
       - name: Checkout
@@ -71,6 +88,7 @@ jobs:
   build_windows_wheels:
     name: windows / py${{ matrix.python_version }}
     runs-on: windows-2022
+    needs: unit_tests
     strategy:
       fail-fast: false
       matrix:
@@ -118,6 +136,7 @@ jobs:
   build_sdist:
     name: sdist
     runs-on: ubuntu-22.04
+    needs: unit_tests
 
     steps:
       - name: Checkout
