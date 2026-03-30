@@ -91,12 +91,8 @@ private:
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);
     void scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_static_ids);
-    void scatter_active_edge_data(const IntDetached &active_indices,
-                                  const IntDetached &global_indices);
-    void rebuild_active_edge_bvh();
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
-    IntDetached dirty_global_edge_ids_from_ranges() const;
     void register_primary_edge_observer(Camera *camera);
     void unregister_primary_edge_observer(Camera *camera);
     void invalidate_primary_edge_observers();
@@ -113,19 +109,15 @@ private:
     Mask triangle_face_normal_mask_;
     MaskDetached triangle_face_normal_mask_detached_;
     SecondaryEdgeInfo edge_info_;
-    SecondaryEdgeInfo active_edge_info_;
     SceneEdgeTopology edge_topology_;
     IntDetached edge_shape_ids_;
     IntDetached edge_local_ids_;
     MaskDetached edge_mask_;
-    IntDetached active_edge_global_ids_;
-    IntDetached global_to_active_edge_id_;
     VectoriT<3, true> triangle_edge_ids_;
 
     bool is_ready_ = false;
     bool pending_updates_ = false;
     bool mask_dirty_ = false;
-    bool all_edges_active_ = true;
     uint64_t scene_version_ = 0;
     uint64_t edge_version_ = 0;
     int edge_count_ = 0;

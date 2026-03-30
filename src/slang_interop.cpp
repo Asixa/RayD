@@ -28,6 +28,44 @@ void scene_sync(SceneHandle handle) {
         "rayd::slang::scene_sync(): null scene handle.").sync();
 }
 
+int scene_edge_count(SceneHandle handle) {
+    const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
+        "rayd::slang::scene_edge_count(): null scene handle.");
+    return static_cast<int>(scene.edge_mask().size());
+}
+
+bool scene_edge_mask_value(SceneHandle handle, int index) {
+    const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
+        "rayd::slang::scene_edge_mask_value(): null scene handle.");
+    const MaskDetached &mask = scene.edge_mask();
+    require(index >= 0 && index < static_cast<int>(mask.size()),
+            "rayd::slang::scene_edge_mask_value(): index out of range.");
+
+    const IntDetached scalar_index = detail::scalar_int(index);
+    const MaskDetached value = drjit::gather<MaskDetached>(mask, scalar_index);
+    drjit::eval(value);
+    drjit::sync_thread();
+    return detail::lane0<bool>(value);
+}
+
+void scene_set_edge_mask(SceneHandle handle, uint64_t mask_ptr, int count) {
+    rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
+        "rayd::slang::scene_set_edge_mask(): null scene handle.");
+    require(count >= 0, "rayd::slang::scene_set_edge_mask(): negative count.");
+    require(mask_ptr != 0 || count == 0,
+            "rayd::slang::scene_set_edge_mask(): null mask pointer.");
+
+    const auto *mask_data =
+        reinterpret_cast<const uint8_t *>(static_cast<std::uintptr_t>(mask_ptr));
+    std::vector<int> mask_values(static_cast<size_t>(count), 0);
+    for (int i = 0; i < count; ++i) {
+        mask_values[static_cast<size_t>(i)] = mask_data[i] != 0 ? 1 : 0;
+    }
+
+    const IntDetached mask_int = drjit::load<IntDetached>(mask_values.data(), count);
+    scene.set_edge_mask(mask_int != 0);
+}
+
 Intersection scene_intersect(SceneHandle handle, const Ray &ray, bool active) {
     const rayd::Scene &scene = detail::handle_ref<rayd::Scene>(handle.value,
         "rayd::slang::scene_intersect(): null scene handle.");
@@ -112,11 +150,12 @@ NearestPointEdge scene_nearest_edge_point(SceneHandle handle, const Float3 &poin
     const NearestPointEdgeDetached hit =
         scene.nearest_edge<true>(detail::to_cuda(point), detail::scalar_mask(active));
     drjit::eval(hit.distance, hit.point, hit.edge_t, hit.edge_point,
-                hit.shape_id, hit.edge_id, hit.is_boundary);
+                hit.shape_id, hit.edge_id, hit.global_edge_id, hit.is_boundary);
     drjit::sync_thread();
     NearestPointEdge result;
     result.shape_id = detail::lane0<int>(hit.shape_id);
     result.edge_id = detail::lane0<int>(hit.edge_id);
+    result.global_edge_id = detail::lane0<int>(hit.global_edge_id);
     result.valid = result.edge_id >= 0;
     result.distance = detail::lane0<float>(hit.distance);
     result.point = detail::to_float3(hit.point);
@@ -132,11 +171,12 @@ NearestRayEdge scene_nearest_edge_ray(SceneHandle handle, const Ray &ray, bool a
     const NearestRayEdgeDetached hit =
         scene.nearest_edge<true>(detail::to_cuda(ray), detail::scalar_mask(active));
     drjit::eval(hit.distance, hit.ray_t, hit.point, hit.edge_t, hit.edge_point,
-                hit.shape_id, hit.edge_id, hit.is_boundary);
+                hit.shape_id, hit.edge_id, hit.global_edge_id, hit.is_boundary);
     drjit::sync_thread();
     NearestRayEdge result;
     result.shape_id = detail::lane0<int>(hit.shape_id);
     result.edge_id = detail::lane0<int>(hit.edge_id);
+    result.global_edge_id = detail::lane0<int>(hit.global_edge_id);
     result.valid = result.edge_id >= 0;
     result.distance = detail::lane0<float>(hit.distance);
     result.ray_t = detail::lane0<float>(hit.ray_t);

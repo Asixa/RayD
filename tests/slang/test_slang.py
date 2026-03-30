@@ -108,6 +108,12 @@ class SlangInteropCompileTests(unittest.TestCase):
     def test_nearest_edge_ray_call(self):
         self.assertIn("rayd::slang::scene_nearest_edge_ray", self.gen)
 
+    def test_nearest_edge_global_id_accessor_call(self):
+        self.assertIn("rayd::slang::npe_global_edge_id", self.gen)
+
+    def test_scene_edge_count_call(self):
+        self.assertIn("rayd::slang::scene_edge_count", self.gen)
+
     def test_camera_sample_ray_call(self):
         self.assertIn("rayd::slang::camera_sample_ray", self.gen)
 
@@ -120,7 +126,8 @@ class SlangInteropCompileTests(unittest.TestCase):
 
     def test_all_exported_functions_present(self):
         for fn in ["testIntersect", "testShadow", "testNearestEdgePoint",
-                    "testNearestEdgeRay", "testCameraSampleRay",
+                    "testNearestEdgeRay", "testNearestEdgePointGlobalId",
+                    "testSceneEdgeCount", "testCameraSampleRay",
                     "testFloat3", "testFloat2", "testMakeRay"]:
             with self.subTest(fn=fn):
                 self.assertTrue(fn in self.gen or f"{fn}_0" in self.gen,
@@ -141,6 +148,25 @@ class SlangRaydInteropTests(unittest.TestCase):
         self.assertTrue(d["shadow_hit"])
         self.assertTrue(d["t_miss_inf"])
         self.assertFalse(d["valid_miss"])
+
+    def test_nearest_edge_global_id_and_mask(self):
+        d = _run_case("slang_rayd_nearest_edge")
+        self.assertTrue(d["point_valid"])
+        self.assertTrue(d["point_matches_native"])
+        self.assertTrue(d["ray_valid"])
+        self.assertTrue(d["ray_matches_native"])
+        self.assertEqual(d["edge_count"], 3)
+        self.assertEqual(d["default_mask"], [True, True, True])
+        self.assertTrue(d["pending_after_false_mask"])
+        self.assertFalse(d["invalid_after_false_mask"])
+        self.assertEqual(d["invalid_global_after_false_mask"], -1)
+        self.assertEqual(d["mask_after_false"], [False, False, False])
+        self.assertTrue(d["masked_point_valid"])
+        self.assertEqual(d["masked_point_global_edge_id"], d["point_global_edge_id"])
+        self.assertEqual(
+            d["mask_after_single"],
+            [i == d["point_global_edge_id"] for i in range(d["edge_count"])],
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ struct NearestPointEdge
 {
     bool valid; float distance;
     Float3 point; float edge_t; Float3 edge_point;
-    int shape_id; int edge_id; bool is_boundary;
+    int shape_id; int edge_id; int global_edge_id; bool is_boundary;
 };
 
 __target_intrinsic(cpp, "rayd::slang::NearestRayEdge")
@@ -43,7 +43,7 @@ struct NearestRayEdge
 {
     bool valid; float distance; float ray_t;
     Float3 point; float edge_t; Float3 edge_point;
-    int shape_id; int edge_id; bool is_boundary;
+    int shape_id; int edge_id; int global_edge_id; bool is_boundary;
 };
 
 __target_intrinsic(cpp, "rayd::slang::PrimaryEdgeSample")
@@ -167,7 +167,7 @@ NearestPointEdge invalidNearestPointEdge()
     NearestPointEdge r;
     r.valid = false; r.distance = infinity();
     r.point = float3(0,0,0); r.edge_t = 0; r.edge_point = float3(0,0,0);
-    r.shape_id = -1; r.edge_id = -1; r.is_boundary = false;
+    r.shape_id = -1; r.edge_id = -1; r.global_edge_id = -1; r.is_boundary = false;
     return r;
 }
 
@@ -176,7 +176,7 @@ NearestRayEdge invalidNearestRayEdge()
     NearestRayEdge r;
     r.valid = false; r.distance = infinity(); r.ray_t = 0;
     r.point = float3(0,0,0); r.edge_t = 0; r.edge_point = float3(0,0,0);
-    r.shape_id = -1; r.edge_id = -1; r.is_boundary = false;
+    r.shape_id = -1; r.edge_id = -1; r.global_edge_id = -1; r.is_boundary = false;
     return r;
 }
 
@@ -229,11 +229,43 @@ int    itsADPrimId(IntersectionAD h)      { __target_switch { case cpp: __intrin
 Float3 itsADDtDo(IntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_do($0)";       default: return h.dt_do; } }
 Float3 itsADDtDd(IntersectionAD h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::its_ad_dt_dd($0)";       default: return h.dt_dd; } }
 
+// ---- Nearest-edge field accessors ----
+
+bool   npeValid(NearestPointEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_valid($0)";          default: return h.valid; } }
+float  npeDistance(NearestPointEdge h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_distance($0)";       default: return h.distance; } }
+Float3 npePoint(NearestPointEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_point($0)";          default: return h.point; } }
+float  npeEdgeT(NearestPointEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_edge_t($0)";         default: return h.edge_t; } }
+Float3 npeEdgePoint(NearestPointEdge h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_edge_point($0)";     default: return h.edge_point; } }
+int    npeShapeId(NearestPointEdge h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_shape_id($0)";       default: return h.shape_id; } }
+int    npeEdgeId(NearestPointEdge h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_edge_id($0)";        default: return h.edge_id; } }
+int    npeGlobalEdgeId(NearestPointEdge h)  { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_global_edge_id($0)"; default: return h.global_edge_id; } }
+bool   npeIsBoundary(NearestPointEdge h)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::npe_is_boundary($0)";    default: return h.is_boundary; } }
+
+bool   nreValid(NearestRayEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_valid($0)";          default: return h.valid; } }
+float  nreDistance(NearestRayEdge h)      { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_distance($0)";       default: return h.distance; } }
+float  nreRayT(NearestRayEdge h)          { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_ray_t($0)";          default: return h.ray_t; } }
+Float3 nrePoint(NearestRayEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_point($0)";          default: return h.point; } }
+float  nreEdgeT(NearestRayEdge h)         { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_edge_t($0)";         default: return h.edge_t; } }
+Float3 nreEdgePoint(NearestRayEdge h)     { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_edge_point($0)";     default: return h.edge_point; } }
+int    nreShapeId(NearestRayEdge h)       { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_shape_id($0)";       default: return h.shape_id; } }
+int    nreEdgeId(NearestRayEdge h)        { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_edge_id($0)";        default: return h.edge_id; } }
+int    nreGlobalEdgeId(NearestRayEdge h)  { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_global_edge_id($0)"; default: return h.global_edge_id; } }
+bool   nreIsBoundary(NearestRayEdge h)    { __target_switch { case cpp: __intrinsic_asm "rayd::slang::nre_is_boundary($0)";    default: return h.is_boundary; } }
+
 NearestPointEdge sceneNearestEdgePoint(SceneHandle scene, Float3 point, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_point($0, $1, $2)"; default: return invalidNearestPointEdge(); } }
 
 NearestRayEdge sceneNearestEdgeRay(SceneHandle scene, Ray ray, bool active = true)
 { __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_nearest_edge_ray($0, $1, $2)"; default: return invalidNearestRayEdge(); } }
+
+int sceneEdgeCount(SceneHandle scene)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_edge_count($0)"; default: return 0; } }
+
+bool sceneEdgeMaskValue(SceneHandle scene, int index)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_edge_mask_value($0, $1)"; default: return false; } }
+
+void sceneSetEdgeMask(SceneHandle scene, uint64_t maskPtr, int count)
+{ __target_switch { case cpp: __intrinsic_asm "rayd::slang::scene_set_edge_mask($0, $1, $2)"; default: return; } }
 
 // ---- Camera queries ----
 

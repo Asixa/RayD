@@ -39,7 +39,8 @@ For intersection workloads, RayD targets Mitsuba-level performance and matching 
 - `Scene`: a container of meshes plus OptiX acceleration
 - `scene.intersect(ray)`: differentiable ray-mesh intersection
 - `scene.shadow_test(ray)`: occlusion testing
-- `scene.nearest_edge(query)`: nearest-edge queries for points and rays
+- `scene.nearest_edge(query)`: nearest-edge queries for points and rays, returning `shape_id`, mesh-local `edge_id`, and scene-global `global_edge_id`
+- `scene.set_edge_mask(mask)` / `scene.edge_mask()`: scene-global filtering for the secondary-edge BVH used by `nearest_edge(...)`
 - edge acceleration data that is useful for edge sampling and edge diffraction methods
 
 ## Performance
@@ -169,6 +170,9 @@ reused across device switches in the same process.
 
 RayD ships a Slang interop layer for Slang's `cpp` target. Slang code can `import rayd_slang;` and call RayD scene queries directly.
 
+`NearestPointEdge` and `NearestRayEdge` returned through Slang include `global_edge_id` in the same scene-global index space as `scene.edge_info().global_edge_id`.
+The Slang bridge also exposes scene edge-mask helpers for host code: `sceneEdgeCount(scene)`, `sceneEdgeMaskValue(scene, index)`, and `sceneSetEdgeMask(scene, maskPtr, count)`.
+
 ### Minimal Slang Example
 
 ```slang
@@ -260,6 +264,8 @@ This is useful for:
 - nearest-edge queries
 - visibility-boundary terms
 - geometric edge diffraction models
+
+`Scene.set_edge_mask(mask)` filters this secondary-edge BVH in scene-global edge index space. It does not modify `scene.edge_info()`, `scene.edge_topology()`, `scene.mesh_edge_offsets()`, or primary-edge camera sampling.
 
 In other words, RayD is not limited to triangle hits. It also gives you direct access to edge-level geometry queries, which are important in many non-graphics simulators.
 

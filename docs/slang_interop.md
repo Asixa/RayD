@@ -33,7 +33,7 @@ t = m.traceRayT(scene.slang_handle, 0.25, 0.25, -1.0, 0.0, 0.0, 1.0)
 
 ## Writing Slang Code
 
-Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** — use the `its*`, `f3*`, `ray*` accessors instead, because `slangc` mangles field names when targeting C++.
+Import the module and use the provided constructors and accessor functions. **Do not access struct fields directly** - use the `its*`, `f3*`, `ray*` accessors instead, because `slangc` mangles field names when targeting C++.
 
 Two import styles are supported:
 
@@ -64,14 +64,61 @@ export float traceRayT(uint64_t sceneHandle,
 **Intersection accessors:**
 `itsValid(h)`, `itsT(h)`, `itsP(h)`, `itsN(h)`, `itsGeoN(h)`, `itsUV(h)`, `itsBarycentric(h)`, `itsShapeId(h)`, `itsPrimId(h)`
 
+**Nearest-edge accessors:**
+`npeValid(h)`, `npeDistance(h)`, `npePoint(h)`, `npeEdgeT(h)`, `npeEdgePoint(h)`, `npeShapeId(h)`, `npeEdgeId(h)`, `npeGlobalEdgeId(h)`, `npeIsBoundary(h)`
+`nreValid(h)`, `nreDistance(h)`, `nreRayT(h)`, `nrePoint(h)`, `nreEdgeT(h)`, `nreEdgePoint(h)`, `nreShapeId(h)`, `nreEdgeId(h)`, `nreGlobalEdgeId(h)`, `nreIsBoundary(h)`
+
 **Float/Ray accessors:**
 `f2X/Y`, `f3X/Y/Z`, `rayO`, `rayD`, `rayTmax`
 
 **Scene queries:**
+`sceneIsReady(scene)`, `sceneHasPendingUpdates(scene)`, `sceneBuild(scene)`, `sceneSync(scene)`
 `sceneIntersect(scene, ray)`, `sceneShadowTest(scene, ray)`, `sceneNearestEdgePoint(scene, point)`, `sceneNearestEdgeRay(scene, ray)`
+`sceneEdgeCount(scene)`, `sceneEdgeMaskValue(scene, index)`, `sceneSetEdgeMask(scene, maskPtr, count)`
 
 **Camera queries:**
 `cameraSampleRay(camera, sample)`, `cameraSamplePrimaryEdge(camera, s)`, `cameraSetResolution(camera, w, h)`, `cameraBuild(camera)`, `cameraPrepareEdges(camera, scene)`
+
+### Nearest-edge results
+
+`NearestPointEdge` and `NearestRayEdge` use the same ID semantics as the native and PyTorch frontends:
+
+- `shape_id`: mesh id
+- `edge_id`: mesh-local edge id inside that mesh
+- `global_edge_id`: scene-global edge id, matching `scene.edge_info().global_edge_id`
+
+Use the `npe*` / `nre*` accessors on the Slang side instead of direct field reads.
+
+### Scene edge masks
+
+The Slang bridge exposes the scene-level edge mask used by `sceneNearestEdgePoint(...)` and `sceneNearestEdgeRay(...)`.
+
+- `sceneSetEdgeMask(scene, maskPtr, count)` expects a host pointer to `count` bytes of mask data
+- each non-zero byte means active, zero means inactive
+- the mask is indexed in scene-global edge order, matching `scene.edge_info().global_edge_id`
+- after setting the mask, the scene has pending updates, so call `sceneSync(scene)` before querying again
+- the mask only affects the secondary-edge BVH used by nearest-edge queries
+- it does not change `scene.edge_info()`, topology metadata, or primary-edge camera preparation
+
+Example from Python calling a Slang export:
+
+```python
+import ctypes
+import rayd as rd
+import rayd.slang as rs
+
+m = rs.load_module("my_shader.slang")
+scene = rd.Scene()
+scene.add_mesh(mesh)
+scene.build()
+
+edge_count = m.getSceneEdgeCount(scene.slang_handle)
+mask = (ctypes.c_uint8 * edge_count)(*([1] * edge_count))
+mask[3] = 0  # disable one scene-global edge
+
+m.setSceneEdgeMask(scene.slang_handle, ctypes.addressof(mask), edge_count)
+m.syncScene(scene.slang_handle)
+```
 
 ## Compilation Pipeline
 
@@ -117,7 +164,8 @@ g++ -std=c++17 -o my_app my_shader.cpp my_main.cpp \
 - The Slang module uses `__target_intrinsic(cpp, "rayd::slang::Foo")` to map Slang struct types onto C++ POD structs.
 - All constructors and field accesses go through `__intrinsic_asm` on the `cpp` target, because `slangc` mangles Slang field names (e.g. `t` → `t_0`) which would not match the C++ struct definitions.
 - The query functions (`scene_intersect`, etc.) are implemented in `src/slang_interop.cpp` and compiled into `rayd_core`. They convert a scalar Slang query into a 1-lane detached Dr.Jit call and extract the result back into a POD struct.
-- Non-`cpp` targets (CUDA, HLSL, etc.) fall back to invalid sentinels — RayD's implementation depends on host-side Dr.Jit + OptiX and is not device-callable.
+- The scene edge-mask helpers follow the same pattern, but the setter is explicitly host-side: `maskPtr` must point to CPU memory that remains valid for the duration of the call.
+- Non-`cpp` targets (CUDA, HLSL, etc.) fall back to invalid sentinels - RayD's implementation depends on host-side Dr.Jit + OptiX and is not device-callable.
 
 ## Handles from Python
 

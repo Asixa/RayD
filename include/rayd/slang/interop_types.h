@@ -57,6 +57,7 @@ struct NearestPointEdge {
     float edge_t = 0.f;
     Float3 edge_point;
     int shape_id = -1, edge_id = -1;
+    int global_edge_id = -1;
     bool is_boundary = false;
 };
 
@@ -68,6 +69,7 @@ struct NearestRayEdge {
     float edge_t = 0.f;
     Float3 edge_point;
     int shape_id = -1, edge_id = -1;
+    int global_edge_id = -1;
     bool is_boundary = false;
 };
 
@@ -136,6 +138,29 @@ inline int    its_ad_prim_id(const IntersectionAD &h) { return h.prim_id; }
 inline Float3 its_ad_dt_do(const IntersectionAD &h) { return h.dt_do; }
 inline Float3 its_ad_dt_dd(const IntersectionAD &h) { return h.dt_dd; }
 
+// --- NearestPointEdge accessors ---
+inline bool   npe_valid(const NearestPointEdge &h) { return h.valid; }
+inline float  npe_distance(const NearestPointEdge &h) { return h.distance; }
+inline Float3 npe_point(const NearestPointEdge &h) { return h.point; }
+inline float  npe_edge_t(const NearestPointEdge &h) { return h.edge_t; }
+inline Float3 npe_edge_point(const NearestPointEdge &h) { return h.edge_point; }
+inline int    npe_shape_id(const NearestPointEdge &h) { return h.shape_id; }
+inline int    npe_edge_id(const NearestPointEdge &h) { return h.edge_id; }
+inline int    npe_global_edge_id(const NearestPointEdge &h) { return h.global_edge_id; }
+inline bool   npe_is_boundary(const NearestPointEdge &h) { return h.is_boundary; }
+
+// --- NearestRayEdge accessors ---
+inline bool   nre_valid(const NearestRayEdge &h) { return h.valid; }
+inline float  nre_distance(const NearestRayEdge &h) { return h.distance; }
+inline float  nre_ray_t(const NearestRayEdge &h) { return h.ray_t; }
+inline Float3 nre_point(const NearestRayEdge &h) { return h.point; }
+inline float  nre_edge_t(const NearestRayEdge &h) { return h.edge_t; }
+inline Float3 nre_edge_point(const NearestRayEdge &h) { return h.edge_point; }
+inline int    nre_shape_id(const NearestRayEdge &h) { return h.shape_id; }
+inline int    nre_edge_id(const NearestRayEdge &h) { return h.edge_id; }
+inline int    nre_global_edge_id(const NearestRayEdge &h) { return h.global_edge_id; }
+inline bool   nre_is_boundary(const NearestRayEdge &h) { return h.is_boundary; }
+
 // --- Scene/Camera query stubs (linked at runtime from rayd_core) ---
 // These are declared here and defined in rayd_core (interop.h).
 // When link_rayd=True, load_module links rayd_core which provides the implementations.
@@ -149,6 +174,9 @@ bool scene_is_ready(SceneHandle handle);
 bool scene_has_pending_updates(SceneHandle handle);
 void scene_build(SceneHandle handle);
 void scene_sync(SceneHandle handle);
+int scene_edge_count(SceneHandle handle);
+bool scene_edge_mask_value(SceneHandle handle, int index);
+void scene_set_edge_mask(SceneHandle handle, uint64_t mask_ptr, int count);
 
 Ray camera_sample_ray(CameraHandle handle, const Float2 &sample);
 PrimaryEdgeSample camera_sample_primary_edge(CameraHandle handle, float sample);

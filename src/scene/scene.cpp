@@ -112,13 +112,9 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     is_ready_ = false;
     pending_updates_ = false;
     edge_mask_ = MaskDetached();
-    active_edge_info_ = SecondaryEdgeInfo();
-    active_edge_global_ids_ = IntDetached();
-    global_to_active_edge_id_ = IntDetached();
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
     mask_dirty_ = false;
-    all_edges_active_ = true;
     invalidate_primary_edge_observers();
     return mesh_count_ - 1;
 }
@@ -224,116 +220,6 @@ void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_s
             scatter_indices_detached);
 }
 
-void Scene::scatter_active_edge_data(const IntDetached &active_indices,
-                                     const IntDetached &global_indices) {
-    const int count = static_cast<int>(global_indices.size());
-    if (count == 0) {
-        return;
-    }
-
-    const Int active_indices_ad = Int(active_indices);
-    const Int global_indices_ad = Int(global_indices);
-    scatter(active_edge_info_.start,
-            gather<Vector3f>(edge_info_.start, global_indices_ad),
-            active_indices_ad);
-    scatter(active_edge_info_.edge,
-            gather<Vector3f>(edge_info_.edge, global_indices_ad),
-            active_indices_ad);
-    scatter(active_edge_info_.normal0,
-            gather<Vector3f>(edge_info_.normal0, global_indices_ad),
-            active_indices_ad);
-    scatter(active_edge_info_.normal1,
-            gather<Vector3f>(edge_info_.normal1, global_indices_ad),
-            active_indices_ad);
-    scatter(active_edge_info_.opposite,
-            gather<Vector3f>(edge_info_.opposite, global_indices_ad),
-            active_indices_ad);
-    scatter(active_edge_info_.is_boundary,
-            gather<Mask>(edge_info_.is_boundary, global_indices_ad),
-            active_indices_ad);
-}
-
-void Scene::rebuild_active_edge_bvh() {
-    pending_edge_bvh_dirty_ranges_.clear();
-    active_edge_info_ = SecondaryEdgeInfo();
-    active_edge_global_ids_ = IntDetached();
-    global_to_active_edge_id_ = IntDetached();
-
-    if (edge_count_ == 0) {
-        all_edges_active_ = true;
-        edge_bvh_->build(active_edge_info_);
-        edge_bvh_dirty_ = false;
-        mask_dirty_ = false;
-        return;
-    }
-
-    all_edges_active_ = drjit::all(edge_mask_);
-    if (all_edges_active_) {
-        edge_bvh_->build(edge_info_);
-        edge_bvh_dirty_ = false;
-        mask_dirty_ = false;
-        return;
-    }
-
-    active_edge_global_ids_ = compressD(arange<IntDetached>(edge_count_), edge_mask_);
-    const int active_edge_count = static_cast<int>(active_edge_global_ids_.size());
-    if (active_edge_count > 0) {
-        const Int active_edge_global_ids_ad = Int(active_edge_global_ids_);
-        active_edge_info_ = SecondaryEdgeInfo {
-            gather<Vector3f>(edge_info_.start, active_edge_global_ids_ad),
-            gather<Vector3f>(edge_info_.edge, active_edge_global_ids_ad),
-            gather<Vector3f>(edge_info_.normal0, active_edge_global_ids_ad),
-            gather<Vector3f>(edge_info_.normal1, active_edge_global_ids_ad),
-            gather<Vector3f>(edge_info_.opposite, active_edge_global_ids_ad),
-            gather<Mask>(edge_info_.is_boundary, active_edge_global_ids_ad)
-        };
-        global_to_active_edge_id_ = full<IntDetached>(-1, edge_count_);
-        scatter(global_to_active_edge_id_,
-                arange<IntDetached>(active_edge_count),
-                active_edge_global_ids_);
-        drjit::eval(active_edge_info_.start,
-                    active_edge_info_.edge,
-                    active_edge_info_.normal0,
-                    active_edge_info_.normal1,
-                    active_edge_info_.opposite,
-                    active_edge_info_.is_boundary,
-                    active_edge_global_ids_,
-                    global_to_active_edge_id_);
-        drjit::sync_thread();
-    } else {
-        global_to_active_edge_id_ = full<IntDetached>(-1, edge_count_);
-        drjit::eval(global_to_active_edge_id_);
-        drjit::sync_thread();
-    }
-
-    edge_bvh_->build(active_edge_info_);
-    edge_bvh_dirty_ = false;
-    mask_dirty_ = false;
-}
-
-IntDetached Scene::dirty_global_edge_ids_from_ranges() const {
-    size_t total_count = 0;
-    for (const EdgeDirtyRange &range : pending_edge_bvh_dirty_ranges_) {
-        if (range.count > 0) {
-            total_count += static_cast<size_t>(range.count);
-        }
-    }
-
-    if (total_count == 0) {
-        return IntDetached();
-    }
-
-    std::vector<int> dirty_global_ids;
-    dirty_global_ids.reserve(total_count);
-    for (const EdgeDirtyRange &range : pending_edge_bvh_dirty_ranges_) {
-        for (int index = 0; index < range.count; ++index) {
-            dirty_global_ids.push_back(range.offset + index);
-        }
-    }
-
-    return load<IntDetached>(dirty_global_ids.data(), dirty_global_ids.size());
-}
-
 void Scene::ensure_scene_edge_data_ready() const {
     if (!edge_bvh_dirty_) {
         return;
@@ -364,7 +250,11 @@ void Scene::ensure_edge_bvh_ready() const {
     }
 
     if (mask_dirty_) {
-        const_cast<Scene *>(this)->rebuild_active_edge_bvh();
+        Scene *scene = const_cast<Scene *>(this);
+        scene->edge_bvh_->build(scene->edge_info_, scene->edge_mask_);
+        scene->pending_edge_bvh_dirty_ranges_.clear();
+        scene->edge_bvh_dirty_ = false;
+        scene->mask_dirty_ = false;
         return;
     }
 
@@ -373,38 +263,7 @@ void Scene::ensure_edge_bvh_ready() const {
         return;
     }
 
-    if (all_edges_active_) {
-        edge_bvh_->refit(edge_info_, pending_edge_bvh_dirty_ranges_);
-        pending_edge_bvh_dirty_ranges_.clear();
-        edge_bvh_dirty_ = false;
-        return;
-    }
-
-    const IntDetached dirty_global_ids = dirty_global_edge_ids_from_ranges();
-    if (dirty_global_ids.size() == 0) {
-        pending_edge_bvh_dirty_ranges_.clear();
-        edge_bvh_dirty_ = false;
-        return;
-    }
-
-    const IntDetached mapped_active_ids =
-        gather<IntDetached>(global_to_active_edge_id_, dirty_global_ids);
-    const MaskDetached active_dirty = mapped_active_ids >= 0;
-    const IntDetached active_indices = compressD(mapped_active_ids, active_dirty);
-    if (active_indices.size() > 0) {
-        const IntDetached global_indices = compressD(dirty_global_ids, active_dirty);
-        Scene *scene = const_cast<Scene *>(this);
-        scene->scatter_active_edge_data(active_indices, global_indices);
-        drjit::eval(scene->active_edge_info_.start,
-                    scene->active_edge_info_.edge,
-                    scene->active_edge_info_.normal0,
-                    scene->active_edge_info_.normal1,
-                    scene->active_edge_info_.opposite,
-                    scene->active_edge_info_.is_boundary);
-        drjit::sync_thread();
-        edge_bvh_->refit(active_edge_info_, active_indices);
-    }
-
+    edge_bvh_->refit(edge_info_, pending_edge_bvh_dirty_ranges_);
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
 }
@@ -569,7 +428,6 @@ void Scene::build() {
                                            load<IntDetached>(triangle_edge_ids_cpu[2].data(), total_face_count));
     if (edge_count_ > 0) {
         edge_info_ = empty<SecondaryEdgeInfo>(edge_count_);
-        active_edge_info_ = SecondaryEdgeInfo();
         edge_topology_ = SceneEdgeTopology {
             load_or_empty(topology_v0),
             load_or_empty(topology_v1),
@@ -583,17 +441,12 @@ void Scene::build() {
         edge_shape_ids_ = empty<IntDetached>(edge_count_);
         edge_local_ids_ = empty<IntDetached>(edge_count_);
         edge_mask_ = full<MaskDetached>(true, edge_count_);
-        active_edge_global_ids_ = IntDetached();
-        global_to_active_edge_id_ = IntDetached();
     } else {
         edge_info_ = SecondaryEdgeInfo();
-        active_edge_info_ = SecondaryEdgeInfo();
         edge_topology_ = SceneEdgeTopology();
         edge_shape_ids_ = IntDetached();
         edge_local_ids_ = IntDetached();
         edge_mask_ = MaskDetached();
-        active_edge_global_ids_ = IntDetached();
-        global_to_active_edge_id_ = IntDetached();
     }
 
     for (const SceneMeshRecord &record : mesh_records_) {
@@ -618,9 +471,8 @@ void Scene::build() {
     drjit::sync_thread();
 
     optix_scene_->build(mesh_descs);
-    all_edges_active_ = true;
     mask_dirty_ = false;
-    rebuild_active_edge_bvh();
+    edge_bvh_->build(edge_info_, edge_mask_);
     is_ready_ = true;
     pending_updates_ = false;
     ++scene_version_;
@@ -673,7 +525,6 @@ void Scene::set_edge_mask(const MaskDetached &mask) {
     }
 
     edge_mask_ = mask;
-    all_edges_active_ = edge_count_ == 0 || drjit::all(edge_mask_);
     mask_dirty_ = true;
     edge_bvh_dirty_ = true;
     pending_updates_ = true;
@@ -1059,9 +910,8 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
         return result;
     }
 
-    const IntDetached global_edge_id_detached = all_edges_active_
-        ? candidate.global_edge_id
-        : gather<IntDetached>(active_edge_global_ids_, candidate.global_edge_id, valid_detached);
+    const IntDetached global_edge_id_detached =
+        edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
         gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
     const IntDetached edge_id_detached =
@@ -1164,9 +1014,8 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
     }
 
     const MaskDetached finite_tmax = drjit::isfinite(t_max_input);
-    const IntDetached global_edge_id_detached = all_edges_active_
-        ? candidate.global_edge_id
-        : gather<IntDetached>(active_edge_global_ids_, candidate.global_edge_id, valid_detached);
+    const IntDetached global_edge_id_detached =
+        edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
         gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
     const IntDetached edge_id_detached =

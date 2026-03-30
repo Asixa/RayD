@@ -27,14 +27,26 @@ export bool testNearestEdgePoint(SceneHandle scene)
 {
     Float3 point = float3(0.25f, 0.1f, 0.0f);
     NearestPointEdge edge = sceneNearestEdgePoint(scene, point);
-    return edge.valid;  // ok: only accessed on non-cpp targets via default
+    return npeValid(edge);
 }
 
 export bool testNearestEdgeRay(SceneHandle scene)
 {
     Ray ray = makeRay(float3(0.2f, 0.4f, 1.0f), float3(0.0f, 0.0f, -1.0f));
     NearestRayEdge edge = sceneNearestEdgeRay(scene, ray);
-    return edge.valid;
+    return nreValid(edge);
+}
+
+export int testNearestEdgePointGlobalId(SceneHandle scene)
+{
+    Float3 point = float3(0.25f, 0.1f, 0.0f);
+    NearestPointEdge edge = sceneNearestEdgePoint(scene, point);
+    return npeGlobalEdgeId(edge);
+}
+
+export int testSceneEdgeCount(SceneHandle scene)
+{
+    return sceneEdgeCount(scene);
 }
 
 export Ray testCameraSampleRay(CameraHandle camera)

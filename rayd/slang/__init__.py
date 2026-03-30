@@ -77,6 +77,7 @@ _PYBIND11_STRUCT_BINDINGS = r"""
         .def_readonly("edge_point", &NearestPointEdge::edge_point)
         .def_readonly("shape_id", &NearestPointEdge::shape_id)
         .def_readonly("edge_id", &NearestPointEdge::edge_id)
+        .def_readonly("global_edge_id", &NearestPointEdge::global_edge_id)
         .def_readonly("is_boundary", &NearestPointEdge::is_boundary);
     py::class_<NearestRayEdge>(m, "NearestRayEdge")
         .def_readonly("valid", &NearestRayEdge::valid)
@@ -87,6 +88,7 @@ _PYBIND11_STRUCT_BINDINGS = r"""
         .def_readonly("edge_point", &NearestRayEdge::edge_point)
         .def_readonly("shape_id", &NearestRayEdge::shape_id)
         .def_readonly("edge_id", &NearestRayEdge::edge_id)
+        .def_readonly("global_edge_id", &NearestRayEdge::global_edge_id)
         .def_readonly("is_boundary", &NearestRayEdge::is_boundary);
     py::class_<PrimaryEdgeSample>(m, "PrimaryEdgeSample")
         .def_readonly("valid", &PrimaryEdgeSample::valid)
@@ -135,7 +137,14 @@ def _slangc() -> str:
 def _lib_dir() -> _Path:
     """Directory containing ``rayd_core`` static library."""
     # Development: build/<tag>/lib/Release/  (Windows) or lib/ (Linux)
-    for pattern in ("*/lib/Release", "*/lib"):
+    py_tag = f"cp{_sys.version_info.major}{_sys.version_info.minor}-cp{_sys.version_info.major}{_sys.version_info.minor}"
+    dev_patterns = (
+        f"{py_tag}*/lib/Release",
+        f"{py_tag}*/lib",
+        "*/lib/Release",
+        "*/lib",
+    )
+    for pattern in dev_patterns:
         for d in sorted((_REPO_ROOT / "build").glob(pattern), reverse=True):
             if list(d.glob("rayd_core*")):
                 return d
@@ -380,4 +389,3 @@ def _add_msvc_to_path():
             _os.environ["PATH"] = bins[0] + _os.pathsep + _os.environ["PATH"]
     except Exception:
         pass
-
