@@ -1,5 +1,7 @@
 #include <rayd/rayd.h>
 
+#include <stdexcept>
+
 #include <nanobind/stl/string.h>
 #include <drjit/python.h>
 
@@ -17,6 +19,36 @@ using namespace nb::literals;
 using namespace rayd;
 
 namespace {
+
+int checked_cuda_device_count() {
+    const int count = jit_cuda_device_count();
+    if (count <= 0)
+        throw std::runtime_error("No Dr.Jit-compatible CUDA devices are available.");
+    return count;
+}
+
+int set_rayd_device(int device, bool initialize_optix) {
+    const int count = checked_cuda_device_count();
+    if (device < 0 || device >= count) {
+        throw std::runtime_error(
+            "set_device(): device index " + std::to_string(device) +
+            " is out of range for " + std::to_string(count) +
+            " Dr.Jit-compatible CUDA device(s).");
+    }
+
+    // RayD scenes, BVHs, and OptiX pipelines are bound to the current thread's
+    // CUDA/OptiX state. Synchronize before switching and eagerly initialize the
+    // target OptiX context so subsequent Scene::build() calls use that device.
+    jit_sync_thread();
+    drjit::set_device(device);
+
+    if (initialize_optix) {
+        jit_optix_context();
+        init_optix_api();
+    }
+
+    return jit_cuda_device();
+}
 
 template <typename T>
 nb::object drjit_python_type() {
@@ -127,6 +159,21 @@ NB_MODULE(rayd, m) {
 
     m.doc() = "Differentiable geometry queries built on Dr.Jit and OptiX.";
     m.attr("__name__") = "rayd";
+    m.def("device_count",
+          &checked_cuda_device_count,
+          "Return the number of Dr.Jit-compatible CUDA devices visible to RayD.");
+    m.def("current_device",
+          []() { return checked_cuda_device_count() > 0 ? jit_cuda_device() : 0; },
+          "Return the current thread's active Dr.Jit CUDA device index.");
+    m.def("set_device",
+          &set_rayd_device,
+          "device"_a,
+          "initialize_optix"_a = true,
+          "Set the current thread's active CUDA device for RayD.\n\n"
+          "Call this before constructing RayD meshes, scenes, cameras, or "
+          "torch/Dr.Jit arrays that you intend to use with them. When "
+          "initialize_optix=True, RayD also initializes the OptiX device "
+          "context for the selected device.");
     bind_section("core types", [&]() {
         nb::class_<RayDetached>(m, "RayDetached")
             .def(nb::init<>())

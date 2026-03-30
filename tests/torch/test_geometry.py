@@ -87,6 +87,29 @@ class TorchImportTests(unittest.TestCase):
 
 @unittest.skipUnless(TORCH_CUDA_AVAILABLE, "torch with CUDA is required for rayd.torch tests")
 class TorchGeometryTests(unittest.TestCase):
+    def test_device_selection_api_is_reexported(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as rd
+            import rayd.torch as rt
+
+            current_before = rd.current_device()
+            current_after = rt.set_device(current_before)
+
+            print(json.dumps({
+                "device_count": int(rt.device_count()),
+                "current_before": int(current_before),
+                "current_after": int(current_after),
+                "top_level_matches": int(rd.current_device()) == int(rt.current_device()),
+            }))
+            """
+        )
+
+        self.assertGreaterEqual(data["device_count"], 1)
+        self.assertEqual(data["current_before"], data["current_after"])
+        self.assertTrue(data["top_level_matches"])
+
     def test_intersect_and_shadow_test(self):
         data = run_json_case(
             """

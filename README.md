@@ -150,6 +150,21 @@ Key conventions:
 
 The native Dr.Jit API remains unchanged and does not depend on PyTorch.
 
+### Device Selection
+
+RayD follows Dr.Jit's current-thread CUDA device selection. If you need to
+choose a GPU explicitly, do it before constructing any RayD resources:
+
+```python
+import rayd as rd
+
+rd.set_device(0)  # also initializes OptiX on that device by default
+```
+
+`rd.set_device()` / `rayd.torch.set_device()` are intended for selecting the
+device up front. Existing RayD scenes, OptiX pipelines, and BVHs should not be
+reused across device switches in the same process.
+
 ## Slang Frontend
 
 RayD ships a Slang interop layer for Slang's `cpp` target. Slang code can `import rayd_slang;` and call RayD scene queries directly.

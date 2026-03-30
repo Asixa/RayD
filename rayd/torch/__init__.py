@@ -28,9 +28,16 @@ from .types import (
 from .mesh import Mesh
 from .scene import Scene
 from .camera import Camera
+from ._env import _native as _native
+
+device_count = _native.device_count
+current_device = _native.current_device
+set_device = _native.set_device
 
 __all__ = [
     "Camera",
+    "current_device",
+    "device_count",
     "Intersection",
     "Mesh",
     "NearestPointEdge",
@@ -42,4 +49,5 @@ __all__ = [
     "SceneEdgeInfo",
     "SceneEdgeTopology",
     "SecondaryEdgeInfo",
+    "set_device",
 ]

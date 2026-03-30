@@ -43,6 +43,43 @@ def run_json_case(script: str, timeout: int = 120):
 
 
 class GeometryCoreTests(unittest.TestCase):
+    def test_device_selection_api_round_trips_and_preserves_optix_queries(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            device_count = pj.device_count()
+            current_before = pj.current_device()
+            current_after = pj.set_device(current_before)
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                                 cuda.Array3f([0.0], [0.0], [1.0]))
+            its = scene.intersect(ray)
+
+            print(json.dumps({
+                "device_count": int(device_count),
+                "current_before": int(current_before),
+                "current_after": int(current_after),
+                "valid": bool(its.is_valid()[0]),
+                "t": float(its.t[0]),
+            }))
+            """
+        )
+
+        self.assertGreaterEqual(data["device_count"], 1)
+        self.assertEqual(data["current_before"], data["current_after"])
+        self.assertTrue(data["valid"])
+        self.assertAlmostEqual(data["t"], 1.0, places=5)
+
     def test_legacy_type_aliases_are_not_exposed(self):
         data = run_json_case(
             """
