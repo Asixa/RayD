@@ -1,4 +1,5 @@
 #include "edge_bvh.h"
+#include "edge_bvh_config.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -20,12 +21,6 @@ inline void require_local(bool condition, const std::string &message) {
 }
 
 namespace {
-
-constexpr int EdgeBVHTreeletMaxLeaves = 7;
-constexpr int EdgeBVHTreeletMinPrimitives = 65536;
-constexpr int EdgeBVHTreeletMinSubtreeLeaves = 32;
-constexpr float EdgeBVHTreeletCostInflationRatio = 1e-4f;
-constexpr bool EdgeBVHEnableGpuTreeletOptimization = false;
 
 struct Float3 {
     float x;
@@ -137,17 +132,16 @@ struct BoundsUnion {
     }
 };
 
-__host__ __device__ inline uint64_t expand_bits_21(uint64_t value) {
-    value &= 0x1fffffull;
-    value = (value | (value << 32)) & 0x1f00000000ffffull;
-    value = (value | (value << 16)) & 0x1f0000ff0000ffull;
-    value = (value | (value << 8)) & 0x100f00f00f00f00full;
-    value = (value | (value << 4)) & 0x10c30c30c30c30c3ull;
-    value = (value | (value << 2)) & 0x1249249249249249ull;
+__host__ __device__ inline uint32_t expand_bits_10(uint32_t value) {
+    value &= 0x000003ffu;
+    value = (value | (value << 16)) & 0x030000FFu;
+    value = (value | (value << 8)) & 0x0300F00Fu;
+    value = (value | (value << 4)) & 0x030C30C3u;
+    value = (value | (value << 2)) & 0x09249249u;
     return value;
 }
 
-__host__ __device__ inline uint64_t morton_code_3d(const Float3 &point, const Bounds3 &scene_bounds) {
+__host__ __device__ inline uint32_t morton_code_3d(const Float3 &point, const Bounds3 &scene_bounds) {
     Float3 normalized(0.5f, 0.5f, 0.5f);
     const Float3 extent(scene_bounds.max.x - scene_bounds.min.x,
                         scene_bounds.max.y - scene_bounds.min.y,
@@ -167,17 +161,13 @@ __host__ __device__ inline uint64_t morton_code_3d(const Float3 &point, const Bo
     normalized.y = fminf(fmaxf(normalized.y, 0.f), 1.f);
     normalized.z = fminf(fmaxf(normalized.z, 0.f), 1.f);
 
-    constexpr uint64_t scale = (1ull << 21) - 1ull;
-    const uint64_t x = static_cast<uint64_t>(normalized.x * static_cast<float>(scale));
-    const uint64_t y = static_cast<uint64_t>(normalized.y * static_cast<float>(scale));
-    const uint64_t z = static_cast<uint64_t>(normalized.z * static_cast<float>(scale));
-    return (expand_bits_21(x) << 2u) |
-           (expand_bits_21(y) << 1u) |
-           (expand_bits_21(z) << 0u);
-}
-
-__device__ inline int clz_u64(uint64_t value) {
-    return value == 0ull ? 64 : __clzll(value);
+    constexpr uint32_t scale = (1u << 10) - 1u;
+    const uint32_t x = static_cast<uint32_t>(normalized.x * static_cast<float>(scale));
+    const uint32_t y = static_cast<uint32_t>(normalized.y * static_cast<float>(scale));
+    const uint32_t z = static_cast<uint32_t>(normalized.z * static_cast<float>(scale));
+    return (expand_bits_10(x) << 2u) |
+           (expand_bits_10(y) << 1u) |
+           (expand_bits_10(z) << 0u);
 }
 
 __device__ inline int clz_u32(uint32_t value) {
@@ -659,7 +649,7 @@ __global__ void compute_morton_codes_kernel(
     const float *primitive_bbox_max_x,
     const float *primitive_bbox_max_y,
     const float *primitive_bbox_max_z,
-    uint64_t *morton_codes) {
+    uint32_t *morton_codes) {
     const int primitive = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (primitive >= primitive_count) {
         return;
@@ -674,7 +664,7 @@ __global__ void compute_morton_codes_kernel(
     morton_codes[primitive] = morton_code_3d(mul3(add3(bbox_min, bbox_max), 0.5f), scene_bounds);
 }
 
-__device__ inline int longest_common_prefix(const uint64_t *morton_codes,
+__device__ inline int longest_common_prefix(const uint32_t *morton_codes,
                                             const int *sorted_primitives,
                                             int primitive_count,
                                             int first,
@@ -683,20 +673,20 @@ __device__ inline int longest_common_prefix(const uint64_t *morton_codes,
         return -1;
     }
 
-    const uint64_t code_first = morton_codes[first];
-    const uint64_t code_second = morton_codes[second];
+    const uint32_t code_first = morton_codes[first];
+    const uint32_t code_second = morton_codes[second];
     if (code_first != code_second) {
-        return clz_u64(code_first ^ code_second);
+        return clz_u32(code_first ^ code_second);
     }
 
     const uint32_t primitive_first = static_cast<uint32_t>(sorted_primitives[first]);
     const uint32_t primitive_second = static_cast<uint32_t>(sorted_primitives[second]);
-    return 64 + clz_u32(primitive_first ^ primitive_second);
+    return 32 + clz_u32(primitive_first ^ primitive_second);
 }
 
 __global__ void build_radix_tree_kernel(
     int primitive_count,
-    const uint64_t *morton_codes,
+    const uint32_t *morton_codes,
     const int *sorted_primitives,
     int *left_child,
     int *right_child,
@@ -838,8 +828,11 @@ void check_cuda_call(cudaError_t error, const char *message) {
                   std::string(message) + ": " + cudaGetErrorString(error));
 }
 
-void sync_cuda(const char *message) {
+void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
+}
+
+void synchronize_cuda(const char *message) {
     check_cuda_call(cudaDeviceSynchronize(), message);
 }
 
@@ -961,8 +954,8 @@ void build_edge_bvh_gpu(
 
         CudaBuffer<Bounds3> primitive_bounds(static_cast<size_t>(primitive_count));
         CudaBuffer<Bounds3> reduced_bounds(1);
-        CudaBuffer<uint64_t> morton_codes_in(static_cast<size_t>(primitive_count));
-        CudaBuffer<uint64_t> morton_codes_out(static_cast<size_t>(primitive_count));
+        CudaBuffer<uint32_t> morton_codes_in(static_cast<size_t>(primitive_count));
+        CudaBuffer<uint32_t> morton_codes_out(static_cast<size_t>(primitive_count));
         CudaBuffer<int> primitive_indices_in(static_cast<size_t>(primitive_count));
         CudaBuffer<int> primitive_indices_out(static_cast<size_t>(primitive_count));
         CudaBuffer<int> parent(static_cast<size_t>(node_count));
@@ -984,7 +977,7 @@ void build_edge_bvh_gpu(
             primitive_bbox_max_y,
             primitive_bbox_max_z,
             primitive_bounds.get());
-        sync_cuda("build_edge_lbvh_gpu(): failed to compute primitive bounds");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch primitive-bounds kernel");
 
         size_t reduce_temp_size = 0;
         check_cuda_call(
@@ -1006,7 +999,8 @@ void build_edge_bvh_gpu(
                                       BoundsUnion(),
                                       Bounds3::empty()),
             "build_edge_lbvh_gpu(): failed to reduce scene bounds");
-        sync_cuda("build_edge_lbvh_gpu(): failed to reduce scene bounds");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch scene-bound reduction");
+        synchronize_cuda("build_edge_lbvh_gpu(): failed to reduce scene bounds");
 
         Bounds3 scene_bounds = Bounds3::empty();
         check_cuda_call(cudaMemcpy(&scene_bounds,
@@ -1016,7 +1010,7 @@ void build_edge_bvh_gpu(
                         "build_edge_lbvh_gpu(): failed to copy scene bounds");
 
         init_sequence_kernel<<<primitive_blocks, block_size>>>(primitive_count, primitive_indices_in.get());
-        sync_cuda("build_edge_lbvh_gpu(): failed to initialize primitive indices");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch primitive-index initialization");
 
         compute_morton_codes_kernel<<<primitive_blocks, block_size>>>(
             primitive_count,
@@ -1028,7 +1022,7 @@ void build_edge_bvh_gpu(
             primitive_bbox_max_y,
             primitive_bbox_max_z,
             morton_codes_in.get());
-        sync_cuda("build_edge_lbvh_gpu(): failed to compute Morton codes");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch Morton-code kernel");
 
         size_t sort_temp_size = 0;
         check_cuda_call(
@@ -1050,7 +1044,7 @@ void build_edge_bvh_gpu(
                                             primitive_indices_out.get(),
                                             primitive_count),
             "build_edge_lbvh_gpu(): failed to sort Morton codes");
-        sync_cuda("build_edge_lbvh_gpu(): failed to sort Morton codes");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch Morton sort");
 
         memset_int(left_child, -1, static_cast<size_t>(node_count), "build_edge_lbvh_gpu(): failed to init left_child");
         memset_int(right_child, -1, static_cast<size_t>(node_count), "build_edge_lbvh_gpu(): failed to init right_child");
@@ -1065,7 +1059,6 @@ void build_edge_bvh_gpu(
                    0,
                    static_cast<size_t>(std::max(internal_count, 1)),
                    "build_edge_lbvh_gpu(): failed to init merge counters");
-        sync_cuda("build_edge_lbvh_gpu(): failed to initialize build buffers");
 
         if (internal_count > 0) {
             build_radix_tree_kernel<<<internal_blocks, block_size>>>(
@@ -1075,7 +1068,7 @@ void build_edge_bvh_gpu(
                 left_child,
                 right_child,
                 parent.get());
-            sync_cuda("build_edge_lbvh_gpu(): failed to build radix tree");
+            check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch radix-tree kernel");
         }
 
         finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size>>>(
@@ -1100,11 +1093,12 @@ void build_edge_bvh_gpu(
             is_leaf,
             primitive_leaf_node,
             merge_counters.get());
-        sync_cuda("build_edge_lbvh_gpu(): failed to finalize node bounds");
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch bounds-finalization kernel");
 
-        if (EdgeBVHEnableGpuTreeletOptimization &&
+        if (EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
             primitive_count >= EdgeBVHTreeletMinPrimitives &&
             internal_count > 0) {
+            synchronize_cuda("build_edge_lbvh_gpu(): failed to finalize node bounds");
             const std::vector<int> host_left_child =
                 copy_int_buffer_to_host(left_child,
                                         static_cast<size_t>(node_count),
@@ -1151,7 +1145,7 @@ void build_edge_bvh_gpu(
                 node_bbox_max_z,
                 node_costs.get(),
                 inflation);
-            sync_cuda("build_edge_lbvh_gpu(): failed to initialize leaf costs");
+            check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-cost initialization");
 
             for (int height = 1; height <= max_height; ++height) {
                 const std::vector<int> &recompute_nodes =
@@ -1178,7 +1172,7 @@ void build_edge_bvh_gpu(
                         node_bbox_max_z,
                         node_costs.get(),
                         inflation);
-                    sync_cuda("build_edge_lbvh_gpu(): failed to recompute internal nodes");
+                    check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch internal-node recompute");
                 }
 
                 const std::vector<int> &optimize_nodes =
@@ -1208,10 +1202,12 @@ void build_edge_bvh_gpu(
                         leaf_primitive,
                         node_costs.get(),
                         inflation);
-                    sync_cuda("build_edge_lbvh_gpu(): failed to optimize selected treelets");
+                    check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch GPU treelet optimization");
                 }
             }
         }
+
+        synchronize_cuda("build_edge_lbvh_gpu(): failed to complete build");
     } catch (const std::exception &e) {
         throw_runtime_error_local(std::string("build_edge_lbvh_gpu(): ") + e.what());
     }

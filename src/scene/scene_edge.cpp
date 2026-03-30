@@ -7,6 +7,7 @@
 #include <drjit/while_loop.h>
 
 #include "edge_bvh.h"
+#include "edge_bvh_config.h"
 
 #include <rayd/scene/scene_edge.h>
 #include <rayd/utils.h>
@@ -21,18 +22,7 @@ constexpr int EdgeBVHHybridClusterLeafCount = 32;
 constexpr int EdgeBVHHybridClusterMaxHeight = 12;
 constexpr int EdgeBVHHybridTopLevelMinPrimitives = 65536;
 constexpr int EdgeBVHSAHBins = 12;
-constexpr int EdgeBVHTreeletMaxLeaves = 7;
-constexpr int EdgeBVHTreeletMinPrimitives = 65536;
-constexpr int EdgeBVHTreeletMinSubtreeLeaves = 32;
-constexpr float EdgeBVHTreeletCostInflationRatio = 1e-4f;
-enum class EdgeBVHPostBuildStrategy {
-    None,
-    HybridTopLevelSAH,
-    Treelet
-};
-constexpr EdgeBVHPostBuildStrategy EdgeBVHActivePostBuildStrategy =
-    EdgeBVHPostBuildStrategy::Treelet;
-using TraversalStack = Array<IntDetached, EdgeBVHTraversalStackSize>;
+using TraversalStack = IntDetached;
 
 struct TopLevelBuildRecord {
     int node_index = -1;
@@ -993,22 +983,20 @@ float optimize_treelets_recursive(int node_index,
 }
 
 TraversalStack make_empty_stack(int query_count) {
-    TraversalStack stack;
-    for (size_t index = 0; index < EdgeBVHTraversalStackSize; ++index) {
-        stack[index] = full<IntDetached>(-1, query_count);
+    if (query_count <= 0) {
+        return IntDetached();
     }
-    return stack;
+    return full<IntDetached>(-1, query_count * static_cast<int>(EdgeBVHTraversalStackSize));
 }
 
 void stack_push(TraversalStack &stack,
+                const IntDetached &stack_base,
                 IntDetached &stack_size,
                 const IntDetached &value,
                 const MaskDetached &active) {
     const int query_count = static_cast<int>(slices(stack_size));
-    for (size_t index = 0; index < EdgeBVHTraversalStackSize; ++index) {
-        const MaskDetached write = active && (stack_size == static_cast<int>(index));
-        stack[index] = select(write, value, stack[index]);
-    }
+    const IntDetached write_index = stack_base + stack_size;
+    scatter(stack, value, write_index, active);
 
     stack_size = stack_size +
                  select(active,
@@ -1017,24 +1005,22 @@ void stack_push(TraversalStack &stack,
 }
 
 IntDetached stack_pop(TraversalStack &stack,
+                      const IntDetached &stack_base,
                       IntDetached &stack_size,
                       const MaskDetached &active) {
     const int query_count = static_cast<int>(slices(stack_size));
     const MaskDetached can_pop = active && (stack_size > 0);
-    const IntDetached pop_index = stack_size - full<IntDetached>(1, query_count);
-
-    IntDetached value = full<IntDetached>(-1, query_count);
-    for (size_t index = 0; index < EdgeBVHTraversalStackSize; ++index) {
-        value = select(can_pop && (pop_index == static_cast<int>(index)),
-                       stack[index],
-                       value);
-    }
+    const IntDetached safe_pop_index =
+        select(can_pop,
+               stack_base + stack_size - full<IntDetached>(1, query_count),
+               zeros<IntDetached>(query_count));
+    const IntDetached value = gather<IntDetached>(stack, safe_pop_index, can_pop);
 
     stack_size = stack_size -
                  select(can_pop,
                         full<IntDetached>(1, query_count),
                         zeros<IntDetached>(query_count));
-    return value;
+    return select(can_pop, value, full<IntDetached>(-1, query_count));
 }
 
 DRJIT_INLINE MaskDetached node_is_leaf(const IntDetached &encoded_left_child) {
@@ -1249,28 +1235,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
             require(next_top_level_node == top_level_nodes.size(),
             "SceneEdge::build(): hybrid top-level rebuild left unused nodes.");
         }
-    } else if (EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::Treelet &&
-               primitive_count_ >= EdgeBVHTreeletMinPrimitives) {
-        std::vector<int> subtree_leaf_counts(static_cast<size_t>(node_count_), -1);
-        compute_subtree_leaf_count(
-            0, optimized_left_child, optimized_right_child, optimized_is_leaf, subtree_leaf_counts);
-        const ScalarVector3f scene_extent =
-            scalar_max(node_bbox_max[0] - node_bbox_min[0], ScalarVector3f(0.f, 0.f, 0.f));
-        const float scene_scale =
-            std::max(scene_extent.x(), std::max(scene_extent.y(), scene_extent.z()));
-        const float inflation =
-            std::max(scene_scale * EdgeBVHTreeletCostInflationRatio, 1e-6f);
-        std::vector<float> subtree_costs(static_cast<size_t>(node_count_), 0.f);
-        optimize_treelets_recursive(0,
-                                    optimized_left_child,
-                                    optimized_right_child,
-                                    optimized_leaf_primitive,
-                                    optimized_is_leaf,
-                                    node_bbox_min,
-                                    node_bbox_max,
-                                    subtree_costs,
-                                    subtree_leaf_counts,
-                                    inflation);
     }
 
     std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
@@ -1588,6 +1552,9 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
         return result;
     }
 
+    const IntDetached stack_base =
+        arange<IntDetached>(query_count) * static_cast<int>(EdgeBVHTraversalStackSize);
+
     auto [current_node,
           stack_size,
           stack,
@@ -1605,13 +1572,13 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
            const IntDetached &) {
             return (current_node >= 0) || (stack_size > 0);
         },
-        [this, &point, query_count](IntDetached &current_node,
-                                    IntDetached &stack_size,
-                                    TraversalStack &stack,
-                                    FloatDetached &best_distance_sq,
-                                    IntDetached &best_primitive) {
+        [this, &point, &stack_base, query_count](IntDetached &current_node,
+                                                 IntDetached &stack_size,
+                                                 TraversalStack &stack,
+                                                 FloatDetached &best_distance_sq,
+                                                 IntDetached &best_primitive) {
             const MaskDetached need_pop = (current_node < 0) && (stack_size > 0);
-            const IntDetached popped_node = stack_pop(stack, stack_size, need_pop);
+            const IntDetached popped_node = stack_pop(stack, stack_base, stack_size, need_pop);
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
@@ -1666,7 +1633,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
 
             const IntDetached near_child = select(left_first, left, right);
             const IntDetached far_child = select(left_first, right, left);
-            stack_push(stack, stack_size, far_child, both_children);
+            stack_push(stack, stack_base, stack_size, far_child, both_children);
 
             IntDetached next_node = full<IntDetached>(-1, query_count);
             next_node = select(both_children, near_child, next_node);
@@ -1693,6 +1660,9 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fD
         return result;
     }
 
+    const IntDetached stack_base =
+        arange<IntDetached>(query_count) * static_cast<int>(EdgeBVHTraversalStackSize);
+
     auto [current_node,
           stack_size,
           stack,
@@ -1710,13 +1680,13 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fD
            const IntDetached &) {
             return (current_node >= 0) || (stack_size > 0);
         },
-        [this, &origin, &segment, query_count](IntDetached &current_node,
-                                               IntDetached &stack_size,
-                                               TraversalStack &stack,
-                                               FloatDetached &best_distance_sq,
-                                               IntDetached &best_primitive) {
+        [this, &origin, &segment, &stack_base, query_count](IntDetached &current_node,
+                                                            IntDetached &stack_size,
+                                                            TraversalStack &stack,
+                                                            FloatDetached &best_distance_sq,
+                                                            IntDetached &best_primitive) {
             const MaskDetached need_pop = (current_node < 0) && (stack_size > 0);
-            const IntDetached popped_node = stack_pop(stack, stack_size, need_pop);
+            const IntDetached popped_node = stack_pop(stack, stack_base, stack_size, need_pop);
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
@@ -1775,7 +1745,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fD
 
             const IntDetached near_child = select(left_first, left, right);
             const IntDetached far_child = select(left_first, right, left);
-            stack_push(stack, stack_size, far_child, both_children);
+            stack_push(stack, stack_base, stack_size, far_child, both_children);
 
             IntDetached next_node = full<IntDetached>(-1, query_count);
             next_node = select(both_children, near_child, next_node);
@@ -1802,6 +1772,9 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
         return result;
     }
 
+    const IntDetached stack_base =
+        arange<IntDetached>(query_count) * static_cast<int>(EdgeBVHTraversalStackSize);
+
     auto [current_node,
           stack_size,
           stack,
@@ -1819,13 +1792,13 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
            const IntDetached &) {
             return (current_node >= 0) || (stack_size > 0);
         },
-        [this, &origin, &direction, query_count](IntDetached &current_node,
-                                                 IntDetached &stack_size,
-                                                 TraversalStack &stack,
-                                                 FloatDetached &best_distance_sq,
-                                                 IntDetached &best_primitive) {
+        [this, &origin, &direction, &stack_base, query_count](IntDetached &current_node,
+                                                              IntDetached &stack_size,
+                                                              TraversalStack &stack,
+                                                              FloatDetached &best_distance_sq,
+                                                              IntDetached &best_primitive) {
             const MaskDetached need_pop = (current_node < 0) && (stack_size > 0);
-            const IntDetached popped_node = stack_pop(stack, stack_size, need_pop);
+            const IntDetached popped_node = stack_pop(stack, stack_base, stack_size, need_pop);
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
@@ -1884,7 +1857,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
 
             const IntDetached near_child = select(left_first, left, right);
             const IntDetached far_child = select(left_first, right, left);
-            stack_push(stack, stack_size, far_child, both_children);
+            stack_push(stack, stack_base, stack_size, far_child, both_children);
 
             IntDetached next_node = full<IntDetached>(-1, query_count);
             next_node = select(both_children, near_child, next_node);

@@ -474,13 +474,24 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Vector3fDetached &point, rayd::MaskDetached active) {
-                     return scene.nearest_edge<true>(point, active);
-                 },
-                 nb::arg("point"), "active"_a = true)
-            .def("nearest_edge",
-                 [](const Scene &scene, const Vector3f &point, rayd::Mask active) {
-                     return scene.nearest_edge<false>(point, active);
+                 [](const Scene &scene, nb::handle point_obj, nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(point_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(point_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f point = nb::cast<Vector3f>(point_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.nearest_edge<false>(point, active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached point_detached = nb::cast<Vector3fDetached>(point_obj);
+                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.nearest_edge<true>(point_detached, active));
+                     }
+                     throw nb::next_overload();
                  },
                  nb::arg("point"), "active"_a = true)
             .def("nearest_edge",

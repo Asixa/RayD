@@ -257,6 +257,26 @@ DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
                                           const Array<Float_, 3> &bbox_max);
 
 template <typename Float_>
+DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3> &origin,
+                                                  const Array<Float_, 3> &direction,
+                                                  const Array<Float_, 3> &bbox_min,
+                                                  const Array<Float_, 3> &bbox_max) {
+    const Float_ direction_length_sq = squared_norm(direction);
+    const mask_t<Float_> valid_direction = direction_length_sq > Epsilon;
+    const Float_ safe_direction_length_sq =
+        select(valid_direction, direction_length_sq, Float_(1.f));
+
+    const Array<Float_, 3> bbox_center = (bbox_min + bbox_max) * Float_(0.5f);
+    const Array<Float_, 3> half_extent = (bbox_max - bbox_min) * Float_(0.5f);
+    const Float_ line_t = dot(bbox_center - origin, direction) / safe_direction_length_sq;
+    const Array<Float_, 3> closest_point = fmadd(direction, line_t, origin);
+    const Float_ center_distance = sqrt(maximum(squared_norm(bbox_center - closest_point), Float_(0.f)));
+    const Float_ sphere_radius = sqrt(maximum(squared_norm(half_extent), Float_(0.f)));
+    const Float_ separation = maximum(center_distance - sphere_radius, Float_(0.f));
+    return select(valid_direction, separation * separation, Float_(0.f));
+}
+
+template <typename Float_>
 DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
                                               const Array<Float_, 3> &segment,
                                               const Array<Float_, 3> &bbox_min,
@@ -266,7 +286,9 @@ DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
     const Array<Float_, 3> path_max = maximum(origin, segment_end);
     const Array<Float_, 3> below = maximum(bbox_min - path_max, Array<Float_, 3>(0.f));
     const Array<Float_, 3> above = maximum(path_min - bbox_max, Array<Float_, 3>(0.f));
-    return squared_norm(below + above);
+    const Float_ path_bbox_bound = squared_norm(below + above);
+    const Float_ direction_bound = line_aabb_sphere_lower_bound_sq(origin, segment, bbox_min, bbox_max);
+    return maximum(path_bbox_bound, direction_bound);
 }
 
 template <typename Float_>
@@ -296,7 +318,9 @@ DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
     const Float_ dx = axis_distance(origin.x(), direction.x(), bbox_min.x(), bbox_max.x());
     const Float_ dy = axis_distance(origin.y(), direction.y(), bbox_min.y(), bbox_max.y());
     const Float_ dz = axis_distance(origin.z(), direction.z(), bbox_min.z(), bbox_max.z());
-    return fmadd(dx, dx, fmadd(dy, dy, dz * dz));
+    const Float_ axis_bound = fmadd(dx, dx, fmadd(dy, dy, dz * dz));
+    const Float_ direction_bound = line_aabb_sphere_lower_bound_sq(origin, direction, bbox_min, bbox_max);
+    return maximum(axis_bound, direction_bound);
 }
 
 } // namespace rayd

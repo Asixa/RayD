@@ -35,6 +35,9 @@ from tests.benchmark_support import _measure
 from tests.benchmark_support import _summarize_timings
 
 
+ALLOW_NO_GRAD_FLAGS = dr.ADFlag.Default | dr.ADFlag.AllowNoGrad
+
+
 def _grid_edge_count(resolution: int) -> int:
     return resolution * (3 * resolution + 2)
 
@@ -270,7 +273,7 @@ def _benchmark_point_gradient(
         dr.set_grad(points, 0)
         result = scene.nearest_edge(points)
         loss = dr.sum(result.distance)
-        dr.backward(loss)
+        dr.backward(loss, flags=ALLOW_NO_GRAD_FLAGS)
         dr.eval(dr.grad(verts), dr.grad(points))
 
     return _summarize_timings(_measure(run, repeats, warmup), query_count)
@@ -297,7 +300,7 @@ def _benchmark_finite_ray_gradient(
         dr.set_grad(origins, 0)
         result = scene.nearest_edge(rays)
         loss = dr.sum(result.ray_t)
-        dr.backward(loss)
+        dr.backward(loss, flags=ALLOW_NO_GRAD_FLAGS)
         dr.eval(dr.grad(origins))
 
     return _summarize_timings(_measure(run, repeats, warmup), query_count)
