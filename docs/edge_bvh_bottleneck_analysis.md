@@ -2,6 +2,7 @@
 
 > Analysis date: 2026-03-30
 > Hardware reference: RTX 5080, Ryzen 7 9800X3D, 192x192 grid mesh, 110,976 edges, 65,536 queries
+> Latest implementation status and Stage 3 plan: [docs/edge_bvh_stage3_preparation.md](E:\Code\RayDi\docs\edge_bvh_stage3_preparation.md)
 
 ## 1. Build Phase
 

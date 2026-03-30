@@ -58,14 +58,37 @@ PRESSURE_ARGS = (
     "2",
 )
 
+MODE_ENV_VARS = {
+    "post_build_strategy": "RAYD_EDGE_BVH_POST_BUILD_STRATEGY",
+    "build_stream_mode": "RAYD_EDGE_BVH_BUILD_STREAM_MODE",
+    "finalize_mode": "RAYD_EDGE_BVH_FINALIZE_MODE",
+    "treelet_schedule_mode": "RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE",
+    "compaction_mode": "RAYD_EDGE_BVH_COMPACTION_MODE",
+    "build_algorithm": "RAYD_EDGE_BVH_BUILD_ALGORITHM",
+    "node_layout_mode": "RAYD_EDGE_BVH_NODE_LAYOUT_MODE",
+}
 
-def _run_json_command(command: list[str], cwd: Path) -> None:
+DEFAULT_EDGE_BVH_MODES = {
+    "post_build_strategy": "gpu_treelet",
+    "build_stream_mode": "overlap",
+    "finalize_mode": "atomic",
+    "treelet_schedule_mode": "flat_levels",
+    "compaction_mode": "host_upload_raw",
+    "build_algorithm": "lbvh",
+    "node_layout_mode": "scalar_arrays",
+}
+
+
+def _run_json_command(command: list[str], cwd: Path, mode_env: dict[str, str]) -> None:
+    env = os.environ.copy()
+    env.update(mode_env)
     result = subprocess.run(
         command,
         cwd=cwd,
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -148,6 +171,7 @@ def _build_summary(
     stage: str,
     include_gradients: bool,
     source_root: Path,
+    mode_overrides: dict[str, str],
     micro_payload: dict[str, Any],
     single_mesh_payload: dict[str, Any],
     pressure_payload: dict[str, Any],
@@ -170,6 +194,7 @@ def _build_summary(
             "single_mesh_include_gradients": include_gradients,
             "source_root": os.fspath(source_root),
         },
+        "edge_bvh_modes": mode_overrides,
         "paths": {
             "micro_raw": _relative(micro_raw),
             "single_mesh_raw": _relative(single_mesh_raw),
@@ -246,6 +271,7 @@ def _render_log(summaries: list[dict[str, Any]]) -> str:
         "- Micro: `48x48` mesh, `128x128` queries, `repeats=8`, `warmup=3`.",
         "- Single-mesh: `192x192` mesh, `256x256` queries, `repeats=5`, `warmup=2`.",
         "- Pressure: `32x32` mesh, `8x8` tiles, `128x128` queries, `mask_keep_stride=8`, `repeats=5`, `warmup=2`.",
+        "- Benchmark cleanliness: `stage2_clean_*` rows use explicit runtime modes with no fallback. Older `stage2_*` rows predate this harness change and are not directly comparable.",
         "",
         "## Micro Metrics",
         "",
@@ -343,7 +369,28 @@ def _update_log() -> None:
     LOG_PATH.write_text(_render_log(summaries), encoding="utf-8")
 
 
-def run_stage(stage: str, include_gradients: bool, source_root: Path) -> Path:
+def _effective_edge_bvh_modes(args: argparse.Namespace) -> dict[str, str]:
+    modes = dict(DEFAULT_EDGE_BVH_MODES)
+    for arg_name in MODE_ENV_VARS:
+        value = getattr(args, arg_name)
+        if value:
+            modes[arg_name] = value
+    return modes
+
+
+def _mode_env_from_effective_modes(effective_modes: dict[str, str]) -> dict[str, str]:
+    return {
+        env_name: effective_modes[arg_name]
+        for arg_name, env_name in MODE_ENV_VARS.items()
+    }
+
+
+def run_stage(
+    stage: str,
+    include_gradients: bool,
+    source_root: Path,
+    effective_modes: dict[str, str],
+) -> Path:
     stage_dir = ARTIFACT_ROOT / stage
     stage_dir.mkdir(parents=True, exist_ok=True)
     micro_raw = stage_dir / "micro.json"
@@ -376,9 +423,10 @@ def run_stage(stage: str, include_gradients: bool, source_root: Path) -> Path:
         os.fspath(pressure_raw),
     ]
 
-    _run_json_command(micro_command, source_root)
-    _run_json_command(single_mesh_command, source_root)
-    _run_json_command(pressure_command, source_root)
+    mode_env = _mode_env_from_effective_modes(effective_modes)
+    _run_json_command(micro_command, source_root, mode_env)
+    _run_json_command(single_mesh_command, source_root, mode_env)
+    _run_json_command(pressure_command, source_root, mode_env)
 
     micro_payload = _load_json(micro_raw)
     single_mesh_payload = _load_json(single_mesh_raw)
@@ -387,6 +435,7 @@ def run_stage(stage: str, include_gradients: bool, source_root: Path) -> Path:
         stage,
         include_gradients,
         source_root,
+        effective_modes,
         micro_payload,
         single_mesh_payload,
         pressure_payload,
@@ -418,9 +467,49 @@ def main() -> int:
         default=os.fspath(WORKSPACE_ROOT),
         help="Repository root to benchmark. Defaults to the current workspace.",
     )
+    parser.add_argument(
+        "--post-build-strategy",
+        choices=("none", "hybrid_top_level_sah", "gpu_treelet"),
+        help="Explicit Edge BVH post-build strategy for this stage run.",
+    )
+    parser.add_argument(
+        "--build-stream-mode",
+        choices=("serial", "overlap"),
+        help="Explicit Edge BVH build stream mode for this stage run.",
+    )
+    parser.add_argument(
+        "--finalize-mode",
+        choices=("atomic", "level_by_level"),
+        help="Explicit Edge BVH finalize mode for this stage run.",
+    )
+    parser.add_argument(
+        "--treelet-schedule-mode",
+        choices=("per_level_uploads", "flat_levels"),
+        help="Explicit Edge BVH treelet schedule mode for this stage run.",
+    )
+    parser.add_argument(
+        "--compaction-mode",
+        choices=("host_upload_raw", "host_upload_exact", "gpu_emit"),
+        help="Explicit Edge BVH compaction mode for this stage run.",
+    )
+    parser.add_argument(
+        "--build-algorithm",
+        choices=("lbvh", "ploc"),
+        help="Explicit Edge BVH build algorithm for this stage run.",
+    )
+    parser.add_argument(
+        "--node-layout-mode",
+        choices=("scalar_arrays", "packed"),
+        help="Explicit Edge BVH node layout mode for this stage run.",
+    )
     args = parser.parse_args()
 
-    summary_path = run_stage(args.stage, args.include_gradients, Path(args.source_root).resolve())
+    summary_path = run_stage(
+        args.stage,
+        args.include_gradients,
+        Path(args.source_root).resolve(),
+        _effective_edge_bvh_modes(args),
+    )
     print(json.dumps(_load_json(summary_path), indent=2))
     return 0
 

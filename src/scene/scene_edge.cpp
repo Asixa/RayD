@@ -1266,6 +1266,15 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         return;
     }
 
+    const EdgeBVHBuildAlgorithm build_algorithm = active_edge_bvh_build_algorithm();
+    const EdgeBVHNodeLayoutMode node_layout_mode = active_edge_bvh_node_layout_mode();
+    require(build_algorithm == EdgeBVHBuildAlgorithm::LBVH,
+            "SceneEdge::build(): build algorithm 'ploc' is not implemented yet. "
+            "No fallback path is available.");
+    require(node_layout_mode == EdgeBVHNodeLayoutMode::ScalarArrays,
+            "SceneEdge::build(): node layout 'packed' is not implemented yet. "
+            "No fallback path is available.");
+
     edge_p0_ = detach<false>(edge_info.start);
     edge_e1_ = detach<false>(edge_info.edge);
     drjit::eval(edge_p0_, edge_e1_);
@@ -1325,21 +1334,24 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     const Vector3fDetached raw_node_bbox_max = node_bbox_max_;
     const IntDetached raw_left_child = left_child_;
     const IntDetached raw_right_child = right_child_;
+    const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
+    const EdgeBVHCompactionMode compaction_mode = active_edge_bvh_compaction_mode();
+    require(!(compaction_mode == EdgeBVHCompactionMode::GpuEmit &&
+              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
+            "SceneEdge::build(): GPU compaction is incompatible with the HybridTopLevelSAH path. "
+            "Choose host_upload_raw or host_upload_exact for a clean benchmark.");
     const bool use_gpu_compaction =
-        EdgeBVHActiveCompactionMode == EdgeBVHCompactionMode::GpuEmit &&
-        EdgeBVHActivePostBuildStrategy != EdgeBVHPostBuildStrategy::HybridTopLevelSAH &&
-        all_active_;
+        compaction_mode == EdgeBVHCompactionMode::GpuEmit;
     const bool use_exact_host_compaction =
         !use_gpu_compaction &&
-        EdgeBVHActiveCompactionMode == EdgeBVHCompactionMode::HostUpload &&
-        !all_active_;
+        compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
     std::vector<ScalarVector3f> primitive_bbox_min_host;
     std::vector<ScalarVector3f> primitive_bbox_max_host;
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
     const bool needs_host_primitive_bbox = use_exact_host_compaction;
     const bool needs_host_bbox =
-        EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH ||
+        post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH ||
         (!use_gpu_compaction && !use_exact_host_compaction);
     if (needs_host_primitive_bbox) {
         primitive_bbox_min_host = copy_vector3_to_host(primitive_bbox_min_);
@@ -1350,7 +1362,7 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         node_bbox_max = copy_vector3_to_host(node_bbox_max_);
     }
 
-    if (EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH &&
+    if (post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH &&
         primitive_count_ >= EdgeBVHHybridTopLevelMinPrimitives) {
         std::vector<int> subtree_leaf_counts(static_cast<size_t>(node_count_), -1);
         std::vector<int> subtree_heights(static_cast<size_t>(node_count_), -1);

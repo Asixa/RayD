@@ -1123,10 +1123,15 @@ void build_edge_bvh_gpu(
         const int primitive_blocks = (primitive_count + block_size - 1) / block_size;
         const int internal_count = std::max(primitive_count - 1, 0);
         const int internal_blocks = (internal_count + block_size - 1) / block_size;
+        const EdgeBVHBuildStreamMode build_stream_mode = active_edge_bvh_build_stream_mode();
+        const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
+        const EdgeBVHFinalizeMode finalize_mode = active_edge_bvh_finalize_mode();
+        const EdgeBVHTreeletScheduleMode treelet_schedule_mode =
+            active_edge_bvh_treelet_schedule_mode();
         const bool overlap_build_streams =
-            EdgeBVHActiveBuildStreamMode == EdgeBVHBuildStreamMode::Overlap;
+            build_stream_mode == EdgeBVHBuildStreamMode::Overlap;
         const bool treelet_enabled =
-            EdgeBVHActivePostBuildStrategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
+            post_build_strategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
             primitive_count >= EdgeBVHTreeletMinPrimitives &&
             internal_count > 0;
 
@@ -1286,7 +1291,7 @@ void build_edge_bvh_gpu(
                          static_cast<size_t>(node_count),
                          bounds_stream,
                          "build_edge_lbvh_gpu(): failed to init parent");
-        if (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::Atomic) {
+        if (finalize_mode == EdgeBVHFinalizeMode::Atomic) {
             memset_int_async(merge_counters.get(),
                              0,
                              static_cast<size_t>(std::max(internal_count, 1)),
@@ -1306,7 +1311,7 @@ void build_edge_bvh_gpu(
         }
 
         if (internal_count > 0 &&
-            (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::LevelByLevel || treelet_enabled)) {
+            (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel || treelet_enabled)) {
             check_cuda_call(cudaStreamSynchronize(bounds_stream),
                             "build_edge_lbvh_gpu(): failed to prepare host topology");
             host_left_child = copy_int_buffer_to_host(left_child,
@@ -1331,7 +1336,7 @@ void build_edge_bvh_gpu(
             }
             require_local(static_cast<int>(scheduled_internal_count) == internal_count,
                           "build_edge_lbvh_gpu(): failed to levelize every internal node.");
-            if (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::LevelByLevel) {
+            if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel) {
                 internal_level_schedule = flatten_node_levels(host_level_groups);
             }
             if (treelet_enabled) {
@@ -1346,7 +1351,7 @@ void build_edge_bvh_gpu(
             }
         }
 
-        if (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::LevelByLevel && internal_count > 0) {
+        if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel && internal_count > 0) {
             finalize_leaf_nodes_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
                 primitive_count,
                 primitive_indices_out.get(),
@@ -1397,7 +1402,7 @@ void build_edge_bvh_gpu(
                     node_bbox_max_z);
                 check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch internal-node merge");
             }
-        } else if (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::LevelByLevel) {
+        } else if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel) {
             finalize_leaf_nodes_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
                 primitive_count,
                 primitive_indices_out.get(),
@@ -1417,7 +1422,7 @@ void build_edge_bvh_gpu(
                 is_leaf,
                 primitive_leaf_node);
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-finalization kernel");
-        } else if (EdgeBVHActiveFinalizeMode == EdgeBVHFinalizeMode::Atomic) {
+        } else if (finalize_mode == EdgeBVHFinalizeMode::Atomic) {
             finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
                 primitive_count,
                 primitive_indices_out.get(),
@@ -1461,7 +1466,7 @@ void build_edge_bvh_gpu(
             const FlatNodeLevels optimize_schedule = flatten_node_levels(optimize_levels);
             CudaBuffer<int> recompute_nodes_device(recompute_schedule.nodes.size());
             CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
-            if (EdgeBVHActiveTreeletScheduleMode == EdgeBVHTreeletScheduleMode::FlatLevels) {
+            if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
                 if (!recompute_schedule.nodes.empty()) {
                     check_cuda_call(cudaMemcpy(recompute_nodes_device.get(),
                                                recompute_schedule.nodes.data(),
@@ -1504,8 +1509,7 @@ void build_edge_bvh_gpu(
                 const int recompute_count = recompute_end - recompute_start;
                 if (recompute_count > 0) {
                     const int level_blocks = (recompute_count + block_size - 1) / block_size;
-                    if (EdgeBVHActiveTreeletScheduleMode ==
-                        EdgeBVHTreeletScheduleMode::FlatLevels) {
+                    if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
                         update_internal_nodes_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
                             recompute_count,
                             recompute_nodes_device.get() + recompute_start,
@@ -1552,8 +1556,7 @@ void build_edge_bvh_gpu(
                 const int optimize_count = optimize_end - optimize_start;
                 if (optimize_count > 0) {
                     const int level_blocks = (optimize_count + block_size - 1) / block_size;
-                    if (EdgeBVHActiveTreeletScheduleMode ==
-                        EdgeBVHTreeletScheduleMode::FlatLevels) {
+                    if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
                         optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
                             optimize_count,
                             optimize_nodes_device.get() + optimize_start,
