@@ -8,9 +8,10 @@ from ._env import _torch
 from ._util import (
     _normalize_active_tensor,
     _normalize_matrix_tensor,
+    _normalize_scalar_tensor,
     _normalize_vector_tensor,
 )
-from ._convert import _scalar_array_to_tensor, _tensor_to_matrix4, _tensor_to_vec3, _to_torch_struct
+from ._convert import _scalar_array_to_tensor, _tensor_to_mask, _tensor_to_matrix4, _tensor_to_vec3, _to_torch_struct
 from .types import Intersection, Ray, SceneSyncProfile, SceneEdgeInfo, SceneEdgeTopology
 from ._state import _MeshState
 from ._native import (
@@ -46,6 +47,7 @@ class Scene:
         self._version = 0
         self._edge_version = 0
         self._native_scene: Any | None = None
+        self._edge_mask: _torch.Tensor | None = None
         self._last_sync_profile = SceneSyncProfile()
         self._query_cache_id = _allocate_native_scene_cache_id()
         self._query_cache_finalizer = weakref.finalize(self, _release_native_scene_cache, self._query_cache_id)
@@ -63,11 +65,23 @@ class Scene:
         tuple[Any, ...],
         tuple[Any, ...],
         tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+        Any,
     ]:
         mesh_states = self._mesh_states()
-        topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens = _scene_cache_tokens(mesh_states)
+        topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens = _scene_cache_tokens(
+            mesh_states, self._edge_mask
+        )
         refresh_policy = _scene_cache_refresh_policy(mesh_states)
-        return mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy
+        return (
+            mesh_states,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+            self._edge_mask,
+        )
 
     def _require_ready(self) -> None:
         if not self._ready:
@@ -90,6 +104,7 @@ class Scene:
         self._ready = False
         self._pending_updates = False
         self._native_scene = None
+        self._edge_mask = None
         _reset_native_scene_cache(self._query_cache_id)
         return len(self._records) - 1
 
@@ -101,6 +116,7 @@ class Scene:
         ns.build()
         _reset_native_scene_cache(self._query_cache_id)
         self._native_scene = ns
+        self._edge_mask = _scalar_array_to_tensor(ns.edge_mask()).torch()
         self._ready = True
         self._pending_updates = False
         self._version = int(ns.version)
@@ -148,12 +164,31 @@ class Scene:
             self._native_scene.append_mesh_transform(mesh_id, _tensor_to_matrix4(matrix, diff=False, name="mat"), append_left)
         self._pending_updates = True
 
+    def set_edge_mask(self, mask: Any) -> None:
+        self._require_ready()
+        if self._native_scene is None:
+            raise RuntimeError("Scene.set_edge_mask(): internal detached scene is unavailable.")
+
+        mask_tensor = _normalize_scalar_tensor(mask, "mask", _torch.bool).clone()
+        expected_size = 0 if self._edge_mask is None else int(self._edge_mask.shape[0])
+        if int(mask_tensor.shape[0]) != expected_size:
+            raise RuntimeError("Scene.set_edge_mask(): mask size must match the scene edge count.")
+        if self._edge_mask is not None and _torch.equal(mask_tensor, self._edge_mask):
+            return
+
+        self._native_scene.set_edge_mask(_tensor_to_mask(mask_tensor, diff=False))
+        self._edge_mask = mask_tensor
+        self._pending_updates = True
+
     def sync(self) -> None:
         self._require_ready()
         if self._native_scene is None:
             raise RuntimeError("Scene.sync(): internal detached scene is unavailable.")
         self._native_scene.sync()
         self._last_sync_profile = SceneSyncProfile(self._native_scene.last_sync_profile)
+        edge_mask = _scalar_array_to_tensor(self._native_scene.edge_mask()).torch()
+        if self._edge_mask is None or not _torch.equal(edge_mask, self._edge_mask):
+            self._edge_mask = edge_mask
         self._pending_updates = False
         self._version = int(self._native_scene.version)
         self._edge_version = int(self._native_scene.edge_version)
@@ -196,6 +231,12 @@ class Scene:
             raise RuntimeError("Scene.edge_topology(): internal detached scene is unavailable.")
         return _to_torch_struct(_scene_edge_topology_from_native(self._native_scene.edge_topology()))
 
+    def edge_mask(self) -> _torch.Tensor:
+        self._require_ready()
+        if self._edge_mask is None:
+            return _torch.empty((0,), device=_torch.device("cuda"), dtype=_torch.bool)
+        return self._edge_mask.clone()
+
     def mesh_face_offsets(self) -> _torch.Tensor:
         self._require_ready()
         if self._native_scene is None:
@@ -230,7 +271,7 @@ class Scene:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.intersect() expects a rayd.torch.Ray.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = self._query_cache_inputs()
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
         return _scene_intersect_impl(
             self._query_cache_id,
             topology_token,
@@ -240,6 +281,7 @@ class Scene:
             right_tokens,
             refresh_policy,
             mesh_states,
+            edge_mask,
             ray,
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
@@ -248,7 +290,7 @@ class Scene:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.shadow_test() expects a rayd.torch.Ray.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = self._query_cache_inputs()
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
         return _scene_shadow_test_impl(
             self._query_cache_id,
             topology_token,
@@ -258,13 +300,14 @@ class Scene:
             right_tokens,
             refresh_policy,
             mesh_states,
+            edge_mask,
             ray,
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 
     def nearest_edge(self, query: Any, active: Any = True) -> Any:
         self._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy = self._query_cache_inputs()
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
         if isinstance(query, Ray):
             return _scene_nearest_ray_impl(
                 self._query_cache_id,
@@ -275,6 +318,7 @@ class Scene:
                 right_tokens,
                 refresh_policy,
                 mesh_states,
+                edge_mask,
                 query,
                 _normalize_active_tensor(active, _ray_batch_size(query)),
             )
@@ -288,6 +332,7 @@ class Scene:
             right_tokens,
             refresh_policy,
             mesh_states,
+            edge_mask,
             point,
             _normalize_active_tensor(active, point.shape[0]),
         )

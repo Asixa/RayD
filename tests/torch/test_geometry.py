@@ -210,11 +210,13 @@ class TorchGeometryTests(unittest.TestCase):
                 "point_valid": [bool(v) for v in point_res.is_valid().tolist()],
                 "point_shape": [int(v) for v in point_res.shape_id.tolist()],
                 "point_edge": [int(v) for v in point_res.edge_id.tolist()],
+                "point_global_edge": [int(v) for v in point_res.global_edge_id.tolist()],
                 "point_distance": float(point_res.distance[0].item()),
                 "point_tensor_shape": list(point_res.edge_point.shape),
                 "ray_valid": bool(ray_res.is_valid()[0].item()),
                 "ray_shape": int(ray_res.shape_id[0].item()),
                 "ray_edge": int(ray_res.edge_id[0].item()),
+                "ray_global_edge": int(ray_res.global_edge_id[0].item()),
                 "ray_distance": float(ray_res.distance[0].item()),
             }))
             """
@@ -223,20 +225,136 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertEqual(data["point_valid"], [True, False])
         self.assertEqual(data["point_shape"][1], -1)
         self.assertEqual(data["point_edge"][1], -1)
+        self.assertEqual(data["point_global_edge"][1], -1)
+        self.assertEqual(data["point_global_edge"][0], data["point_edge"][0])
         self.assertGreaterEqual(data["point_distance"], 0.0)
         self.assertEqual(data["point_tensor_shape"], [2, 3])
         self.assertTrue(data["ray_valid"])
         self.assertEqual(data["ray_shape"], 0)
         self.assertGreaterEqual(data["ray_edge"], 0)
+        self.assertEqual(data["ray_global_edge"], data["ray_edge"])
         self.assertGreaterEqual(data["ray_distance"], 0.0)
+
+    def test_scene_edge_mask_filters_queries_rebuilds_query_cache_and_keeps_primary_edges_prepared(self):
+        data = run_json_case(
+            """
+            import importlib
+            import json
+            import torch
+            import rayd.torch as rt
+            native = importlib.import_module("rayd.torch._native")
+
+            device = "cuda"
+            mesh = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(mesh, dynamic=True)
+            scene.build()
+
+            edge_info_before = scene.edge_info()
+            default_mask = [bool(v) for v in scene.edge_mask().tolist()]
+            version_before = int(scene.version)
+            edge_version_before = int(scene.edge_version)
+
+            camera = rt.Camera(45.0, 1e-4, 1e4)
+            camera.width = 16
+            camera.height = 16
+            camera.build()
+            camera.prepare_edges(scene)
+            sample_before = camera.sample_edge(torch.tensor([0.25], device=device))
+
+            point = torch.tensor([[0.25, -0.2, 0.1]], device=device)
+            first_query = scene.nearest_edge(point)
+            entry0 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+
+            wrong_size_error = False
+            try:
+                scene.set_edge_mask(torch.tensor([True, True], device=device, dtype=torch.bool))
+            except Exception as exc:
+                wrong_size_error = "mask size must match" in str(exc)
+
+            scene.set_edge_mask(torch.tensor([True, True, True], device=device, dtype=torch.bool))
+            pending_after_same_mask = bool(scene.has_pending_updates())
+
+            scene.set_edge_mask(torch.tensor([False, True, False], device=device, dtype=torch.bool))
+            pending_after_mask_change = bool(scene.has_pending_updates())
+            pending_query_error = False
+            try:
+                scene.nearest_edge(point)
+            except Exception as exc:
+                pending_query_error = "pending updates" in str(exc)
+
+            scene.sync()
+            masked_query = scene.nearest_edge(point)
+            entry1 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+            sample_after = camera.sample_edge(torch.tensor([0.25], device=device))
+
+            scene.set_edge_mask(torch.tensor([False, False, False], device=device, dtype=torch.bool))
+            scene.sync()
+            invalid_query = scene.nearest_edge(point)
+            entry2 = native._SCENE_QUERY_CACHE[scene._query_cache_id]
+            edge_info_after = scene.edge_info()
+
+            print(json.dumps({
+                "default_mask": default_mask,
+                "wrong_size_error": wrong_size_error,
+                "pending_after_same_mask": pending_after_same_mask,
+                "pending_after_mask_change": pending_after_mask_change,
+                "pending_query_error": pending_query_error,
+                "version_before": version_before,
+                "version_after_mask_sync": int(scene.version),
+                "edge_version_before": edge_version_before,
+                "edge_version_after_invalid_sync": int(scene.edge_version),
+                "first_query_valid": bool(first_query.is_valid()[0].item()),
+                "build_after_first_query": int(entry0.build_count),
+                "build_after_mask_sync_query": int(entry1.build_count),
+                "build_after_invalid_sync_query": int(entry2.build_count),
+                "masked_valid": bool(masked_query.is_valid()[0].item()),
+                "masked_edge_id": int(masked_query.edge_id[0].item()),
+                "masked_global_edge_id": int(masked_query.global_edge_id[0].item()),
+                "invalid_valid": bool(invalid_query.is_valid()[0].item()),
+                "invalid_global_edge_id": int(invalid_query.global_edge_id[0].item()),
+                "sample_before_idx": int(sample_before.idx[0].item()),
+                "sample_after_idx": int(sample_after.idx[0].item()),
+                "edge_info_before": [int(v) for v in edge_info_before.global_edge_id.tolist()],
+                "edge_info_after": [int(v) for v in edge_info_after.global_edge_id.tolist()],
+            }))
+            """
+        )
+
+        self.assertEqual(data["default_mask"], [True, True, True])
+        self.assertTrue(data["wrong_size_error"])
+        self.assertFalse(data["pending_after_same_mask"])
+        self.assertTrue(data["pending_after_mask_change"])
+        self.assertTrue(data["pending_query_error"])
+        self.assertTrue(data["first_query_valid"])
+        self.assertEqual(data["build_after_first_query"], 1)
+        self.assertEqual(data["build_after_mask_sync_query"], 2)
+        self.assertEqual(data["build_after_invalid_sync_query"], 3)
+        self.assertTrue(data["masked_valid"])
+        self.assertEqual(data["masked_edge_id"], 1)
+        self.assertEqual(data["masked_global_edge_id"], 1)
+        self.assertFalse(data["invalid_valid"])
+        self.assertEqual(data["invalid_global_edge_id"], -1)
+        self.assertGreaterEqual(data["sample_before_idx"], 0)
+        self.assertGreaterEqual(data["sample_after_idx"], 0)
+        self.assertEqual(data["edge_info_before"], [0, 1, 2])
+        self.assertEqual(data["edge_info_after"], [0, 1, 2])
+        self.assertEqual(data["version_after_mask_sync"], data["version_before"])
+        self.assertEqual(data["edge_version_after_invalid_sync"], data["edge_version_before"] + 2)
 
     def test_scene_query_cache_reuses_native_scene_and_syncs_inplace_tensor_updates(self):
         data = run_json_case(
             """
+            import importlib
             import json
             import torch
             import rayd.torch as rt
-            import rayd.torch._native as native
+            native = importlib.import_module("rayd.torch._native")
 
             device = "cuda"
             verts = torch.tensor([[0.0, 0.0, 0.0],

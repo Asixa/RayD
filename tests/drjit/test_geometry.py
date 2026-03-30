@@ -687,6 +687,7 @@ class GeometryCoreTests(unittest.TestCase):
                 "valid": [bool(v) for v in list(edges.is_valid())],
                 "shape_id": [int(v) for v in list(edges.shape_id)],
                 "edge_id": [int(v) for v in list(edges.edge_id)],
+                "global_edge_id": [int(v) for v in list(edges.global_edge_id)],
                 "distance": [float(v) for v in list(edges.distance)],
                 "edge_t": [float(v) for v in list(edges.edge_t)],
                 "point": [[float(v) for v in list(edges.point[i])] for i in range(3)],
@@ -700,6 +701,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["valid"], [True, True])
         self.assertEqual(data["shape_id"], [0, 0])
         self.assertEqual(data["edge_id"], [0, 1])
+        self.assertEqual(data["global_edge_id"], [0, 1])
         self.assertAlmostEqual(data["distance"][0], math.sqrt(0.05), places=5)
         self.assertAlmostEqual(data["distance"][1], 0.1, places=5)
         self.assertAlmostEqual(data["edge_t"][0], 0.25, places=5)
@@ -745,6 +747,7 @@ class GeometryCoreTests(unittest.TestCase):
                 "valid": [bool(v) for v in list(edges.is_valid())],
                 "shape_id": [int(v) for v in list(edges.shape_id)],
                 "edge_id": [int(v) for v in list(edges.edge_id)],
+                "global_edge_id": [int(v) for v in list(edges.global_edge_id)],
                 "distance": [float(v) for v in list(edges.distance)],
                 "ray_t": [float(v) for v in list(edges.ray_t)],
                 "edge_t": [float(v) for v in list(edges.edge_t)],
@@ -758,6 +761,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["valid"], [True, True])
         self.assertEqual(data["shape_id"], [0, 0])
         self.assertEqual(data["edge_id"], [0, 1])
+        self.assertEqual(data["global_edge_id"], [0, 1])
         self.assertAlmostEqual(data["distance"][0], 0.5, places=5)
         self.assertAlmostEqual(data["distance"][1], 0.0, places=6)
         self.assertAlmostEqual(data["ray_t"][0], 0.5, places=5)
@@ -803,10 +807,13 @@ class GeometryCoreTests(unittest.TestCase):
             scene.build()
 
             edge = scene.nearest_edge(cuda.Array3f([2.2], [0.2], [0.3]))
+            offsets = scene.mesh_edge_offsets()
             print(json.dumps({
                 "valid": bool(edge.is_valid()[0]),
                 "shape_id": int(edge.shape_id[0]),
                 "edge_id": int(edge.edge_id[0]),
+                "global_edge_id": int(edge.global_edge_id[0]),
+                "mesh_edge_offset": int(offsets[1]),
                 "distance": float(edge.distance[0]),
             }))
             """
@@ -815,6 +822,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertEqual(data["shape_id"], 1)
         self.assertEqual(data["edge_id"], 0)
+        self.assertEqual(data["global_edge_id"], data["mesh_edge_offset"] + data["edge_id"])
         self.assertAlmostEqual(data["distance"], math.sqrt(0.13), places=5)
 
     def test_scene_nearest_edge_dynamic_updates_require_commit_and_refit(self):
@@ -852,6 +860,7 @@ class GeometryCoreTests(unittest.TestCase):
                 "valid": bool(edge.is_valid()[0]),
                 "shape_id": int(edge.shape_id[0]),
                 "edge_id": int(edge.edge_id[0]),
+                "global_edge_id": int(edge.global_edge_id[0]),
                 "distance": float(edge.distance[0]),
                 "edge_t": float(edge.edge_t[0]),
                 "edge_point": [float(edge.edge_point[0][0]), float(edge.edge_point[1][0]), float(edge.edge_point[2][0])],
@@ -864,12 +873,144 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertEqual(data["shape_id"], 0)
         self.assertEqual(data["edge_id"], 0)
+        self.assertEqual(data["global_edge_id"], 0)
         self.assertAlmostEqual(data["distance"], math.sqrt(0.05), places=5)
         self.assertAlmostEqual(data["edge_t"], 0.25, places=5)
         self.assertAlmostEqual(data["edge_point"][0], 2.25, places=5)
         self.assertAlmostEqual(data["edge_point"][1], 0.0, places=5)
         self.assertAlmostEqual(data["edge_point"][2], 0.0, places=5)
         self.assertFalse(data["pending_after_commit"])
+
+    def test_scene_edge_mask_requires_build_filters_queries_and_preserves_metadata(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+
+            prebuild_error = False
+            try:
+                scene.set_edge_mask(cuda.Bool([True, True, True]))
+            except Exception as exc:
+                prebuild_error = "not built" in str(exc)
+
+            scene.build()
+            default_mask = [bool(v) for v in list(scene.edge_mask())]
+            edge_info_before = scene.edge_info()
+            version_before = int(scene.version)
+            edge_version_before = int(scene.edge_version)
+
+            wrong_size_error = False
+            try:
+                scene.set_edge_mask(cuda.Bool([True, True]))
+            except Exception as exc:
+                wrong_size_error = "mask size must match" in str(exc)
+            scene.set_edge_mask(cuda.Bool([True, True, True]))
+            pending_after_same_mask = bool(scene.has_pending_updates())
+
+            scene.set_edge_mask(cuda.Bool([False, True, False]))
+            pending_after_mask_change = bool(scene.has_pending_updates())
+            pending_query_error = False
+            try:
+                scene.nearest_edge(cuda.Array3f([0.25], [-0.2], [0.1]))
+            except Exception as exc:
+                pending_query_error = "pending updates" in str(exc)
+            scene.sync()
+            version_after_mask_sync = int(scene.version)
+            edge_version_after_mask_sync = int(scene.edge_version)
+
+            masked_edge = scene.nearest_edge(cuda.Array3f([0.25], [-0.2], [0.1]))
+            scene.set_edge_mask(cuda.Bool([False, False, False]))
+            scene.sync()
+            invalid_edge = scene.nearest_edge(cuda.Array3f([0.25], [-0.2], [0.1]))
+            edge_info_after = scene.edge_info()
+
+            print(json.dumps({
+                "prebuild_error": prebuild_error,
+                "wrong_size_error": wrong_size_error,
+                "default_mask": default_mask,
+                "pending_after_same_mask": pending_after_same_mask,
+                "pending_after_mask_change": pending_after_mask_change,
+                "pending_query_error": pending_query_error,
+                "version_before": version_before,
+                "version_after_mask_sync": version_after_mask_sync,
+                "edge_version_before": edge_version_before,
+                "edge_version_after_mask_sync": edge_version_after_mask_sync,
+                "masked_valid": bool(masked_edge.is_valid()[0]),
+                "masked_edge_id": int(masked_edge.edge_id[0]),
+                "masked_global_edge_id": int(masked_edge.global_edge_id[0]),
+                "invalid_valid": bool(invalid_edge.is_valid()[0]),
+                "invalid_global_edge_id": int(invalid_edge.global_edge_id[0]),
+                "edge_info_before": [int(v) for v in list(edge_info_before.global_edge_id)],
+                "edge_info_after": [int(v) for v in list(edge_info_after.global_edge_id)],
+            }))
+            """
+        )
+
+        self.assertTrue(data["prebuild_error"])
+        self.assertTrue(data["wrong_size_error"])
+        self.assertEqual(data["default_mask"], [True, True, True])
+        self.assertFalse(data["pending_after_same_mask"])
+        self.assertTrue(data["pending_after_mask_change"])
+        self.assertTrue(data["pending_query_error"])
+        self.assertEqual(data["version_after_mask_sync"], data["version_before"])
+        self.assertEqual(data["edge_version_after_mask_sync"], data["edge_version_before"] + 1)
+        self.assertTrue(data["masked_valid"])
+        self.assertEqual(data["masked_edge_id"], 1)
+        self.assertEqual(data["masked_global_edge_id"], 1)
+        self.assertFalse(data["invalid_valid"])
+        self.assertEqual(data["invalid_global_edge_id"], -1)
+        self.assertEqual(data["edge_info_before"], [0, 1, 2])
+        self.assertEqual(data["edge_info_after"], [0, 1, 2])
+
+    def test_scene_edge_masked_refit_updates_active_subset(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0],
+                                       [0.0, 0.0, 0.0]),
+                          cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.build()
+            scene.set_edge_mask(cuda.Bool([False, True, False]))
+            scene.sync()
+
+            scene.update_mesh_vertices(mesh_id,
+                                       cuda.Array3f([2.0, 3.0, 2.0],
+                                                    [0.0, 0.0, 1.0],
+                                                    [0.0, 0.0, 0.0]))
+            scene.sync()
+            edge = scene.nearest_edge(cuda.Array3f([1.8], [0.25], [0.1]))
+
+            print(json.dumps({
+                "valid": bool(edge.is_valid()[0]),
+                "shape_id": int(edge.shape_id[0]),
+                "edge_id": int(edge.edge_id[0]),
+                "global_edge_id": int(edge.global_edge_id[0]),
+                "distance": float(edge.distance[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["valid"])
+        self.assertEqual(data["shape_id"], 0)
+        self.assertEqual(data["edge_id"], 1)
+        self.assertEqual(data["global_edge_id"], 1)
+        self.assertAlmostEqual(data["distance"], math.sqrt(0.05), places=5)
 
     def test_scene_edge_metadata_and_topology_are_exposed(self):
         data = run_json_case(

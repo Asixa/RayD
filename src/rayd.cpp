@@ -271,6 +271,7 @@ NB_MODULE(rayd, m) {
             .def_ro("edge_point", &NearestPointEdgeDetached::edge_point)
             .def_ro("shape_id", &NearestPointEdgeDetached::shape_id)
             .def_ro("edge_id", &NearestPointEdgeDetached::edge_id)
+            .def_ro("global_edge_id", &NearestPointEdgeDetached::global_edge_id)
             .def_ro("is_boundary", &NearestPointEdgeDetached::is_boundary);
 
         nb::class_<NearestPointEdge>(m, "NearestPointEdge")
@@ -281,6 +282,7 @@ NB_MODULE(rayd, m) {
             .def_ro("edge_point", &NearestPointEdge::edge_point)
             .def_ro("shape_id", &NearestPointEdge::shape_id)
             .def_ro("edge_id", &NearestPointEdge::edge_id)
+            .def_ro("global_edge_id", &NearestPointEdge::global_edge_id)
             .def_ro("is_boundary", &NearestPointEdge::is_boundary);
 
         nb::class_<NearestRayEdgeDetached>(m, "NearestRayEdgeDetached")
@@ -292,6 +294,7 @@ NB_MODULE(rayd, m) {
             .def_ro("edge_point", &NearestRayEdgeDetached::edge_point)
             .def_ro("shape_id", &NearestRayEdgeDetached::shape_id)
             .def_ro("edge_id", &NearestRayEdgeDetached::edge_id)
+            .def_ro("global_edge_id", &NearestRayEdgeDetached::global_edge_id)
             .def_ro("is_boundary", &NearestRayEdgeDetached::is_boundary);
 
         nb::class_<NearestRayEdge>(m, "NearestRayEdge")
@@ -303,6 +306,7 @@ NB_MODULE(rayd, m) {
             .def_ro("edge_point", &NearestRayEdge::edge_point)
             .def_ro("shape_id", &NearestRayEdge::shape_id)
             .def_ro("edge_id", &NearestRayEdge::edge_id)
+            .def_ro("global_edge_id", &NearestRayEdge::global_edge_id)
             .def_ro("is_boundary", &NearestRayEdge::is_boundary);
 
         nb::class_<SceneSyncProfile>(m, "SceneSyncProfile")
@@ -420,12 +424,19 @@ NB_MODULE(rayd, m) {
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
             .def("set_mesh_transform", &Scene::set_mesh_transform, "mesh_id"_a, "mat"_a, "set_left"_a = true)
             .def("append_mesh_transform", &Scene::append_mesh_transform, "mesh_id"_a, "mat"_a, "append_left"_a = true)
+            .def("set_edge_mask",
+                 nb::overload_cast<const rayd::MaskDetached &>(&Scene::set_edge_mask),
+                 nb::arg("mask"))
+            .def("set_edge_mask",
+                 nb::overload_cast<const rayd::Mask &>(&Scene::set_edge_mask),
+                 nb::arg("mask"))
             .def("sync", &Scene::sync)
             .def("is_ready", &Scene::is_ready)
             .def("has_pending_updates", &Scene::has_pending_updates)
             .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
             .def("edge_topology", &Scene::edge_topology)
+            .def("edge_mask", &Scene::edge_mask)
             .def("mesh_face_offsets", &Scene::mesh_face_offsets)
             .def("mesh_edge_offsets", &Scene::mesh_edge_offsets)
             .def("triangle_edge_indices",
@@ -463,15 +474,15 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Vector3f &point, rayd::Mask active) {
-                     return scene.nearest_edge<false>(point, active);
-                 },
-                 nb::arg("point").noconvert(), "active"_a = true)
-            .def("nearest_edge",
                  [](const Scene &scene, const Vector3fDetached &point, rayd::MaskDetached active) {
                      return scene.nearest_edge<true>(point, active);
                  },
-                 nb::arg("point").noconvert(), "active"_a = true)
+                 nb::arg("point"), "active"_a = true)
+            .def("nearest_edge",
+                 [](const Scene &scene, const Vector3f &point, rayd::Mask active) {
+                     return scene.nearest_edge<false>(point, active);
+                 },
+                 nb::arg("point"), "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.nearest_edge<true>(ray, active);

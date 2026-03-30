@@ -1345,6 +1345,78 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
     drjit::sync_thread();
 }
 
+void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
+                          const IntDetached &primitive_indices) {
+    require(ready_, "SceneEdge::refit(): BVH is not built.");
+
+    const int dirty_primitive_count = static_cast<int>(primitive_indices.size());
+    if (primitive_count_ == 0 || dirty_primitive_count == 0) {
+        return;
+    }
+
+    const Vector3fDetached scene_p0 = detach<false>(edge_info.start);
+    const Vector3fDetached scene_e1 = detach<false>(edge_info.edge);
+    const Vector3fDetached edge_p0 = gather<Vector3fDetached>(scene_p0, primitive_indices);
+    const Vector3fDetached edge_e1 = gather<Vector3fDetached>(scene_e1, primitive_indices);
+    const Vector3fDetached edge_p1 = edge_p0 + edge_e1;
+    const Vector3fDetached bbox_min = minimum(edge_p0, edge_p1);
+    const Vector3fDetached bbox_max = maximum(edge_p0, edge_p1);
+    const IntDetached leaf_nodes = gather<IntDetached>(primitive_leaf_node_, primitive_indices);
+
+    scatter(edge_p0_, edge_p0, primitive_indices);
+    scatter(edge_e1_, edge_e1, primitive_indices);
+    scatter(primitive_bbox_min_, bbox_min, primitive_indices);
+    scatter(primitive_bbox_max_, bbox_max, primitive_indices);
+
+    const IntDetached encoded_leaf_begin = gather<IntDetached>(left_child_, leaf_nodes);
+    const IntDetached leaf_begin = node_leaf_begin(encoded_leaf_begin);
+    const IntDetached leaf_count = gather<IntDetached>(right_child_, leaf_nodes);
+    Vector3fDetached leaf_bbox_min = zero_vector3(dirty_primitive_count);
+    Vector3fDetached leaf_bbox_max = zero_vector3(dirty_primitive_count);
+    MaskDetached initialized = zeros<MaskDetached>(dirty_primitive_count);
+    for (int slot = 0; slot < EdgeBVHLeafSize; ++slot) {
+        const MaskDetached lane_active = leaf_count > slot;
+        const IntDetached slot_offset =
+            leaf_begin + full<IntDetached>(slot, dirty_primitive_count);
+        const IntDetached leaf_primitive =
+            gather<IntDetached>(leaf_primitives_, slot_offset, lane_active);
+        const Vector3fDetached slot_bbox_min =
+            gather<Vector3fDetached>(primitive_bbox_min_, leaf_primitive, lane_active);
+        const Vector3fDetached slot_bbox_max =
+            gather<Vector3fDetached>(primitive_bbox_max_, leaf_primitive, lane_active);
+
+        leaf_bbox_min = select(lane_active && !initialized, slot_bbox_min, leaf_bbox_min);
+        leaf_bbox_max = select(lane_active && !initialized, slot_bbox_max, leaf_bbox_max);
+        leaf_bbox_min =
+            select(lane_active && initialized, minimum(leaf_bbox_min, slot_bbox_min), leaf_bbox_min);
+        leaf_bbox_max =
+            select(lane_active && initialized, maximum(leaf_bbox_max, slot_bbox_max), leaf_bbox_max);
+        initialized |= lane_active;
+    }
+
+    scatter(node_bbox_min_, leaf_bbox_min, leaf_nodes);
+    scatter(node_bbox_max_, leaf_bbox_max, leaf_nodes);
+
+    for (const IntDetached &level : refit_levels_) {
+        const IntDetached left = gather<IntDetached>(left_child_, level);
+        const IntDetached right = gather<IntDetached>(right_child_, level);
+        const Vector3fDetached left_bbox_min = gather<Vector3fDetached>(node_bbox_min_, left);
+        const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left);
+        const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right);
+        const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right);
+        scatter(node_bbox_min_, minimum(left_bbox_min, right_bbox_min), level);
+        scatter(node_bbox_max_, maximum(left_bbox_max, right_bbox_max), level);
+    }
+
+    drjit::eval(edge_p0_,
+                edge_e1_,
+                primitive_bbox_min_,
+                primitive_bbox_max_,
+                node_bbox_min_,
+                node_bbox_max_);
+    drjit::sync_thread();
+}
+
 ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetached &point,
                                                                 const MaskDetached &active) const {
     const int query_count = static_cast<int>(slices(point));

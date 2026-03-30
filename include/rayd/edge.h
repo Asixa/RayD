@@ -23,6 +23,7 @@ struct NearestPointEdgeData {
     Vec3f edge_point = zeros<Vec3f>(1);
     Int_ shape_id = full<Int_>(-1, 1);
     Int_ edge_id = full<Int_>(-1, 1);
+    Int_ global_edge_id = full<Int_>(-1, 1);
     Mask_ is_boundary = full<Mask_>(false, 1);
 
     DRJIT_STRUCT(NearestPointEdgeData,
@@ -32,6 +33,7 @@ struct NearestPointEdgeData {
                  edge_point,
                  shape_id,
                  edge_id,
+                 global_edge_id,
                  is_boundary)
 };
 
@@ -60,6 +62,7 @@ struct NearestRayEdgeData {
     Vec3f edge_point = zeros<Vec3f>(1);
     Int_ shape_id = full<Int_>(-1, 1);
     Int_ edge_id = full<Int_>(-1, 1);
+    Int_ global_edge_id = full<Int_>(-1, 1);
     Mask_ is_boundary = full<Mask_>(false, 1);
 
     DRJIT_STRUCT(NearestRayEdgeData,
@@ -70,6 +73,7 @@ struct NearestRayEdgeData {
                  edge_point,
                  shape_id,
                  edge_id,
+                 global_edge_id,
                  is_boundary)
 };
 

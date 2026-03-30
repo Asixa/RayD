@@ -166,10 +166,11 @@ def _scene_transform_tokens(mesh_states: list[_MeshState], attr: str) -> tuple[A
 
 def _scene_cache_tokens(
     mesh_states: list[_MeshState],
+    edge_mask: Any | None = None,
 ) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]:
     return (
         _scene_topology_token(mesh_states),
-        _scene_rebuild_token(mesh_states),
+        _scene_rebuild_token(mesh_states) + (_tensor_state_token(edge_mask),),
         _scene_vertex_tokens(mesh_states),
         _scene_transform_tokens(mesh_states, "to_world_left"),
         _scene_transform_tokens(mesh_states, "to_world_right"),
@@ -187,11 +188,16 @@ def _scene_cache_refresh_policy(
     )
 
 
-def _build_query_native_scene(mesh_states: list[_MeshState]) -> Any:
+def _build_query_native_scene(mesh_states: list[_MeshState], edge_mask: Any | None = None) -> Any:
     scene = _native.Scene()
     for state in mesh_states:
         scene.add_mesh(_build_native_mesh(state, preserve_gradients=True), True)
     scene.build()
+    if edge_mask is not None:
+        native_edge_mask = _tensor_to_mask(edge_mask, diff=False)
+        if not isinstance(native_edge_mask, bool) and dr.width(native_edge_mask) > 0 and not bool(dr.all(native_edge_mask)):
+            scene.set_edge_mask(native_edge_mask)
+            scene.sync()
     return scene
 
 
@@ -253,6 +259,7 @@ def _prepare_native_scene_cache(
     left_tokens: tuple[Any, ...],
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    edge_mask: Any | None = None,
 ) -> Any:
     force_rebuild, force_vertex_refresh, force_left_refresh, force_right_refresh = refresh_policy
     entry = _SCENE_QUERY_CACHE.get(cache_id)
@@ -260,7 +267,7 @@ def _prepare_native_scene_cache(
         build_count = 1 if entry is None else entry.build_count + 1
         sync_count = 0 if entry is None else entry.sync_count
         entry = _NativeSceneCacheEntry(
-            scene=_build_query_native_scene(mesh_states),
+            scene=_build_query_native_scene(mesh_states, edge_mask),
             topology_token=topology_token,
             rebuild_token=rebuild_token,
             vertex_tokens=vertex_tokens,
@@ -321,6 +328,7 @@ def _nearest_point_from_native(result: Any) -> NearestPointEdge:
         edge_point=_vec3_to_tensor(result.edge_point),
         shape_id=_scalar_array_to_tensor(result.shape_id),
         edge_id=_scalar_array_to_tensor(result.edge_id),
+        global_edge_id=_scalar_array_to_tensor(result.global_edge_id),
         is_boundary=_scalar_array_to_tensor(result.is_boundary),
     )
 
@@ -334,6 +342,7 @@ def _nearest_ray_from_native(result: Any) -> NearestRayEdge:
         edge_point=_vec3_to_tensor(result.edge_point),
         shape_id=_scalar_array_to_tensor(result.shape_id),
         edge_id=_scalar_array_to_tensor(result.edge_id),
+        global_edge_id=_scalar_array_to_tensor(result.global_edge_id),
         is_boundary=_scalar_array_to_tensor(result.is_boundary),
     )
 
@@ -483,6 +492,7 @@ def _scene_intersect_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     ray: Ray,
     active: Any,
 ) -> Any:
@@ -496,6 +506,7 @@ def _scene_intersect_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     its = scene.intersect(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff))
     return _intersection_from_native(its)
@@ -511,6 +522,7 @@ def _scene_shadow_test_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     ray: Ray,
     active: Any,
 ) -> Any:
@@ -524,6 +536,7 @@ def _scene_shadow_test_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     return _scalar_array_to_tensor(scene.shadow_test(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff)))
 
@@ -538,6 +551,7 @@ def _scene_nearest_point_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     point: Any,
     active: Any,
 ) -> Any:
@@ -551,6 +565,7 @@ def _scene_nearest_point_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     result = scene.nearest_edge(_tensor_to_vec3(point, diff=diff, name="point"), _tensor_to_mask(active, diff=diff))
     return _nearest_point_from_native(result)
@@ -566,6 +581,7 @@ def _scene_nearest_ray_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     ray: Ray,
     active: Any,
 ) -> Any:
@@ -579,6 +595,7 @@ def _scene_nearest_ray_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     result = scene.nearest_edge(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff))
     return _nearest_ray_from_native(result)
@@ -603,6 +620,7 @@ def _camera_sample_edge_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     sample1: Any,
 ) -> Any:
     scene = _prepare_native_scene_cache(
@@ -614,6 +632,7 @@ def _camera_sample_edge_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     camera = _build_native_camera(state, preserve_gradients=True)
     camera.prepare_edges(scene)
@@ -631,6 +650,7 @@ def _camera_render_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     background: float,
 ) -> Any:
     scene = _prepare_native_scene_cache(
@@ -642,6 +662,7 @@ def _camera_render_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     camera = _build_native_camera(state, preserve_gradients=True)
     return camera.render(scene, background)
@@ -658,6 +679,7 @@ def _camera_render_grad_impl(
     right_tokens: tuple[Any, ...],
     refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
     mesh_states: list[_MeshState],
+    edge_mask: Any,
     spp: int,
     background: float,
 ) -> Any:
@@ -670,6 +692,7 @@ def _camera_render_grad_impl(
         left_tokens,
         right_tokens,
         refresh_policy,
+        edge_mask,
     )
     camera = _build_native_camera(state, preserve_gradients=True)
     return camera.render_grad(scene, spp, background)

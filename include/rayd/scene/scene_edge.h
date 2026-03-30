@@ -25,6 +25,8 @@ public:
     void build(const SecondaryEdgeInfo &edge_info);
     void refit(const SecondaryEdgeInfo &edge_info,
                const std::vector<EdgeDirtyRange> &dirty_ranges);
+    void refit(const SecondaryEdgeInfo &edge_info,
+               const IntDetached &primitive_indices);
     bool is_ready() const { return ready_; }
     bool has_edges() const { return primitive_count_ > 0; }
 

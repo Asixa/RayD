@@ -67,6 +67,7 @@ class NearestPointEdge(_StructRepr):
         "edge_point": object,
         "shape_id": object,
         "edge_id": object,
+        "global_edge_id": object,
         "is_boundary": object,
     }
 
@@ -78,6 +79,7 @@ class NearestPointEdge(_StructRepr):
         edge_point: Any = None,
         shape_id: Any = None,
         edge_id: Any = None,
+        global_edge_id: Any = None,
         is_boundary: Any = None,
     ):
         self.distance = distance
@@ -86,6 +88,7 @@ class NearestPointEdge(_StructRepr):
         self.edge_point = edge_point
         self.shape_id = shape_id
         self.edge_id = edge_id
+        self.global_edge_id = global_edge_id
         self.is_boundary = is_boundary
 
     def is_valid(self) -> Any:
@@ -101,6 +104,7 @@ class NearestRayEdge(_StructRepr):
         "edge_point": object,
         "shape_id": object,
         "edge_id": object,
+        "global_edge_id": object,
         "is_boundary": object,
     }
 
@@ -113,6 +117,7 @@ class NearestRayEdge(_StructRepr):
         edge_point: Any = None,
         shape_id: Any = None,
         edge_id: Any = None,
+        global_edge_id: Any = None,
         is_boundary: Any = None,
     ):
         self.distance = distance
@@ -122,6 +127,7 @@ class NearestRayEdge(_StructRepr):
         self.edge_point = edge_point
         self.shape_id = shape_id
         self.edge_id = edge_id
+        self.global_edge_id = global_edge_id
         self.is_boundary = is_boundary
 
     def is_valid(self) -> Any:

@@ -23,6 +23,7 @@ NearestPointEdgeT<Detached> initialize_nearest_point_edge_result(int query_count
     result.edge_point = zeros<Vector3fT<Detached>>(query_count);
     result.shape_id = full<IntT<Detached>>(-1, query_count);
     result.edge_id = full<IntT<Detached>>(-1, query_count);
+    result.global_edge_id = full<IntT<Detached>>(-1, query_count);
     result.is_boundary = full<MaskT<Detached>>(false, query_count);
     return result;
 }
@@ -37,6 +38,7 @@ NearestRayEdgeT<Detached> initialize_nearest_ray_edge_result(int query_count) {
     result.edge_point = zeros<Vector3fT<Detached>>(query_count);
     result.shape_id = full<IntT<Detached>>(-1, query_count);
     result.edge_id = full<IntT<Detached>>(-1, query_count);
+    result.global_edge_id = full<IntT<Detached>>(-1, query_count);
     result.is_boundary = full<MaskT<Detached>>(false, query_count);
     return result;
 }
@@ -109,6 +111,14 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     mesh_count_ = static_cast<int>(mesh_records_.size());
     is_ready_ = false;
     pending_updates_ = false;
+    edge_mask_ = MaskDetached();
+    active_edge_info_ = SecondaryEdgeInfo();
+    active_edge_global_ids_ = IntDetached();
+    global_to_active_edge_id_ = IntDetached();
+    pending_edge_bvh_dirty_ranges_.clear();
+    edge_bvh_dirty_ = false;
+    mask_dirty_ = false;
+    all_edges_active_ = true;
     invalidate_primary_edge_observers();
     return mesh_count_ - 1;
 }
@@ -214,6 +224,116 @@ void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_s
             scatter_indices_detached);
 }
 
+void Scene::scatter_active_edge_data(const IntDetached &active_indices,
+                                     const IntDetached &global_indices) {
+    const int count = static_cast<int>(global_indices.size());
+    if (count == 0) {
+        return;
+    }
+
+    const Int active_indices_ad = Int(active_indices);
+    const Int global_indices_ad = Int(global_indices);
+    scatter(active_edge_info_.start,
+            gather<Vector3f>(edge_info_.start, global_indices_ad),
+            active_indices_ad);
+    scatter(active_edge_info_.edge,
+            gather<Vector3f>(edge_info_.edge, global_indices_ad),
+            active_indices_ad);
+    scatter(active_edge_info_.normal0,
+            gather<Vector3f>(edge_info_.normal0, global_indices_ad),
+            active_indices_ad);
+    scatter(active_edge_info_.normal1,
+            gather<Vector3f>(edge_info_.normal1, global_indices_ad),
+            active_indices_ad);
+    scatter(active_edge_info_.opposite,
+            gather<Vector3f>(edge_info_.opposite, global_indices_ad),
+            active_indices_ad);
+    scatter(active_edge_info_.is_boundary,
+            gather<Mask>(edge_info_.is_boundary, global_indices_ad),
+            active_indices_ad);
+}
+
+void Scene::rebuild_active_edge_bvh() {
+    pending_edge_bvh_dirty_ranges_.clear();
+    active_edge_info_ = SecondaryEdgeInfo();
+    active_edge_global_ids_ = IntDetached();
+    global_to_active_edge_id_ = IntDetached();
+
+    if (edge_count_ == 0) {
+        all_edges_active_ = true;
+        edge_bvh_->build(active_edge_info_);
+        edge_bvh_dirty_ = false;
+        mask_dirty_ = false;
+        return;
+    }
+
+    all_edges_active_ = drjit::all(edge_mask_);
+    if (all_edges_active_) {
+        edge_bvh_->build(edge_info_);
+        edge_bvh_dirty_ = false;
+        mask_dirty_ = false;
+        return;
+    }
+
+    active_edge_global_ids_ = compressD(arange<IntDetached>(edge_count_), edge_mask_);
+    const int active_edge_count = static_cast<int>(active_edge_global_ids_.size());
+    if (active_edge_count > 0) {
+        const Int active_edge_global_ids_ad = Int(active_edge_global_ids_);
+        active_edge_info_ = SecondaryEdgeInfo {
+            gather<Vector3f>(edge_info_.start, active_edge_global_ids_ad),
+            gather<Vector3f>(edge_info_.edge, active_edge_global_ids_ad),
+            gather<Vector3f>(edge_info_.normal0, active_edge_global_ids_ad),
+            gather<Vector3f>(edge_info_.normal1, active_edge_global_ids_ad),
+            gather<Vector3f>(edge_info_.opposite, active_edge_global_ids_ad),
+            gather<Mask>(edge_info_.is_boundary, active_edge_global_ids_ad)
+        };
+        global_to_active_edge_id_ = full<IntDetached>(-1, edge_count_);
+        scatter(global_to_active_edge_id_,
+                arange<IntDetached>(active_edge_count),
+                active_edge_global_ids_);
+        drjit::eval(active_edge_info_.start,
+                    active_edge_info_.edge,
+                    active_edge_info_.normal0,
+                    active_edge_info_.normal1,
+                    active_edge_info_.opposite,
+                    active_edge_info_.is_boundary,
+                    active_edge_global_ids_,
+                    global_to_active_edge_id_);
+        drjit::sync_thread();
+    } else {
+        global_to_active_edge_id_ = full<IntDetached>(-1, edge_count_);
+        drjit::eval(global_to_active_edge_id_);
+        drjit::sync_thread();
+    }
+
+    edge_bvh_->build(active_edge_info_);
+    edge_bvh_dirty_ = false;
+    mask_dirty_ = false;
+}
+
+IntDetached Scene::dirty_global_edge_ids_from_ranges() const {
+    size_t total_count = 0;
+    for (const EdgeDirtyRange &range : pending_edge_bvh_dirty_ranges_) {
+        if (range.count > 0) {
+            total_count += static_cast<size_t>(range.count);
+        }
+    }
+
+    if (total_count == 0) {
+        return IntDetached();
+    }
+
+    std::vector<int> dirty_global_ids;
+    dirty_global_ids.reserve(total_count);
+    for (const EdgeDirtyRange &range : pending_edge_bvh_dirty_ranges_) {
+        for (int index = 0; index < range.count; ++index) {
+            dirty_global_ids.push_back(range.offset + index);
+        }
+    }
+
+    return load<IntDetached>(dirty_global_ids.data(), dirty_global_ids.size());
+}
+
 void Scene::ensure_scene_edge_data_ready() const {
     if (!edge_bvh_dirty_) {
         return;
@@ -239,12 +359,52 @@ void Scene::ensure_scene_edge_data_ready() const {
 }
 
 void Scene::ensure_edge_bvh_ready() const {
-    if (!edge_bvh_dirty_ || pending_edge_bvh_dirty_ranges_.empty()) {
+    if (!edge_bvh_dirty_) {
+        return;
+    }
+
+    if (mask_dirty_) {
+        const_cast<Scene *>(this)->rebuild_active_edge_bvh();
+        return;
+    }
+
+    if (pending_edge_bvh_dirty_ranges_.empty()) {
         edge_bvh_dirty_ = false;
         return;
     }
 
-    edge_bvh_->refit(edge_info_, pending_edge_bvh_dirty_ranges_);
+    if (all_edges_active_) {
+        edge_bvh_->refit(edge_info_, pending_edge_bvh_dirty_ranges_);
+        pending_edge_bvh_dirty_ranges_.clear();
+        edge_bvh_dirty_ = false;
+        return;
+    }
+
+    const IntDetached dirty_global_ids = dirty_global_edge_ids_from_ranges();
+    if (dirty_global_ids.size() == 0) {
+        pending_edge_bvh_dirty_ranges_.clear();
+        edge_bvh_dirty_ = false;
+        return;
+    }
+
+    const IntDetached mapped_active_ids =
+        gather<IntDetached>(global_to_active_edge_id_, dirty_global_ids);
+    const MaskDetached active_dirty = mapped_active_ids >= 0;
+    const IntDetached active_indices = compressD(mapped_active_ids, active_dirty);
+    if (active_indices.size() > 0) {
+        const IntDetached global_indices = compressD(dirty_global_ids, active_dirty);
+        Scene *scene = const_cast<Scene *>(this);
+        scene->scatter_active_edge_data(active_indices, global_indices);
+        drjit::eval(scene->active_edge_info_.start,
+                    scene->active_edge_info_.edge,
+                    scene->active_edge_info_.normal0,
+                    scene->active_edge_info_.normal1,
+                    scene->active_edge_info_.opposite,
+                    scene->active_edge_info_.is_boundary);
+        drjit::sync_thread();
+        edge_bvh_->refit(active_edge_info_, active_indices);
+    }
+
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
 }
@@ -409,6 +569,7 @@ void Scene::build() {
                                            load<IntDetached>(triangle_edge_ids_cpu[2].data(), total_face_count));
     if (edge_count_ > 0) {
         edge_info_ = empty<SecondaryEdgeInfo>(edge_count_);
+        active_edge_info_ = SecondaryEdgeInfo();
         edge_topology_ = SceneEdgeTopology {
             load_or_empty(topology_v0),
             load_or_empty(topology_v1),
@@ -421,11 +582,18 @@ void Scene::build() {
         };
         edge_shape_ids_ = empty<IntDetached>(edge_count_);
         edge_local_ids_ = empty<IntDetached>(edge_count_);
+        edge_mask_ = full<MaskDetached>(true, edge_count_);
+        active_edge_global_ids_ = IntDetached();
+        global_to_active_edge_id_ = IntDetached();
     } else {
         edge_info_ = SecondaryEdgeInfo();
+        active_edge_info_ = SecondaryEdgeInfo();
         edge_topology_ = SceneEdgeTopology();
         edge_shape_ids_ = IntDetached();
         edge_local_ids_ = IntDetached();
+        edge_mask_ = MaskDetached();
+        active_edge_global_ids_ = IntDetached();
+        global_to_active_edge_id_ = IntDetached();
     }
 
     for (const SceneMeshRecord &record : mesh_records_) {
@@ -443,15 +611,16 @@ void Scene::build() {
                 edge_offsets_,
                 triangle_edge_ids_,
                 edge_info_,
+                edge_mask_,
                 edge_topology_,
                 edge_shape_ids_,
                 edge_local_ids_);
     drjit::sync_thread();
 
     optix_scene_->build(mesh_descs);
-    edge_bvh_->build(edge_info_);
-    pending_edge_bvh_dirty_ranges_.clear();
-    edge_bvh_dirty_ = false;
+    all_edges_active_ = true;
+    mask_dirty_ = false;
+    rebuild_active_edge_bvh();
     is_ready_ = true;
     pending_updates_ = false;
     ++scene_version_;
@@ -494,6 +663,22 @@ void Scene::append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool appe
     pending_updates_ = true;
 }
 
+void Scene::set_edge_mask(const MaskDetached &mask) {
+    require(is_ready(), "Scene::set_edge_mask(): scene is not built.");
+    require(static_cast<int>(mask.size()) == edge_count_,
+            "Scene::set_edge_mask(): mask size must match the scene edge count.");
+
+    if (mask.size() == edge_mask_.size() && drjit::all(mask == edge_mask_)) {
+        return;
+    }
+
+    edge_mask_ = mask;
+    all_edges_active_ = edge_count_ == 0 || drjit::all(edge_mask_);
+    mask_dirty_ = true;
+    edge_bvh_dirty_ = true;
+    pending_updates_ = true;
+}
+
 void Scene::sync() {
     require(is_ready(), "Scene::sync(): scene is not built.");
     last_sync_profile_ = SceneSyncProfile();
@@ -504,6 +689,7 @@ void Scene::sync() {
 
     using Clock = std::chrono::steady_clock;
     const auto total_start = Clock::now();
+    const bool mask_dirty_before = mask_dirty_;
 
     std::vector<OptixSceneMeshDesc> mesh_descs;
     mesh_descs.reserve(mesh_records_.size());
@@ -608,11 +794,15 @@ void Scene::sync() {
     last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
     last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
     pending_updates_ = false;
-    ++scene_version_;
-    if (last_sync_profile_.updated_edge_meshes > 0) {
+    if (!updates.empty()) {
+        ++scene_version_;
+    }
+    if (mask_dirty_before || last_sync_profile_.updated_edge_meshes > 0) {
         ++edge_version_;
     }
-    invalidate_primary_edge_observers();
+    if (!updates.empty()) {
+        invalidate_primary_edge_observers();
+    }
     last_sync_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();
 }
@@ -640,6 +830,11 @@ SceneEdgeInfo Scene::edge_info() const {
 const SceneEdgeTopology &Scene::edge_topology() const {
     require(is_ready(), "Scene::edge_topology(): scene is not built.");
     return edge_topology_;
+}
+
+const MaskDetached &Scene::edge_mask() const {
+    require(is_ready(), "Scene::edge_mask(): scene is not built.");
+    return edge_mask_;
 }
 
 VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool global) const {
@@ -864,14 +1059,17 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
         return result;
     }
 
+    const IntDetached global_edge_id_detached = all_edges_active_
+        ? candidate.global_edge_id
+        : gather<IntDetached>(active_edge_global_ids_, candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
-        gather<IntDetached>(edge_shape_ids_, candidate.global_edge_id, valid_detached);
+        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
     const IntDetached edge_id_detached =
-        gather<IntDetached>(edge_local_ids_, candidate.global_edge_id, valid_detached);
+        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
 
     if constexpr (!Detached) {
         const Mask valid = Mask(valid_detached);
-        const Int global_edge_id = Int(candidate.global_edge_id);
+        const Int global_edge_id = Int(global_edge_id_detached);
         const Vector3f p0 = gather<Vector3f>(edge_info_.start, global_edge_id, valid);
         const Vector3f e1 = gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
         const Mask is_boundary = gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
@@ -887,14 +1085,15 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
         result.edge_point = select(valid, edge_point, result.edge_point);
         result.shape_id = select(valid, Int(shape_id_detached), result.shape_id);
         result.edge_id = select(valid, Int(edge_id_detached), result.edge_id);
+        result.global_edge_id = select(valid, global_edge_id, result.global_edge_id);
         result.is_boundary = select(valid, is_boundary, result.is_boundary);
     } else {
         const Vector3fDetached p0 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.start), candidate.global_edge_id, valid_detached);
+            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
         const Vector3fDetached e1 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.edge), candidate.global_edge_id, valid_detached);
+            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
         const MaskDetached is_boundary =
-            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), candidate.global_edge_id, valid_detached);
+            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
 
         FloatDetached edge_t;
         Vector3fDetached edge_point;
@@ -907,6 +1106,7 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
         result.edge_point = select(valid_detached, edge_point, result.edge_point);
         result.shape_id = select(valid_detached, shape_id_detached, result.shape_id);
         result.edge_id = select(valid_detached, edge_id_detached, result.edge_id);
+        result.global_edge_id = select(valid_detached, global_edge_id_detached, result.global_edge_id);
         result.is_boundary = select(valid_detached, is_boundary, result.is_boundary);
     }
 
@@ -964,14 +1164,17 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
     }
 
     const MaskDetached finite_tmax = drjit::isfinite(t_max_input);
+    const IntDetached global_edge_id_detached = all_edges_active_
+        ? candidate.global_edge_id
+        : gather<IntDetached>(active_edge_global_ids_, candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
-        gather<IntDetached>(edge_shape_ids_, candidate.global_edge_id, valid_detached);
+        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
     const IntDetached edge_id_detached =
-        gather<IntDetached>(edge_local_ids_, candidate.global_edge_id, valid_detached);
+        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
 
     if constexpr (!Detached) {
         const Mask valid = Mask(valid_detached);
-        const Int global_edge_id = Int(candidate.global_edge_id);
+        const Int global_edge_id = Int(global_edge_id_detached);
         const Vector3f p0 = gather<Vector3f>(edge_info_.start, global_edge_id, valid);
         const Vector3f e1 = gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
         const Mask is_boundary = gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
@@ -1025,14 +1228,15 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         result.edge_point = select(valid, edge_point, result.edge_point);
         result.shape_id = select(valid, Int(shape_id_detached), result.shape_id);
         result.edge_id = select(valid, Int(edge_id_detached), result.edge_id);
+        result.global_edge_id = select(valid, global_edge_id, result.global_edge_id);
         result.is_boundary = select(valid, is_boundary, result.is_boundary);
     } else {
         const Vector3fDetached p0 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.start), candidate.global_edge_id, valid_detached);
+            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
         const Vector3fDetached e1 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.edge), candidate.global_edge_id, valid_detached);
+            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
         const MaskDetached is_boundary =
-            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), candidate.global_edge_id, valid_detached);
+            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
 
         const MaskDetached finite_mask = valid_detached && finite_tmax;
         const MaskDetached infinite_mask = valid_detached && !finite_tmax;
@@ -1083,6 +1287,7 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         result.edge_point = select(valid_detached, edge_point, result.edge_point);
         result.shape_id = select(valid_detached, shape_id_detached, result.shape_id);
         result.edge_id = select(valid_detached, edge_id_detached, result.edge_id);
+        result.global_edge_id = select(valid_detached, global_edge_id_detached, result.global_edge_id);
         result.is_boundary = select(valid_detached, is_boundary, result.is_boundary);
     }
 
