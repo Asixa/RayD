@@ -264,6 +264,30 @@ NB_MODULE(rayd, m) {
             .def_ro("shape_id", &Intersection::shape_id)
             .def_ro("prim_id", &Intersection::prim_id);
 
+        nb::class_<ReflectionChainDetached>(m, "ReflectionChainDetached")
+            .def("is_valid", &ReflectionChainDetached::is_valid)
+            .def_ro("max_bounces", &ReflectionChainDetached::max_bounces)
+            .def_ro("ray_count", &ReflectionChainDetached::ray_count)
+            .def_ro("bounce_count", &ReflectionChainDetached::bounce_count)
+            .def_ro("t", &ReflectionChainDetached::t)
+            .def_ro("hit_points", &ReflectionChainDetached::hit_points)
+            .def_ro("geo_normals", &ReflectionChainDetached::geo_normals)
+            .def_ro("image_sources", &ReflectionChainDetached::image_sources)
+            .def_ro("shape_ids", &ReflectionChainDetached::shape_ids)
+            .def_ro("prim_ids", &ReflectionChainDetached::prim_ids);
+
+        nb::class_<ReflectionChain>(m, "ReflectionChain")
+            .def("is_valid", &ReflectionChain::is_valid)
+            .def_ro("max_bounces", &ReflectionChain::max_bounces)
+            .def_ro("ray_count", &ReflectionChain::ray_count)
+            .def_ro("bounce_count", &ReflectionChain::bounce_count)
+            .def_ro("t", &ReflectionChain::t)
+            .def_ro("hit_points", &ReflectionChain::hit_points)
+            .def_ro("geo_normals", &ReflectionChain::geo_normals)
+            .def_ro("image_sources", &ReflectionChain::image_sources)
+            .def_ro("shape_ids", &ReflectionChain::shape_ids)
+            .def_ro("prim_ids", &ReflectionChain::prim_ids);
+
         nb::class_<NearestPointEdgeDetached>(m, "NearestPointEdgeDetached")
             .def("is_valid", &NearestPointEdgeDetached::is_valid)
             .def_ro("distance", &NearestPointEdgeDetached::distance)
@@ -485,6 +509,16 @@ NB_MODULE(rayd, m) {
                      return scene.intersect<false>(ray, active, flags);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
+            .def("trace_reflections",
+                 [](const Scene &scene, const RayDetached &ray, int max_bounces, rayd::MaskDetached active) {
+                     return scene.trace_reflections<true>(ray, max_bounces, active);
+                 },
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+            .def("trace_reflections",
+                 [](const Scene &scene, const Ray &ray, int max_bounces, rayd::Mask active) {
+                     return scene.trace_reflections<false>(ray, max_bounces, active);
+                 },
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

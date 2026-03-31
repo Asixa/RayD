@@ -8,10 +8,13 @@
 #include <rayd/edge.h>
 #include <rayd/intersection.h>
 #include <rayd/mesh.h>
+#include <rayd/reflection.h>
 #include <rayd/scene/scene_edge.h>
 #include <rayd/scene/scene_optix.h>
 
 namespace rayd {
+
+class ReflectionTracePipeline;
 
 struct SceneSyncProfile {
     double mesh_update_ms = 0.0;
@@ -63,6 +66,10 @@ public:
     IntersectionT<Detached> intersect(const RayT<Detached> &ray,
                                        MaskT<Detached> active = true,
                                        RayFlags flags = RayFlags::All) const;
+    template <bool Detached>
+    ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
+                                                 int max_bounces,
+                                                 MaskT<Detached> active = true) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
@@ -132,6 +139,7 @@ private:
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
+    mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     SceneSyncProfile last_sync_profile_;
 

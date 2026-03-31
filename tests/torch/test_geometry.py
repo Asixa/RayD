@@ -235,6 +235,87 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertEqual(data["ray_global_edge"], data["ray_edge"])
         self.assertGreaterEqual(data["ray_distance"], 0.0)
 
+    def test_trace_reflections_returns_batched_chain_and_supports_gradients(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+
+            wall = rt.Mesh(
+                torch.tensor([[1.0, -1.0, 0.0],
+                              [1.0,  1.0, 0.0],
+                              [1.0,  1.0, 2.0],
+                              [1.0, -1.0, 2.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            ceiling = rt.Mesh(
+                torch.tensor([[-2.0, -2.0, 2.0],
+                              [ 2.0, -2.0, 2.0],
+                              [ 2.0,  2.0, 2.0],
+                              [-2.0,  2.0, 2.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            scene.add_mesh(wall)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            inv_sqrt2 = 1.0 / math.sqrt(2.0)
+            ray = rt.Ray(
+                torch.tensor([[0.0, 0.0, 0.5]], device=device),
+                torch.tensor([[inv_sqrt2, 0.0, inv_sqrt2]], device=device),
+            )
+            chain = scene.trace_reflections(ray, max_bounces=3)
+
+            grad_verts = torch.tensor([[0.0, 0.0, 0.0],
+                                       [1.0, 0.0, 0.0],
+                                       [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            grad_mesh = rt.Mesh(
+                grad_verts,
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+            grad_scene = rt.Scene()
+            grad_scene.add_mesh(grad_mesh)
+            grad_scene.build()
+            grad_ray = rt.Ray(
+                torch.tensor([[0.25, 0.25, -1.0]], device=device),
+                torch.tensor([[0.0, 0.0, 1.0]], device=device),
+            )
+            grad_chain = grad_scene.trace_reflections(grad_ray, max_bounces=1)
+            grad_chain.t.sum().backward()
+
+            print(json.dumps({
+                "bounce_count": int(chain.bounce_count[0].item()),
+                "t_shape": list(chain.t.shape),
+                "hit_shape": list(chain.hit_points.shape),
+                "shape_ids": [int(v) for v in chain.shape_ids[0].tolist()],
+                "hit0": [float(v) for v in chain.hit_points[0, 0].tolist()],
+                "hit1": [float(v) for v in chain.hit_points[0, 1].tolist()],
+                "img1": [float(v) for v in chain.image_sources[0, 1].tolist()],
+                "grad_nonzero": bool(grad_verts.grad is not None and grad_verts.grad.abs().sum().item() > 0),
+            }))
+            """
+        )
+
+        self.assertEqual(data["bounce_count"], 2)
+        self.assertEqual(data["t_shape"], [1, 3])
+        self.assertEqual(data["hit_shape"], [1, 3, 3])
+        self.assertEqual(data["shape_ids"][:2], [0, 1])
+        self.assertAlmostEqual(data["hit0"][0], 1.0, places=4)
+        self.assertAlmostEqual(data["hit0"][2], 1.5, places=4)
+        self.assertAlmostEqual(data["hit1"][0], 0.5, places=4)
+        self.assertAlmostEqual(data["hit1"][2], 2.0, places=4)
+        self.assertAlmostEqual(data["img1"][0], 2.0, places=4)
+        self.assertAlmostEqual(data["img1"][2], 3.5, places=4)
+        self.assertTrue(data["grad_nonzero"])
+
     def test_scene_edge_mask_filters_queries_rebuilds_query_cache_and_keeps_primary_edges_prepared(self):
         data = run_json_case(
             """

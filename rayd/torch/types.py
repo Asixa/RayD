@@ -59,6 +59,43 @@ class Intersection(_StructRepr):
         return self.prim_id >= 0
 
 
+class ReflectionChain(_StructRepr):
+    DRJIT_STRUCT = {
+        "bounce_count": object,
+        "t": object,
+        "hit_points": object,
+        "geo_normals": object,
+        "image_sources": object,
+        "shape_ids": object,
+        "prim_ids": object,
+    }
+
+    def __init__(
+        self,
+        bounce_count: Any = None,
+        t: Any = None,
+        hit_points: Any = None,
+        geo_normals: Any = None,
+        image_sources: Any = None,
+        shape_ids: Any = None,
+        prim_ids: Any = None,
+        max_bounces: int = 0,
+        ray_count: int = 0,
+    ):
+        self.bounce_count = bounce_count
+        self.t = t
+        self.hit_points = hit_points
+        self.geo_normals = geo_normals
+        self.image_sources = image_sources
+        self.shape_ids = shape_ids
+        self.prim_ids = prim_ids
+        self.max_bounces = max_bounces
+        self.ray_count = ray_count
+
+    def is_valid(self) -> Any:
+        return self.prim_ids >= 0
+
+
 class NearestPointEdge(_StructRepr):
     DRJIT_STRUCT = {
         "distance": object,

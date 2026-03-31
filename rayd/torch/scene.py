@@ -12,7 +12,7 @@ from ._util import (
     _normalize_vector_tensor,
 )
 from ._convert import _scalar_array_to_tensor, _tensor_to_mask, _tensor_to_matrix4, _tensor_to_vec3, _to_torch_struct
-from .types import Intersection, Ray, SceneSyncProfile, SceneEdgeInfo, SceneEdgeTopology
+from .types import ReflectionChain, Intersection, Ray, SceneSyncProfile, SceneEdgeInfo, SceneEdgeTopology
 from ._state import _MeshState
 from ._native import (
     _allocate_native_scene_cache_id,
@@ -26,6 +26,7 @@ from ._native import (
     _scene_edge_info_from_native,
     _scene_edge_topology_from_native,
     _scene_intersect_impl,
+    _scene_trace_reflections_impl,
     _scene_nearest_point_impl,
     _scene_nearest_ray_impl,
     _scene_shadow_test_impl,
@@ -283,6 +284,26 @@ class Scene:
             mesh_states,
             edge_mask,
             ray,
+            _normalize_active_tensor(active, _ray_batch_size(ray)),
+        )
+
+    def trace_reflections(self, ray: Ray, max_bounces: int, active: Any = True) -> ReflectionChain:
+        self._require_query_ready()
+        if not isinstance(ray, Ray):
+            raise TypeError("Scene.trace_reflections() expects a rayd.torch.Ray.")
+        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
+        return _scene_trace_reflections_impl(
+            self._query_cache_id,
+            topology_token,
+            rebuild_token,
+            vertex_tokens,
+            left_tokens,
+            right_tokens,
+            refresh_policy,
+            mesh_states,
+            edge_mask,
+            ray,
+            int(max_bounces),
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 

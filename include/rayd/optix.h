@@ -65,6 +65,7 @@ using OptixVisibilityMask = unsigned int;
 #define OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW 1
 #define OPTIX_EXCEPTION_FLAG_TRACE_DEPTH 2
 #define OPTIX_EXCEPTION_FLAG_DEBUG 8
+#define OPTIX_PROGRAM_GROUP_KIND_RAYGEN 0x2421
 #define OPTIX_PROGRAM_GROUP_KIND_MISS 0x2422
 #define OPTIX_PROGRAM_GROUP_KIND_EXCEPTION 0x2423
 #define OPTIX_PROGRAM_GROUP_KIND_HITGROUP 0x2424
@@ -206,6 +207,14 @@ struct OptixProgramGroupOptions {
     const OptixPayloadType *payloadType;
 };
 
+struct OptixPipelineLinkOptions {
+    unsigned int maxTraceDepth;
+    unsigned int maxContinuationCallableDepth;
+    unsigned int maxDirectCallableDepthFromState;
+    unsigned int maxDirectCallableDepthFromTraversal;
+    unsigned int maxTraversableGraphDepth;
+};
+
 struct OptixShaderBindingTable {
     CUdeviceptr raygenRecord;
     CUdeviceptr exceptionRecord;
@@ -263,7 +272,15 @@ D(optixProgramGroupCreate, OptixDeviceContext, const OptixProgramGroupDesc *,
   unsigned int, const OptixProgramGroupOptions *, char *, size_t *,
   OptixProgramGroup *);
 D(optixProgramGroupDestroy, OptixProgramGroup);
+D(optixPipelineCreate, OptixDeviceContext,
+  const OptixPipelineCompileOptions *, const OptixPipelineLinkOptions *,
+  const OptixProgramGroup *, unsigned int, char *, size_t *, OptixPipeline *);
+D(optixPipelineDestroy, OptixPipeline);
+D(optixPipelineSetStackSize, OptixPipeline, unsigned int, unsigned int,
+  unsigned int, unsigned int);
 D(optixSbtRecordPackHeader, OptixProgramGroup, void *);
+D(optixLaunch, OptixPipeline, CUstream, CUdeviceptr, size_t,
+  const OptixShaderBindingTable *, unsigned int, unsigned int, unsigned int);
 D(optixAccelCompact, OptixDeviceContext, CUstream, OptixTraversableHandle,
   CUdeviceptr, size_t, OptixTraversableHandle *);
 

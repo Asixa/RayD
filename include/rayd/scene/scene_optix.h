@@ -50,6 +50,8 @@ public:
               const std::vector<OptixSceneMeshUpdate> &updates);
     bool is_ready() const;
     const OptixSyncProfile &last_sync_profile() const { return last_sync_profile_; }
+    OptixDeviceContext context() const;
+    OptixTraversableHandle ias_handle() const;
 
     template <bool Detached>
     OptixIntersection intersect(const RayT<Detached> &ray,

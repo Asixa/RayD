@@ -227,7 +227,11 @@ void init_optix_api() {
     L(optixModuleDestroy)
     L(optixProgramGroupCreate);
     L(optixProgramGroupDestroy)
+    L(optixPipelineCreate);
+    L(optixPipelineDestroy);
+    L(optixPipelineSetStackSize);
     L(optixSbtRecordPackHeader);
+    L(optixLaunch);
 
     #undef L
 }

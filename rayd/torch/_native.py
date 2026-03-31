@@ -29,6 +29,7 @@ from ._convert import (
 )
 from .types import (
     Intersection,
+    ReflectionChain,
     NearestPointEdge,
     NearestRayEdge,
     PrimaryEdgeSample,
@@ -320,6 +321,37 @@ def _intersection_from_native(its: Any) -> Intersection:
     )
 
 
+def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
+    max_bounces = int(getattr(chain, "max_bounces", 0))
+    ray_count = int(getattr(chain, "ray_count", 0))
+
+    t = _scalar_array_to_tensor(chain.t)
+    hit_points = _vec3_to_tensor(chain.hit_points)
+    geo_normals = _vec3_to_tensor(chain.geo_normals)
+    image_sources = _vec3_to_tensor(chain.image_sources)
+    shape_ids = _scalar_array_to_tensor(chain.shape_ids)
+    prim_ids = _scalar_array_to_tensor(chain.prim_ids)
+
+    t = dr.reshape(type(t), t, shape=(ray_count, max_bounces))
+    hit_points = dr.reshape(type(hit_points), hit_points, shape=(ray_count, max_bounces, 3))
+    geo_normals = dr.reshape(type(geo_normals), geo_normals, shape=(ray_count, max_bounces, 3))
+    image_sources = dr.reshape(type(image_sources), image_sources, shape=(ray_count, max_bounces, 3))
+    shape_ids = dr.reshape(type(shape_ids), shape_ids, shape=(ray_count, max_bounces))
+    prim_ids = dr.reshape(type(prim_ids), prim_ids, shape=(ray_count, max_bounces))
+
+    return ReflectionChain(
+        bounce_count=_scalar_array_to_tensor(chain.bounce_count),
+        t=t,
+        hit_points=hit_points,
+        geo_normals=geo_normals,
+        image_sources=image_sources,
+        shape_ids=shape_ids,
+        prim_ids=prim_ids,
+        max_bounces=max_bounces,
+        ray_count=ray_count,
+    )
+
+
 def _nearest_point_from_native(result: Any) -> NearestPointEdge:
     return NearestPointEdge(
         distance=_scalar_array_to_tensor(result.distance),
@@ -510,6 +542,41 @@ def _scene_intersect_impl(
     )
     its = scene.intersect(_native_ray_from_public(ray, diff=diff), _tensor_to_mask(active, diff=diff))
     return _intersection_from_native(its)
+
+
+@dr.wrap(source="torch", target="drjit")
+def _scene_trace_reflections_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    edge_mask: Any,
+    ray: Ray,
+    max_bounces: int,
+    active: Any,
+) -> Any:
+    diff = _has_diff_fields(ray) or any(_has_diff_fields(s) for s in mesh_states)
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+        edge_mask,
+    )
+    chain = scene.trace_reflections(
+        _native_ray_from_public(ray, diff=diff),
+        int(max_bounces),
+        _tensor_to_mask(active, diff=diff),
+    )
+    return _reflection_chain_from_native(chain)
 
 
 @dr.wrap(source="torch", target="drjit")

@@ -16,6 +16,12 @@ using IntersectionT = IntersectionData<FloatT<Detached>>;
 using Intersection = IntersectionT<false>;
 using IntersectionDetached = IntersectionT<true>;
 
+template <typename> struct ReflectionChainData;
+template <bool Detached>
+using ReflectionChainT = ReflectionChainData<FloatT<Detached>>;
+using ReflectionChain = ReflectionChainT<false>;
+using ReflectionChainDetached = ReflectionChainT<true>;
+
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>
 using NearestPointEdgeT = NearestPointEdgeData<FloatT<Detached>>;

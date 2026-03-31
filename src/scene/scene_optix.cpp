@@ -726,6 +726,16 @@ bool OptixScene::is_ready() const {
     return m_accel != nullptr;
 }
 
+OptixDeviceContext OptixScene::context() const {
+    require(m_accel != nullptr, "OptixScene::context(): scene is not built.");
+    return m_accel->context;
+}
+
+OptixTraversableHandle OptixScene::ias_handle() const {
+    require(m_accel != nullptr, "OptixScene::ias_handle(): scene is not built.");
+    return m_accel->ias_handle;
+}
+
 template <bool Detached>
 OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detached> &active) const {
     const int ray_count = static_cast<int>(slices(ray.o));

@@ -16,6 +16,7 @@ except ImportError as exc:  # pragma: no cover - exercised in subprocess tests
 # Public API re-exports
 from .types import (
     Intersection,
+    ReflectionChain,
     NearestPointEdge,
     NearestRayEdge,
     PrimaryEdgeSample,
@@ -44,6 +45,7 @@ __all__ = [
     "NearestRayEdge",
     "PrimaryEdgeSample",
     "Ray",
+    "ReflectionChain",
     "Scene",
     "SceneSyncProfile",
     "SceneEdgeInfo",
