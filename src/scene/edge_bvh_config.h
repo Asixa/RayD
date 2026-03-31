@@ -55,6 +55,7 @@ constexpr EdgeBVHTreeletScheduleMode EdgeBVHDefaultTreeletScheduleMode =
     EdgeBVHTreeletScheduleMode::FlatLevels;
 constexpr EdgeBVHCompactionMode EdgeBVHDefaultCompactionMode =
     EdgeBVHCompactionMode::HostUploadRaw;
+// Stable default remains LBVH + GPU treelet. PLOC stays available as an experimental override.
 constexpr EdgeBVHBuildAlgorithm EdgeBVHDefaultBuildAlgorithm =
     EdgeBVHBuildAlgorithm::LBVH;
 constexpr EdgeBVHNodeLayoutMode EdgeBVHDefaultNodeLayoutMode =

@@ -110,6 +110,10 @@ Expected mode combinations:
 
 Current serial re-evaluation prioritized scalar-array `PLOC` first and added an extra `serial_reeval_ploc_gpu_treelet` row because raw scalar `PLOC` is still not competitive enough to justify a packed-layout rerun yet.
 
+Implementation note:
+
+- `PLOC` remains benchmarkable, but the code now lives under `src/scene/experimental/` so the stable `LBVH + gpu_treelet` path stays isolated from experimental builder work.
+
 ## Serial Re-evaluation
 
 These rows are the current authoritative comparison because they were collected serially, one benchmark process at a time. Any earlier timings collected under concurrent benchmark load are invalid for speed analysis and should not be used.
