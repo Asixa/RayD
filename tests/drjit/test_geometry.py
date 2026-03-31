@@ -413,6 +413,78 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["t"], 1.0, places=5)
         self.assertGreater(data["grad_z_sum"], 0.0)
 
+    def test_trace_reflections_gpu_deduplicate_merges_duplicate_and_canonical_paths(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            wall = pj.Mesh(
+                cuda.Array3f([1.0, 1.0, 1.0, 1.0],
+                             [-1.0, 1.0, 1.0, -1.0],
+                             [0.0, 0.0, 2.0, 2.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+
+            scene = pj.Scene()
+            scene.add_mesh(wall)
+            scene.build()
+
+            ray = pj.RayDetached(
+                cuda.Array3f([0.0, 0.0, 0.0],
+                             [0.0, 0.0, 0.0],
+                             [1.0, 1.0, 1.0]),
+                cuda.Array3f([1.0, 1.0, 1.0],
+                             [0.2, 0.2, -0.6],
+                             [0.2, 0.2, 0.2]),
+            )
+
+            chain = scene.trace_reflections(ray, max_bounces=1, deduplicate=True)
+            chain_canon = scene.trace_reflections(
+                ray,
+                max_bounces=1,
+                deduplicate=True,
+                canonical_prim_table=cuda.Int([0, 0]),
+            )
+            dr.eval(chain.discovery_count,
+                    chain.hit_points,
+                    chain.plane_points,
+                    chain.geo_normals,
+                    chain.plane_normals,
+                    chain_canon.discovery_count)
+            dr.sync_thread()
+
+            plane_match = all(
+                abs(float(chain.hit_points[axis][i]) - float(chain.plane_points[axis][i])) < 1e-6
+                for axis in range(3)
+                for i in range(dr.width(chain.hit_points[0]))
+            )
+            normal_match = all(
+                abs(float(chain.geo_normals[axis][i]) - float(chain.plane_normals[axis][i])) < 1e-6
+                for axis in range(3)
+                for i in range(dr.width(chain.geo_normals[0]))
+            )
+
+            print(json.dumps({
+                "ray_count": int(chain.ray_count),
+                "discovery": sorted(int(v) for v in list(chain.discovery_count)),
+                "plane_match": plane_match,
+                "normal_match": normal_match,
+                "canon_ray_count": int(chain_canon.ray_count),
+                "canon_discovery": [int(v) for v in list(chain_canon.discovery_count)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["ray_count"], 2)
+        self.assertEqual(data["discovery"], [1, 2])
+        self.assertTrue(data["plane_match"])
+        self.assertTrue(data["normal_match"])
+        self.assertEqual(data["canon_ray_count"], 1)
+        self.assertEqual(data["canon_discovery"], [3])
+
     def test_shadow_test_honors_active_mask_and_pending_update_guard(self):
         data = run_json_case(
             """

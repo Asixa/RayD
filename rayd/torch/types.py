@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._util import _normalize_public_ray_fields
+from ._util import _normalize_public_ray_fields, _shape_tuple
 
 
 class _StructRepr:
@@ -62,10 +62,13 @@ class Intersection(_StructRepr):
 class ReflectionChain(_StructRepr):
     DRJIT_STRUCT = {
         "bounce_count": object,
+        "discovery_count": object,
         "t": object,
         "hit_points": object,
         "geo_normals": object,
         "image_sources": object,
+        "plane_points": object,
+        "plane_normals": object,
         "shape_ids": object,
         "prim_ids": object,
     }
@@ -73,24 +76,52 @@ class ReflectionChain(_StructRepr):
     def __init__(
         self,
         bounce_count: Any = None,
+        discovery_count: Any = None,
         t: Any = None,
         hit_points: Any = None,
         geo_normals: Any = None,
         image_sources: Any = None,
+        plane_points: Any = None,
+        plane_normals: Any = None,
         shape_ids: Any = None,
         prim_ids: Any = None,
         max_bounces: int = 0,
         ray_count: int = 0,
     ):
         self.bounce_count = bounce_count
+        self.discovery_count = discovery_count
         self.t = t
         self.hit_points = hit_points
         self.geo_normals = geo_normals
         self.image_sources = image_sources
+        self.plane_points = plane_points
+        self.plane_normals = plane_normals
         self.shape_ids = shape_ids
         self.prim_ids = prim_ids
-        self.max_bounces = max_bounces
-        self.ray_count = ray_count
+        self._max_bounces_hint = int(max_bounces)
+        self._ray_count_hint = int(ray_count)
+
+    @property
+    def max_bounces(self) -> int:
+        t_shape = _shape_tuple(self.t)
+        if len(t_shape) >= 2:
+            return int(t_shape[1])
+        return int(self._max_bounces_hint)
+
+    @max_bounces.setter
+    def max_bounces(self, value: int) -> None:
+        self._max_bounces_hint = int(value)
+
+    @property
+    def ray_count(self) -> int:
+        bounce_shape = _shape_tuple(self.bounce_count)
+        if len(bounce_shape) >= 1:
+            return int(bounce_shape[0])
+        return int(self._ray_count_hint)
+
+    @ray_count.setter
+    def ray_count(self, value: int) -> None:
+        self._ray_count_hint = int(value)
 
     def is_valid(self) -> Any:
         return self.prim_ids >= 0

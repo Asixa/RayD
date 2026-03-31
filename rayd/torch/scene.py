@@ -287,7 +287,16 @@ class Scene:
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 
-    def trace_reflections(self, ray: Ray, max_bounces: int, active: Any = True) -> ReflectionChain:
+    def trace_reflections(
+        self,
+        ray: Ray,
+        max_bounces: int,
+        active: Any = True,
+        *,
+        deduplicate: bool = False,
+        canonical_prim_table: Any = None,
+        image_source_tolerance: float = 1e-5,
+    ) -> ReflectionChain:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.trace_reflections() expects a rayd.torch.Ray.")
@@ -304,6 +313,9 @@ class Scene:
             edge_mask,
             ray,
             int(max_bounces),
+            bool(deduplicate),
+            canonical_prim_table,
+            float(image_source_tolerance),
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 

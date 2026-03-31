@@ -69,6 +69,11 @@ public:
     template <bool Detached>
     ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
                                                  int max_bounces,
+                                                 const ReflectionTraceOptions &options,
+                                                 MaskT<Detached> active) const;
+    template <bool Detached>
+    ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
+                                                 int max_bounces,
                                                  MaskT<Detached> active = true) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;

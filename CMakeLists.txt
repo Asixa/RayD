@@ -37,6 +37,15 @@ list(PREPEND CMAKE_PREFIX_PATH "${DRJIT_CMAKE_DIR}" "${NANOBIND_CMAKE_DIR}")
 find_package(drjit CONFIG REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 
+get_target_property(RAYD_DRJIT_INCLUDE_DIRS drjit INTERFACE_INCLUDE_DIRECTORIES)
+if(NOT RAYD_DRJIT_INCLUDE_DIRS)
+    set(RAYD_DRJIT_INCLUDE_DIRS "")
+endif()
+get_target_property(RAYD_DRJIT_COMPILE_DEFINITIONS drjit-core INTERFACE_COMPILE_DEFINITIONS)
+if(NOT RAYD_DRJIT_COMPILE_DEFINITIONS)
+    set(RAYD_DRJIT_COMPILE_DEFINITIONS "")
+endif()
+
 if(WIN32)
     add_definitions(-D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS)
 else()
@@ -81,6 +90,27 @@ include_directories(
     ${CUDA_INCLUDE_DIRS}
 )
 
+set(RAYD_CUDA_INCLUDE_DIRS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    ${CUDA_INCLUDE_DIRS}
+    ${RAYD_DRJIT_INCLUDE_DIRS}
+)
+list(REMOVE_DUPLICATES RAYD_CUDA_INCLUDE_DIRS)
+
+set(RAYD_CUDA_INCLUDE_FLAGS_LIST "")
+foreach(RAYD_CUDA_INCLUDE_DIR IN LISTS RAYD_CUDA_INCLUDE_DIRS)
+    list(APPEND RAYD_CUDA_INCLUDE_FLAGS_LIST "-I\"${RAYD_CUDA_INCLUDE_DIR}\"")
+endforeach()
+string(JOIN " " RAYD_CUDA_INCLUDE_FLAGS ${RAYD_CUDA_INCLUDE_FLAGS_LIST})
+
+set(RAYD_CUDA_DEFINITIONS_LIST "")
+foreach(RAYD_CUDA_DEFINITION IN LISTS RAYD_DRJIT_COMPILE_DEFINITIONS)
+    list(APPEND RAYD_CUDA_DEFINITIONS_LIST "-D${RAYD_CUDA_DEFINITION}")
+endforeach()
+string(JOIN " " RAYD_CUDA_DEFINITIONS ${RAYD_CUDA_DEFINITIONS_LIST})
+
 set(RAYD_INCLUDE_DIR include/rayd)
 set(RAYD_SOURCE_DIR src)
 set(RAYD_CORE_SOURCE_FILES
@@ -107,9 +137,10 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
-    ${RAYD_SOURCE_DIR}/scene/reflection_trace_host.h
-    ${RAYD_SOURCE_DIR}/scene/reflection_trace_params.h
-    ${RAYD_SOURCE_DIR}/scene/reflection_trace_host.cpp
+    ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.h
+    ${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h
+    ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
+    ${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h
     ${RAYD_INCLUDE_DIR}/scene/scene_edge.h
     ${RAYD_SOURCE_DIR}/scene/scene_edge.cpp
     ${RAYD_SOURCE_DIR}/scene/edge_bvh.h
@@ -135,7 +166,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu\" -I\"${CMAKE_CURRENT_SOURCE_DIR}/include\" -I\"${CMAKE_CURRENT_SOURCE_DIR}\" -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
@@ -155,8 +186,8 @@ else()
         OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
-                -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
-                -I"${CMAKE_CURRENT_SOURCE_DIR}"
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_CUDA_OBJECT}"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
@@ -170,7 +201,44 @@ endif()
 set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_CUDA_OBJECT}")
 
-set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/reflection_trace.cu")
+set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
+if(WIN32)
+    set(RAYD_REFLECTION_DEDUP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_dedup.obj")
+    set(RAYD_REFLECTION_DEDUP_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_dedup.bat")
+    file(GENERATE OUTPUT "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_DEDUP_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}"
+            "${RAYD_REFLECTION_DEDUP_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h"
+        VERBATIM
+    )
+else()
+    set(RAYD_REFLECTION_DEDUP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_dedup.o")
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_REFLECTION_DEDUP_CU}"
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_REFLECTION_DEDUP_OBJECT}"
+        DEPENDS
+            "${RAYD_REFLECTION_DEDUP_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h"
+        VERBATIM
+    )
+endif()
+set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_DEDUP_OBJECT}")
+
+set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
 set(RAYD_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace.ptx")
 set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_ptx.h")
 
@@ -180,7 +248,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" -I\"${CMAKE_CURRENT_SOURCE_DIR}/include\" -I\"${CMAKE_CURRENT_SOURCE_DIR}\" -o \"${RAYD_REFLECTION_TRACE_PTX}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_TRACE_PTX}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
@@ -188,7 +256,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
         DEPENDS
             "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
             "${RAYD_REFLECTION_TRACE_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/reflection_trace_params.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
         VERBATIM
     )
 else()
@@ -197,12 +265,12 @@ else()
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
                 "${RAYD_REFLECTION_TRACE_CU}"
                 -I"${OPTIX_INCLUDE_DIR}"
-                -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
-                -I"${CMAKE_CURRENT_SOURCE_DIR}"
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_REFLECTION_TRACE_PTX}"
         DEPENDS
             "${RAYD_REFLECTION_TRACE_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/reflection_trace_params.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
         VERBATIM
     )
 endif()

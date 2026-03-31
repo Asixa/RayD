@@ -24,6 +24,10 @@ def _bool_scalar_type(diff: bool):
     return _cuda_ad.Bool if diff else _cuda.Bool
 
 
+def _int_scalar_type(diff: bool):
+    return _cuda_ad.Int if diff else _cuda.Int
+
+
 def _vec2_type(diff: bool):
     return _cuda_ad.Array2f if diff else _cuda.Array2f
 
@@ -60,6 +64,21 @@ def _tensor_to_mask(value: Any, *, diff: bool) -> Any:
     if isinstance(value, bool):
         return value
     target = _bool_scalar_type(diff)
+    arr = _as_drjit_value(value)
+    if type(arr) is target:
+        return arr
+    if dr.is_array_v(type(arr)) and dr.is_tensor_v(arr):
+        arr = dr.ravel(arr)
+    return target(arr)
+
+
+def _tensor_to_int_array(value: Any, *, allow_none: bool = False, name: str = "value") -> Any:
+    if value is None:
+        if allow_none:
+            return _cuda.Int()
+        raise ValueError(f"{name} is required.")
+
+    target = _int_scalar_type(False)
     arr = _as_drjit_value(value)
     if type(arr) is target:
         return arr

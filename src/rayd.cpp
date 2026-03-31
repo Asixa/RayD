@@ -242,6 +242,12 @@ NB_MODULE(rayd, m) {
             .value("UV", RayFlags::UV)
             .value("All", RayFlags::All);
 
+        nb::class_<ReflectionTraceOptions>(m, "ReflectionTraceOptions")
+            .def(nb::init<>())
+            .def_rw("deduplicate", &ReflectionTraceOptions::deduplicate)
+            .def_rw("canonical_prim_table", &ReflectionTraceOptions::canonical_prim_table)
+            .def_rw("image_source_tolerance", &ReflectionTraceOptions::image_source_tolerance);
+
         nb::class_<IntersectionDetached>(m, "IntersectionDetached")
             .def("is_valid", &IntersectionDetached::is_valid)
             .def_ro("t", &IntersectionDetached::t)
@@ -269,10 +275,13 @@ NB_MODULE(rayd, m) {
             .def_ro("max_bounces", &ReflectionChainDetached::max_bounces)
             .def_ro("ray_count", &ReflectionChainDetached::ray_count)
             .def_ro("bounce_count", &ReflectionChainDetached::bounce_count)
+            .def_ro("discovery_count", &ReflectionChainDetached::discovery_count)
             .def_ro("t", &ReflectionChainDetached::t)
             .def_ro("hit_points", &ReflectionChainDetached::hit_points)
             .def_ro("geo_normals", &ReflectionChainDetached::geo_normals)
             .def_ro("image_sources", &ReflectionChainDetached::image_sources)
+            .def_ro("plane_points", &ReflectionChainDetached::plane_points)
+            .def_ro("plane_normals", &ReflectionChainDetached::plane_normals)
             .def_ro("shape_ids", &ReflectionChainDetached::shape_ids)
             .def_ro("prim_ids", &ReflectionChainDetached::prim_ids);
 
@@ -281,10 +290,13 @@ NB_MODULE(rayd, m) {
             .def_ro("max_bounces", &ReflectionChain::max_bounces)
             .def_ro("ray_count", &ReflectionChain::ray_count)
             .def_ro("bounce_count", &ReflectionChain::bounce_count)
+            .def_ro("discovery_count", &ReflectionChain::discovery_count)
             .def_ro("t", &ReflectionChain::t)
             .def_ro("hit_points", &ReflectionChain::hit_points)
             .def_ro("geo_normals", &ReflectionChain::geo_normals)
             .def_ro("image_sources", &ReflectionChain::image_sources)
+            .def_ro("plane_points", &ReflectionChain::plane_points)
+            .def_ro("plane_normals", &ReflectionChain::plane_normals)
             .def_ro("shape_ids", &ReflectionChain::shape_ids)
             .def_ro("prim_ids", &ReflectionChain::prim_ids);
 
@@ -519,6 +531,64 @@ NB_MODULE(rayd, m) {
                      return scene.trace_reflections<false>(ray, max_bounces, active);
                  },
                  nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+            .def("trace_reflections",
+                 [](const Scene &scene,
+                    const RayDetached &ray,
+                    int max_bounces,
+                    const ReflectionTraceOptions &options,
+                    rayd::MaskDetached active) {
+                     return scene.trace_reflections<true>(ray, max_bounces, options, active);
+                 },
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a, "active"_a = true)
+            .def("trace_reflections",
+                 [](const Scene &scene,
+                    const Ray &ray,
+                    int max_bounces,
+                    const ReflectionTraceOptions &options,
+                    rayd::Mask active) {
+                     return scene.trace_reflections<false>(ray, max_bounces, options, active);
+                 },
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a, "active"_a = true)
+            .def("trace_reflections",
+                 [](const Scene &scene,
+                    const RayDetached &ray,
+                    int max_bounces,
+                    bool deduplicate,
+                    const IntDetached &canonical_prim_table,
+                    float image_source_tolerance,
+                    rayd::MaskDetached active) {
+                     ReflectionTraceOptions options;
+                     options.deduplicate = deduplicate;
+                     options.canonical_prim_table = canonical_prim_table;
+                     options.image_source_tolerance = image_source_tolerance;
+                     return scene.trace_reflections<true>(ray, max_bounces, options, active);
+                 },
+                 nb::arg("ray").noconvert(),
+                 "max_bounces"_a,
+                 "deduplicate"_a = false,
+                 "canonical_prim_table"_a = IntDetached(),
+                 "image_source_tolerance"_a = 1e-5f,
+                 "active"_a = true)
+            .def("trace_reflections",
+                 [](const Scene &scene,
+                    const Ray &ray,
+                    int max_bounces,
+                    bool deduplicate,
+                    const IntDetached &canonical_prim_table,
+                    float image_source_tolerance,
+                    rayd::Mask active) {
+                     ReflectionTraceOptions options;
+                     options.deduplicate = deduplicate;
+                     options.canonical_prim_table = canonical_prim_table;
+                     options.image_source_tolerance = image_source_tolerance;
+                     return scene.trace_reflections<false>(ray, max_bounces, options, active);
+                 },
+                 nb::arg("ray").noconvert(),
+                 "max_bounces"_a,
+                 "deduplicate"_a = false,
+                 "canonical_prim_table"_a = IntDetached(),
+                 "image_source_tolerance"_a = 1e-5f,
+                 "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

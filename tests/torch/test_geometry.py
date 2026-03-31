@@ -316,6 +316,65 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(data["img1"][2], 3.5, places=4)
         self.assertTrue(data["grad_nonzero"])
 
+    def test_trace_reflections_gpu_deduplicate_merges_duplicate_and_canonical_paths(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+
+            wall = rt.Mesh(
+                torch.tensor([[1.0, -1.0, 0.0],
+                              [1.0,  1.0, 0.0],
+                              [1.0,  1.0, 2.0],
+                              [1.0, -1.0, 2.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            scene.add_mesh(wall)
+            scene.build()
+
+            ray = rt.Ray(
+                torch.tensor([[0.0, 0.0, 1.0],
+                              [0.0, 0.0, 1.0],
+                              [0.0, 0.0, 1.0]], device=device),
+                torch.tensor([[1.0, 0.2, 0.2],
+                              [1.0, 0.2, 0.2],
+                              [1.0, -0.6, 0.2]], device=device),
+            )
+
+            chain = scene.trace_reflections(ray, max_bounces=1, deduplicate=True)
+            chain_canon = scene.trace_reflections(
+                ray,
+                max_bounces=1,
+                deduplicate=True,
+                canonical_prim_table=torch.tensor([0, 0], device=device, dtype=torch.int32),
+            )
+
+            print(json.dumps({
+                "ray_count": int(chain.ray_count),
+                "discovery": sorted(int(v) for v in chain.discovery_count.tolist()),
+                "plane_match": bool(torch.allclose(chain.hit_points, chain.plane_points)),
+                "normal_match": bool(torch.allclose(chain.geo_normals, chain.plane_normals)),
+                "canon_ray_count": int(chain_canon.ray_count),
+                "canon_discovery": [int(v) for v in chain_canon.discovery_count.tolist()],
+                "canon_shape": list(chain_canon.hit_points.shape),
+            }))
+            """
+        )
+
+        self.assertEqual(data["ray_count"], 2)
+        self.assertEqual(data["discovery"], [1, 2])
+        self.assertTrue(data["plane_match"])
+        self.assertTrue(data["normal_match"])
+        self.assertEqual(data["canon_ray_count"], 1)
+        self.assertEqual(data["canon_discovery"], [3])
+        self.assertEqual(data["canon_shape"], [1, 1, 3])
+
     def test_scene_edge_mask_filters_queries_rebuilds_query_cache_and_keeps_primary_edges_prepared(self):
         data = run_json_case(
             """

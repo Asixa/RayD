@@ -17,6 +17,7 @@ from ._convert import (
     _float_scalar_type,
     _matrix4_to_tensor,
     _scalar_array_to_tensor,
+    _tensor_to_int_array,
     _tensor_to_mask,
     _tensor_to_matrix4,
     _tensor_to_scalar_array,
@@ -325,26 +326,42 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     max_bounces = int(getattr(chain, "max_bounces", 0))
     ray_count = int(getattr(chain, "ray_count", 0))
 
+    bounce_count = _scalar_array_to_tensor(chain.bounce_count)
+    discovery_count = _scalar_array_to_tensor(chain.discovery_count)
     t = _scalar_array_to_tensor(chain.t)
     hit_points = _vec3_to_tensor(chain.hit_points)
     geo_normals = _vec3_to_tensor(chain.geo_normals)
     image_sources = _vec3_to_tensor(chain.image_sources)
+    plane_points = _vec3_to_tensor(chain.plane_points)
+    plane_normals = _vec3_to_tensor(chain.plane_normals)
     shape_ids = _scalar_array_to_tensor(chain.shape_ids)
     prim_ids = _scalar_array_to_tensor(chain.prim_ids)
 
+    if ray_count <= 0 and hasattr(bounce_count, "numel"):
+        ray_count = int(bounce_count.numel())
+    if max_bounces <= 0 and ray_count > 0 and hasattr(t, "numel"):
+        max_bounces = int(t.numel() // ray_count)
+
+    bounce_count = dr.reshape(type(bounce_count), bounce_count, shape=(ray_count,))
+    discovery_count = dr.reshape(type(discovery_count), discovery_count, shape=(ray_count,))
     t = dr.reshape(type(t), t, shape=(ray_count, max_bounces))
     hit_points = dr.reshape(type(hit_points), hit_points, shape=(ray_count, max_bounces, 3))
     geo_normals = dr.reshape(type(geo_normals), geo_normals, shape=(ray_count, max_bounces, 3))
     image_sources = dr.reshape(type(image_sources), image_sources, shape=(ray_count, max_bounces, 3))
+    plane_points = dr.reshape(type(plane_points), plane_points, shape=(ray_count, max_bounces, 3))
+    plane_normals = dr.reshape(type(plane_normals), plane_normals, shape=(ray_count, max_bounces, 3))
     shape_ids = dr.reshape(type(shape_ids), shape_ids, shape=(ray_count, max_bounces))
     prim_ids = dr.reshape(type(prim_ids), prim_ids, shape=(ray_count, max_bounces))
 
     return ReflectionChain(
-        bounce_count=_scalar_array_to_tensor(chain.bounce_count),
+        bounce_count=bounce_count,
+        discovery_count=discovery_count,
         t=t,
         hit_points=hit_points,
         geo_normals=geo_normals,
         image_sources=image_sources,
+        plane_points=plane_points,
+        plane_normals=plane_normals,
         shape_ids=shape_ids,
         prim_ids=prim_ids,
         max_bounces=max_bounces,
@@ -557,6 +574,9 @@ def _scene_trace_reflections_impl(
     edge_mask: Any,
     ray: Ray,
     max_bounces: int,
+    deduplicate: bool,
+    canonical_prim_table: Any,
+    image_source_tolerance: float,
     active: Any,
 ) -> Any:
     diff = _has_diff_fields(ray) or any(_has_diff_fields(s) for s in mesh_states)
@@ -571,9 +591,18 @@ def _scene_trace_reflections_impl(
         refresh_policy,
         edge_mask,
     )
+    options = _native.ReflectionTraceOptions()
+    options.deduplicate = bool(deduplicate)
+    options.canonical_prim_table = _tensor_to_int_array(
+        canonical_prim_table,
+        allow_none=True,
+        name="canonical_prim_table",
+    )
+    options.image_source_tolerance = float(image_source_tolerance)
     chain = scene.trace_reflections(
         _native_ray_from_public(ray, diff=diff),
         int(max_bounces),
+        options,
         _tensor_to_mask(active, diff=diff),
     )
     return _reflection_chain_from_native(chain)

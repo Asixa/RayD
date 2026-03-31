@@ -13,7 +13,8 @@
 #include <rayd/scene/scene.h>
 #include <rayd/scene/scene_edge.h>
 
-#include "reflection_trace_host.h"
+#include "../multipath/reflection_dedup.h"
+#include "../multipath/reflection_trace_host.h"
 
 namespace rayd {
 
@@ -107,6 +108,8 @@ struct ReflectionTraceRaw {
     int max_bounces = 0;
     int ray_count = 0;
     IntDetached bounce_count;
+    IntDetached discovery_count;
+    IntDetached representative_ray_index;
     IntDetached shape_ids;
     IntDetached prim_ids;
     FloatDetached t;
@@ -132,13 +135,78 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
 
     const int slot_count = ray_count * max_bounces;
     result.bounce_count = full<IntT<Detached>>(0, ray_count);
+    result.discovery_count = full<IntT<Detached>>(0, ray_count);
     result.t = full<FloatT<Detached>>(Infinity, slot_count);
     result.hit_points = zeros<Vector3fT<Detached>>(slot_count);
     result.geo_normals = zeros<Vector3fT<Detached>>(slot_count);
     result.image_sources = zeros<Vector3fT<Detached>>(slot_count);
+    result.plane_points = zeros<Vector3fT<Detached>>(slot_count);
+    result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
     result.shape_ids = full<IntT<Detached>>(-1, slot_count);
     result.prim_ids = full<IntT<Detached>>(-1, slot_count);
     return result;
+}
+
+ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces) {
+    const int slot_count = ray_count * max_bounces;
+
+    ReflectionTraceRaw raw;
+    raw.max_bounces = max_bounces;
+    raw.ray_count = ray_count;
+    raw.bounce_count = empty<IntDetached>(ray_count);
+    raw.discovery_count = empty<IntDetached>(ray_count);
+    raw.representative_ray_index = empty<IntDetached>(ray_count);
+    raw.shape_ids = empty<IntDetached>(slot_count);
+    raw.prim_ids = empty<IntDetached>(slot_count);
+    raw.t = empty<FloatDetached>(slot_count);
+    raw.bary_u = empty<FloatDetached>(slot_count);
+    raw.bary_v = empty<FloatDetached>(slot_count);
+    raw.hit_x = empty<FloatDetached>(slot_count);
+    raw.hit_y = empty<FloatDetached>(slot_count);
+    raw.hit_z = empty<FloatDetached>(slot_count);
+    raw.norm_x = empty<FloatDetached>(slot_count);
+    raw.norm_y = empty<FloatDetached>(slot_count);
+    raw.norm_z = empty<FloatDetached>(slot_count);
+    raw.img_x = empty<FloatDetached>(slot_count);
+    raw.img_y = empty<FloatDetached>(slot_count);
+    raw.img_z = empty<FloatDetached>(slot_count);
+    return raw;
+}
+
+void initialize_reflection_trace_raw(ReflectionTraceRaw &raw) {
+    const int ray_count = raw.ray_count;
+    const int slot_count = raw.ray_count * raw.max_bounces;
+    const int zero_i = 0;
+    const int minus_one_i = -1;
+    const float zero_f = 0.f;
+    const float inf_f = Infinity;
+
+    jit_memset_async(JitBackend::CUDA, raw.bounce_count.data(), ray_count, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA, raw.discovery_count.data(), ray_count, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.representative_ray_index.data(),
+                     ray_count,
+                     sizeof(int),
+                     &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.shape_ids.data(), slot_count, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.prim_ids.data(), slot_count, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.t.data(), slot_count, sizeof(float), &inf_f);
+    jit_memset_async(JitBackend::CUDA, raw.bary_u.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.bary_v.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.hit_x.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.hit_y.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.hit_z.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.norm_x.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.norm_y.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.norm_z.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.img_x.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.img_y.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.img_z.data(), slot_count, sizeof(float), &zero_f);
+}
+
+template <typename ArrayD>
+ArrayD prefix_array(const ArrayD &value, int count) {
+    return gather<ArrayD>(value, arange<IntDetached>(count));
 }
 
 template <bool Detached>
@@ -1139,6 +1207,15 @@ template <bool Detached>
 ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                                                     int max_bounces,
                                                     MaskT<Detached> active) const {
+    return this->template trace_reflections<Detached>(
+        ray, max_bounces, ReflectionTraceOptions(), active);
+}
+
+template <bool Detached>
+ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
+                                                    int max_bounces,
+                                                    const ReflectionTraceOptions &options,
+                                                    MaskT<Detached> active) const {
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
     require(!pending_updates_,
             "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
@@ -1198,47 +1275,13 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                 triangle_info_detached_.e2,
                 triangle_info_detached_.face_normal,
                 face_offsets_);
+    if (options.deduplicate && slices(options.canonical_prim_table) > 0) {
+        drjit::eval(options.canonical_prim_table);
+    }
     drjit::sync_thread();
 
-    const int slot_count = ray_count * max_bounces;
-    ReflectionTraceRaw raw;
-    raw.max_bounces = max_bounces;
-    raw.ray_count = ray_count;
-    raw.bounce_count = empty<IntDetached>(ray_count);
-    raw.shape_ids = empty<IntDetached>(slot_count);
-    raw.prim_ids = empty<IntDetached>(slot_count);
-    raw.t = empty<FloatDetached>(slot_count);
-    raw.bary_u = empty<FloatDetached>(slot_count);
-    raw.bary_v = empty<FloatDetached>(slot_count);
-    raw.hit_x = empty<FloatDetached>(slot_count);
-    raw.hit_y = empty<FloatDetached>(slot_count);
-    raw.hit_z = empty<FloatDetached>(slot_count);
-    raw.norm_x = empty<FloatDetached>(slot_count);
-    raw.norm_y = empty<FloatDetached>(slot_count);
-    raw.norm_z = empty<FloatDetached>(slot_count);
-    raw.img_x = empty<FloatDetached>(slot_count);
-    raw.img_y = empty<FloatDetached>(slot_count);
-    raw.img_z = empty<FloatDetached>(slot_count);
-
-    const int zero_i = 0;
-    const int minus_one_i = -1;
-    const float zero_f = 0.f;
-    const float inf_f = Infinity;
-    jit_memset_async(JitBackend::CUDA, raw.bounce_count.data(), ray_count, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA, raw.shape_ids.data(), slot_count, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.prim_ids.data(), slot_count, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.t.data(), slot_count, sizeof(float), &inf_f);
-    jit_memset_async(JitBackend::CUDA, raw.bary_u.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.bary_v.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_z.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_z.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_z.data(), slot_count, sizeof(float), &zero_f);
+    ReflectionTraceRaw raw = allocate_reflection_trace_raw(ray_count, max_bounces);
+    initialize_reflection_trace_raw(raw);
 
     ReflectionTraceParams params = {};
     params.primary_handle = primary_scene->ias_handle();
@@ -1288,33 +1331,142 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 
     reflection_pipeline_->launch(params);
 
+    int trace_ray_count = ray_count;
+    IntDetached trace_bounce_count = raw.bounce_count;
+    IntDetached trace_discovery_count =
+        select(raw.bounce_count > 0,
+               full<IntDetached>(1, ray_count),
+               full<IntDetached>(0, ray_count));
+    IntDetached trace_representative_ray_index = arange<IntDetached>(ray_count);
+    IntDetached trace_shape_ids = raw.shape_ids;
+    IntDetached trace_prim_ids = raw.prim_ids;
+    FloatDetached trace_t = raw.t;
+    FloatDetached trace_hit_x = raw.hit_x;
+    FloatDetached trace_hit_y = raw.hit_y;
+    FloatDetached trace_hit_z = raw.hit_z;
+    FloatDetached trace_norm_x = raw.norm_x;
+    FloatDetached trace_norm_y = raw.norm_y;
+    FloatDetached trace_norm_z = raw.norm_z;
+    FloatDetached trace_img_x = raw.img_x;
+    FloatDetached trace_img_y = raw.img_y;
+    FloatDetached trace_img_z = raw.img_z;
+
+    if (options.deduplicate) {
+        ReflectionTraceRaw compacted = allocate_reflection_trace_raw(ray_count, max_bounces);
+        initialize_reflection_trace_raw(compacted);
+
+        const IntDetached canonical_table = options.canonical_prim_table;
+        const int canonical_table_size = static_cast<int>(slices(canonical_table));
+        const int n_unique = reflection_dedup_gpu(
+            ray_count,
+            max_bounces,
+            raw.bounce_count.data(),
+            raw.shape_ids.data(),
+            raw.prim_ids.data(),
+            raw.t.data(),
+            raw.bary_u.data(),
+            raw.bary_v.data(),
+            raw.hit_x.data(),
+            raw.hit_y.data(),
+            raw.hit_z.data(),
+            raw.norm_x.data(),
+            raw.norm_y.data(),
+            raw.norm_z.data(),
+            raw.img_x.data(),
+            raw.img_y.data(),
+            raw.img_z.data(),
+            face_offsets_.data(),
+            mesh_count_,
+            canonical_table_size > 0 ? canonical_table.data() : nullptr,
+            canonical_table_size,
+            options.image_source_tolerance,
+            compacted.bounce_count.data(),
+            compacted.shape_ids.data(),
+            compacted.prim_ids.data(),
+            compacted.t.data(),
+            compacted.bary_u.data(),
+            compacted.bary_v.data(),
+            compacted.hit_x.data(),
+            compacted.hit_y.data(),
+            compacted.hit_z.data(),
+            compacted.norm_x.data(),
+            compacted.norm_y.data(),
+            compacted.norm_z.data(),
+            compacted.img_x.data(),
+            compacted.img_y.data(),
+            compacted.img_z.data(),
+            compacted.discovery_count.data(),
+            compacted.representative_ray_index.data());
+
+        trace_ray_count = n_unique;
+        const int unique_slot_count = trace_ray_count * max_bounces;
+        trace_bounce_count = prefix_array(compacted.bounce_count, trace_ray_count);
+        trace_discovery_count = prefix_array(compacted.discovery_count, trace_ray_count);
+        trace_representative_ray_index =
+            prefix_array(compacted.representative_ray_index, trace_ray_count);
+        trace_shape_ids = prefix_array(compacted.shape_ids, unique_slot_count);
+        trace_prim_ids = prefix_array(compacted.prim_ids, unique_slot_count);
+        trace_t = prefix_array(compacted.t, unique_slot_count);
+        trace_hit_x = prefix_array(compacted.hit_x, unique_slot_count);
+        trace_hit_y = prefix_array(compacted.hit_y, unique_slot_count);
+        trace_hit_z = prefix_array(compacted.hit_z, unique_slot_count);
+        trace_norm_x = prefix_array(compacted.norm_x, unique_slot_count);
+        trace_norm_y = prefix_array(compacted.norm_y, unique_slot_count);
+        trace_norm_z = prefix_array(compacted.norm_z, unique_slot_count);
+        trace_img_x = prefix_array(compacted.img_x, unique_slot_count);
+        trace_img_y = prefix_array(compacted.img_y, unique_slot_count);
+        trace_img_z = prefix_array(compacted.img_z, unique_slot_count);
+        result.ray_count = trace_ray_count;
+    }
+
     if constexpr (Detached) {
-        result.bounce_count = raw.bounce_count;
-        result.t = raw.t;
-        result.hit_points = Vector3fDetached(raw.hit_x, raw.hit_y, raw.hit_z);
-        result.geo_normals = Vector3fDetached(raw.norm_x, raw.norm_y, raw.norm_z);
-        result.image_sources = Vector3fDetached(raw.img_x, raw.img_y, raw.img_z);
-        result.shape_ids = raw.shape_ids;
-        result.prim_ids = raw.prim_ids;
+        const Vector3fDetached hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
+        const Vector3fDetached plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
+        result.bounce_count = trace_bounce_count;
+        result.discovery_count = trace_discovery_count;
+        result.t = trace_t;
+        result.hit_points = hit_points;
+        result.geo_normals = plane_normals;
+        result.image_sources = Vector3fDetached(trace_img_x, trace_img_y, trace_img_z);
+        result.plane_points = hit_points;
+        result.plane_normals = plane_normals;
+        result.shape_ids = trace_shape_ids;
+        result.prim_ids = trace_prim_ids;
         return result;
     } else {
-        result.bounce_count = Int(raw.bounce_count);
-        result.shape_ids = Int(raw.shape_ids);
-        result.prim_ids = Int(raw.prim_ids);
+        result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
+        result.bounce_count = Int(trace_bounce_count);
+        result.discovery_count = Int(trace_discovery_count);
+        result.shape_ids = Int(trace_shape_ids);
+        result.prim_ids = Int(trace_prim_ids);
 
-        Ray current_ray = ray;
-        MaskDetached current_active_detached = active_detached;
-        Vector3f current_image_source = ray.o;
+        if (trace_ray_count == 0) {
+            return result;
+        }
+
+        const Mask representative_mask = full<Mask>(true, trace_ray_count);
+        const MaskDetached representative_mask_detached =
+            full<MaskDetached>(true, trace_ray_count);
+        const Int representative_ray_index = Int(trace_representative_ray_index);
+        Ray current_ray(
+            gather<Vector3f>(ray.o, representative_ray_index, representative_mask),
+            gather<Vector3f>(ray.d, representative_ray_index, representative_mask),
+            gather<Float>(ray.tmax, representative_ray_index, representative_mask));
+        MaskDetached current_active_detached =
+            gather<MaskDetached>(active_detached,
+                                 trace_representative_ray_index,
+                                 representative_mask_detached);
+        Vector3f current_image_source = current_ray.o;
         const IntDetached bounce_slots =
-            arange<IntDetached>(ray_count) * IntDetached(max_bounces);
+            arange<IntDetached>(trace_ray_count) * IntDetached(max_bounces);
 
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
             const IntDetached slot_detached = bounce_slots + bounce;
             const Int slot = Int(slot_detached);
             const IntDetached shape_id_detached =
-                gather<IntDetached>(raw.shape_ids, slot_detached, current_active_detached);
+                gather<IntDetached>(trace_shape_ids, slot_detached, current_active_detached);
             const IntDetached prim_id_detached =
-                gather<IntDetached>(raw.prim_ids, slot_detached, current_active_detached);
+                gather<IntDetached>(trace_prim_ids, slot_detached, current_active_detached);
             const MaskDetached broadphase_hit =
                 current_active_detached && (shape_id_detached >= 0) && (prim_id_detached >= 0);
             if (drjit::none(broadphase_hit)) {
@@ -1338,12 +1490,13 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 
             Mask bounce_hit =
                 hit_mask && drjit::isfinite(hit_distance) && (hit_distance < current_ray.tmax);
-            const Float safe_t = select(bounce_hit, hit_distance, full<Float>(Infinity, ray_count));
+            const Float safe_t =
+                select(bounce_hit, hit_distance, full<Float>(Infinity, trace_ray_count));
             Vector3f geo_normal = gather<Vector3f>(triangle_info_.face_normal, global_prim, hit_mask);
             geo_normal = normalize(select(hit_mask, geo_normal, Vector3f(0.f, 0.f, 1.f)));
             geo_normal = select(dot(current_ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
             const Vector3f hit_point =
-                current_ray(select(bounce_hit, safe_t, zeros<Float>(ray_count)));
+                current_ray(select(bounce_hit, safe_t, zeros<Float>(trace_ray_count)));
             const Float plane_distance = dot(current_image_source - hit_point, geo_normal);
             const Vector3f reflected_image_source =
                 current_image_source - 2.f * plane_distance * geo_normal;
@@ -1352,6 +1505,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             scatter(result.hit_points, hit_point, slot, bounce_hit);
             scatter(result.geo_normals, geo_normal, slot, bounce_hit);
             scatter(result.image_sources, reflected_image_source, slot, bounce_hit);
+            scatter(result.plane_points, hit_point, slot, bounce_hit);
+            scatter(result.plane_normals, geo_normal, slot, bounce_hit);
 
             const Float ray_dot_normal = dot(current_ray.d, geo_normal);
             const Vector3f reflected_direction =
@@ -1361,7 +1516,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                                    current_ray.o);
             current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
             current_ray.tmax = select(bounce_hit,
-                                      full<Float>(Infinity, ray_count),
+                                      full<Float>(Infinity, trace_ray_count),
                                       current_ray.tmax);
             current_image_source =
                 select(bounce_hit, reflected_image_source, current_image_source);
@@ -1667,6 +1822,14 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
 
 template IntersectionDetached Scene::intersect<true>(const RayDetached &ray, MaskDetached active, RayFlags flags) const;
 template Intersection Scene::intersect<false>(const Ray &ray, Mask active, RayFlags flags) const;
+template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetached &ray,
+                                                                int max_bounces,
+                                                                const ReflectionTraceOptions &options,
+                                                                MaskDetached active) const;
+template ReflectionChain Scene::trace_reflections<false>(const Ray &ray,
+                                                         int max_bounces,
+                                                         const ReflectionTraceOptions &options,
+                                                         Mask active) const;
 template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetached &ray,
                                                                 int max_bounces,
                                                                 MaskDetached active) const;
