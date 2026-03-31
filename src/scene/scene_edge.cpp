@@ -16,8 +16,12 @@ namespace rayd {
 
 namespace {
 
-constexpr size_t EdgeBVHTraversalStackSize = 32;
-constexpr int EdgeBVHLeafSize = 4;
+constexpr size_t EdgeBVHTraversalStackSize = 64;
+constexpr int EdgeBVHPackedBoundsStride = 6;
+constexpr int EdgeBVHPackedChildrenStride = 2;
+constexpr int EdgeBVHPLOCSearchRadius = 8;
+constexpr int EdgeBVHPLOCSearchRadiusMid = 16;
+constexpr int EdgeBVHPLOCSearchRadiusWide = 32;
 constexpr int EdgeBVHHybridClusterLeafCount = 32;
 constexpr int EdgeBVHHybridClusterMaxHeight = 12;
 constexpr int EdgeBVHHybridTopLevelMinPrimitives = 65536;
@@ -35,6 +39,29 @@ struct SAHBin {
     ScalarVector3f bbox_min;
     ScalarVector3f bbox_max;
     int count = 0;
+};
+
+struct PLOCCluster {
+    int node_index = -1;
+    ScalarVector3f bbox_min;
+    ScalarVector3f bbox_max;
+    ScalarVector3f centroid;
+};
+
+struct PLOCCandidatePair {
+    int left_index = -1;
+    int right_index = -1;
+    float cost = 0.f;
+};
+
+struct HostRawEdgeBVH {
+    std::vector<int> left_child;
+    std::vector<int> right_child;
+    std::vector<int> is_leaf;
+    std::vector<int> leaf_primitive;
+    std::vector<int> primitive_leaf_node;
+    std::vector<ScalarVector3f> node_bbox_min;
+    std::vector<ScalarVector3f> node_bbox_max;
 };
 
 ScalarVector3f scalar_min(const ScalarVector3f &a, const ScalarVector3f &b) {
@@ -84,6 +111,41 @@ float axis_value(const ScalarVector3f &v, int axis) {
         return v.y();
     }
     return v.z();
+}
+
+uint32_t expand_bits_10_host(uint32_t value) {
+    value &= 0x000003ffu;
+    value = (value | (value << 16)) & 0x030000FFu;
+    value = (value | (value << 8)) & 0x0300F00Fu;
+    value = (value | (value << 4)) & 0x030C30C3u;
+    value = (value | (value << 2)) & 0x09249249u;
+    return value;
+}
+
+uint32_t morton_code_3d_host(const ScalarVector3f &point,
+                             const ScalarVector3f &scene_bbox_min,
+                             const ScalarVector3f &scene_bbox_max) {
+    ScalarVector3f normalized(0.5f, 0.5f, 0.5f);
+    const ScalarVector3f extent = scene_bbox_max - scene_bbox_min;
+    if (extent.x() > 0.f) {
+        normalized.x() = (point.x() - scene_bbox_min.x()) / extent.x();
+    }
+    if (extent.y() > 0.f) {
+        normalized.y() = (point.y() - scene_bbox_min.y()) / extent.y();
+    }
+    if (extent.z() > 0.f) {
+        normalized.z() = (point.z() - scene_bbox_min.z()) / extent.z();
+    }
+
+    normalized = scalar_max(ScalarVector3f(0.f, 0.f, 0.f),
+                            scalar_min(normalized, ScalarVector3f(1.f, 1.f, 1.f)));
+    constexpr uint32_t scale = (1u << 10) - 1u;
+    const uint32_t x = static_cast<uint32_t>(normalized.x() * static_cast<float>(scale));
+    const uint32_t y = static_cast<uint32_t>(normalized.y() * static_cast<float>(scale));
+    const uint32_t z = static_cast<uint32_t>(normalized.z() * static_cast<float>(scale));
+    return (expand_bits_10_host(x) << 2u) |
+           (expand_bits_10_host(y) << 1u) |
+           (expand_bits_10_host(z) << 0u);
 }
 
 Vector3fDetached zero_vector3(int size) {
@@ -507,6 +569,19 @@ int compute_node_height(int node_index,
                                               is_leaf,
                                               heights));
     return height;
+}
+
+float bbox_overlap_surface_area(const ScalarVector3f &a_min,
+                                const ScalarVector3f &a_max,
+                                const ScalarVector3f &b_min,
+                                const ScalarVector3f &b_max) {
+    const ScalarVector3f overlap_min = scalar_max(a_min, b_min);
+    const ScalarVector3f overlap_max = scalar_min(a_max, b_max);
+    const ScalarVector3f overlap_extent = overlap_max - overlap_min;
+    if (overlap_extent.x() <= 0.f || overlap_extent.y() <= 0.f || overlap_extent.z() <= 0.f) {
+        return 0.f;
+    }
+    return bbox_surface_area(overlap_min, overlap_max);
 }
 
 void collect_subtree_primitives(int node_index,
@@ -1131,6 +1206,295 @@ float optimize_treelets_recursive(int node_index,
     return subtree_costs[static_cast<size_t>(node_index)];
 }
 
+float ploc_merge_cost(const PLOCCluster &a, const PLOCCluster &b) {
+    return bbox_surface_area(scalar_min(a.bbox_min, b.bbox_min),
+                             scalar_max(a.bbox_max, b.bbox_max));
+}
+
+PLOCCluster merge_ploc_clusters(const PLOCCluster &left,
+                                const PLOCCluster &right,
+                                int node_index,
+                                HostRawEdgeBVH &raw_bvh) {
+    raw_bvh.left_child[static_cast<size_t>(node_index)] = left.node_index;
+    raw_bvh.right_child[static_cast<size_t>(node_index)] = right.node_index;
+    raw_bvh.leaf_primitive[static_cast<size_t>(node_index)] = -1;
+    raw_bvh.is_leaf[static_cast<size_t>(node_index)] = 0;
+    raw_bvh.node_bbox_min[static_cast<size_t>(node_index)] =
+        scalar_min(left.bbox_min, right.bbox_min);
+    raw_bvh.node_bbox_max[static_cast<size_t>(node_index)] =
+        scalar_max(left.bbox_max, right.bbox_max);
+    return PLOCCluster{
+        node_index,
+        raw_bvh.node_bbox_min[static_cast<size_t>(node_index)],
+        raw_bvh.node_bbox_max[static_cast<size_t>(node_index)],
+        (raw_bvh.node_bbox_min[static_cast<size_t>(node_index)] +
+         raw_bvh.node_bbox_max[static_cast<size_t>(node_index)]) * 0.5f
+    };
+}
+
+int ploc_search_radius(int cluster_count) {
+    if (cluster_count <= 1) {
+        return 0;
+    }
+
+    int search_radius = EdgeBVHPLOCSearchRadius;
+    if (cluster_count <= 2048) {
+        search_radius = EdgeBVHPLOCSearchRadiusWide;
+    } else if (cluster_count <= 8192) {
+        search_radius = EdgeBVHPLOCSearchRadiusMid;
+    }
+    return std::min(search_radius, cluster_count - 1);
+}
+
+float ploc_pairing_cost_sum(const std::vector<PLOCCluster> &clusters, int begin, int end) {
+    float cost = 0.f;
+    for (int index = begin; index + 1 <= end; index += 2) {
+        cost += ploc_merge_cost(clusters[static_cast<size_t>(index)],
+                                clusters[static_cast<size_t>(index + 1)]);
+    }
+    return cost;
+}
+
+HostRawEdgeBVH build_ploc_bvh_host(const std::vector<ScalarVector3f> &primitive_bbox_min,
+                                   const std::vector<ScalarVector3f> &primitive_bbox_max) {
+    const int primitive_count = static_cast<int>(primitive_bbox_min.size());
+    require(primitive_count == static_cast<int>(primitive_bbox_max.size()),
+            "SceneEdge::build(): invalid primitive bbox arrays for PLOC.");
+
+    const int node_count = std::max(2 * primitive_count - 1, 1);
+    const int internal_count = std::max(primitive_count - 1, 0);
+    HostRawEdgeBVH raw_bvh;
+    raw_bvh.left_child.assign(static_cast<size_t>(node_count), -1);
+    raw_bvh.right_child.assign(static_cast<size_t>(node_count), -1);
+    raw_bvh.is_leaf.assign(static_cast<size_t>(node_count), 0);
+    raw_bvh.leaf_primitive.assign(static_cast<size_t>(node_count), -1);
+    raw_bvh.primitive_leaf_node.assign(static_cast<size_t>(primitive_count), -1);
+    raw_bvh.node_bbox_min.assign(static_cast<size_t>(node_count), empty_bbox_min());
+    raw_bvh.node_bbox_max.assign(static_cast<size_t>(node_count), empty_bbox_max());
+
+    if (primitive_count == 0) {
+        return raw_bvh;
+    }
+
+    if (primitive_count == 1) {
+        raw_bvh.is_leaf[0] = 1;
+        raw_bvh.leaf_primitive[0] = 0;
+        raw_bvh.primitive_leaf_node[0] = 0;
+        raw_bvh.node_bbox_min[0] = primitive_bbox_min[0];
+        raw_bvh.node_bbox_max[0] = primitive_bbox_max[0];
+        return raw_bvh;
+    }
+
+    ScalarVector3f scene_bbox_min = empty_bbox_min();
+    ScalarVector3f scene_bbox_max = empty_bbox_max();
+    std::vector<ScalarVector3f> primitive_centroids(static_cast<size_t>(primitive_count));
+    for (int primitive = 0; primitive < primitive_count; ++primitive) {
+        scene_bbox_min = scalar_min(scene_bbox_min, primitive_bbox_min[static_cast<size_t>(primitive)]);
+        scene_bbox_max = scalar_max(scene_bbox_max, primitive_bbox_max[static_cast<size_t>(primitive)]);
+        primitive_centroids[static_cast<size_t>(primitive)] =
+            (primitive_bbox_min[static_cast<size_t>(primitive)] +
+             primitive_bbox_max[static_cast<size_t>(primitive)]) * 0.5f;
+    }
+
+    std::vector<uint32_t> morton_codes(static_cast<size_t>(primitive_count), 0u);
+    std::vector<int> primitive_order(static_cast<size_t>(primitive_count), 0);
+    for (int primitive = 0; primitive < primitive_count; ++primitive) {
+        primitive_order[static_cast<size_t>(primitive)] = primitive;
+        morton_codes[static_cast<size_t>(primitive)] =
+            morton_code_3d_host(primitive_centroids[static_cast<size_t>(primitive)],
+                                scene_bbox_min,
+                                scene_bbox_max);
+    }
+    std::stable_sort(primitive_order.begin(),
+                     primitive_order.end(),
+                     [&morton_codes](int a, int b) {
+                         const uint32_t code_a = morton_codes[static_cast<size_t>(a)];
+                         const uint32_t code_b = morton_codes[static_cast<size_t>(b)];
+                         if (code_a != code_b) {
+                             return code_a < code_b;
+                         }
+                         return a < b;
+                     });
+
+    std::vector<PLOCCluster> current_clusters;
+    current_clusters.reserve(static_cast<size_t>(primitive_count));
+    for (int rank = 0; rank < primitive_count; ++rank) {
+        const int primitive = primitive_order[static_cast<size_t>(rank)];
+        const int node_index = internal_count + rank;
+        raw_bvh.is_leaf[static_cast<size_t>(node_index)] = 1;
+        raw_bvh.leaf_primitive[static_cast<size_t>(node_index)] = primitive;
+        raw_bvh.primitive_leaf_node[static_cast<size_t>(primitive)] = node_index;
+        raw_bvh.node_bbox_min[static_cast<size_t>(node_index)] =
+            primitive_bbox_min[static_cast<size_t>(primitive)];
+        raw_bvh.node_bbox_max[static_cast<size_t>(node_index)] =
+            primitive_bbox_max[static_cast<size_t>(primitive)];
+        current_clusters.push_back(PLOCCluster{
+            node_index,
+            raw_bvh.node_bbox_min[static_cast<size_t>(node_index)],
+            raw_bvh.node_bbox_max[static_cast<size_t>(node_index)],
+            primitive_centroids[static_cast<size_t>(primitive)]
+        });
+    }
+
+    int next_internal_node = internal_count - 1;
+    while (current_clusters.size() > 1) {
+        const int cluster_count = static_cast<int>(current_clusters.size());
+        const int search_radius = ploc_search_radius(cluster_count);
+        std::vector<int> best_neighbors(static_cast<size_t>(cluster_count), -1);
+        std::vector<float> best_costs(static_cast<size_t>(cluster_count),
+                                      std::numeric_limits<float>::infinity());
+
+        for (int cluster_index = 0; cluster_index < cluster_count; ++cluster_index) {
+            const int begin = std::max(0, cluster_index - search_radius);
+            const int end = std::min(cluster_count - 1, cluster_index + search_radius);
+            for (int neighbor_index = begin; neighbor_index <= end; ++neighbor_index) {
+                if (neighbor_index == cluster_index) {
+                    continue;
+                }
+                const float candidate_cost =
+                    ploc_merge_cost(current_clusters[static_cast<size_t>(cluster_index)],
+                                    current_clusters[static_cast<size_t>(neighbor_index)]);
+                if (candidate_cost < best_costs[static_cast<size_t>(cluster_index)] ||
+                    (candidate_cost == best_costs[static_cast<size_t>(cluster_index)] &&
+                     neighbor_index < best_neighbors[static_cast<size_t>(cluster_index)])) {
+                    best_costs[static_cast<size_t>(cluster_index)] = candidate_cost;
+                    best_neighbors[static_cast<size_t>(cluster_index)] = neighbor_index;
+                }
+            }
+        }
+
+        std::vector<PLOCCandidatePair> candidate_pairs;
+        candidate_pairs.reserve(static_cast<size_t>(cluster_count));
+        for (int cluster_index = 0; cluster_index < cluster_count; ++cluster_index) {
+            const int neighbor_index = best_neighbors[static_cast<size_t>(cluster_index)];
+            if (neighbor_index >= 0 && neighbor_index < cluster_count &&
+                neighbor_index != cluster_index) {
+                const int left_index = std::min(cluster_index, neighbor_index);
+                const int right_index = std::max(cluster_index, neighbor_index);
+                candidate_pairs.push_back(PLOCCandidatePair{
+                    left_index,
+                    right_index,
+                    ploc_merge_cost(current_clusters[static_cast<size_t>(left_index)],
+                                    current_clusters[static_cast<size_t>(right_index)])
+                });
+            }
+        }
+
+        std::sort(candidate_pairs.begin(),
+                  candidate_pairs.end(),
+                  [](const PLOCCandidatePair &a, const PLOCCandidatePair &b) {
+                      if (a.left_index != b.left_index) {
+                          return a.left_index < b.left_index;
+                      }
+                      if (a.right_index != b.right_index) {
+                          return a.right_index < b.right_index;
+                      }
+                      return a.cost < b.cost;
+                  });
+        candidate_pairs.erase(
+            std::unique(candidate_pairs.begin(),
+                        candidate_pairs.end(),
+                        [](const PLOCCandidatePair &a, const PLOCCandidatePair &b) {
+                            return a.left_index == b.left_index &&
+                                   a.right_index == b.right_index;
+                        }),
+            candidate_pairs.end());
+        std::sort(candidate_pairs.begin(),
+                  candidate_pairs.end(),
+                  [](const PLOCCandidatePair &a, const PLOCCandidatePair &b) {
+                      if (a.cost != b.cost) {
+                          return a.cost < b.cost;
+                      }
+                      const int span_a = a.right_index - a.left_index;
+                      const int span_b = b.right_index - b.left_index;
+                      if (span_a != span_b) {
+                          return span_a < span_b;
+                      }
+                      return a.left_index < b.left_index;
+                  });
+
+        std::vector<int> pair_with(static_cast<size_t>(cluster_count), -1);
+        for (const PLOCCandidatePair &candidate : candidate_pairs) {
+            if (pair_with[static_cast<size_t>(candidate.left_index)] >= 0 ||
+                pair_with[static_cast<size_t>(candidate.right_index)] >= 0) {
+                continue;
+            }
+            pair_with[static_cast<size_t>(candidate.left_index)] = candidate.right_index;
+            pair_with[static_cast<size_t>(candidate.right_index)] = candidate.left_index;
+        }
+
+        std::vector<PLOCCluster> next_clusters;
+        next_clusters.reserve(static_cast<size_t>((cluster_count + 1) / 2));
+        const auto emit_merge = [&](int left_index, int right_index) {
+            require(next_internal_node >= 0,
+                    "SceneEdge::build(): PLOC ran out of internal nodes.");
+            next_clusters.push_back(
+                merge_ploc_clusters(current_clusters[static_cast<size_t>(left_index)],
+                                    current_clusters[static_cast<size_t>(right_index)],
+                                    next_internal_node--,
+                                    raw_bvh));
+        };
+
+        int cluster_index = 0;
+        while (cluster_index < cluster_count) {
+            const int partner_index = pair_with[static_cast<size_t>(cluster_index)];
+            if (partner_index > cluster_index) {
+                emit_merge(cluster_index, partner_index);
+                ++cluster_index;
+                continue;
+            }
+
+            if (partner_index >= 0) {
+                ++cluster_index;
+                continue;
+            }
+
+            const int run_begin = cluster_index;
+            while (cluster_index < cluster_count &&
+                   pair_with[static_cast<size_t>(cluster_index)] < 0) {
+                ++cluster_index;
+            }
+            const int run_end = cluster_index - 1;
+            const int run_length = run_end - run_begin + 1;
+
+            if (run_length == 1) {
+                next_clusters.push_back(current_clusters[static_cast<size_t>(run_begin)]);
+                continue;
+            }
+
+            int pair_begin = run_begin;
+            if ((run_length & 1) != 0) {
+                const float leave_last_cost =
+                    ploc_pairing_cost_sum(current_clusters, run_begin, run_end - 1);
+                const float leave_first_cost =
+                    ploc_pairing_cost_sum(current_clusters, run_begin + 1, run_end);
+                if (leave_first_cost < leave_last_cost) {
+                    next_clusters.push_back(current_clusters[static_cast<size_t>(run_begin)]);
+                    pair_begin = run_begin + 1;
+                }
+            }
+
+            for (int pair_index = pair_begin; pair_index + 1 <= run_end; pair_index += 2) {
+                emit_merge(pair_index, pair_index + 1);
+            }
+
+            if (((run_end - pair_begin + 1) & 1) != 0) {
+                next_clusters.push_back(current_clusters[static_cast<size_t>(run_end)]);
+            }
+        }
+
+        require(next_clusters.size() < current_clusters.size(),
+                "SceneEdge::build(): PLOC did not make clustering progress.");
+        current_clusters = std::move(next_clusters);
+    }
+
+    require(current_clusters.size() == 1 && current_clusters[0].node_index == 0,
+            "SceneEdge::build(): PLOC did not produce a valid root.");
+    require(next_internal_node == -1,
+            "SceneEdge::build(): PLOC did not consume every internal node.");
+    return raw_bvh;
+}
+
 TraversalStack make_empty_stack(int query_count) {
     if (query_count <= 0) {
         return IntDetached();
@@ -1180,7 +1544,133 @@ DRJIT_INLINE IntDetached node_leaf_begin(const IntDetached &encoded_left_child) 
     return -encoded_left_child - full<IntDetached>(1, slices(encoded_left_child));
 }
 
+DRJIT_INLINE IntDetached packed_node_float_index(const IntDetached &node_indices, int component) {
+    const int count = static_cast<int>(slices(node_indices));
+    return node_indices * full<IntDetached>(EdgeBVHPackedBoundsStride, count) +
+           full<IntDetached>(component, count);
+}
+
+DRJIT_INLINE IntDetached packed_node_int_index(const IntDetached &node_indices, int component) {
+    const int count = static_cast<int>(slices(node_indices));
+    return node_indices * full<IntDetached>(EdgeBVHPackedChildrenStride, count) +
+           full<IntDetached>(component, count);
+}
+
+Vector3fDetached gather_packed_node_bbox_min(const FloatDetached &packed_node_bounds,
+                                             const IntDetached &node_indices,
+                                             const MaskDetached &active) {
+    return Vector3fDetached(gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 0),
+                                active),
+                            gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 1),
+                                active),
+                            gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 2),
+                                active));
+}
+
+Vector3fDetached gather_packed_node_bbox_max(const FloatDetached &packed_node_bounds,
+                                             const IntDetached &node_indices,
+                                             const MaskDetached &active) {
+    return Vector3fDetached(gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 3),
+                                active),
+                            gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 4),
+                                active),
+                            gather<FloatDetached>(
+                                packed_node_bounds,
+                                packed_node_float_index(node_indices, 5),
+                                active));
+}
+
+void scatter_packed_node_bounds(FloatDetached &packed_node_bounds,
+                                const IntDetached &node_indices,
+                                const Vector3fDetached &bbox_min,
+                                const Vector3fDetached &bbox_max) {
+    scatter(packed_node_bounds, bbox_min.x(), packed_node_float_index(node_indices, 0));
+    scatter(packed_node_bounds, bbox_min.y(), packed_node_float_index(node_indices, 1));
+    scatter(packed_node_bounds, bbox_min.z(), packed_node_float_index(node_indices, 2));
+    scatter(packed_node_bounds, bbox_max.x(), packed_node_float_index(node_indices, 3));
+    scatter(packed_node_bounds, bbox_max.y(), packed_node_float_index(node_indices, 4));
+    scatter(packed_node_bounds, bbox_max.z(), packed_node_float_index(node_indices, 5));
+}
+
+void scatter_packed_node_children(IntDetached &packed_node_children,
+                                  const IntDetached &node_indices,
+                                  const IntDetached &left_child,
+                                  const IntDetached &right_child) {
+    scatter(packed_node_children, left_child, packed_node_int_index(node_indices, 0));
+    scatter(packed_node_children, right_child, packed_node_int_index(node_indices, 1));
+}
+
 } // namespace
+
+void SceneEdge::rebuild_packed_node_layout() {
+    if (!packed_node_layout_enabled_ || node_count_ <= 0) {
+        packed_node_bounds_ = FloatDetached();
+        packed_node_children_ = IntDetached();
+        return;
+    }
+
+    packed_node_bounds_ =
+        full<FloatDetached>(0.f, node_count_ * EdgeBVHPackedBoundsStride);
+    packed_node_children_ =
+        full<IntDetached>(-1, node_count_ * EdgeBVHPackedChildrenStride);
+    const IntDetached node_indices = arange<IntDetached>(node_count_);
+    scatter_packed_node_bounds(packed_node_bounds_, node_indices, node_bbox_min_, node_bbox_max_);
+    scatter_packed_node_children(packed_node_children_, node_indices, left_child_, right_child_);
+}
+
+void SceneEdge::scatter_node_bounds(const IntDetached &node_indices,
+                                    const Vector3fDetached &bbox_min,
+                                    const Vector3fDetached &bbox_max) {
+    scatter(node_bbox_min_, bbox_min, node_indices);
+    scatter(node_bbox_max_, bbox_max, node_indices);
+    if (packed_node_layout_enabled_) {
+        scatter_packed_node_bounds(packed_node_bounds_, node_indices, bbox_min, bbox_max);
+    }
+}
+
+IntDetached SceneEdge::gather_node_left_child(const IntDetached &node_indices,
+                                              const MaskDetached &active) const {
+    if (packed_node_layout_enabled_) {
+        return gather<IntDetached>(
+            packed_node_children_, packed_node_int_index(node_indices, 0), active);
+    }
+    return gather<IntDetached>(left_child_, node_indices, active);
+}
+
+IntDetached SceneEdge::gather_node_right_child(const IntDetached &node_indices,
+                                               const MaskDetached &active) const {
+    if (packed_node_layout_enabled_) {
+        return gather<IntDetached>(
+            packed_node_children_, packed_node_int_index(node_indices, 1), active);
+    }
+    return gather<IntDetached>(right_child_, node_indices, active);
+}
+
+Vector3fDetached SceneEdge::gather_node_bbox_min(const IntDetached &node_indices,
+                                                 const MaskDetached &active) const {
+    if (packed_node_layout_enabled_) {
+        return gather_packed_node_bbox_min(packed_node_bounds_, node_indices, active);
+    }
+    return gather<Vector3fDetached>(node_bbox_min_, node_indices, active);
+}
+
+Vector3fDetached SceneEdge::gather_node_bbox_max(const IntDetached &node_indices,
+                                                 const MaskDetached &active) const {
+    if (packed_node_layout_enabled_) {
+        return gather_packed_node_bbox_max(packed_node_bounds_, node_indices, active);
+    }
+    return gather<Vector3fDetached>(node_bbox_max_, node_indices, active);
+}
 
 void SceneEdge::build(const SecondaryEdgeInfo &edge_info) {
     all_active_ = true;
@@ -1250,6 +1740,7 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     node_count_ = 0;
     ready_ = false;
     refit_levels_.clear();
+    packed_node_layout_enabled_ = false;
 
     if (primitive_count_ == 0) {
         edge_p0_ = Vector3fDetached();
@@ -1258,8 +1749,10 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         primitive_bbox_max_ = Vector3fDetached();
         node_bbox_min_ = Vector3fDetached();
         node_bbox_max_ = Vector3fDetached();
+        packed_node_bounds_ = FloatDetached();
         left_child_ = IntDetached();
         right_child_ = IntDetached();
+        packed_node_children_ = IntDetached();
         leaf_primitives_ = IntDetached();
         primitive_leaf_node_ = IntDetached();
         ready_ = true;
@@ -1268,12 +1761,26 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
 
     const EdgeBVHBuildAlgorithm build_algorithm = active_edge_bvh_build_algorithm();
     const EdgeBVHNodeLayoutMode node_layout_mode = active_edge_bvh_node_layout_mode();
-    require(build_algorithm == EdgeBVHBuildAlgorithm::LBVH,
-            "SceneEdge::build(): build algorithm 'ploc' is not implemented yet. "
-            "No fallback path is available.");
-    require(node_layout_mode == EdgeBVHNodeLayoutMode::ScalarArrays,
-            "SceneEdge::build(): node layout 'packed' is not implemented yet. "
-            "No fallback path is available.");
+    const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
+    const EdgeBVHCompactionMode compaction_mode = active_edge_bvh_compaction_mode();
+    const bool force_gpu_ploc_finalize = build_algorithm == EdgeBVHBuildAlgorithm::PLOC;
+    const bool use_gpu_compaction =
+        force_gpu_ploc_finalize || compaction_mode == EdgeBVHCompactionMode::GpuEmit;
+    const bool use_exact_host_compaction =
+        !force_gpu_ploc_finalize &&
+        !use_gpu_compaction &&
+        compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
+    const bool needs_host_build_topology =
+        build_algorithm == EdgeBVHBuildAlgorithm::LBVH ||
+        post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH;
+    require(!(compaction_mode == EdgeBVHCompactionMode::GpuEmit &&
+              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
+            "SceneEdge::build(): GPU compaction is incompatible with the HybridTopLevelSAH path. "
+            "Choose host_upload_raw or host_upload_exact for a clean benchmark.");
+    require(!(build_algorithm == EdgeBVHBuildAlgorithm::PLOC &&
+              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
+            "SceneEdge::build(): PLOC no longer supports the host HybridTopLevelSAH rebuild.");
+    packed_node_layout_enabled_ = node_layout_mode == EdgeBVHNodeLayoutMode::Packed;
 
     edge_p0_ = detach<false>(edge_info.start);
     edge_e1_ = detach<false>(edge_info.edge);
@@ -1292,72 +1799,96 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     primitive_leaf_node_ = full<IntDetached>(-1, primitive_count_);
     IntDetached build_leaf_primitive = full<IntDetached>(-1, build_node_count);
     IntDetached build_is_leaf = zeros<IntDetached>(build_node_count);
-
-    build_edge_bvh_gpu(
-        primitive_count_,
-        edge_p0_[0].data(),
-        edge_p0_[1].data(),
-        edge_p0_[2].data(),
-        edge_e1_[0].data(),
-        edge_e1_[1].data(),
-        edge_e1_[2].data(),
-        primitive_bbox_min_[0].data(),
-        primitive_bbox_min_[1].data(),
-        primitive_bbox_min_[2].data(),
-        primitive_bbox_max_[0].data(),
-        primitive_bbox_max_[1].data(),
-        primitive_bbox_max_[2].data(),
-        node_bbox_min_[0].data(),
-        node_bbox_min_[1].data(),
-        node_bbox_min_[2].data(),
-        node_bbox_max_[0].data(),
-        node_bbox_max_[1].data(),
-        node_bbox_max_[2].data(),
-        left_child_.data(),
-        right_child_.data(),
-        build_leaf_primitive.data(),
-        build_is_leaf.data(),
-        primitive_leaf_node_.data());
-
-    drjit::sync_thread();
-
-    const std::vector<int> left_child = copy_ints_to_host(left_child_);
-    const std::vector<int> right_child = copy_ints_to_host(right_child_);
-    const std::vector<int> is_leaf = copy_ints_to_host(build_is_leaf);
-    const std::vector<int> leaf_primitive = copy_ints_to_host(build_leaf_primitive);
-
-    std::vector<int> optimized_left_child = left_child;
-    std::vector<int> optimized_right_child = right_child;
-    std::vector<int> optimized_is_leaf = is_leaf;
-    std::vector<int> optimized_leaf_primitive = leaf_primitive;
-    const Vector3fDetached raw_node_bbox_min = node_bbox_min_;
-    const Vector3fDetached raw_node_bbox_max = node_bbox_max_;
-    const IntDetached raw_left_child = left_child_;
-    const IntDetached raw_right_child = right_child_;
-    const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
-    const EdgeBVHCompactionMode compaction_mode = active_edge_bvh_compaction_mode();
-    require(!(compaction_mode == EdgeBVHCompactionMode::GpuEmit &&
-              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
-            "SceneEdge::build(): GPU compaction is incompatible with the HybridTopLevelSAH path. "
-            "Choose host_upload_raw or host_upload_exact for a clean benchmark.");
-    const bool use_gpu_compaction =
-        compaction_mode == EdgeBVHCompactionMode::GpuEmit;
-    const bool use_exact_host_compaction =
-        !use_gpu_compaction &&
-        compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
+    std::vector<int> left_child;
+    std::vector<int> right_child;
+    std::vector<int> is_leaf;
+    std::vector<int> leaf_primitive;
+    std::vector<int> optimized_left_child;
+    std::vector<int> optimized_right_child;
+    std::vector<int> optimized_is_leaf;
+    std::vector<int> optimized_leaf_primitive;
     std::vector<ScalarVector3f> primitive_bbox_min_host;
     std::vector<ScalarVector3f> primitive_bbox_max_host;
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
+
+    if (build_algorithm == EdgeBVHBuildAlgorithm::LBVH ||
+        build_algorithm == EdgeBVHBuildAlgorithm::PLOC) {
+        if (build_algorithm == EdgeBVHBuildAlgorithm::LBVH) {
+            build_edge_bvh_gpu(
+                primitive_count_,
+                edge_p0_[0].data(),
+                edge_p0_[1].data(),
+                edge_p0_[2].data(),
+                edge_e1_[0].data(),
+                edge_e1_[1].data(),
+                edge_e1_[2].data(),
+                primitive_bbox_min_[0].data(),
+                primitive_bbox_min_[1].data(),
+                primitive_bbox_min_[2].data(),
+                primitive_bbox_max_[0].data(),
+                primitive_bbox_max_[1].data(),
+                primitive_bbox_max_[2].data(),
+                node_bbox_min_[0].data(),
+                node_bbox_min_[1].data(),
+                node_bbox_min_[2].data(),
+                node_bbox_max_[0].data(),
+                node_bbox_max_[1].data(),
+                node_bbox_max_[2].data(),
+                left_child_.data(),
+                right_child_.data(),
+                build_leaf_primitive.data(),
+                build_is_leaf.data(),
+                primitive_leaf_node_.data());
+        } else {
+            build_edge_ploc_bvh_gpu(
+                primitive_count_,
+                edge_p0_[0].data(),
+                edge_p0_[1].data(),
+                edge_p0_[2].data(),
+                edge_e1_[0].data(),
+                edge_e1_[1].data(),
+                edge_e1_[2].data(),
+                primitive_bbox_min_[0].data(),
+                primitive_bbox_min_[1].data(),
+                primitive_bbox_min_[2].data(),
+                primitive_bbox_max_[0].data(),
+                primitive_bbox_max_[1].data(),
+                primitive_bbox_max_[2].data(),
+                node_bbox_min_[0].data(),
+                node_bbox_min_[1].data(),
+                node_bbox_min_[2].data(),
+                node_bbox_max_[0].data(),
+                node_bbox_max_[1].data(),
+                node_bbox_max_[2].data(),
+                left_child_.data(),
+                right_child_.data(),
+                build_leaf_primitive.data(),
+                build_is_leaf.data(),
+                primitive_leaf_node_.data());
+        }
+
+        if (needs_host_build_topology) {
+            drjit::sync_thread();
+            left_child = copy_ints_to_host(left_child_);
+            right_child = copy_ints_to_host(right_child_);
+            is_leaf = copy_ints_to_host(build_is_leaf);
+            leaf_primitive = copy_ints_to_host(build_leaf_primitive);
+            optimized_left_child = left_child;
+            optimized_right_child = right_child;
+            optimized_is_leaf = is_leaf;
+            optimized_leaf_primitive = leaf_primitive;
+        }
+    }
     const bool needs_host_primitive_bbox = use_exact_host_compaction;
     const bool needs_host_bbox =
         post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH ||
         (!use_gpu_compaction && !use_exact_host_compaction);
-    if (needs_host_primitive_bbox) {
+    if (needs_host_primitive_bbox && primitive_bbox_min_host.empty()) {
         primitive_bbox_min_host = copy_vector3_to_host(primitive_bbox_min_);
         primitive_bbox_max_host = copy_vector3_to_host(primitive_bbox_max_);
     }
-    if (needs_host_bbox) {
+    if (needs_host_bbox && node_bbox_min.empty()) {
         node_bbox_min = copy_vector3_to_host(node_bbox_min_);
         node_bbox_max = copy_vector3_to_host(node_bbox_max_);
     }
@@ -1424,15 +1955,45 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         }
     }
 
-    std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
-    compute_subtree_leaf_count(
-        0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
+    const Vector3fDetached raw_node_bbox_min = node_bbox_min_;
+    const Vector3fDetached raw_node_bbox_max = node_bbox_max_;
+    const IntDetached raw_left_child = left_child_;
+    const IntDetached raw_right_child = right_child_;
 
     std::vector<int> final_left_child;
     std::vector<int> final_right_child;
     std::vector<int> final_is_leaf;
 
-    if (use_gpu_compaction) {
+    if (force_gpu_ploc_finalize) {
+        node_count_ = build_node_count;
+        left_child_ = full<IntDetached>(-1, node_count_);
+        right_child_ = full<IntDetached>(0, node_count_);
+        leaf_primitives_ = full<IntDetached>(-1, primitive_count_);
+        primitive_leaf_node_ = full<IntDetached>(-1, primitive_count_);
+
+        collapse_edge_bvh_gpu(primitive_count_,
+                              build_node_count,
+                              raw_left_child.data(),
+                              raw_right_child.data(),
+                              build_leaf_primitive.data(),
+                              left_child_.data(),
+                              right_child_.data(),
+                              leaf_primitives_.data(),
+                              primitive_leaf_node_.data());
+
+        drjit::sync_thread();
+        final_left_child = copy_ints_to_host(left_child_);
+        final_right_child = copy_ints_to_host(right_child_);
+        final_is_leaf.assign(static_cast<size_t>(node_count_), 0);
+        for (int node_index = 0; node_index < node_count_; ++node_index) {
+            final_is_leaf[static_cast<size_t>(node_index)] =
+                final_left_child[static_cast<size_t>(node_index)] < 0 &&
+                final_right_child[static_cast<size_t>(node_index)] > 0 ? 1 : 0;
+        }
+    } else if (use_gpu_compaction) {
+        std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
+        compute_subtree_leaf_count(
+            0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
         CompactedEdgeBVHPlan plan;
         plan.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
         emit_compacted_bvh_plan_preorder(0,
@@ -1492,6 +2053,9 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         final_right_child = plan.right_child;
         final_is_leaf = plan.is_leaf;
     } else {
+        std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
+        compute_subtree_leaf_count(
+            0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
         CompactedEdgeBVH compacted;
         compacted.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
         if (use_exact_host_compaction) {
@@ -1540,9 +2104,11 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
 
     std::vector<std::vector<int>> refit_levels(static_cast<size_t>(max_height + 1));
     for (int node_index = 0; node_index < node_count_; ++node_index) {
-        if (final_is_leaf[static_cast<size_t>(node_index)] == 0) {
-            refit_levels[static_cast<size_t>(heights[static_cast<size_t>(node_index)])].push_back(node_index);
+        const int height = heights[static_cast<size_t>(node_index)];
+        if (height <= 0 || final_is_leaf[static_cast<size_t>(node_index)] != 0) {
+            continue;
         }
+        refit_levels[static_cast<size_t>(height)].push_back(node_index);
     }
     for (int height = 1; height <= max_height; ++height) {
         if (!refit_levels[static_cast<size_t>(height)].empty()) {
@@ -1552,18 +2118,101 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         }
     }
 
+    rebuild_packed_node_layout();
+
     drjit::eval(edge_p0_,
                 edge_e1_,
                 primitive_bbox_min_,
                 primitive_bbox_max_,
                 node_bbox_min_,
                 node_bbox_max_,
+                packed_node_bounds_,
                 left_child_,
                 right_child_,
+                packed_node_children_,
                 leaf_primitives_,
                 primitive_leaf_node_);
     drjit::sync_thread();
     ready_ = true;
+}
+
+SceneEdgeBVHStats SceneEdge::stats() const {
+    require(ready_, "SceneEdge::stats(): BVH is not built.");
+
+    SceneEdgeBVHStats result;
+    result.primitive_count = primitive_count_;
+    result.refit_level_count = static_cast<int>(refit_levels_.size());
+    result.leaf_size_histogram.assign(static_cast<size_t>(EdgeBVHLeafSize + 1), 0);
+
+    if (node_count_ <= 0) {
+        return result;
+    }
+
+    const std::vector<int> left_child = copy_ints_to_host(left_child_);
+    const std::vector<int> right_child = copy_ints_to_host(right_child_);
+    const std::vector<ScalarVector3f> node_bbox_min = copy_vector3_to_host(node_bbox_min_);
+    const std::vector<ScalarVector3f> node_bbox_max = copy_vector3_to_host(node_bbox_max_);
+
+    std::vector<int> is_leaf(static_cast<size_t>(node_count_), 0);
+    std::vector<int> heights(static_cast<size_t>(node_count_), -1);
+    for (int node_index = 0; node_index < node_count_; ++node_index) {
+        is_leaf[static_cast<size_t>(node_index)] =
+            left_child[static_cast<size_t>(node_index)] < 0 &&
+            right_child[static_cast<size_t>(node_index)] > 0 ? 1 : 0;
+    }
+
+    result.max_height = compute_node_height(0, left_child, right_child, is_leaf, heights);
+    result.root_surface_area = static_cast<double>(bbox_surface_area(node_bbox_min[0], node_bbox_max[0]));
+
+    int leaf_primitive_sum = 0;
+    for (int node_index = 0; node_index < node_count_; ++node_index) {
+        if (heights[static_cast<size_t>(node_index)] < 0) {
+            continue;
+        }
+
+        ++result.node_count;
+        if (is_leaf[static_cast<size_t>(node_index)] > 0) {
+            ++result.leaf_node_count;
+            const int leaf_size = right_child[static_cast<size_t>(node_index)];
+            if (leaf_size > 0) {
+                leaf_primitive_sum += leaf_size;
+                result.min_leaf_size =
+                    result.leaf_node_count == 1 ? leaf_size : std::min(result.min_leaf_size, leaf_size);
+                result.max_leaf_size = std::max(result.max_leaf_size, leaf_size);
+                if (leaf_size >= static_cast<int>(result.leaf_size_histogram.size())) {
+                    result.leaf_size_histogram.resize(static_cast<size_t>(leaf_size + 1), 0);
+                }
+                result.leaf_size_histogram[static_cast<size_t>(leaf_size)] += 1;
+            }
+            continue;
+        }
+
+        ++result.internal_node_count;
+        const int left_index = left_child[static_cast<size_t>(node_index)];
+        const int right_index = right_child[static_cast<size_t>(node_index)];
+        result.internal_surface_area_sum += static_cast<double>(
+            bbox_surface_area(node_bbox_min[static_cast<size_t>(node_index)],
+                              node_bbox_max[static_cast<size_t>(node_index)]));
+        result.sibling_overlap_surface_area_sum += static_cast<double>(
+            bbox_overlap_surface_area(node_bbox_min[static_cast<size_t>(left_index)],
+                                      node_bbox_max[static_cast<size_t>(left_index)],
+                                      node_bbox_min[static_cast<size_t>(right_index)],
+                                      node_bbox_max[static_cast<size_t>(right_index)]));
+    }
+
+    if (result.leaf_node_count > 0) {
+        result.avg_leaf_size =
+            static_cast<double>(leaf_primitive_sum) / static_cast<double>(result.leaf_node_count);
+    }
+    if (result.internal_node_count > 0) {
+        result.sibling_overlap_surface_area_avg =
+            result.sibling_overlap_surface_area_sum / static_cast<double>(result.internal_node_count);
+    }
+    if (result.internal_surface_area_sum > 0.0) {
+        result.normalized_sibling_overlap =
+            result.sibling_overlap_surface_area_sum / result.internal_surface_area_sum;
+    }
+    return result;
 }
 
 void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
@@ -1642,8 +2291,7 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
             initialized |= lane_active;
         }
 
-        scatter(node_bbox_min_, leaf_bbox_min, leaf_nodes);
-        scatter(node_bbox_max_, leaf_bbox_max, leaf_nodes);
+        scatter_node_bounds(leaf_nodes, leaf_bbox_min, leaf_bbox_max);
     }
 
     for (const IntDetached &level : refit_levels_) {
@@ -1653,8 +2301,9 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
         const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left);
         const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right);
         const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right);
-        scatter(node_bbox_min_, minimum(left_bbox_min, right_bbox_min), level);
-        scatter(node_bbox_max_, maximum(left_bbox_max, right_bbox_max), level);
+        scatter_node_bounds(level,
+                            minimum(left_bbox_min, right_bbox_min),
+                            maximum(left_bbox_max, right_bbox_max));
     }
 
     drjit::eval(edge_p0_,
@@ -1662,7 +2311,8 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
                 primitive_bbox_min_,
                 primitive_bbox_max_,
                 node_bbox_min_,
-                node_bbox_max_);
+                node_bbox_max_,
+                packed_node_bounds_);
     drjit::sync_thread();
 }
 
@@ -1715,8 +2365,7 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
         initialized |= lane_active;
     }
 
-    scatter(node_bbox_min_, leaf_bbox_min, leaf_nodes);
-    scatter(node_bbox_max_, leaf_bbox_max, leaf_nodes);
+    scatter_node_bounds(leaf_nodes, leaf_bbox_min, leaf_bbox_max);
 
     for (const IntDetached &level : refit_levels_) {
         const IntDetached left = gather<IntDetached>(left_child_, level);
@@ -1725,8 +2374,9 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
         const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left);
         const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right);
         const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right);
-        scatter(node_bbox_min_, minimum(left_bbox_min, right_bbox_min), level);
-        scatter(node_bbox_max_, maximum(left_bbox_max, right_bbox_max), level);
+        scatter_node_bounds(level,
+                            minimum(left_bbox_min, right_bbox_min),
+                            maximum(left_bbox_max, right_bbox_max));
     }
 
     drjit::eval(edge_p0_,
@@ -1734,7 +2384,8 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
                 primitive_bbox_min_,
                 primitive_bbox_max_,
                 node_bbox_min_,
-                node_bbox_max_);
+                node_bbox_max_,
+                packed_node_bounds_);
     drjit::sync_thread();
 }
 
@@ -1849,16 +2500,16 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
-            const Vector3fDetached bbox_min = gather<Vector3fDetached>(node_bbox_min_, current_node, lane_active);
-            const Vector3fDetached bbox_max = gather<Vector3fDetached>(node_bbox_max_, current_node, lane_active);
+            const Vector3fDetached bbox_min = gather_node_bbox_min(current_node, lane_active);
+            const Vector3fDetached bbox_max = gather_node_bbox_max(current_node, lane_active);
             const FloatDetached node_bound = point_aabb_distance_sq(point, bbox_min, bbox_max);
             const MaskDetached visit = lane_active && (node_bound <= best_distance_sq);
 
-            const IntDetached encoded_left = gather<IntDetached>(left_child_, current_node, lane_active);
+            const IntDetached encoded_left = gather_node_left_child(current_node, lane_active);
             const MaskDetached leaf_node = lane_active && node_is_leaf(encoded_left);
             const MaskDetached leaf_visit = visit && leaf_node;
             const IntDetached leaf_begin = node_leaf_begin(encoded_left);
-            const IntDetached leaf_count = gather<IntDetached>(right_child_, current_node, lane_active);
+            const IntDetached leaf_count = gather_node_right_child(current_node, lane_active);
             for (int slot = 0; slot < EdgeBVHLeafSize; ++slot) {
                 const MaskDetached slot_visit = leaf_visit && (leaf_count > slot);
                 const IntDetached primitive_offset = leaf_begin + full<IntDetached>(slot, query_count);
@@ -1882,12 +2533,12 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
 
             const MaskDetached internal_visit = visit && !leaf_node;
             const IntDetached left = select(internal_visit, encoded_left, full<IntDetached>(-1, query_count));
-            const IntDetached right = gather<IntDetached>(right_child_, current_node, internal_visit);
+            const IntDetached right = gather_node_right_child(current_node, internal_visit);
 
-            const Vector3fDetached left_bbox_min = gather<Vector3fDetached>(node_bbox_min_, left, internal_visit);
-            const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left, internal_visit);
-            const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right, internal_visit);
-            const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right, internal_visit);
+            const Vector3fDetached left_bbox_min = gather_node_bbox_min(left, internal_visit);
+            const Vector3fDetached left_bbox_max = gather_node_bbox_max(left, internal_visit);
+            const Vector3fDetached right_bbox_min = gather_node_bbox_min(right, internal_visit);
+            const Vector3fDetached right_bbox_max = gather_node_bbox_max(right, internal_visit);
             const FloatDetached left_bound = point_aabb_distance_sq(point, left_bbox_min, left_bbox_max);
             const FloatDetached right_bound = point_aabb_distance_sq(point, right_bbox_min, right_bbox_max);
 
@@ -1957,16 +2608,16 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fD
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
-            const Vector3fDetached bbox_min = gather<Vector3fDetached>(node_bbox_min_, current_node, lane_active);
-            const Vector3fDetached bbox_max = gather<Vector3fDetached>(node_bbox_max_, current_node, lane_active);
+            const Vector3fDetached bbox_min = gather_node_bbox_min(current_node, lane_active);
+            const Vector3fDetached bbox_max = gather_node_bbox_max(current_node, lane_active);
             const FloatDetached node_bound = segment_aabb_lower_bound_sq(origin, segment, bbox_min, bbox_max);
             const MaskDetached visit = lane_active && (node_bound <= best_distance_sq);
 
-            const IntDetached encoded_left = gather<IntDetached>(left_child_, current_node, lane_active);
+            const IntDetached encoded_left = gather_node_left_child(current_node, lane_active);
             const MaskDetached leaf_node = lane_active && node_is_leaf(encoded_left);
             const MaskDetached leaf_visit = visit && leaf_node;
             const IntDetached leaf_begin = node_leaf_begin(encoded_left);
-            const IntDetached leaf_count = gather<IntDetached>(right_child_, current_node, lane_active);
+            const IntDetached leaf_count = gather_node_right_child(current_node, lane_active);
             for (int slot = 0; slot < EdgeBVHLeafSize; ++slot) {
                 const MaskDetached slot_visit = leaf_visit && (leaf_count > slot);
                 const IntDetached primitive_offset = leaf_begin + full<IntDetached>(slot, query_count);
@@ -1994,12 +2645,12 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fD
 
             const MaskDetached internal_visit = visit && !leaf_node;
             const IntDetached left = select(internal_visit, encoded_left, full<IntDetached>(-1, query_count));
-            const IntDetached right = gather<IntDetached>(right_child_, current_node, internal_visit);
+            const IntDetached right = gather_node_right_child(current_node, internal_visit);
 
-            const Vector3fDetached left_bbox_min = gather<Vector3fDetached>(node_bbox_min_, left, internal_visit);
-            const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left, internal_visit);
-            const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right, internal_visit);
-            const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right, internal_visit);
+            const Vector3fDetached left_bbox_min = gather_node_bbox_min(left, internal_visit);
+            const Vector3fDetached left_bbox_max = gather_node_bbox_max(left, internal_visit);
+            const Vector3fDetached right_bbox_min = gather_node_bbox_min(right, internal_visit);
+            const Vector3fDetached right_bbox_max = gather_node_bbox_max(right, internal_visit);
             const FloatDetached left_bound = segment_aabb_lower_bound_sq(origin, segment, left_bbox_min, left_bbox_max);
             const FloatDetached right_bound = segment_aabb_lower_bound_sq(origin, segment, right_bbox_min, right_bbox_max);
 
@@ -2069,16 +2720,16 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
             current_node = select(need_pop, popped_node, current_node);
 
             const MaskDetached lane_active = current_node >= 0;
-            const Vector3fDetached bbox_min = gather<Vector3fDetached>(node_bbox_min_, current_node, lane_active);
-            const Vector3fDetached bbox_max = gather<Vector3fDetached>(node_bbox_max_, current_node, lane_active);
+            const Vector3fDetached bbox_min = gather_node_bbox_min(current_node, lane_active);
+            const Vector3fDetached bbox_max = gather_node_bbox_max(current_node, lane_active);
             const FloatDetached node_bound = ray_aabb_lower_bound_sq(origin, direction, bbox_min, bbox_max);
             const MaskDetached visit = lane_active && (node_bound <= best_distance_sq);
 
-            const IntDetached encoded_left = gather<IntDetached>(left_child_, current_node, lane_active);
+            const IntDetached encoded_left = gather_node_left_child(current_node, lane_active);
             const MaskDetached leaf_node = lane_active && node_is_leaf(encoded_left);
             const MaskDetached leaf_visit = visit && leaf_node;
             const IntDetached leaf_begin = node_leaf_begin(encoded_left);
-            const IntDetached leaf_count = gather<IntDetached>(right_child_, current_node, lane_active);
+            const IntDetached leaf_count = gather_node_right_child(current_node, lane_active);
             for (int slot = 0; slot < EdgeBVHLeafSize; ++slot) {
                 const MaskDetached slot_visit = leaf_visit && (leaf_count > slot);
                 const IntDetached primitive_offset = leaf_begin + full<IntDetached>(slot, query_count);
@@ -2106,12 +2757,12 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
 
             const MaskDetached internal_visit = visit && !leaf_node;
             const IntDetached left = select(internal_visit, encoded_left, full<IntDetached>(-1, query_count));
-            const IntDetached right = gather<IntDetached>(right_child_, current_node, internal_visit);
+            const IntDetached right = gather_node_right_child(current_node, internal_visit);
 
-            const Vector3fDetached left_bbox_min = gather<Vector3fDetached>(node_bbox_min_, left, internal_visit);
-            const Vector3fDetached left_bbox_max = gather<Vector3fDetached>(node_bbox_max_, left, internal_visit);
-            const Vector3fDetached right_bbox_min = gather<Vector3fDetached>(node_bbox_min_, right, internal_visit);
-            const Vector3fDetached right_bbox_max = gather<Vector3fDetached>(node_bbox_max_, right, internal_visit);
+            const Vector3fDetached left_bbox_min = gather_node_bbox_min(left, internal_visit);
+            const Vector3fDetached left_bbox_max = gather_node_bbox_max(left, internal_visit);
+            const Vector3fDetached right_bbox_min = gather_node_bbox_min(right, internal_visit);
+            const Vector3fDetached right_bbox_max = gather_node_bbox_max(right, internal_visit);
             const FloatDetached left_bound = ray_aabb_lower_bound_sq(origin, direction, left_bbox_min, left_bbox_max);
             const FloatDetached right_bound = ray_aabb_lower_bound_sq(origin, direction, right_bbox_min, right_bbox_max);
 

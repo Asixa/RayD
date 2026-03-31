@@ -59,6 +59,7 @@ constexpr EdgeBVHBuildAlgorithm EdgeBVHDefaultBuildAlgorithm =
     EdgeBVHBuildAlgorithm::LBVH;
 constexpr EdgeBVHNodeLayoutMode EdgeBVHDefaultNodeLayoutMode =
     EdgeBVHNodeLayoutMode::ScalarArrays;
+constexpr int EdgeBVHLeafSize = 4;
 
 inline std::string normalize_edge_bvh_mode_value(const char *value) {
     std::string normalized = value != nullptr ? std::string(value) : std::string();

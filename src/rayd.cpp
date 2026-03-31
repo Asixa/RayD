@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 #include <drjit/python.h>
 
 #include <rayd/intersection.h>
@@ -324,6 +325,26 @@ NB_MODULE(rayd, m) {
             .def_ro("updated_transform_meshes", &SceneSyncProfile::updated_transform_meshes)
             .def_ro("updated_edge_meshes", &SceneSyncProfile::updated_edge_meshes)
             .def_ro("updated_edges", &SceneSyncProfile::updated_edges);
+
+        nb::class_<SceneEdgeBVHStats>(m, "SceneEdgeBVHStats")
+            .def_ro("primitive_count", &SceneEdgeBVHStats::primitive_count)
+            .def_ro("node_count", &SceneEdgeBVHStats::node_count)
+            .def_ro("internal_node_count", &SceneEdgeBVHStats::internal_node_count)
+            .def_ro("leaf_node_count", &SceneEdgeBVHStats::leaf_node_count)
+            .def_ro("max_height", &SceneEdgeBVHStats::max_height)
+            .def_ro("refit_level_count", &SceneEdgeBVHStats::refit_level_count)
+            .def_ro("min_leaf_size", &SceneEdgeBVHStats::min_leaf_size)
+            .def_ro("max_leaf_size", &SceneEdgeBVHStats::max_leaf_size)
+            .def_ro("avg_leaf_size", &SceneEdgeBVHStats::avg_leaf_size)
+            .def_ro("root_surface_area", &SceneEdgeBVHStats::root_surface_area)
+            .def_ro("internal_surface_area_sum", &SceneEdgeBVHStats::internal_surface_area_sum)
+            .def_ro("sibling_overlap_surface_area_sum",
+                    &SceneEdgeBVHStats::sibling_overlap_surface_area_sum)
+            .def_ro("sibling_overlap_surface_area_avg",
+                    &SceneEdgeBVHStats::sibling_overlap_surface_area_avg)
+            .def_ro("normalized_sibling_overlap",
+                    &SceneEdgeBVHStats::normalized_sibling_overlap)
+            .def_ro("leaf_size_histogram", &SceneEdgeBVHStats::leaf_size_histogram);
     });
 
     bind_section("mesh", [&]() {
@@ -435,6 +456,7 @@ NB_MODULE(rayd, m) {
             .def("has_pending_updates", &Scene::has_pending_updates)
             .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
+            .def("edge_bvh_stats", &Scene::edge_bvh_stats)
             .def("edge_topology", &Scene::edge_topology)
             .def("edge_mask", &Scene::edge_mask)
             .def("mesh_face_offsets", &Scene::mesh_face_offsets)

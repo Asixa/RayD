@@ -234,6 +234,27 @@ def _summarize_profile_samples(
     return summary
 
 
+def _bvh_stats_to_json(scene: Any) -> dict[str, Any]:
+    stats = scene.edge_bvh_stats()
+    return {
+        "primitive_count": int(stats.primitive_count),
+        "node_count": int(stats.node_count),
+        "internal_node_count": int(stats.internal_node_count),
+        "leaf_node_count": int(stats.leaf_node_count),
+        "max_height": int(stats.max_height),
+        "refit_level_count": int(stats.refit_level_count),
+        "min_leaf_size": int(stats.min_leaf_size),
+        "max_leaf_size": int(stats.max_leaf_size),
+        "avg_leaf_size": float(stats.avg_leaf_size),
+        "root_surface_area": float(stats.root_surface_area),
+        "internal_surface_area_sum": float(stats.internal_surface_area_sum),
+        "sibling_overlap_surface_area_sum": float(stats.sibling_overlap_surface_area_sum),
+        "sibling_overlap_surface_area_avg": float(stats.sibling_overlap_surface_area_avg),
+        "normalized_sibling_overlap": float(stats.normalized_sibling_overlap),
+        "leaf_size_histogram": [int(value) for value in list(stats.leaf_size_histogram)],
+    }
+
+
 def _build_mask_scenarios(
     scene: Any,
     *,
@@ -468,6 +489,7 @@ def _benchmark_mask_scenario(
         "description": scenario.description,
         "active_edge_count": int(scenario.active_edge_count),
         "keep_ratio": float(scenario.keep_ratio),
+        "bvh_stats": _bvh_stats_to_json(scene),
         "sync_to_mask": sync_to_mask,
         "restore_full": restore_full,
         "queries": query_timings,
@@ -558,6 +580,7 @@ def main() -> int:
         )
         for scenario in mask_scenarios
     ]
+    _ensure_mask(scene, full_mask)
     full_result = next(result for result in mask_results if result["name"] == "full")
 
     payload = {
@@ -579,6 +602,7 @@ def main() -> int:
             "mask_keep_stride": int(args.mask_keep_stride),
         },
         "build": build_timings,
+        "bvh_stats": _bvh_stats_to_json(scene),
         "timings": full_result["queries"],
         "sanity": full_result["sanity"],
         "mask_scenarios": mask_results,

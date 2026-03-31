@@ -678,6 +678,14 @@ SceneEdgeInfo Scene::edge_info() const {
     return info;
 }
 
+SceneEdgeBVHStats Scene::edge_bvh_stats() const {
+    require(is_ready(), "Scene::edge_bvh_stats(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::edge_bvh_stats(): scene has pending updates. Call Scene::sync() first.");
+    ensure_edge_bvh_ready();
+    return edge_bvh_->stats();
+}
+
 const SceneEdgeTopology &Scene::edge_topology() const {
     require(is_ready(), "Scene::edge_topology(): scene is not built.");
     return edge_topology_;

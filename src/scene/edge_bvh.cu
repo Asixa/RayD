@@ -665,6 +665,389 @@ __global__ void compute_morton_codes_kernel(
     morton_codes[primitive] = morton_code_3d(mul3(add3(bbox_min, bbox_max), 0.5f), scene_bounds);
 }
 
+__device__ inline float bbox_surface_area_bounds(const Bounds3 &bounds) {
+    const float dx = fmaxf(bounds.max.x - bounds.min.x, 0.f);
+    const float dy = fmaxf(bounds.max.y - bounds.min.y, 0.f);
+    const float dz = fmaxf(bounds.max.z - bounds.min.z, 0.f);
+    return 2.f * (dx * dy + dx * dz + dy * dz);
+}
+
+__device__ inline float ploc_merge_cost_bounds(const Bounds3 &a, const Bounds3 &b) {
+    return bbox_surface_area_bounds(merge_bounds(a, b));
+}
+
+__global__ void initialize_ploc_leaves_kernel(
+    int primitive_count,
+    int internal_count,
+    const int *sorted_primitives,
+    const float *primitive_bbox_min_x,
+    const float *primitive_bbox_min_y,
+    const float *primitive_bbox_min_z,
+    const float *primitive_bbox_max_x,
+    const float *primitive_bbox_max_y,
+    const float *primitive_bbox_max_z,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    int *leaf_primitive,
+    int *is_leaf,
+    int *primitive_leaf_node,
+    int *current_nodes,
+    Bounds3 *current_bounds) {
+    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (leaf_index >= primitive_count) {
+        return;
+    }
+
+    const int primitive = sorted_primitives[leaf_index];
+    const int node_index = internal_count + leaf_index;
+    const Bounds3 bounds{
+        Float3(primitive_bbox_min_x[primitive],
+               primitive_bbox_min_y[primitive],
+               primitive_bbox_min_z[primitive]),
+        Float3(primitive_bbox_max_x[primitive],
+               primitive_bbox_max_y[primitive],
+               primitive_bbox_max_z[primitive])
+    };
+
+    store_bounds(node_index,
+                 bounds,
+                 node_bbox_min_x,
+                 node_bbox_min_y,
+                 node_bbox_min_z,
+                 node_bbox_max_x,
+                 node_bbox_max_y,
+                 node_bbox_max_z);
+    leaf_primitive[node_index] = primitive;
+    is_leaf[node_index] = 1;
+    primitive_leaf_node[primitive] = node_index;
+    current_nodes[leaf_index] = node_index;
+    current_bounds[leaf_index] = bounds;
+}
+
+__global__ void compute_ploc_best_neighbors_kernel(int cluster_count,
+                                                   int search_radius,
+                                                   const Bounds3 *current_bounds,
+                                                   int *best_neighbor) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count) {
+        return;
+    }
+
+    const Bounds3 self_bounds = current_bounds[cluster_index];
+    const int begin = max(0, cluster_index - search_radius);
+    const int end = min(cluster_count - 1, cluster_index + search_radius);
+    float best_cost = 1e30f;
+    int best_index = -1;
+    for (int neighbor_index = begin; neighbor_index <= end; ++neighbor_index) {
+        if (neighbor_index == cluster_index) {
+            continue;
+        }
+        const float candidate_cost =
+            ploc_merge_cost_bounds(self_bounds, current_bounds[neighbor_index]);
+        if (candidate_cost < best_cost ||
+            (candidate_cost == best_cost &&
+             (best_index < 0 || neighbor_index < best_index))) {
+            best_cost = candidate_cost;
+            best_index = neighbor_index;
+        }
+    }
+    best_neighbor[cluster_index] = best_index;
+}
+
+__device__ inline uint64_t pack_ploc_candidate_sort_key(float cost, uint32_t tie_breaker) {
+    return (static_cast<uint64_t>(__float_as_uint(cost)) << 32) |
+           static_cast<uint64_t>(tie_breaker);
+}
+
+__global__ void generate_ploc_candidate_pairs_kernel(int cluster_count,
+                                                     const Bounds3 *current_bounds,
+                                                     const int *best_neighbor,
+                                                     uint64_t *candidate_sort_keys,
+                                                     int *candidate_ids,
+                                                     int *candidate_left,
+                                                     int *candidate_right) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count) {
+        return;
+    }
+
+    candidate_ids[cluster_index] = cluster_index;
+    const int neighbor_index = best_neighbor[cluster_index];
+    if (neighbor_index < 0 || neighbor_index >= cluster_count || neighbor_index == cluster_index) {
+        candidate_left[cluster_index] = -1;
+        candidate_right[cluster_index] = -1;
+        candidate_sort_keys[cluster_index] = 0xffffffffffffffffull;
+        return;
+    }
+
+    const int left_index = min(cluster_index, neighbor_index);
+    const int right_index = max(cluster_index, neighbor_index);
+    candidate_left[cluster_index] = left_index;
+    candidate_right[cluster_index] = right_index;
+    candidate_sort_keys[cluster_index] = pack_ploc_candidate_sort_key(
+        ploc_merge_cost_bounds(current_bounds[left_index], current_bounds[right_index]),
+        static_cast<uint32_t>(cluster_index));
+}
+
+__global__ void greedy_select_ploc_sorted_pairs_kernel(int candidate_count,
+                                                       const int *sorted_candidate_ids,
+                                                       const int *candidate_left,
+                                                       const int *candidate_right,
+                                                       int *pair_role,
+                                                       int *pair_partner,
+                                                       int *node_used) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    for (int candidate_rank = 0; candidate_rank < candidate_count; ++candidate_rank) {
+        const int candidate_id = sorted_candidate_ids[candidate_rank];
+        const int left_index = candidate_left[candidate_id];
+        const int right_index = candidate_right[candidate_id];
+        if (left_index < 0 || right_index < 0) {
+            continue;
+        }
+        if (node_used[left_index] != 0 || node_used[right_index] != 0) {
+            continue;
+        }
+
+        node_used[left_index] = 1;
+        node_used[right_index] = 1;
+        pair_role[left_index] = 1;
+        pair_role[right_index] = -1;
+        pair_partner[left_index] = right_index;
+        pair_partner[right_index] = left_index;
+    }
+}
+
+__global__ void mark_ploc_unmatched_runs_kernel(int cluster_count,
+                                                const int *pair_role,
+                                                int *run_start_flag,
+                                                int *run_end_flag) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count) {
+        return;
+    }
+
+    const bool unmatched = pair_role[cluster_index] == 0;
+    run_start_flag[cluster_index] =
+        unmatched && (cluster_index == 0 || pair_role[cluster_index - 1] != 0) ? 1 : 0;
+    run_end_flag[cluster_index] =
+        unmatched && (cluster_index + 1 == cluster_count || pair_role[cluster_index + 1] != 0) ? 1 : 0;
+}
+
+__global__ void scatter_ploc_run_bounds_kernel(int cluster_count,
+                                               const int *pair_role,
+                                               const int *run_start_flag,
+                                               const int *run_end_flag,
+                                               const int *run_prefix,
+                                               int *run_start_indices,
+                                               int *run_end_indices) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count || pair_role[cluster_index] != 0) {
+        return;
+    }
+
+    const int run_id = run_prefix[cluster_index] - 1;
+    if (run_id < 0) {
+        return;
+    }
+
+    if (run_start_flag[cluster_index] != 0) {
+        run_start_indices[run_id] = cluster_index;
+    }
+    if (run_end_flag[cluster_index] != 0) {
+        run_end_indices[run_id] = cluster_index;
+    }
+}
+
+__global__ void compute_ploc_run_pairing_mode_from_starts_kernel(
+    int cluster_count,
+    const Bounds3 *current_bounds,
+    const int *run_start_flag,
+    const int *run_prefix,
+    const int *run_end_indices,
+    int *run_leave_first) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count || run_start_flag[cluster_index] == 0) {
+        return;
+    }
+
+    const int run_index = run_prefix[cluster_index] - 1;
+    const int start = cluster_index;
+    const int end = run_end_indices[run_index];
+    const int run_length = end - start + 1;
+    int leave_first = 0;
+    if (run_length > 1 && (run_length & 1) != 0) {
+        float leave_last_cost = 0.f;
+        for (int index = start; index + 1 <= end - 1; index += 2) {
+            leave_last_cost +=
+                ploc_merge_cost_bounds(current_bounds[index], current_bounds[index + 1]);
+        }
+
+        float leave_first_cost = 0.f;
+        for (int index = start + 1; index + 1 <= end; index += 2) {
+            leave_first_cost +=
+                ploc_merge_cost_bounds(current_bounds[index], current_bounds[index + 1]);
+        }
+        leave_first = leave_first_cost < leave_last_cost ? 1 : 0;
+    }
+
+    run_leave_first[run_index] = leave_first;
+}
+
+__global__ void build_ploc_emission_plan_kernel(int cluster_count,
+                                                const int *pair_role,
+                                                const int *pair_partner,
+                                                const int *run_prefix,
+                                                const int *run_start_indices,
+                                                const int *run_end_indices,
+                                                const int *run_leave_first,
+                                                int *emit_flag,
+                                                int *merge_flag,
+                                                int *emit_partner) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count) {
+        return;
+    }
+
+    emit_flag[cluster_index] = 0;
+    merge_flag[cluster_index] = 0;
+    emit_partner[cluster_index] = -1;
+
+    if (pair_role[cluster_index] == 1) {
+        emit_flag[cluster_index] = 1;
+        merge_flag[cluster_index] = 1;
+        emit_partner[cluster_index] = pair_partner[cluster_index];
+        return;
+    }
+
+    if (pair_role[cluster_index] != 0) {
+        return;
+    }
+
+    const int run_id = run_prefix[cluster_index] - 1;
+    if (run_id < 0) {
+        return;
+    }
+
+    const int start = run_start_indices[run_id];
+    const int end = run_end_indices[run_id];
+    const int run_length = end - start + 1;
+    if (run_length == 1) {
+        emit_flag[cluster_index] = 1;
+        return;
+    }
+
+    const int leave_first = run_leave_first[run_id];
+    if (leave_first != 0 && cluster_index == start) {
+        emit_flag[cluster_index] = 1;
+        return;
+    }
+    if (leave_first == 0 && (run_length & 1) != 0 && cluster_index == end) {
+        emit_flag[cluster_index] = 1;
+        return;
+    }
+
+    const int pair_begin = start + leave_first;
+    const int pair_end = end - ((leave_first == 0 && (run_length & 1) != 0) ? 1 : 0);
+    if (cluster_index < pair_begin || cluster_index > pair_end) {
+        return;
+    }
+
+    const int offset = cluster_index - pair_begin;
+    if ((offset & 1) == 0 && cluster_index + 1 <= pair_end) {
+        emit_flag[cluster_index] = 1;
+        merge_flag[cluster_index] = 1;
+        emit_partner[cluster_index] = cluster_index + 1;
+    }
+}
+
+__global__ void emit_ploc_next_clusters_kernel(
+    int cluster_count,
+    int next_internal_node,
+    const int *current_nodes_in,
+    const Bounds3 *current_bounds_in,
+    const int *emit_flag,
+    const int *emit_offsets,
+    const int *merge_flag,
+    const int *merge_offsets,
+    const int *emit_partner,
+    int *current_nodes_out,
+    Bounds3 *current_bounds_out,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    int *left_child,
+    int *right_child,
+    int *leaf_primitive,
+    int *is_leaf,
+    int *parent) {
+    const int cluster_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (cluster_index >= cluster_count || emit_flag[cluster_index] == 0) {
+        return;
+    }
+
+    const int out_index = emit_offsets[cluster_index];
+    if (merge_flag[cluster_index] != 0) {
+        const int partner_index = emit_partner[cluster_index];
+        const int node_index = next_internal_node - merge_offsets[cluster_index];
+        const Bounds3 merged =
+            merge_bounds(current_bounds_in[cluster_index], current_bounds_in[partner_index]);
+        current_nodes_out[out_index] = node_index;
+        current_bounds_out[out_index] = merged;
+        left_child[node_index] = current_nodes_in[cluster_index];
+        right_child[node_index] = current_nodes_in[partner_index];
+        parent[current_nodes_in[cluster_index]] = node_index;
+        parent[current_nodes_in[partner_index]] = node_index;
+        leaf_primitive[node_index] = -1;
+        is_leaf[node_index] = 0;
+        store_bounds(node_index,
+                     merged,
+                     node_bbox_min_x,
+                     node_bbox_min_y,
+                     node_bbox_min_z,
+                     node_bbox_max_x,
+                     node_bbox_max_y,
+                     node_bbox_max_z);
+        return;
+    }
+
+    current_nodes_out[out_index] = current_nodes_in[cluster_index];
+    current_bounds_out[out_index] = current_bounds_in[cluster_index];
+}
+
+__global__ void finalize_ploc_round_counts_kernel(int cluster_count,
+                                                  const int *run_prefix,
+                                                  const int *emit_flag,
+                                                  const int *emit_offsets,
+                                                  const int *merge_flag,
+                                                  const int *merge_offsets,
+                                                  int *round_counts) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+
+    if (cluster_count <= 0) {
+        round_counts[0] = 0;
+        round_counts[1] = 0;
+        round_counts[2] = 0;
+        return;
+    }
+
+    const int last_index = cluster_count - 1;
+    round_counts[0] = run_prefix[last_index];
+    round_counts[1] = emit_offsets[last_index] + emit_flag[last_index];
+    round_counts[2] = merge_offsets[last_index] + merge_flag[last_index];
+}
+
 __device__ inline int longest_common_prefix(const uint32_t *morton_codes,
                                             const int *sorted_primitives,
                                             int primitive_count,
@@ -1086,6 +1469,20 @@ HostTreeLevels build_host_tree_levels_from_topology(const std::vector<int> &left
     }
 
     return result;
+}
+
+int ploc_search_radius_gpu(int cluster_count) {
+    if (cluster_count <= 1) {
+        return 0;
+    }
+
+    int search_radius = 8;
+    if (cluster_count <= 2048) {
+        search_radius = 32;
+    } else if (cluster_count <= 8192) {
+        search_radius = 16;
+    }
+    return std::min(search_radius, cluster_count - 1);
 }
 
 } // namespace
@@ -1608,6 +2005,971 @@ void build_edge_bvh_gpu(
                         "build_edge_lbvh_gpu(): failed to complete build");
     } catch (const std::exception &e) {
         throw_runtime_error_local(std::string("build_edge_lbvh_gpu(): ") + e.what());
+    }
+}
+
+void build_edge_ploc_bvh_gpu(
+    int primitive_count,
+    const float *edge_p0_x,
+    const float *edge_p0_y,
+    const float *edge_p0_z,
+    const float *edge_e1_x,
+    const float *edge_e1_y,
+    const float *edge_e1_z,
+    float *primitive_bbox_min_x,
+    float *primitive_bbox_min_y,
+    float *primitive_bbox_min_z,
+    float *primitive_bbox_max_x,
+    float *primitive_bbox_max_y,
+    float *primitive_bbox_max_z,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    int *left_child,
+    int *right_child,
+    int *leaf_primitive,
+    int *is_leaf,
+    int *primitive_leaf_node) {
+    require_local(primitive_count > 0, "build_edge_ploc_bvh_gpu(): primitive_count must be positive.");
+
+    try {
+        const int node_count = std::max(2 * primitive_count - 1, 1);
+        const int internal_count = std::max(primitive_count - 1, 0);
+        const int block_size = 256;
+        const int primitive_blocks = (primitive_count + block_size - 1) / block_size;
+        const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
+        const EdgeBVHTreeletScheduleMode treelet_schedule_mode =
+            active_edge_bvh_treelet_schedule_mode();
+        const bool treelet_enabled =
+            post_build_strategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
+            primitive_count >= EdgeBVHTreeletMinPrimitives &&
+            internal_count > 0;
+        CudaStreamHandle stream_handle;
+        const cudaStream_t stream = stream_handle.get();
+
+        CudaBuffer<Bounds3> primitive_bounds(static_cast<size_t>(primitive_count));
+        CudaBuffer<Bounds3> reduced_bounds(1);
+        CudaBuffer<uint32_t> morton_codes_in(static_cast<size_t>(primitive_count));
+        CudaBuffer<uint32_t> morton_codes_out(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> primitive_indices_in(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> primitive_indices_out(static_cast<size_t>(primitive_count));
+        CudaBuffer<uint64_t> candidate_sort_keys_in(static_cast<size_t>(primitive_count));
+        CudaBuffer<uint64_t> candidate_sort_keys_out(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> candidate_ids_in(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> candidate_ids_out(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> candidate_left(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> candidate_right(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> current_nodes_a(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> current_nodes_b(static_cast<size_t>(primitive_count));
+        CudaBuffer<Bounds3> current_bounds_a(static_cast<size_t>(primitive_count));
+        CudaBuffer<Bounds3> current_bounds_b(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> best_neighbor(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> node_used(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> pair_role(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> pair_partner(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_start_flag(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_end_flag(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_prefix(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_start_indices(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_end_indices(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> run_leave_first(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> emit_flag(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> emit_offsets(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> merge_flag(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> merge_offsets(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> emit_partner(static_cast<size_t>(primitive_count));
+        CudaBuffer<int> round_counts(3);
+        CudaBuffer<int> parent(static_cast<size_t>(node_count));
+        CudaBuffer<float> node_costs(static_cast<size_t>(node_count));
+        std::vector<int> host_left_child;
+        std::vector<int> host_right_child;
+        std::vector<int> host_is_leaf;
+        std::vector<int> subtree_leaf_counts;
+        std::vector<int> node_heights;
+        std::vector<std::vector<int>> host_level_groups;
+        FlatNodeLevels internal_level_schedule;
+        int max_height = 0;
+
+        compute_primitive_bounds_kernel<<<primitive_blocks, block_size, 0, stream>>>(
+            primitive_count,
+            edge_p0_x,
+            edge_p0_y,
+            edge_p0_z,
+            edge_e1_x,
+            edge_e1_y,
+            edge_e1_z,
+            primitive_bbox_min_x,
+            primitive_bbox_min_y,
+            primitive_bbox_min_z,
+            primitive_bbox_max_x,
+            primitive_bbox_max_y,
+            primitive_bbox_max_z,
+            primitive_bounds.get());
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch primitive-bounds kernel");
+
+        size_t reduce_temp_size = 0;
+        check_cuda_call(
+            cub::DeviceReduce::Reduce(nullptr,
+                                      reduce_temp_size,
+                                      primitive_bounds.get(),
+                                      reduced_bounds.get(),
+                                      primitive_count,
+                                      BoundsUnion(),
+                                      Bounds3::empty(),
+                                      stream),
+            "build_edge_ploc_bvh_gpu(): failed to size scene-bound reduction");
+        CudaBuffer<char> reduce_temp(reduce_temp_size);
+        check_cuda_call(
+            cub::DeviceReduce::Reduce(reduce_temp.get(),
+                                      reduce_temp_size,
+                                      primitive_bounds.get(),
+                                      reduced_bounds.get(),
+                                      primitive_count,
+                                      BoundsUnion(),
+                                      Bounds3::empty(),
+                                      stream),
+            "build_edge_ploc_bvh_gpu(): failed to reduce scene bounds");
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch scene-bound reduction");
+
+        Bounds3 scene_bounds = Bounds3::empty();
+        check_cuda_call(cudaMemcpyAsync(&scene_bounds,
+                                        reduced_bounds.get(),
+                                        sizeof(Bounds3),
+                                        cudaMemcpyDeviceToHost,
+                                        stream),
+                        "build_edge_ploc_bvh_gpu(): failed to copy scene bounds");
+        init_sequence_kernel<<<primitive_blocks, block_size, 0, stream>>>(
+            primitive_count, primitive_indices_in.get());
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch primitive-index initialization");
+        check_cuda_call(cudaStreamSynchronize(stream),
+                        "build_edge_ploc_bvh_gpu(): failed to prepare Morton inputs");
+
+        compute_morton_codes_kernel<<<primitive_blocks, block_size, 0, stream>>>(
+            primitive_count,
+            scene_bounds,
+            primitive_bbox_min_x,
+            primitive_bbox_min_y,
+            primitive_bbox_min_z,
+            primitive_bbox_max_x,
+            primitive_bbox_max_y,
+            primitive_bbox_max_z,
+            morton_codes_in.get());
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch Morton-code kernel");
+
+        size_t sort_temp_size = 0;
+        check_cuda_call(
+            cub::DeviceRadixSort::SortPairs(nullptr,
+                                            sort_temp_size,
+                                            morton_codes_in.get(),
+                                            morton_codes_out.get(),
+                                            primitive_indices_in.get(),
+                                            primitive_indices_out.get(),
+                                            primitive_count,
+                                            0,
+                                            32,
+                                            stream),
+            "build_edge_ploc_bvh_gpu(): failed to size radix sort");
+        CudaBuffer<char> sort_temp(sort_temp_size);
+        size_t pair_sort_temp_size = 0;
+        check_cuda_call(
+            cub::DeviceRadixSort::SortPairs(nullptr,
+                                            pair_sort_temp_size,
+                                            candidate_sort_keys_in.get(),
+                                            candidate_sort_keys_out.get(),
+                                            candidate_ids_in.get(),
+                                            candidate_ids_out.get(),
+                                            primitive_count,
+                                            0,
+                                            64,
+                                            stream),
+            "build_edge_ploc_bvh_gpu(): failed to size candidate sort");
+        CudaBuffer<char> pair_sort_temp(pair_sort_temp_size);
+        check_cuda_call(
+            cub::DeviceRadixSort::SortPairs(sort_temp.get(),
+                                            sort_temp_size,
+                                            morton_codes_in.get(),
+                                            morton_codes_out.get(),
+                                            primitive_indices_in.get(),
+                                            primitive_indices_out.get(),
+                                            primitive_count,
+                                            0,
+                                            32,
+                                            stream),
+            "build_edge_ploc_bvh_gpu(): failed to sort Morton codes");
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch Morton sort");
+
+        memset_int_async(left_child,
+                         -1,
+                         static_cast<size_t>(node_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init left_child");
+        memset_int_async(right_child,
+                         -1,
+                         static_cast<size_t>(node_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init right_child");
+        memset_int_async(leaf_primitive,
+                         -1,
+                         static_cast<size_t>(node_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init leaf_primitive");
+        memset_int_async(is_leaf,
+                         0,
+                         static_cast<size_t>(node_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init is_leaf");
+        memset_int_async(primitive_leaf_node,
+                         -1,
+                         static_cast<size_t>(primitive_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init primitive_leaf_node");
+        memset_int_async(parent.get(),
+                         -1,
+                         static_cast<size_t>(node_count),
+                         stream,
+                         "build_edge_ploc_bvh_gpu(): failed to init parent");
+
+        initialize_ploc_leaves_kernel<<<primitive_blocks, block_size, 0, stream>>>(
+            primitive_count,
+            internal_count,
+            primitive_indices_out.get(),
+            primitive_bbox_min_x,
+            primitive_bbox_min_y,
+            primitive_bbox_min_z,
+            primitive_bbox_max_x,
+            primitive_bbox_max_y,
+            primitive_bbox_max_z,
+            node_bbox_min_x,
+            node_bbox_min_y,
+            node_bbox_min_z,
+            node_bbox_max_x,
+            node_bbox_max_y,
+            node_bbox_max_z,
+            leaf_primitive,
+            is_leaf,
+            primitive_leaf_node,
+            current_nodes_a.get(),
+            current_bounds_a.get());
+        check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to initialize leaf clusters");
+
+        size_t inclusive_scan_temp_size = 0;
+        size_t exclusive_emit_temp_size = 0;
+        size_t exclusive_merge_temp_size = 0;
+        check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr,
+                                                      inclusive_scan_temp_size,
+                                                      run_start_flag.get(),
+                                                      run_prefix.get(),
+                                                      primitive_count,
+                                                      stream),
+                        "build_edge_ploc_bvh_gpu(): failed to size run scan");
+        check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
+                                                      exclusive_emit_temp_size,
+                                                      emit_flag.get(),
+                                                      emit_offsets.get(),
+                                                      primitive_count,
+                                                      stream),
+                        "build_edge_ploc_bvh_gpu(): failed to size emit scan");
+        check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
+                                                      exclusive_merge_temp_size,
+                                                      merge_flag.get(),
+                                                      merge_offsets.get(),
+                                                      primitive_count,
+                                                      stream),
+                        "build_edge_ploc_bvh_gpu(): failed to size merge scan");
+        CudaBuffer<char> scan_temp(std::max(inclusive_scan_temp_size,
+                                            std::max(exclusive_emit_temp_size,
+                                                     exclusive_merge_temp_size)));
+
+        int current_cluster_count = primitive_count;
+        int next_internal_node = internal_count - 1;
+        int host_round_counts[3] = { 0, 0, 0 };
+        CudaBuffer<int> *current_nodes_in = &current_nodes_a;
+        CudaBuffer<int> *current_nodes_out = &current_nodes_b;
+        CudaBuffer<Bounds3> *current_bounds_in = &current_bounds_a;
+        CudaBuffer<Bounds3> *current_bounds_out = &current_bounds_b;
+
+        while (current_cluster_count > 1) {
+            const int cluster_blocks = (current_cluster_count + block_size - 1) / block_size;
+            const int search_radius = ploc_search_radius_gpu(current_cluster_count);
+
+            compute_ploc_best_neighbors_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                search_radius,
+                current_bounds_in->get(),
+                best_neighbor.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch neighbor search");
+
+            generate_ploc_candidate_pairs_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                current_bounds_in->get(),
+                best_neighbor.get(),
+                candidate_sort_keys_in.get(),
+                candidate_ids_in.get(),
+                candidate_left.get(),
+                candidate_right.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to generate candidate pairs");
+
+            check_cuda_call(
+                cub::DeviceRadixSort::SortPairs(pair_sort_temp.get(),
+                                                pair_sort_temp_size,
+                                                candidate_sort_keys_in.get(),
+                                                candidate_sort_keys_out.get(),
+                                                candidate_ids_in.get(),
+                                                candidate_ids_out.get(),
+                                                current_cluster_count,
+                                                0,
+                                                64,
+                                                stream),
+                "build_edge_ploc_bvh_gpu(): failed to sort candidate pairs");
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to launch candidate sort");
+
+            memset_int_async(node_used.get(),
+                             0,
+                             static_cast<size_t>(current_cluster_count),
+                             stream,
+                             "build_edge_ploc_bvh_gpu(): failed to reset node-used flags");
+            memset_int_async(pair_role.get(),
+                             0,
+                             static_cast<size_t>(current_cluster_count),
+                             stream,
+                             "build_edge_ploc_bvh_gpu(): failed to reset pair roles");
+            memset_int_async(pair_partner.get(),
+                             -1,
+                             static_cast<size_t>(current_cluster_count),
+                             stream,
+                             "build_edge_ploc_bvh_gpu(): failed to reset pair partners");
+
+            greedy_select_ploc_sorted_pairs_kernel<<<1, 1, 0, stream>>>(
+                current_cluster_count,
+                candidate_ids_out.get(),
+                candidate_left.get(),
+                candidate_right.get(),
+                pair_role.get(),
+                pair_partner.get(),
+                node_used.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to greedily select candidate pairs");
+
+            mark_ploc_unmatched_runs_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                pair_role.get(),
+                run_start_flag.get(),
+                run_end_flag.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to mark unmatched runs");
+
+            check_cuda_call(cub::DeviceScan::InclusiveSum(scan_temp.get(),
+                                                          inclusive_scan_temp_size,
+                                                          run_start_flag.get(),
+                                                          run_prefix.get(),
+                                                          current_cluster_count,
+                                                          stream),
+                            "build_edge_ploc_bvh_gpu(): failed to scan unmatched runs");
+
+            scatter_ploc_run_bounds_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                pair_role.get(),
+                run_start_flag.get(),
+                run_end_flag.get(),
+                run_prefix.get(),
+                run_start_indices.get(),
+                run_end_indices.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to scatter run bounds");
+
+            check_cuda_call(cudaMemsetAsync(run_leave_first.get(),
+                                            0,
+                                            sizeof(int) * static_cast<size_t>(primitive_count),
+                                            stream),
+                            "build_edge_ploc_bvh_gpu(): failed to reset run pairing modes");
+
+            compute_ploc_run_pairing_mode_from_starts_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                current_bounds_in->get(),
+                run_start_flag.get(),
+                run_prefix.get(),
+                run_end_indices.get(),
+                run_leave_first.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to evaluate unmatched run pairing");
+
+            build_ploc_emission_plan_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                pair_role.get(),
+                pair_partner.get(),
+                run_prefix.get(),
+                run_start_indices.get(),
+                run_end_indices.get(),
+                run_leave_first.get(),
+                emit_flag.get(),
+                merge_flag.get(),
+                emit_partner.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to build emission plan");
+
+            check_cuda_call(cub::DeviceScan::ExclusiveSum(scan_temp.get(),
+                                                          exclusive_emit_temp_size,
+                                                          emit_flag.get(),
+                                                          emit_offsets.get(),
+                                                          current_cluster_count,
+                                                          stream),
+                            "build_edge_ploc_bvh_gpu(): failed to scan emit flags");
+            check_cuda_call(cub::DeviceScan::ExclusiveSum(scan_temp.get(),
+                                                          exclusive_merge_temp_size,
+                                                          merge_flag.get(),
+                                                          merge_offsets.get(),
+                                                          current_cluster_count,
+                                                          stream),
+                            "build_edge_ploc_bvh_gpu(): failed to scan merge flags");
+
+            emit_ploc_next_clusters_kernel<<<cluster_blocks, block_size, 0, stream>>>(
+                current_cluster_count,
+                next_internal_node,
+                current_nodes_in->get(),
+                current_bounds_in->get(),
+                emit_flag.get(),
+                emit_offsets.get(),
+                merge_flag.get(),
+                merge_offsets.get(),
+                emit_partner.get(),
+                current_nodes_out->get(),
+                current_bounds_out->get(),
+                node_bbox_min_x,
+                node_bbox_min_y,
+                node_bbox_min_z,
+                node_bbox_max_x,
+                node_bbox_max_y,
+                node_bbox_max_z,
+                left_child,
+                right_child,
+                leaf_primitive,
+                is_leaf,
+                parent.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to emit next cluster level");
+
+            finalize_ploc_round_counts_kernel<<<1, 1, 0, stream>>>(
+                current_cluster_count,
+                run_prefix.get(),
+                emit_flag.get(),
+                emit_offsets.get(),
+                merge_flag.get(),
+                merge_offsets.get(),
+                round_counts.get());
+            check_cuda_last_error("build_edge_ploc_bvh_gpu(): failed to finalize round counts");
+            check_cuda_call(cudaMemcpyAsync(host_round_counts,
+                                            round_counts.get(),
+                                            sizeof(host_round_counts),
+                                            cudaMemcpyDeviceToHost,
+                                            stream),
+                            "build_edge_ploc_bvh_gpu(): failed to copy round counts");
+            check_cuda_call(cudaStreamSynchronize(stream),
+                            "build_edge_ploc_bvh_gpu(): failed to complete clustering round");
+
+            const int next_cluster_count = host_round_counts[1];
+            const int merge_count = host_round_counts[2];
+            require_local(merge_count > 0,
+                          "build_edge_ploc_bvh_gpu(): clustering round did not make progress.");
+            require_local(next_cluster_count > 0 && next_cluster_count < current_cluster_count,
+                          "build_edge_ploc_bvh_gpu(): invalid next cluster count.");
+
+            current_cluster_count = next_cluster_count;
+            next_internal_node -= merge_count;
+            std::swap(current_nodes_in, current_nodes_out);
+            std::swap(current_bounds_in, current_bounds_out);
+        }
+
+        require_local(next_internal_node == -1,
+                      "build_edge_ploc_bvh_gpu(): internal-node allocator did not terminate at the root.");
+
+        if (treelet_enabled) {
+            check_cuda_call(cudaStreamSynchronize(stream),
+                            "build_edge_ploc_bvh_gpu(): failed to finalize raw topology");
+            host_left_child = copy_int_buffer_to_host(left_child,
+                                                      static_cast<size_t>(node_count),
+                                                      "build_edge_ploc_bvh_gpu(): failed to copy left_child");
+            host_right_child = copy_int_buffer_to_host(right_child,
+                                                       static_cast<size_t>(node_count),
+                                                       "build_edge_ploc_bvh_gpu(): failed to copy right_child");
+            host_is_leaf = copy_int_buffer_to_host(is_leaf,
+                                                   static_cast<size_t>(node_count),
+                                                   "build_edge_ploc_bvh_gpu(): failed to copy is_leaf");
+            const HostTreeLevels host_levels = build_host_tree_levels_from_topology(host_left_child,
+                                                                                    host_right_child,
+                                                                                    host_is_leaf);
+            node_heights = host_levels.node_heights;
+            host_level_groups = host_levels.levels;
+            max_height = host_levels.max_height;
+            size_t scheduled_internal_count = 0;
+            for (size_t level_index = 1; level_index < host_level_groups.size(); ++level_index) {
+                scheduled_internal_count += host_level_groups[level_index].size();
+            }
+            require_local(static_cast<int>(scheduled_internal_count) == internal_count,
+                          "build_edge_ploc_bvh_gpu(): failed to levelize every internal node.");
+            internal_level_schedule = flatten_node_levels(host_level_groups);
+            subtree_leaf_counts.assign(static_cast<size_t>(node_count), 1);
+            for (int height = 1; height <= max_height; ++height) {
+                for (int node_index : host_level_groups[static_cast<size_t>(height)]) {
+                    subtree_leaf_counts[static_cast<size_t>(node_index)] =
+                        subtree_leaf_counts[static_cast<size_t>(
+                            host_left_child[static_cast<size_t>(node_index)])] +
+                        subtree_leaf_counts[static_cast<size_t>(
+                            host_right_child[static_cast<size_t>(node_index)])];
+                }
+            }
+
+            std::vector<std::vector<int>> recompute_levels(static_cast<size_t>(max_height + 1));
+            std::vector<std::vector<int>> optimize_levels(static_cast<size_t>(max_height + 1));
+            for (int node_index = 0; node_index < internal_count; ++node_index) {
+                const int height = node_heights[static_cast<size_t>(node_index)];
+                if (subtree_leaf_counts[static_cast<size_t>(node_index)] >=
+                    EdgeBVHTreeletMinSubtreeLeaves) {
+                    optimize_levels[static_cast<size_t>(height)].push_back(node_index);
+                } else {
+                    recompute_levels[static_cast<size_t>(height)].push_back(node_index);
+                }
+            }
+            const FlatNodeLevels recompute_schedule = flatten_node_levels(recompute_levels);
+            const FlatNodeLevels optimize_schedule = flatten_node_levels(optimize_levels);
+            CudaBuffer<int> recompute_nodes_device(recompute_schedule.nodes.size());
+            CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
+            if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
+                if (!recompute_schedule.nodes.empty()) {
+                    check_cuda_call(cudaMemcpy(recompute_nodes_device.get(),
+                                               recompute_schedule.nodes.data(),
+                                               recompute_schedule.nodes.size() * sizeof(int),
+                                               cudaMemcpyHostToDevice),
+                                    "build_edge_ploc_bvh_gpu(): failed to upload recompute schedule");
+                }
+                if (!optimize_schedule.nodes.empty()) {
+                    check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
+                                               optimize_schedule.nodes.data(),
+                                               optimize_schedule.nodes.size() * sizeof(int),
+                                               cudaMemcpyHostToDevice),
+                                    "build_edge_ploc_bvh_gpu(): failed to upload treelet schedule");
+                }
+            }
+
+            const float scene_scale =
+                fmaxf(scene_bounds.max.x - scene_bounds.min.x,
+                      fmaxf(scene_bounds.max.y - scene_bounds.min.y,
+                            scene_bounds.max.z - scene_bounds.min.z));
+            const float inflation =
+                fmaxf(scene_scale * EdgeBVHTreeletCostInflationRatio, 1e-6f);
+            initialize_leaf_costs_kernel<<<primitive_blocks, block_size, 0, stream>>>(
+                primitive_count,
+                node_bbox_min_x,
+                node_bbox_min_y,
+                node_bbox_min_z,
+                node_bbox_max_x,
+                node_bbox_max_y,
+                node_bbox_max_z,
+                node_costs.get(),
+                inflation);
+            check_cuda_last_error(
+                "build_edge_ploc_bvh_gpu(): failed to launch leaf-cost initialization");
+
+            for (int height = 1; height <= max_height; ++height) {
+                const int recompute_start =
+                    recompute_schedule.level_offsets[static_cast<size_t>(height)];
+                const int recompute_end =
+                    recompute_schedule.level_offsets[static_cast<size_t>(height + 1)];
+                const int recompute_count = recompute_end - recompute_start;
+                if (recompute_count > 0) {
+                    const int level_blocks = (recompute_count + block_size - 1) / block_size;
+                    if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
+                        update_internal_nodes_kernel<<<level_blocks, block_size, 0, stream>>>(
+                            recompute_count,
+                            recompute_nodes_device.get() + recompute_start,
+                            left_child,
+                            right_child,
+                            node_bbox_min_x,
+                            node_bbox_min_y,
+                            node_bbox_min_z,
+                            node_bbox_max_x,
+                            node_bbox_max_y,
+                            node_bbox_max_z,
+                            node_costs.get(),
+                            inflation);
+                    } else {
+                        const std::vector<int> &recompute_nodes =
+                            recompute_levels[static_cast<size_t>(height)];
+                        CudaBuffer<int> device_nodes(recompute_nodes.size());
+                        check_cuda_call(cudaMemcpy(device_nodes.get(),
+                                                   recompute_nodes.data(),
+                                                   recompute_nodes.size() * sizeof(int),
+                                                   cudaMemcpyHostToDevice),
+                                        "build_edge_ploc_bvh_gpu(): failed to upload recompute nodes");
+                        update_internal_nodes_kernel<<<level_blocks, block_size, 0, stream>>>(
+                            recompute_count,
+                            device_nodes.get(),
+                            left_child,
+                            right_child,
+                            node_bbox_min_x,
+                            node_bbox_min_y,
+                            node_bbox_min_z,
+                            node_bbox_max_x,
+                            node_bbox_max_y,
+                            node_bbox_max_z,
+                            node_costs.get(),
+                            inflation);
+                    }
+                    check_cuda_last_error(
+                        "build_edge_ploc_bvh_gpu(): failed to launch internal-node recompute");
+                }
+
+                const int optimize_start =
+                    optimize_schedule.level_offsets[static_cast<size_t>(height)];
+                const int optimize_end =
+                    optimize_schedule.level_offsets[static_cast<size_t>(height + 1)];
+                const int optimize_count = optimize_end - optimize_start;
+                if (optimize_count > 0) {
+                    const int level_blocks = (optimize_count + block_size - 1) / block_size;
+                    if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
+                        optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, stream>>>(
+                            optimize_count,
+                            optimize_nodes_device.get() + optimize_start,
+                            is_leaf,
+                            left_child,
+                            right_child,
+                            parent.get(),
+                            node_bbox_min_x,
+                            node_bbox_min_y,
+                            node_bbox_min_z,
+                            node_bbox_max_x,
+                            node_bbox_max_y,
+                            node_bbox_max_z,
+                            leaf_primitive,
+                            node_costs.get(),
+                            inflation);
+                    } else {
+                        const std::vector<int> &optimize_nodes =
+                            optimize_levels[static_cast<size_t>(height)];
+                        CudaBuffer<int> device_nodes(optimize_nodes.size());
+                        check_cuda_call(cudaMemcpy(device_nodes.get(),
+                                                   optimize_nodes.data(),
+                                                   optimize_nodes.size() * sizeof(int),
+                                                   cudaMemcpyHostToDevice),
+                                        "build_edge_ploc_bvh_gpu(): failed to upload treelet roots");
+                        optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, stream>>>(
+                            optimize_count,
+                            device_nodes.get(),
+                            is_leaf,
+                            left_child,
+                            right_child,
+                            parent.get(),
+                            node_bbox_min_x,
+                            node_bbox_min_y,
+                            node_bbox_min_z,
+                            node_bbox_max_x,
+                            node_bbox_max_y,
+                            node_bbox_max_z,
+                            leaf_primitive,
+                            node_costs.get(),
+                            inflation);
+                    }
+                    check_cuda_last_error(
+                        "build_edge_ploc_bvh_gpu(): failed to launch GPU treelet optimization");
+                }
+            }
+        }
+
+        check_cuda_call(cudaStreamSynchronize(stream),
+                        "build_edge_ploc_bvh_gpu(): failed to complete build");
+    } catch (const std::exception &e) {
+        throw_runtime_error_local(std::string("build_edge_ploc_bvh_gpu(): ") + e.what());
+    }
+}
+
+__global__ void build_raw_parent_links_kernel(int node_count,
+                                              const int *raw_left_child,
+                                              const int *raw_right_child,
+                                              int *parent) {
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count) {
+        return;
+    }
+
+    const int left = raw_left_child[node_index];
+    const int right = raw_right_child[node_index];
+    if (left >= 0) {
+        parent[left] = node_index;
+    }
+    if (right >= 0) {
+        parent[right] = node_index;
+    }
+}
+
+__global__ void finalize_raw_subtree_leaf_counts_kernel(int node_count,
+                                                        const int *raw_leaf_primitive,
+                                                        const int *parent,
+                                                        int *subtree_leaf_count,
+                                                        int *arrival_counter) {
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count || raw_leaf_primitive[node_index] < 0) {
+        return;
+    }
+
+    subtree_leaf_count[node_index] = 1;
+    int current = parent[node_index];
+    int contribution = 1;
+    while (current >= 0) {
+        atomicAdd(subtree_leaf_count + current, contribution);
+        if (atomicAdd(arrival_counter + current, 1) == 0) {
+            return;
+        }
+        contribution = subtree_leaf_count[current];
+        current = parent[current];
+    }
+}
+
+__global__ void mark_collapsible_raw_nodes_kernel(int node_count,
+                                                  const int *subtree_leaf_count,
+                                                  const int *raw_leaf_primitive,
+                                                  int *collapse_flag) {
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count) {
+        return;
+    }
+
+    collapse_flag[node_index] =
+        (raw_leaf_primitive[node_index] >= 0 || subtree_leaf_count[node_index] <= EdgeBVHLeafSize) ? 1 : 0;
+}
+
+__global__ void mark_live_collapsed_raw_nodes_kernel(int node_count,
+                                                     const int *parent,
+                                                     const int *collapse_flag,
+                                                     const int *subtree_leaf_count,
+                                                     int *live_flag,
+                                                     int *live_leaf_count) {
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count) {
+        return;
+    }
+
+    bool live = true;
+    int current = node_index;
+    while (current > 0) {
+        const int parent_index = parent[current];
+        if (parent_index < 0) {
+            live = false;
+            break;
+        }
+        if (collapse_flag[parent_index] != 0) {
+            live = false;
+            break;
+        }
+        current = parent_index;
+    }
+
+    live_flag[node_index] = live ? 1 : 0;
+    live_leaf_count[node_index] =
+        (live && collapse_flag[node_index] != 0) ? subtree_leaf_count[node_index] : 0;
+}
+
+__global__ void emit_collapsed_raw_nodes_kernel(int node_count,
+                                                const int *raw_left_child,
+                                                const int *raw_right_child,
+                                                const int *subtree_leaf_count,
+                                                const int *collapse_flag,
+                                                const int *live_flag,
+                                                const int *leaf_begin,
+                                                int *out_left_child,
+                                                int *out_right_child) {
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count) {
+        return;
+    }
+
+    if (live_flag[node_index] == 0) {
+        out_left_child[node_index] = -1;
+        out_right_child[node_index] = 0;
+        return;
+    }
+
+    if (collapse_flag[node_index] != 0) {
+        out_left_child[node_index] = -leaf_begin[node_index] - 1;
+        out_right_child[node_index] = subtree_leaf_count[node_index];
+        return;
+    }
+
+    out_left_child[node_index] = raw_left_child[node_index];
+    out_right_child[node_index] = raw_right_child[node_index];
+}
+
+__global__ void emit_collapsed_raw_leaf_primitives_kernel(int node_count,
+                                                          const int *collapse_flag,
+                                                          const int *live_flag,
+                                                          const int *leaf_begin,
+                                                          const int *subtree_leaf_count,
+                                                          const int *raw_left_child,
+                                                          const int *raw_right_child,
+                                                          const int *raw_leaf_primitive,
+                                                          int *out_leaf_primitives,
+                                                          int *out_primitive_leaf_node) {
+    constexpr int max_stack_size = 2 * EdgeBVHLeafSize;
+    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (node_index >= node_count || live_flag[node_index] == 0 || collapse_flag[node_index] == 0) {
+        return;
+    }
+
+    const int leaf_count = subtree_leaf_count[node_index];
+    if (leaf_count <= 0) {
+        return;
+    }
+
+    int stack[max_stack_size];
+    int stack_size = 0;
+    stack[stack_size++] = node_index;
+    int write_offset = leaf_begin[node_index];
+
+    while (stack_size > 0) {
+        const int raw_node_index = stack[--stack_size];
+        const int primitive = raw_leaf_primitive[raw_node_index];
+        if (primitive >= 0) {
+            out_leaf_primitives[write_offset++] = primitive;
+            out_primitive_leaf_node[primitive] = node_index;
+            continue;
+        }
+
+        const int right = raw_right_child[raw_node_index];
+        const int left = raw_left_child[raw_node_index];
+        if (right >= 0 && stack_size < max_stack_size) {
+            stack[stack_size++] = right;
+        }
+        if (left >= 0 && stack_size < max_stack_size) {
+            stack[stack_size++] = left;
+        }
+    }
+}
+
+void collapse_edge_bvh_gpu(
+    int primitive_count,
+    int raw_node_count,
+    const int *raw_left_child,
+    const int *raw_right_child,
+    const int *raw_leaf_primitive,
+    int *out_left_child,
+    int *out_right_child,
+    int *out_leaf_primitives,
+    int *out_primitive_leaf_node) {
+    require_local(primitive_count >= 0, "collapse_edge_bvh_gpu(): primitive_count must be non-negative.");
+    require_local(raw_node_count >= 0, "collapse_edge_bvh_gpu(): raw_node_count must be non-negative.");
+
+    try {
+        const int block_size = 256;
+        const int node_blocks = (raw_node_count + block_size - 1) / block_size;
+        CudaStreamHandle stream_handle;
+        const cudaStream_t stream = stream_handle.get();
+        CudaBuffer<int> parent(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> subtree_leaf_count(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> arrival_counter(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> collapse_flag(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> live_flag(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> live_leaf_count(static_cast<size_t>(raw_node_count));
+        CudaBuffer<int> leaf_begin(static_cast<size_t>(raw_node_count));
+
+        memset_int_async(parent.get(),
+                         -1,
+                         static_cast<size_t>(raw_node_count),
+                         stream,
+                         "collapse_edge_bvh_gpu(): failed to initialize parent links");
+        memset_int_async(subtree_leaf_count.get(),
+                         0,
+                         static_cast<size_t>(raw_node_count),
+                         stream,
+                         "collapse_edge_bvh_gpu(): failed to initialize subtree leaf counts");
+        memset_int_async(arrival_counter.get(),
+                         0,
+                         static_cast<size_t>(raw_node_count),
+                         stream,
+                         "collapse_edge_bvh_gpu(): failed to initialize subtree merge counters");
+
+        build_raw_parent_links_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            raw_left_child,
+            raw_right_child,
+            parent.get());
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to build raw parent links");
+
+        finalize_raw_subtree_leaf_counts_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            raw_leaf_primitive,
+            parent.get(),
+            subtree_leaf_count.get(),
+            arrival_counter.get());
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to accumulate subtree leaf counts");
+
+        mark_collapsible_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            subtree_leaf_count.get(),
+            raw_leaf_primitive,
+            collapse_flag.get());
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark collapsible nodes");
+
+        mark_live_collapsed_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            parent.get(),
+            collapse_flag.get(),
+            subtree_leaf_count.get(),
+            live_flag.get(),
+            live_leaf_count.get());
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark live nodes");
+
+        size_t scan_temp_size = 0;
+        check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
+                                                      scan_temp_size,
+                                                      live_leaf_count.get(),
+                                                      leaf_begin.get(),
+                                                      raw_node_count,
+                                                      stream),
+                        "collapse_edge_bvh_gpu(): failed to size leaf packing scan");
+        CudaBuffer<char> scan_temp(scan_temp_size);
+        check_cuda_call(cub::DeviceScan::ExclusiveSum(scan_temp.get(),
+                                                      scan_temp_size,
+                                                      live_leaf_count.get(),
+                                                      leaf_begin.get(),
+                                                      raw_node_count,
+                                                      stream),
+                        "collapse_edge_bvh_gpu(): failed to scan leaf packing offsets");
+
+        memset_int_async(out_leaf_primitives,
+                         -1,
+                         static_cast<size_t>(primitive_count),
+                         stream,
+                         "collapse_edge_bvh_gpu(): failed to initialize leaf primitive output");
+        memset_int_async(out_primitive_leaf_node,
+                         -1,
+                         static_cast<size_t>(primitive_count),
+                         stream,
+                         "collapse_edge_bvh_gpu(): failed to initialize primitive leaf-node output");
+
+        emit_collapsed_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            raw_left_child,
+            raw_right_child,
+            subtree_leaf_count.get(),
+            collapse_flag.get(),
+            live_flag.get(),
+            leaf_begin.get(),
+            out_left_child,
+            out_right_child);
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed node topology");
+
+        emit_collapsed_raw_leaf_primitives_kernel<<<node_blocks, block_size, 0, stream>>>(
+            raw_node_count,
+            collapse_flag.get(),
+            live_flag.get(),
+            leaf_begin.get(),
+            subtree_leaf_count.get(),
+            raw_left_child,
+            raw_right_child,
+            raw_leaf_primitive,
+            out_leaf_primitives,
+            out_primitive_leaf_node);
+        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed leaf primitives");
+
+        check_cuda_call(cudaStreamSynchronize(stream),
+                        "collapse_edge_bvh_gpu(): failed to finish subtree collapse");
+    } catch (const std::exception &e) {
+        throw_runtime_error_local(std::string("collapse_edge_bvh_gpu(): ") + e.what());
     }
 }
 

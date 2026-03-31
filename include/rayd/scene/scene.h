@@ -49,6 +49,7 @@ public:
     void sync();
     const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
     SceneEdgeInfo edge_info() const;
+    SceneEdgeBVHStats edge_bvh_stats() const;
     const SceneEdgeTopology &edge_topology() const;
     const MaskDetached &edge_mask() const;
     const IntDetached &mesh_face_offsets() const { return face_offsets_; }

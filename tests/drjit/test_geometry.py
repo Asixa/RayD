@@ -971,6 +971,124 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["edge_info_before"], [0, 1, 2])
         self.assertEqual(data["edge_info_after"], [0, 1, 2])
 
+    def test_scene_edge_ploc_gpu_treelet_mode_builds_and_queries(self):
+        data = run_json_case(
+            """
+            import json
+            import os
+
+            os.environ["RAYD_EDGE_BVH_BUILD_ALGORITHM"] = "ploc"
+            os.environ["RAYD_EDGE_BVH_POST_BUILD_STRATEGY"] = "gpu_treelet"
+            os.environ["RAYD_EDGE_BVH_COMPACTION_MODE"] = "gpu_emit"
+
+            import rayd as pj
+            import drjit.cuda as cuda
+            from tests.benchmark_support import _make_grid_mesh_data
+
+            mesh_data = _make_grid_mesh_data(192)
+            mesh = pj.Mesh(cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+                           cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+            edge = scene.nearest_edge(cuda.Array3f([0.5], [0.5], [0.1]))
+
+            print(json.dumps({
+                "valid": bool(edge.is_valid()[0]),
+                "global_edge_id": int(edge.global_edge_id[0]),
+                "distance": float(edge.distance[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["valid"])
+        self.assertGreaterEqual(data["global_edge_id"], 0)
+        self.assertGreater(data["distance"], 0.0)
+
+    def test_scene_edge_ploc_stats_report_gpu_collapsed_leaves(self):
+        data = run_json_case(
+            """
+            import json
+            import os
+
+            os.environ["RAYD_EDGE_BVH_BUILD_ALGORITHM"] = "ploc"
+            os.environ["RAYD_EDGE_BVH_POST_BUILD_STRATEGY"] = "none"
+            os.environ["RAYD_EDGE_BVH_COMPACTION_MODE"] = "gpu_emit"
+
+            import rayd as pj
+            import drjit.cuda as cuda
+            from tests.benchmark_support import _make_grid_mesh_data
+
+            mesh_data = _make_grid_mesh_data(32)
+            mesh = pj.Mesh(cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+                           cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+            stats = scene.edge_bvh_stats()
+
+            print(json.dumps({
+                "primitive_count": int(stats.primitive_count),
+                "node_count": int(stats.node_count),
+                "max_leaf_size": int(stats.max_leaf_size),
+                "leaf_histogram": [int(v) for v in list(stats.leaf_size_histogram)],
+            }))
+            """
+        )
+
+        raw_node_count = 2 * data["primitive_count"] - 1
+        multi_primitive_leaves = sum(data["leaf_histogram"][2:]) if len(data["leaf_histogram"]) > 2 else 0
+
+        self.assertGreater(data["primitive_count"], 0)
+        self.assertGreater(data["node_count"], 0)
+        self.assertLess(data["node_count"], raw_node_count)
+        self.assertLessEqual(data["max_leaf_size"], 4)
+        self.assertGreater(multi_primitive_leaves, 0)
+
+    def test_scene_edge_bvh_stats_report_compacted_tree_metrics(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+            from tests.benchmark_support import _make_grid_mesh_data
+
+            mesh_data = _make_grid_mesh_data(8)
+            mesh = pj.Mesh(cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+                           cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+            stats = scene.edge_bvh_stats()
+
+            print(json.dumps({
+                "primitive_count": int(stats.primitive_count),
+                "node_count": int(stats.node_count),
+                "internal_node_count": int(stats.internal_node_count),
+                "leaf_node_count": int(stats.leaf_node_count),
+                "max_height": int(stats.max_height),
+                "refit_level_count": int(stats.refit_level_count),
+                "leaf_histogram": [int(v) for v in list(stats.leaf_size_histogram)],
+                "hist_leaf_count": int(sum(stats.leaf_size_histogram)),
+                "hist_primitive_count": int(sum(i * v for i, v in enumerate(stats.leaf_size_histogram))),
+                "normalized_overlap": float(stats.normalized_sibling_overlap),
+            }))
+            """
+        )
+
+        self.assertGreater(data["primitive_count"], 0)
+        self.assertGreater(data["node_count"], 0)
+        self.assertGreater(data["internal_node_count"], 0)
+        self.assertGreater(data["leaf_node_count"], 0)
+        self.assertGreaterEqual(data["max_height"], 1)
+        self.assertGreaterEqual(data["refit_level_count"], 1)
+        self.assertEqual(data["hist_leaf_count"], data["leaf_node_count"])
+        self.assertEqual(data["hist_primitive_count"], data["primitive_count"])
+        self.assertGreaterEqual(data["normalized_overlap"], 0.0)
+
     def test_scene_edge_masked_refit_updates_active_subset(self):
         data = run_json_case(
             """
