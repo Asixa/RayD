@@ -14,6 +14,12 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn('nanobind==2.9.2', readme)
         self.assertNotIn('nanobind==2.11.0', readme)
 
+    def test_reflection_trace_ptx_header_is_committed(self):
+        self.assertTrue(
+            (ROOT / "src" / "multipath" / "reflection_trace_ptx.h").is_file(),
+            "Expected committed reflection_trace PTX header for wheel builds.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

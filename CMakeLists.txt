@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(RAYD_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL_3 + no exceptions)." ON)
 option(RAYD_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
 option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
+option(RAYD_REGENERATE_REFLECTION_TRACE_PTX "Regenerate reflection_trace PTX during the build. Requires OptiX SDK headers." OFF)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 execute_process(
@@ -67,17 +68,6 @@ endif()
 find_package(CUDA 11.0 REQUIRED)
 set(CUDA_PROPAGATE_HOST_FLAGS OFF)
 mark_as_advanced(CLEAR CUDA_64_BIT_DEVICE_CODE)
-
-find_path(OPTIX_INCLUDE_DIR optix.h
-    HINTS
-        ENV OPTIX_PATH
-        "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0/include"
-        "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0/include"
-        "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0/include"
-)
-if(NOT OPTIX_INCLUDE_DIR)
-    message(FATAL_ERROR "Could not locate OptiX SDK headers. Set OPTIX_INCLUDE_DIR or OPTIX_PATH.")
-endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
@@ -239,56 +229,89 @@ set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNA
 list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_DEDUP_OBJECT}")
 
 set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
-set(RAYD_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace.ptx")
 set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_ptx.h")
+set(RAYD_REFLECTION_TRACE_PTX_H_COMMITTED
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_ptx.h")
 
-if(WIN32)
-    set(RAYD_REFLECTION_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_trace_ptx.bat")
-    file(GENERATE OUTPUT "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}" CONTENT
+if(RAYD_REGENERATE_REFLECTION_TRACE_PTX)
+    find_path(OPTIX_INCLUDE_DIR optix.h
+        HINTS
+            ENV OPTIX_INCLUDE_DIR
+            ENV OPTIX_PATH
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
+            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+        PATH_SUFFIXES include
+    )
+    if(NOT OPTIX_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "Could not locate OptiX SDK headers needed to regenerate reflection_trace PTX. "
+            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_REFLECTION_TRACE_PTX.")
+    endif()
+
+    set(RAYD_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace.ptx")
+    if(WIN32)
+        set(RAYD_REFLECTION_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_trace_ptx.bat")
+        file(GENERATE OUTPUT "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_TRACE_PTX}\"\r\n\
 ")
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
-        COMMAND "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
-            "${RAYD_REFLECTION_TRACE_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
-        VERBATIM
-    )
-else()
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
+        add_custom_command(
+            OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
+            COMMAND "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
+            DEPENDS
+                "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_TRACE_CU}"
-                -I"${OPTIX_INCLUDE_DIR}"
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_REFLECTION_TRACE_PTX}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
+            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
+                    "${RAYD_REFLECTION_TRACE_CU}"
+                    -I"${OPTIX_INCLUDE_DIR}"
+                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                    ${RAYD_CUDA_DEFINITIONS_LIST}
+                    -o "${RAYD_REFLECTION_TRACE_PTX}"
+            DEPENDS
+                "${RAYD_REFLECTION_TRACE_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
+            VERBATIM
+        )
+    endif()
+
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_TRACE_PTX_H}"
+        COMMAND ${CMAKE_COMMAND}
+            -DPTX_FILE=${RAYD_REFLECTION_TRACE_PTX}
+            -DOUTPUT_FILE=${RAYD_REFLECTION_TRACE_PTX_H}
+            -DVAR_NAME=reflection_trace_ptx
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
         DEPENDS
-            "${RAYD_REFLECTION_TRACE_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
+            "${RAYD_REFLECTION_TRACE_PTX}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
         VERBATIM
     )
+    set_source_files_properties("${RAYD_REFLECTION_TRACE_PTX_H}" PROPERTIES GENERATED TRUE)
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H}")
+else()
+    if(NOT EXISTS "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
+        message(FATAL_ERROR
+            "Missing committed reflection_trace PTX header at "
+            "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}. "
+            "Restore it or enable RAYD_REGENERATE_REFLECTION_TRACE_PTX with OptiX SDK headers available.")
+    endif()
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
 endif()
-
-add_custom_command(
-    OUTPUT "${RAYD_REFLECTION_TRACE_PTX_H}"
-    COMMAND ${CMAKE_COMMAND}
-        -DPTX_FILE=${RAYD_REFLECTION_TRACE_PTX}
-        -DOUTPUT_FILE=${RAYD_REFLECTION_TRACE_PTX_H}
-        -DVAR_NAME=reflection_trace_ptx
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-    DEPENDS
-        "${RAYD_REFLECTION_TRACE_PTX}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-    VERBATIM
-)
-set_source_files_properties("${RAYD_REFLECTION_TRACE_PTX_H}" PROPERTIES GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H}")
 
 set(RAYD_NANOBIND_ARGS NB_DOMAIN drjit)
 if(RAYD_NANOBIND_NOMINSIZE)
