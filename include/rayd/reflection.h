@@ -27,6 +27,7 @@ struct ReflectionChainData {
 
     Int_ bounce_count = full<Int_>(0, 1);
     Int_ discovery_count = full<Int_>(0, 1);
+    Int_ representative_ray_index = full<Int_>(-1, 1);
     Float_ t = full<Float_>(Infinity, 1);
     Vec3f hit_points = zeros<Vec3f>(1);
     Vec3f geo_normals = zeros<Vec3f>(1);
@@ -39,6 +40,7 @@ struct ReflectionChainData {
     DRJIT_STRUCT(ReflectionChainData,
                  bounce_count,
                  discovery_count,
+                 representative_ray_index,
                  t,
                  hit_points,
                  geo_normals,

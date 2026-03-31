@@ -136,6 +136,7 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
     const int slot_count = ray_count * max_bounces;
     result.bounce_count = full<IntT<Detached>>(0, ray_count);
     result.discovery_count = full<IntT<Detached>>(0, ray_count);
+    result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
     result.t = full<FloatT<Detached>>(Infinity, slot_count);
     result.hit_points = zeros<Vector3fT<Detached>>(slot_count);
     result.geo_normals = zeros<Vector3fT<Detached>>(slot_count);
@@ -1424,6 +1425,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         const Vector3fDetached plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
         result.bounce_count = trace_bounce_count;
         result.discovery_count = trace_discovery_count;
+        result.representative_ray_index = trace_representative_ray_index;
         result.t = trace_t;
         result.hit_points = hit_points;
         result.geo_normals = plane_normals;
@@ -1437,6 +1439,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
         result.bounce_count = Int(trace_bounce_count);
         result.discovery_count = Int(trace_discovery_count);
+        result.representative_ray_index = Int(trace_representative_ray_index);
         result.shape_ids = Int(trace_shape_ids);
         result.prim_ids = Int(trace_prim_ids);
 

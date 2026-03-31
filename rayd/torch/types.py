@@ -63,6 +63,7 @@ class ReflectionChain(_StructRepr):
     DRJIT_STRUCT = {
         "bounce_count": object,
         "discovery_count": object,
+        "representative_ray_index": object,
         "t": object,
         "hit_points": object,
         "geo_normals": object,
@@ -77,6 +78,7 @@ class ReflectionChain(_StructRepr):
         self,
         bounce_count: Any = None,
         discovery_count: Any = None,
+        representative_ray_index: Any = None,
         t: Any = None,
         hit_points: Any = None,
         geo_normals: Any = None,
@@ -90,6 +92,7 @@ class ReflectionChain(_StructRepr):
     ):
         self.bounce_count = bounce_count
         self.discovery_count = discovery_count
+        self.representative_ray_index = representative_ray_index
         self.t = t
         self.hit_points = hit_points
         self.geo_normals = geo_normals

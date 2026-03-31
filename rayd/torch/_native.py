@@ -328,6 +328,7 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
 
     bounce_count = _scalar_array_to_tensor(chain.bounce_count)
     discovery_count = _scalar_array_to_tensor(chain.discovery_count)
+    representative_ray_index = _scalar_array_to_tensor(chain.representative_ray_index)
     t = _scalar_array_to_tensor(chain.t)
     hit_points = _vec3_to_tensor(chain.hit_points)
     geo_normals = _vec3_to_tensor(chain.geo_normals)
@@ -344,6 +345,11 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
 
     bounce_count = dr.reshape(type(bounce_count), bounce_count, shape=(ray_count,))
     discovery_count = dr.reshape(type(discovery_count), discovery_count, shape=(ray_count,))
+    representative_ray_index = dr.reshape(
+        type(representative_ray_index),
+        representative_ray_index,
+        shape=(ray_count,),
+    )
     t = dr.reshape(type(t), t, shape=(ray_count, max_bounces))
     hit_points = dr.reshape(type(hit_points), hit_points, shape=(ray_count, max_bounces, 3))
     geo_normals = dr.reshape(type(geo_normals), geo_normals, shape=(ray_count, max_bounces, 3))
@@ -356,6 +362,7 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     return ReflectionChain(
         bounce_count=bounce_count,
         discovery_count=discovery_count,
+        representative_ray_index=representative_ray_index,
         t=t,
         hit_points=hit_points,
         geo_normals=geo_normals,
