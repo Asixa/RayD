@@ -20,18 +20,17 @@ Current serial measurements already show that `LBVH + gpu_treelet` wins on:
 
 The important implication is that the next wins are no longer "replace LBVH with a smarter builder". The remaining headroom is mostly implementation overhead:
 
-- `refit()` work is broader than necessary
-- mask changes still trigger full rebuilds
+- sparse `refit()` is no longer the dominant edge-BVH cost after Workstream 1
+- mask changes no longer rebuild, but masked queries now trade rebuild cost for filtering/culling overhead on the full tree
 - `build_edge_bvh_gpu()` still performs host topology round-trips for levelization and treelet scheduling
 - traversal is still a gather-heavy Dr.Jit path over scalar arrays
 
 ## Priority Order
 
-1. Dirty-ancestor-only refit
-2. Mask update path that avoids unconditional rebuild
-3. Remove host round-trip from LBVH treelet preparation
-4. Query-path memory layout cleanup
-5. Treelet heuristic retuning only after the first four are done
+1. Remove host round-trip from LBVH treelet preparation
+2. Query-path memory layout cleanup
+3. Optional masked-query fallback policy for cases where Workstream 2 filtering regresses traversal too far
+4. Treelet heuristic retuning only after the first three are done
 
 ## Workstream 1: Dirty-Ancestor-Only Refit
 
@@ -62,6 +61,13 @@ This makes sparse vertex edits pay for untouched internal nodes and is the most 
 - Largest remaining `sync()` win for sparse geometry edits.
 - No query regression if the touched-node sets are correct.
 - Limited risk because the math is unchanged; only the scheduling granularity changes.
+
+### Current prototype status
+
+- A first dirty-ancestor prototype now exists in code, with `RAYD_EDGE_BVH_REFIT_STRATEGY={auto,full,dirty_ancestors}` for calibration.
+- The prototype now keeps parent links on-device, performs dirty-ancestor marking on the GPU, and compacts dirty per-level worklists fully on the GPU before refitting internal nodes.
+- On the verified sparse-update calibration scenes, the dirty path now beats the old full-level GPU scan on `edge_refit_ms`.
+- `auto` therefore uses the dirty path again, but only under a conservative sparsity heuristic; `full` and `dirty_ancestors` remain available for calibration.
 
 ### Acceptance criteria
 
@@ -100,6 +106,44 @@ That is correct but too expensive. Mask flips are not topology creation. They ar
 - Query throughput can regress if inactive primitives stay physically present but are only filtered at leaf time.
 
 That is why the active-count propagation step should follow quickly after the initial bring-up.
+
+### Current implementation status
+
+- Stage A and Stage B are now implemented in the default path.
+- `Scene::ensure_edge_bvh_ready()` no longer routes `mask_dirty_` to `build()`. It now updates the active mask/count state on the existing full-scene BVH and only uses refit when there are actual dirty edge ranges.
+- `SceneEdge` now keeps per-primitive active flags plus per-node active primitive counts so queries can skip empty subtrees without topology rebuild.
+- Geometry regression coverage still passes, including the mask-specific tests in `tests.drjit.test_geometry`.
+
+### Measured result
+
+Artifact:
+
+- `artifacts/benchmarks/edge_bvh_workstream2_pressure.json`
+
+Compared against the old rebuild-based baseline in `artifacts/benchmarks/edge_bvh_stages/serial_reeval_lbvh_baseline/pressure.json` on the same `32x32 x 8x8` pressure scene:
+
+- `checker_tiles` mask flip: `edge_refit_ms` dropped from `13.30 ms` to `0.42 ms`; restore to full dropped from `25.28 ms` to `0.44 ms`
+- `boundary_only` mask flip: `2.04 ms` to `0.45 ms`; restore to full `24.50 ms` to `0.44 ms`
+- `stride_sparse` mask flip: `2.62 ms` to `0.45 ms`; restore to full `23.64 ms` to `0.41 ms`
+- `empty` restore to full: `24.18 ms` to `0.46 ms`
+
+This means the original Workstream 2 sync goal is met. Mask-only `sync()` no longer quietly rebuilds the BVH.
+
+### Observed tradeoff
+
+- Masked query throughput is now workload-dependent because inactive primitives still contribute to the stored subtree bounds unless a subtree becomes fully empty.
+- Some masks regressed after switching from "rebuild a compact masked BVH" to "filter inside the full BVH":
+  - `checker_tiles` finite ray: `25.65 ms` to `32.06 ms`
+  - `boundary_only` finite ray: `19.79 ms` to `65.96 ms`
+  - `interior_only` finite ray: `15.21 ms` to `18.34 ms`
+- Some masks improved because the old rebuild path produced a poor masked tree:
+  - `stride_sparse` finite ray: `75.25 ms` to `24.59 ms`
+
+### Conclusion
+
+- Workstream 2 is complete for the intended `sync()` objective.
+- It should remain enabled because the restore/full-mask path win is too large to ignore.
+- A future Stage C should be a selective fallback or alternate masked-query path, not a return to unconditional rebuilds on every mask flip.
 
 ## Workstream 3: Remove Host Round-Trip From Treelet Preparation
 

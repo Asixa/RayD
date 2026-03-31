@@ -43,6 +43,7 @@ public:
     void build(const SecondaryEdgeInfo &edge_info);
     void build(const SecondaryEdgeInfo &edge_info,
                const MaskDetached &mask);
+    void set_mask(const MaskDetached &mask);
     void refit(const SecondaryEdgeInfo &edge_info,
                const std::vector<EdgeDirtyRange> &dirty_ranges);
     void refit(const SecondaryEdgeInfo &edge_info,
@@ -63,11 +64,11 @@ public:
 
 private:
     void build_bvh(const SecondaryEdgeInfo &edge_info);
-    void scatter_active_edge_data(const SecondaryEdgeInfo &full_edge_info,
-                                  const IntDetached &active_indices,
-                                  const IntDetached &global_indices);
-    IntDetached dirty_global_edge_ids_from_ranges(
-        const std::vector<EdgeDirtyRange> &dirty_ranges) const;
+    void update_active_counts_from_mask(const MaskDetached &mask);
+    IntDetached refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfo &edge_info,
+                                                        const IntDetached &primitive_indices);
+    void refit_internal_nodes_full();
+    void refit_internal_nodes_dirty(const std::vector<IntDetached> &dirty_leaf_chunks);
     ClosestEdgeCandidate nearest_edge_point_detached(const Vector3fDetached &point,
                                                      const MaskDetached &active) const;
     ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
@@ -84,6 +85,8 @@ private:
                                        const MaskDetached &active) const;
     IntDetached gather_node_right_child(const IntDetached &node_indices,
                                         const MaskDetached &active) const;
+    IntDetached gather_node_active_count(const IntDetached &node_indices,
+                                         const MaskDetached &active) const;
     Vector3fDetached gather_node_bbox_min(const IntDetached &node_indices,
                                           const MaskDetached &active) const;
     Vector3fDetached gather_node_bbox_max(const IntDetached &node_indices,
@@ -102,16 +105,23 @@ private:
     Vector3fDetached node_bbox_min_;
     Vector3fDetached node_bbox_max_;
     FloatDetached packed_node_bounds_;
-    SecondaryEdgeInfo active_edge_info_;
 
     IntDetached left_child_;
     IntDetached right_child_;
     IntDetached packed_node_children_;
     IntDetached leaf_primitives_;
     IntDetached primitive_leaf_node_;
-    IntDetached active_global_ids_;
-    IntDetached global_to_active_;
+    IntDetached leaf_nodes_;
+    IntDetached primitive_active_flags_;
+    IntDetached node_active_count_;
+    IntDetached node_subtree_primitive_count_;
+    IntDetached node_parent_;
+    IntDetached dirty_node_marks_;
+    IntDetached dirty_level_nodes_;
+    IntDetached dirty_level_count_;
 
+    int active_primitive_count_ = 0;
+    int full_refit_node_count_ = 0;
     std::vector<IntDetached> refit_levels_;
 };
 

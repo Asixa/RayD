@@ -70,4 +70,28 @@ void compact_edge_bvh_gpu(
     int *out_leaf_primitives,
     int *out_primitive_leaf_node);
 
+void mark_edge_bvh_dirty_ancestors_gpu(
+    int node_count,
+    int leaf_count,
+    const int *leaf_nodes,
+    const int *node_parent,
+    int *out_dirty_marks,
+    bool clear_marks);
+
+void compact_and_refit_edge_bvh_level_gpu(
+    int level_count,
+    const int *level_nodes,
+    const int *dirty_marks,
+    int *scratch_selected_nodes,
+    int *scratch_selected_count,
+    const int *left_child,
+    const int *right_child,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    float *packed_node_bounds);
+
 } // namespace rayd

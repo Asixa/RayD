@@ -897,6 +897,98 @@ __global__ void finalize_leaves_and_bounds_kernel(
     }
 }
 
+__global__ void mark_dirty_ancestors_kernel(int leaf_count,
+                                            const int *leaf_nodes,
+                                            const int *node_parent,
+                                            int *dirty_marks) {
+    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (leaf_index >= leaf_count) {
+        return;
+    }
+
+    const int leaf_node = leaf_nodes[leaf_index];
+    if (leaf_node < 0) {
+        return;
+    }
+
+    if (atomicExch(&dirty_marks[leaf_node], 1) != 0) {
+        return;
+    }
+
+    int current = node_parent[leaf_node];
+    while (current >= 0) {
+        if (atomicExch(&dirty_marks[current], 1) != 0) {
+            break;
+        }
+        current = node_parent[current];
+    }
+}
+
+__global__ void compact_dirty_level_kernel(int level_count,
+                                           const int *level_nodes,
+                                           const int *dirty_marks,
+                                           int *selected_nodes,
+                                           int *selected_count) {
+    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (item_index >= level_count) {
+        return;
+    }
+
+    const int node_index = level_nodes[item_index];
+    if (node_index < 0 || dirty_marks[node_index] == 0) {
+        return;
+    }
+
+    const int output_index = atomicAdd(selected_count, 1);
+    selected_nodes[output_index] = node_index;
+}
+
+__global__ void refit_selected_internal_nodes_kernel(
+    int max_selected_count,
+    const int *selected_count,
+    const int *selected_nodes,
+    const int *left_child,
+    const int *right_child,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    float *packed_node_bounds) {
+    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int selected = *selected_count;
+    if (item_index >= max_selected_count || item_index >= selected) {
+        return;
+    }
+
+    const int node_index = selected_nodes[item_index];
+    const int left = left_child[node_index];
+    const int right = right_child[node_index];
+    const float bbox_min_x = fminf(node_bbox_min_x[left], node_bbox_min_x[right]);
+    const float bbox_min_y = fminf(node_bbox_min_y[left], node_bbox_min_y[right]);
+    const float bbox_min_z = fminf(node_bbox_min_z[left], node_bbox_min_z[right]);
+    const float bbox_max_x = fmaxf(node_bbox_max_x[left], node_bbox_max_x[right]);
+    const float bbox_max_y = fmaxf(node_bbox_max_y[left], node_bbox_max_y[right]);
+    const float bbox_max_z = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
+    node_bbox_min_x[node_index] = bbox_min_x;
+    node_bbox_min_y[node_index] = bbox_min_y;
+    node_bbox_min_z[node_index] = bbox_min_z;
+    node_bbox_max_x[node_index] = bbox_max_x;
+    node_bbox_max_y[node_index] = bbox_max_y;
+    node_bbox_max_z[node_index] = bbox_max_z;
+
+    if (packed_node_bounds != nullptr) {
+        const int packed_base = node_index * 6;
+        packed_node_bounds[packed_base + 0] = bbox_min_x;
+        packed_node_bounds[packed_base + 1] = bbox_min_y;
+        packed_node_bounds[packed_base + 2] = bbox_min_z;
+        packed_node_bounds[packed_base + 3] = bbox_max_x;
+        packed_node_bounds[packed_base + 4] = bbox_max_y;
+        packed_node_bounds[packed_base + 5] = bbox_max_z;
+    }
+}
+
 void check_cuda_call(cudaError_t error, const char *message) {
     require_local(error == cudaSuccess,
                   std::string(message) + ": " + cudaGetErrorString(error));
@@ -2101,6 +2193,131 @@ void compact_edge_bvh_gpu(
         synchronize_cuda("compact_edge_bvh_gpu(): failed to finish GPU compaction");
     } catch (const std::exception &e) {
         throw_runtime_error_local(std::string("compact_edge_bvh_gpu(): ") + e.what());
+    }
+}
+
+void mark_edge_bvh_dirty_ancestors_gpu(
+    int node_count,
+    int leaf_count,
+    const int *leaf_nodes,
+    const int *node_parent,
+    int *out_dirty_marks,
+    bool clear_marks) {
+    require_local(node_count >= 0,
+                  "mark_edge_bvh_dirty_ancestors_gpu(): node_count must be non-negative.");
+    require_local(leaf_count >= 0,
+                  "mark_edge_bvh_dirty_ancestors_gpu(): leaf_count must be non-negative.");
+    require_local(node_parent != nullptr || node_count == 0,
+                  "mark_edge_bvh_dirty_ancestors_gpu(): node_parent pointer is null.");
+    require_local(out_dirty_marks != nullptr || node_count == 0,
+                  "mark_edge_bvh_dirty_ancestors_gpu(): output mark pointer is null.");
+    require_local(leaf_nodes != nullptr || leaf_count == 0,
+                  "mark_edge_bvh_dirty_ancestors_gpu(): leaf_nodes pointer is null.");
+
+    try {
+        if (node_count == 0) {
+            return;
+        }
+
+        if (clear_marks) {
+            check_cuda_call(
+                cudaMemset(out_dirty_marks, 0, sizeof(int) * static_cast<size_t>(node_count)),
+                "mark_edge_bvh_dirty_ancestors_gpu(): failed to clear dirty marks");
+        }
+
+        if (leaf_count == 0) {
+            return;
+        }
+
+        constexpr int block_size = 256;
+        const int block_count = (leaf_count + block_size - 1) / block_size;
+        mark_dirty_ancestors_kernel<<<block_count, block_size>>>(
+            leaf_count, leaf_nodes, node_parent, out_dirty_marks);
+        check_cuda_last_error(
+            "mark_edge_bvh_dirty_ancestors_gpu(): failed to launch dirty-ancestor kernel");
+    } catch (const std::exception &e) {
+        throw_runtime_error_local(std::string("mark_edge_bvh_dirty_ancestors_gpu(): ") + e.what());
+    }
+}
+
+void compact_and_refit_edge_bvh_level_gpu(
+    int level_count,
+    const int *level_nodes,
+    const int *dirty_marks,
+    int *scratch_selected_nodes,
+    int *scratch_selected_count,
+    const int *left_child,
+    const int *right_child,
+    float *node_bbox_min_x,
+    float *node_bbox_min_y,
+    float *node_bbox_min_z,
+    float *node_bbox_max_x,
+    float *node_bbox_max_y,
+    float *node_bbox_max_z,
+    float *packed_node_bounds) {
+    require_local(level_count >= 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): level_count must be non-negative.");
+    require_local(level_nodes != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): level_nodes pointer is null.");
+    require_local(dirty_marks != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): dirty_marks pointer is null.");
+    require_local(scratch_selected_nodes != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): scratch_selected_nodes pointer is null.");
+    require_local(scratch_selected_count != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): scratch_selected_count pointer is null.");
+    require_local(left_child != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): left_child pointer is null.");
+    require_local(right_child != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): right_child pointer is null.");
+    require_local(node_bbox_min_x != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_min_x pointer is null.");
+    require_local(node_bbox_min_y != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_min_y pointer is null.");
+    require_local(node_bbox_min_z != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_min_z pointer is null.");
+    require_local(node_bbox_max_x != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_max_x pointer is null.");
+    require_local(node_bbox_max_y != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_max_y pointer is null.");
+    require_local(node_bbox_max_z != nullptr || level_count == 0,
+                  "compact_and_refit_edge_bvh_level_gpu(): node_bbox_max_z pointer is null.");
+
+    try {
+        if (level_count == 0) {
+            return;
+        }
+
+        check_cuda_call(cudaMemset(scratch_selected_count, 0, sizeof(int)),
+                        "compact_and_refit_edge_bvh_level_gpu(): failed to clear selected count");
+
+        constexpr int block_size = 256;
+        const int block_count = (level_count + block_size - 1) / block_size;
+        compact_dirty_level_kernel<<<block_count, block_size>>>(
+            level_count,
+            level_nodes,
+            dirty_marks,
+            scratch_selected_nodes,
+            scratch_selected_count);
+        check_cuda_last_error(
+            "compact_and_refit_edge_bvh_level_gpu(): failed to launch dirty-level compaction");
+
+        refit_selected_internal_nodes_kernel<<<block_count, block_size>>>(
+            level_count,
+            scratch_selected_count,
+            scratch_selected_nodes,
+            left_child,
+            right_child,
+            node_bbox_min_x,
+            node_bbox_min_y,
+            node_bbox_min_z,
+            node_bbox_max_x,
+            node_bbox_max_y,
+            node_bbox_max_z,
+            packed_node_bounds);
+        check_cuda_last_error(
+            "compact_and_refit_edge_bvh_level_gpu(): failed to launch dirty-level refit");
+    } catch (const std::exception &e) {
+        throw_runtime_error_local(std::string("compact_and_refit_edge_bvh_level_gpu(): ") + e.what());
     }
 }
 

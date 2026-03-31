@@ -249,23 +249,20 @@ void Scene::ensure_edge_bvh_ready() const {
         return;
     }
 
+    Scene *scene = const_cast<Scene *>(this);
     if (mask_dirty_) {
-        Scene *scene = const_cast<Scene *>(this);
-        scene->edge_bvh_->build(scene->edge_info_, scene->edge_mask_);
-        scene->pending_edge_bvh_dirty_ranges_.clear();
-        scene->edge_bvh_dirty_ = false;
+        scene->edge_bvh_->set_mask(scene->edge_mask_);
         scene->mask_dirty_ = false;
-        return;
     }
 
     if (pending_edge_bvh_dirty_ranges_.empty()) {
-        edge_bvh_dirty_ = false;
+        scene->edge_bvh_dirty_ = false;
         return;
     }
 
-    edge_bvh_->refit(edge_info_, pending_edge_bvh_dirty_ranges_);
-    pending_edge_bvh_dirty_ranges_.clear();
-    edge_bvh_dirty_ = false;
+    scene->edge_bvh_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
+    scene->pending_edge_bvh_dirty_ranges_.clear();
+    scene->edge_bvh_dirty_ = false;
 }
 
 void Scene::register_primary_edge_observer(Camera *camera) {
