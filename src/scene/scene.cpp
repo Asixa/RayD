@@ -1,7 +1,10 @@
 #include <algorithm>
 #include <array>
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include <rayd/intersection.h>
@@ -13,6 +16,61 @@
 namespace rayd {
 
 namespace {
+
+enum class OptixSplitMode {
+    Auto,
+    Off,
+    On
+};
+
+std::string normalize_optix_split_mode_value(const char *value) {
+    std::string normalized = value != nullptr ? std::string(value) : std::string();
+    std::transform(normalized.begin(),
+                   normalized.end(),
+                   normalized.begin(),
+                   [](unsigned char ch) -> char {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return normalized;
+}
+
+OptixSplitMode active_optix_split_mode() {
+    static const OptixSplitMode value = []() {
+        const char *raw = std::getenv("RAYD_OPTIX_SPLIT_MODE");
+        const std::string normalized = normalize_optix_split_mode_value(raw);
+        if (normalized.empty() || normalized == "auto") {
+            return normalized.empty() ? OptixSplitMode::Off : OptixSplitMode::Auto;
+        }
+        if (normalized == "off" || normalized == "false" || normalized == "0") {
+            return OptixSplitMode::Off;
+        }
+        if (normalized == "on" || normalized == "true" || normalized == "1") {
+            return OptixSplitMode::On;
+        }
+        throw std::runtime_error(
+            "Invalid RAYD_OPTIX_SPLIT_MODE. Expected one of: auto, off, on.");
+    }();
+    return value;
+}
+
+bool should_split_optix_scene(OptixSplitMode mode,
+                              int static_mesh_count,
+                              int dynamic_mesh_count) {
+    if (static_mesh_count == 0 || dynamic_mesh_count == 0) {
+        return false;
+    }
+    if (mode == OptixSplitMode::On) {
+        return true;
+    }
+    if (mode == OptixSplitMode::Off) {
+        return false;
+    }
+
+    // The measured mixed-scene query tax is still too large to justify enabling
+    // split mode automatically. Keep "on" available for calibration, but bias
+    // "auto" to the stable single-scene path until a better heuristic exists.
+    return false;
+}
 
 template <bool Detached>
 NearestPointEdgeT<Detached> initialize_nearest_point_edge_result(int query_count) {
@@ -73,6 +131,8 @@ int face_opposite_vertex(const std::array<int, 3> &face_vertices, int v0, int v1
 
 Scene::Scene()
     : optix_scene_(std::make_unique<OptixScene>()),
+      optix_static_scene_(std::make_unique<OptixScene>()),
+      optix_dynamic_scene_(std::make_unique<OptixScene>()),
       edge_bvh_(std::make_unique<SceneEdge>()) {}
 
 Scene::~Scene() {
@@ -115,6 +175,10 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
     mask_dirty_ = false;
+    optix_split_active_ = false;
+    optix_static_mesh_indices_.clear();
+    optix_dynamic_mesh_indices_.clear();
+    optix_dynamic_mesh_local_index_.clear();
     invalidate_primary_edge_observers();
     return mesh_count_ - 1;
 }
@@ -467,7 +531,51 @@ void Scene::build() {
                 edge_local_ids_);
     drjit::sync_thread();
 
-    optix_scene_->build(mesh_descs);
+    int static_mesh_count = 0;
+    int dynamic_mesh_count = 0;
+    for (const SceneMeshRecord &record : mesh_records_) {
+        if (record.dynamic) {
+            ++dynamic_mesh_count;
+        } else {
+            ++static_mesh_count;
+        }
+    }
+
+    optix_split_active_ =
+        should_split_optix_scene(active_optix_split_mode(), static_mesh_count, dynamic_mesh_count);
+    optix_static_mesh_indices_.clear();
+    optix_dynamic_mesh_indices_.clear();
+    optix_dynamic_mesh_local_index_.assign(mesh_records_.size(), -1);
+
+    if (optix_split_active_) {
+        std::vector<OptixSceneMeshDesc> static_mesh_descs;
+        std::vector<OptixSceneMeshDesc> dynamic_mesh_descs;
+        static_mesh_descs.reserve(static_mesh_count);
+        dynamic_mesh_descs.reserve(dynamic_mesh_count);
+
+        for (size_t mesh_index = 0; mesh_index < mesh_records_.size(); ++mesh_index) {
+            if (mesh_records_[mesh_index].dynamic) {
+                optix_dynamic_mesh_local_index_[mesh_index] =
+                    static_cast<int>(dynamic_mesh_descs.size());
+                optix_dynamic_mesh_indices_.push_back(static_cast<int>(mesh_index));
+                dynamic_mesh_descs.push_back(mesh_descs[mesh_index]);
+            } else {
+                optix_static_mesh_indices_.push_back(static_cast<int>(mesh_index));
+                static_mesh_descs.push_back(mesh_descs[mesh_index]);
+            }
+        }
+
+        optix_scene_ = std::make_unique<OptixScene>();
+        optix_static_scene_ = std::make_unique<OptixScene>();
+        optix_dynamic_scene_ = std::make_unique<OptixScene>();
+        optix_static_scene_->build(static_mesh_descs);
+        optix_dynamic_scene_->build(dynamic_mesh_descs);
+    } else {
+        optix_scene_ = std::make_unique<OptixScene>();
+        optix_static_scene_ = std::make_unique<OptixScene>();
+        optix_dynamic_scene_ = std::make_unique<OptixScene>();
+        optix_scene_->build(mesh_descs);
+    }
     mask_dirty_ = false;
     edge_bvh_->build(edge_info_, edge_mask_);
     is_ready_ = true;
@@ -635,12 +743,43 @@ void Scene::sync() {
     }
 
     const auto optix_start = Clock::now();
-    optix_scene_->sync(mesh_descs, updates);
-    last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
-        Clock::now() - optix_start).count();
-    const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
-    last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
-    last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+    if (optix_split_active_) {
+        std::vector<OptixSceneMeshDesc> dynamic_mesh_descs;
+        dynamic_mesh_descs.reserve(optix_dynamic_mesh_indices_.size());
+        for (int mesh_index : optix_dynamic_mesh_indices_) {
+            dynamic_mesh_descs.push_back(mesh_descs[static_cast<size_t>(mesh_index)]);
+        }
+
+        std::vector<OptixSceneMeshUpdate> dynamic_updates;
+        dynamic_updates.reserve(updates.size());
+        for (const OptixSceneMeshUpdate &update : updates) {
+            const int dynamic_local_index =
+                optix_dynamic_mesh_local_index_[static_cast<size_t>(update.mesh_id)];
+            if (dynamic_local_index < 0) {
+                continue;
+            }
+            dynamic_updates.push_back(
+                { dynamic_local_index, update.vertices_dirty, update.transform_dirty });
+        }
+
+        if (!dynamic_updates.empty()) {
+            optix_dynamic_scene_->sync(dynamic_mesh_descs, dynamic_updates);
+        }
+        last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
+            Clock::now() - optix_start).count();
+        if (!dynamic_updates.empty()) {
+            const OptixSyncProfile &optix_profile = optix_dynamic_scene_->last_sync_profile();
+            last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
+            last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+        }
+    } else {
+        optix_scene_->sync(mesh_descs, updates);
+        last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
+            Clock::now() - optix_start).count();
+        const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
+        last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
+        last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+    }
     pending_updates_ = false;
     if (!updates.empty()) {
         ++scene_version_;
@@ -749,8 +888,12 @@ VectoriT<2, true> Scene::edge_adjacent_faces(const IntDetached &edge_id, bool gl
 }
 
 bool Scene::is_ready() const {
-    return is_ready_ && optix_scene_ != nullptr && edge_bvh_ != nullptr &&
-           optix_scene_->is_ready() && edge_bvh_->is_ready();
+    const bool optix_ready =
+        optix_split_active_
+            ? (optix_static_scene_ != nullptr && optix_dynamic_scene_ != nullptr &&
+               optix_static_scene_->is_ready() && optix_dynamic_scene_->is_ready())
+            : (optix_scene_ != nullptr && optix_scene_->is_ready());
+    return is_ready_ && edge_bvh_ != nullptr && edge_bvh_->is_ready() && optix_ready;
 }
 
 template <bool Detached>
@@ -774,7 +917,56 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     intersection.prim_id = full<IntT<Detached>>(-1, ray_count);
 
     MaskT<Detached> hit_mask = active;
-    OptixIntersection optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
+    OptixIntersection optix_hit;
+    if (optix_split_active_) {
+        MaskT<Detached> static_hit_mask = active;
+        MaskT<Detached> dynamic_hit_mask = active;
+        const OptixIntersection static_hit =
+            optix_static_scene_->template intersect<Detached>(ray, static_hit_mask);
+        if constexpr (!Detached) {
+            drjit::eval(static_hit.t,
+                        static_hit.barycentric[0],
+                        static_hit.barycentric[1],
+                        static_hit.shape_id,
+                        static_hit.global_prim_id,
+                        detach<false>(static_hit_mask));
+        } else {
+            drjit::eval(static_hit.t,
+                        static_hit.barycentric[0],
+                        static_hit.barycentric[1],
+                        static_hit.shape_id,
+                        static_hit.global_prim_id,
+                        static_hit_mask);
+        }
+        drjit::sync_thread();
+        const OptixIntersection dynamic_hit =
+            optix_dynamic_scene_->template intersect<Detached>(ray, dynamic_hit_mask);
+
+        const MaskDetached static_hit_mask_detached = detach<false>(static_hit_mask);
+        const MaskDetached dynamic_hit_mask_detached = detach<false>(dynamic_hit_mask);
+        const MaskDetached choose_dynamic =
+            dynamic_hit_mask_detached &&
+            (!static_hit_mask_detached || (dynamic_hit.t < static_hit.t));
+        const MaskDetached any_hit = static_hit_mask_detached || dynamic_hit_mask_detached;
+
+        optix_hit.reserve(ray_count);
+        optix_hit.t = select(choose_dynamic, dynamic_hit.t, static_hit.t);
+        optix_hit.barycentric[0] =
+            select(choose_dynamic, dynamic_hit.barycentric[0], static_hit.barycentric[0]);
+        optix_hit.barycentric[1] =
+            select(choose_dynamic, dynamic_hit.barycentric[1], static_hit.barycentric[1]);
+        optix_hit.shape_id = select(choose_dynamic, dynamic_hit.shape_id, static_hit.shape_id);
+        optix_hit.global_prim_id =
+            select(choose_dynamic, dynamic_hit.global_prim_id, static_hit.global_prim_id);
+
+        if constexpr (!Detached) {
+            hit_mask = Mask(any_hit);
+        } else {
+            hit_mask = any_hit;
+        }
+    } else {
+        optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
+    }
 
     const IntDetached shape_id = optix_hit.shape_id;
     const IntDetached global_primitive_id = optix_hit.global_prim_id;
@@ -875,7 +1067,22 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
 
-    return optix_scene_->template shadow_test<Detached>(ray, active);
+    if (!optix_split_active_) {
+        return optix_scene_->template shadow_test<Detached>(ray, active);
+    }
+
+    const MaskT<Detached> static_hit =
+        optix_static_scene_->template shadow_test<Detached>(ray, active);
+    if constexpr (!Detached) {
+        drjit::eval(detach<false>(static_hit));
+    } else {
+        drjit::eval(static_hit);
+    }
+    drjit::sync_thread();
+    const MaskT<Detached> dynamic_active = active && !static_hit;
+    const MaskT<Detached> dynamic_hit =
+        optix_dynamic_scene_->template shadow_test<Detached>(ray, dynamic_active);
+    return static_hit || dynamic_hit;
 }
 
 template <bool Detached>

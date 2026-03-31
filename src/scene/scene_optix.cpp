@@ -1,8 +1,11 @@
 #include <cstdio>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
+#include <cstdint>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <rayd/ray.h>
@@ -24,6 +27,65 @@ namespace dr = drjit;
 #endif
 
 namespace {
+
+enum class OptixAccelPreference {
+    FastTrace,
+    FastBuild
+};
+
+std::string normalize_optix_mode_value(const char *value) {
+    std::string normalized = value != nullptr ? std::string(value) : std::string();
+    std::transform(normalized.begin(),
+                   normalized.end(),
+                   normalized.begin(),
+                   [](unsigned char ch) -> char {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return normalized;
+}
+
+OptixAccelPreference parse_optix_preference(const char *env_name,
+                                           OptixAccelPreference auto_value) {
+    const char *raw = std::getenv(env_name);
+    const std::string normalized = normalize_optix_mode_value(raw);
+    if (normalized.empty() || normalized == "auto") {
+        return auto_value;
+    }
+    if (normalized == "fast_trace" || normalized == "trace") {
+        return OptixAccelPreference::FastTrace;
+    }
+    if (normalized == "fast_build" || normalized == "build" ||
+        normalized == "relaxed" || normalized == "none") {
+        return OptixAccelPreference::FastBuild;
+    }
+    throw std::runtime_error(std::string("Invalid ") + env_name +
+                             ". Expected one of: auto, fast_trace, fast_build, relaxed.");
+}
+
+OptixAccelPreference active_dynamic_gas_preference() {
+    static const OptixAccelPreference value =
+        parse_optix_preference("RAYD_OPTIX_DYNAMIC_GAS_PREFERENCE",
+                               OptixAccelPreference::FastTrace);
+    return value;
+}
+
+OptixAccelPreference active_dynamic_ias_preference() {
+    static const OptixAccelPreference value =
+        parse_optix_preference("RAYD_OPTIX_DYNAMIC_IAS_PREFERENCE",
+                               OptixAccelPreference::FastBuild);
+    return value;
+}
+
+unsigned optix_preference_build_flag(OptixAccelPreference preference) {
+    if (preference == OptixAccelPreference::FastBuild) {
+#ifdef OPTIX_BUILD_FLAG_PREFER_FAST_BUILD
+        return OPTIX_BUILD_FLAG_PREFER_FAST_BUILD;
+#else
+        return 0u;
+#endif
+    }
+    return OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+}
 
 void fill_optix_transform(float out[12], const Matrix4f &matrix) {
     Matrix4fDetached detached = detach<false>(matrix);
@@ -52,6 +114,19 @@ struct OptixMeshState {
     OptixAccelBufferSizes gas_buffer_sizes = {};
 };
 
+void write_optix_instance(OptixInstance &instance,
+                          const OptixSceneMeshDesc &mesh_desc,
+                          const OptixMeshState &mesh_state,
+                          size_t mesh_index) {
+    std::memset(&instance, 0, sizeof(instance));
+    fill_optix_transform(instance.transform, mesh_desc.mesh->full_transform());
+    instance.instanceId = static_cast<unsigned int>(mesh_desc.mesh_id);
+    instance.sbtOffset = static_cast<unsigned int>(mesh_index);
+    instance.visibilityMask = 255u;
+    instance.flags = OPTIX_INSTANCE_FLAG_NONE;
+    instance.traversableHandle = mesh_state.gas_handle;
+}
+
 struct RetiredOptixJitResources {
     UIntDetached pipeline_handle;
     UIntDetached sbt_handle;
@@ -72,6 +147,8 @@ std::vector<RetiredOptixJitResources> &retired_optix_resources() {
 
 struct OptixState {
     OptixDeviceContext context = 0;
+    bool has_dynamic_meshes = false;
+    bool has_static_meshes = false;
 
     UInt64Detached handle;
     UIntDetached pipeline_handle;
@@ -194,6 +271,33 @@ static void ensure_device_buffer(void *&buffer, size_t &buffer_size, size_t requ
     buffer_size = required_size;
 }
 
+static void ensure_instance_buffer(OptixState *state) {
+    const size_t instance_bytes = sizeof(OptixInstance) * state->instances.size();
+    if (instance_bytes == 0) {
+        return;
+    }
+
+    if (state->instance_buffer != nullptr) {
+        return;
+    }
+
+    state->instance_buffer = jit_malloc(AllocType::Device, instance_bytes);
+}
+
+static void upload_instance_span(OptixState *state, size_t begin, size_t count) {
+    if (count == 0) {
+        return;
+    }
+
+    ensure_instance_buffer(state);
+    const size_t byte_offset = begin * sizeof(OptixInstance);
+    const size_t byte_count = count * sizeof(OptixInstance);
+    jit_memcpy(JitBackend::CUDA,
+               reinterpret_cast<uint8_t *>(state->instance_buffer) + byte_offset,
+               state->instances.data() + begin,
+               byte_count);
+}
+
 static void build_gas(OptixState *state, OptixMeshState &mesh_state, const OptixSceneMeshDesc &mesh_desc) {
     const Mesh &mesh = *mesh_desc.mesh;
 
@@ -230,7 +334,9 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
     unsigned int triangle_input_flags[] = { OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT };
     build_input.triangleArray.flags = triangle_input_flags;
 
-    mesh_state.accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    mesh_state.accel_options.buildFlags = mesh_state.dynamic
+                                              ? optix_preference_build_flag(active_dynamic_gas_preference())
+                                              : OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
     if (mesh_state.dynamic) {
         mesh_state.accel_options.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_UPDATE;
     } else {
@@ -353,37 +459,75 @@ static void update_gas(OptixState *state, OptixMeshState &mesh_state, const Mesh
     mesh_state.accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 }
 
-static void update_instances(OptixState *state, const std::vector<OptixSceneMeshDesc> &meshes) {
+static void initialize_instances(OptixState *state, const std::vector<OptixSceneMeshDesc> &meshes) {
     state->instances.resize(meshes.size());
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
-        OptixInstance &instance = state->instances[mesh_index];
-        std::memset(&instance, 0, sizeof(instance));
-        fill_optix_transform(instance.transform, meshes[mesh_index].mesh->full_transform());
-        instance.instanceId = static_cast<unsigned int>(meshes[mesh_index].mesh_id);
-        instance.sbtOffset = static_cast<unsigned int>(mesh_index);
-        instance.visibilityMask = 255u;
-        instance.flags = OPTIX_INSTANCE_FLAG_NONE;
-        instance.traversableHandle = state->mesh_states[mesh_index].gas_handle;
+        write_optix_instance(state->instances[mesh_index],
+                             meshes[mesh_index],
+                             state->mesh_states[mesh_index],
+                             mesh_index);
     }
 
-    const size_t instance_bytes = sizeof(OptixInstance) * state->instances.size();
-    if (state->instance_buffer == nullptr) {
-        state->instance_buffer = jit_malloc(AllocType::Device, instance_bytes);
-    }
-
-    jit_memcpy(JitBackend::CUDA, state->instance_buffer, state->instances.data(), instance_bytes);
+    upload_instance_span(state, 0, state->instances.size());
 }
 
-static void build_ias(OptixState *state, const std::vector<OptixSceneMeshDesc> &meshes, bool update) {
-    update_instances(state, meshes);
+static void update_dirty_instances(OptixState *state,
+                                   const std::vector<OptixSceneMeshDesc> &meshes,
+                                   const std::vector<int> &dirty_instance_indices) {
+    if (dirty_instance_indices.empty()) {
+        return;
+    }
+
+    require(state->instances.size() == meshes.size(),
+            "OptixScene::sync(): instance cache size does not match the scene mesh count.");
+
+    for (int mesh_index : dirty_instance_indices) {
+        require(mesh_index >= 0 && mesh_index < static_cast<int>(meshes.size()),
+                "OptixScene::sync(): dirty instance index is out of range.");
+        write_optix_instance(state->instances[static_cast<size_t>(mesh_index)],
+                             meshes[static_cast<size_t>(mesh_index)],
+                             state->mesh_states[static_cast<size_t>(mesh_index)],
+                             static_cast<size_t>(mesh_index));
+    }
+
+    if (dirty_instance_indices.size() == state->instances.size()) {
+        upload_instance_span(state, 0, state->instances.size());
+        return;
+    }
+
+    size_t span_begin = static_cast<size_t>(dirty_instance_indices.front());
+    size_t span_end = span_begin + 1;
+    for (size_t offset = 1; offset < dirty_instance_indices.size(); ++offset) {
+        const size_t instance_index = static_cast<size_t>(dirty_instance_indices[offset]);
+        if (instance_index == span_end) {
+            span_end = instance_index + 1;
+            continue;
+        }
+
+        upload_instance_span(state, span_begin, span_end - span_begin);
+        span_begin = instance_index;
+        span_end = instance_index + 1;
+    }
+
+    upload_instance_span(state, span_begin, span_end - span_begin);
+}
+
+static void build_ias(OptixState *state, bool update) {
+    require(!state->instances.empty(), "OptixScene: missing instances for IAS build.");
 
     OptixBuildInput build_input = {};
     build_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     build_input.instanceArray.instances = reinterpret_cast<CUdeviceptr>(state->instance_buffer);
-    build_input.instanceArray.numInstances = static_cast<unsigned int>(meshes.size());
+    build_input.instanceArray.numInstances = static_cast<unsigned int>(state->instances.size());
     build_input.instanceArray.instanceStride = sizeof(OptixInstance);
 
-    state->ias_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_UPDATE | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    if (state->has_dynamic_meshes) {
+        state->ias_options.buildFlags =
+            OPTIX_BUILD_FLAG_ALLOW_UPDATE |
+            optix_preference_build_flag(active_dynamic_ias_preference());
+    } else {
+        state->ias_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    }
     state->ias_options.operation = update ? OPTIX_BUILD_OPERATION_UPDATE : OPTIX_BUILD_OPERATION_BUILD;
 
     if (!update) {
@@ -503,10 +647,13 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes) {
         mesh_state.dynamic = meshes[mesh_index].dynamic;
         mesh_state.face_offset = meshes[mesh_index].face_offset;
         mesh_state.mesh_id = meshes[mesh_index].mesh_id;
+        m_accel->has_dynamic_meshes |= mesh_state.dynamic;
+        m_accel->has_static_meshes |= !mesh_state.dynamic;
         build_gas(m_accel, mesh_state, meshes[mesh_index]);
     }
 
-    build_ias(m_accel, meshes, false);
+    initialize_instances(m_accel, meshes);
+    build_ias(m_accel, false);
 }
 
 void OptixScene::sync(const std::vector<OptixSceneMeshDesc> &meshes,
@@ -520,15 +667,19 @@ void OptixScene::sync(const std::vector<OptixSceneMeshDesc> &meshes,
 
     using Clock = std::chrono::steady_clock;
     const auto total_start = Clock::now();
+    bool has_vertex_updates = false;
+    std::vector<uint8_t> dirty_instance_mask(meshes.size(), 0);
 
     for (const OptixSceneMeshUpdate &update : updates) {
         require(update.mesh_id >= 0 && update.mesh_id < static_cast<int>(m_accel->mesh_states.size()),
                 "OptixScene::sync(): mesh_id is out of range.");
         if (update.vertices_dirty) {
             ++last_sync_profile_.updated_vertex_meshes;
+            has_vertex_updates = true;
         }
         if (update.transform_dirty) {
             ++last_sync_profile_.updated_transform_meshes;
+            dirty_instance_mask[static_cast<size_t>(update.mesh_id)] = 1;
         }
         if (!update.vertices_dirty) {
             continue;
@@ -538,15 +689,35 @@ void OptixScene::sync(const std::vector<OptixSceneMeshDesc> &meshes,
         require(mesh_state.dynamic,
                 "OptixScene::sync(): attempted to update a non-dynamic mesh.");
         const auto gas_start = Clock::now();
+        const OptixTraversableHandle previous_handle = mesh_state.gas_handle;
         update_gas(m_accel, mesh_state, *meshes[static_cast<size_t>(update.mesh_id)].mesh);
         last_sync_profile_.gas_update_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - gas_start).count();
+        if (mesh_state.gas_handle != previous_handle) {
+            dirty_instance_mask[static_cast<size_t>(update.mesh_id)] = 1;
+        }
     }
 
-    const auto ias_start = Clock::now();
-    build_ias(m_accel, meshes, true);
-    last_sync_profile_.ias_update_ms = std::chrono::duration<double, std::milli>(
-        Clock::now() - ias_start).count();
+    std::vector<int> dirty_instance_indices;
+    dirty_instance_indices.reserve(updates.size());
+    for (size_t mesh_index = 0; mesh_index < dirty_instance_mask.size(); ++mesh_index) {
+        if (dirty_instance_mask[mesh_index] != 0) {
+            dirty_instance_indices.push_back(static_cast<int>(mesh_index));
+        }
+    }
+
+    const bool needs_instance_upload = !dirty_instance_indices.empty();
+    if (needs_instance_upload) {
+        update_dirty_instances(m_accel, meshes, dirty_instance_indices);
+    }
+
+    const bool needs_ias_update = has_vertex_updates || needs_instance_upload;
+    if (needs_ias_update) {
+        const auto ias_start = Clock::now();
+        build_ias(m_accel, true);
+        last_sync_profile_.ias_update_ms = std::chrono::duration<double, std::milli>(
+            Clock::now() - ias_start).count();
+    }
     last_sync_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();
 }

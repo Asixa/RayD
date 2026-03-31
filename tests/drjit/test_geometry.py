@@ -2090,6 +2090,91 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["p"][0], 2.25, places=5)
         self.assertAlmostEqual(data["p"][1], 0.25, places=5)
 
+    def test_mixed_static_dynamic_optix_split_keeps_hits_and_shadow_queries_correct(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_OPTIX_SPLIT_MODE"] = "on"
+
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            static_mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                               [0.0, 0.0, 1.0],
+                                               [0.0, 0.0, 0.0]),
+                                  cuda.Array3i([0], [1], [2]))
+            dynamic_mesh = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                                [0.0, 0.0, 1.0],
+                                                [0.0, 0.0, 0.0]),
+                                   cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(static_mesh, dynamic=False)
+            dynamic_id = scene.add_mesh(dynamic_mesh, dynamic=True)
+            scene.build()
+
+            static_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                                        cuda.Array3f([0.0], [0.0], [1.0]))
+            dynamic_ray_before = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+                                                cuda.Array3f([0.0], [0.0], [1.0]))
+
+            static_before = scene.intersect(static_ray)
+            dynamic_before = scene.intersect(dynamic_ray_before)
+            static_before_valid = bool(static_before.is_valid()[0])
+            static_before_shape = int(static_before.shape_id[0])
+            dynamic_before_valid = bool(dynamic_before.is_valid()[0])
+            dynamic_before_shape = int(dynamic_before.shape_id[0])
+
+            scene.set_mesh_transform(
+                dynamic_id,
+                cuda.Matrix4f([
+                    [1.0, 0.0, 0.0, 2.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ])
+            )
+            scene.sync()
+
+            dynamic_ray_after = pj.RayDetached(cuda.Array3f([4.25], [0.25], [-1.0]),
+                                               cuda.Array3f([0.0], [0.0], [1.0]))
+            static_after = scene.intersect(static_ray)
+            dynamic_after = scene.intersect(dynamic_ray_after)
+            old_position_after = scene.intersect(dynamic_ray_before)
+            shadow_old = scene.shadow_test(dynamic_ray_before)
+            shadow_new = scene.shadow_test(dynamic_ray_after)
+
+            print(json.dumps({
+                "static_before_valid": static_before_valid,
+                "static_before_shape": static_before_shape,
+                "dynamic_before_valid": dynamic_before_valid,
+                "dynamic_before_shape": dynamic_before_shape,
+                "static_after_valid": bool(static_after.is_valid()[0]),
+                "static_after_shape": int(static_after.shape_id[0]),
+                "dynamic_after_valid": bool(dynamic_after.is_valid()[0]),
+                "dynamic_after_shape": int(dynamic_after.shape_id[0]),
+                "dynamic_after_x": float(dynamic_after.p[0][0]),
+                "old_position_after_valid": bool(old_position_after.is_valid()[0]),
+                "shadow_old": bool(shadow_old[0]),
+                "shadow_new": bool(shadow_new[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["static_before_valid"])
+        self.assertEqual(data["static_before_shape"], 0)
+        self.assertTrue(data["dynamic_before_valid"])
+        self.assertEqual(data["dynamic_before_shape"], 1)
+        self.assertTrue(data["static_after_valid"])
+        self.assertEqual(data["static_after_shape"], 0)
+        self.assertTrue(data["dynamic_after_valid"])
+        self.assertEqual(data["dynamic_after_shape"], 1)
+        self.assertAlmostEqual(data["dynamic_after_x"], 4.25, places=5)
+        self.assertFalse(data["old_position_after_valid"])
+        self.assertFalse(data["shadow_old"])
+        self.assertTrue(data["shadow_new"])
+
     def test_dynamic_vertex_updates_preserve_gradients(self):
         data = run_json_case(
             """

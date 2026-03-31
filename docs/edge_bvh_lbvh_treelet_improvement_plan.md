@@ -24,12 +24,54 @@ The important implication is that the next wins are no longer "replace LBVH with
 - mask changes no longer rebuild, but masked queries now trade rebuild cost for filtering/culling overhead on the full tree
 - `build_edge_bvh_gpu()` still performs host topology round-trips for levelization and treelet scheduling
 - traversal is still a gather-heavy Dr.Jit path over scalar arrays
+- a GPU-side treelet preparation prototype now exists, but it remains experimental because it has not yet beaten the stable host-prepared path in measured build latency
+
+## OptiX Sync Follow-Up
+
+After Workstream 1, the next bottleneck was no longer edge-BVH refit itself. It was `Scene::sync()` spending most of its remaining time in the OptiX scene update path.
+
+Two follow-up changes now exist:
+
+- `OptixScene::sync()` no longer rebuilds or reuploads every instance slot on every update. It patches only dirty instance records and keeps the cached instance buffer alive across syncs.
+- Dynamic GAS / IAS build preferences are now configurable with:
+  - `RAYD_OPTIX_DYNAMIC_GAS_PREFERENCE={auto,fast_trace,fast_build,relaxed}`
+  - `RAYD_OPTIX_DYNAMIC_IAS_PREFERENCE={auto,fast_trace,fast_build,relaxed}`
+
+Measured on the verified `8x8` dynamic-mesh calibration scene (`32x32` grid per mesh, update one mesh per sync), the current tradeoff is:
+
+- `gas=fast_trace, ias=fast_trace`: best batch query throughput among the tested combinations
+- `gas=relaxed, ias=relaxed`: best build latency, but about `12%` slower batch query throughput than `fast_trace/fast_trace`
+- `gas=fast_trace, ias=relaxed`: smaller query regression than fully relaxed while still keeping the IAS path less conservative for dynamic updates
+
+Artifacts:
+
+- `artifacts/benchmarks/optix_dynamic_flags_benchmark.json`
+- `artifacts/benchmarks/optix_query_dynamic_ff.json`
+- `artifacts/benchmarks/optix_query_dynamic_fr.json`
+- `artifacts/benchmarks/optix_query_dynamic_rr.json`
+
+Current default therefore remains conservative on GAS quality and only relaxes IAS:
+
+- dynamic GAS default: `fast_trace`
+- dynamic IAS default: `relaxed`
+
+The code also contains an experimental static/dynamic OptiX split path behind `RAYD_OPTIX_SPLIT_MODE={off,on,auto}`. The mixed-scene calibration (`63` static meshes + `1` dynamic mesh) showed:
+
+- split `on` did not materially reduce `sync()` time on the measured workload
+- split `on` increased batch query time by about `2.3x`
+- split `on` therefore is not enabled by default
+
+Artifacts:
+
+- `artifacts/benchmarks/optix_split_benchmark.json`
+
+Default behavior now treats an unset `RAYD_OPTIX_SPLIT_MODE` as `off`, and `auto` is also biased to the single-scene path until a measured heuristic exists that pays for the query tax.
 
 ## Priority Order
 
-1. Remove host round-trip from LBVH treelet preparation
-2. Query-path memory layout cleanup
-3. Optional masked-query fallback policy for cases where Workstream 2 filtering regresses traversal too far
+1. Query-path memory layout cleanup
+2. Optional masked-query fallback policy for cases where Workstream 2 filtering regresses traversal too far
+3. Revisit GPU treelet preparation only if a clearer build-latency win emerges
 4. Treelet heuristic retuning only after the first three are done
 
 ## Workstream 1: Dirty-Ancestor-Only Refit
@@ -180,6 +222,35 @@ This reduces risk and preserves a checkpoint after each step.
 
 - Best improvement for `build()` latency on large scenes.
 - No direct effect on query quality.
+
+### Current prototype status
+
+- A GPU-side prototype now computes treelet subtree leaf counts and node heights on-device, then builds flat recompute/optimize schedules on the GPU.
+- The prototype is kept behind `RAYD_EDGE_BVH_EXPERIMENTAL_GPU_TREELET_PREP=1`.
+- The stable default does not enable it, because the current measurements do not justify replacing the older host-prepared schedule.
+
+### Measured result
+
+Artifacts:
+
+- `artifacts/benchmarks/edge_bvh_workstream3_single_mesh.json`
+- `artifacts/benchmarks/edge_bvh_workstream3_pressure.json`
+
+Compared against `artifacts/benchmarks/edge_bvh_stages/serial_reeval_lbvh_baseline/`:
+
+- single `192x192` build: `43.96 ms` baseline vs `50.54 ms` prototype
+- single point query: `4.29 ms` vs `4.73 ms`
+- single finite ray query: `11.25 ms` vs `11.72 ms`
+- pressure build: `139.63 ms` vs `143.37 ms`
+- pressure full finite ray query: `15.53 ms` vs `16.57 ms`
+
+The prototype no longer pays the large host topology copy and schedule upload, but the new GPU-side schedule generation still adds enough overhead that the end result is slightly slower overall on the authoritative workload.
+
+### Conclusion
+
+- Workstream 3 is implemented as an experimental calibration path, not an accepted default optimization.
+- The default `LBVH + gpu_treelet` path remains on the older host-prepared schedule because it is still faster in measured end-to-end results.
+- If this line is revisited, the next iteration should reduce prototype kernel count and temporary allocations before attempting another default-path swap.
 
 ## Workstream 4: Query-Path Layout Cleanup
 

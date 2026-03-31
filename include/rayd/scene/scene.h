@@ -124,8 +124,14 @@ private:
     int edge_count_ = 0;
     mutable bool edge_bvh_dirty_ = false;
     mutable std::vector<EdgeDirtyRange> pending_edge_bvh_dirty_ranges_;
+    bool optix_split_active_ = false;
+    std::vector<int> optix_static_mesh_indices_;
+    std::vector<int> optix_dynamic_mesh_indices_;
+    std::vector<int> optix_dynamic_mesh_local_index_;
     std::vector<Camera *> primary_edge_observers_;
     std::unique_ptr<OptixScene> optix_scene_;
+    std::unique_ptr<OptixScene> optix_static_scene_;
+    std::unique_ptr<OptixScene> optix_dynamic_scene_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     SceneSyncProfile last_sync_profile_;
 
