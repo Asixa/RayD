@@ -2683,6 +2683,7 @@ template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
                                                  MaskT<Detached> &active) const {
     require(ready_, "SceneEdge::nearest_edge(point): BVH is not built.");
+    drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
 
     const int query_count = static_cast<int>(slices(point));
     ClosestEdgeCandidate result;
@@ -2711,6 +2712,7 @@ template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const RayT<Detached> &ray,
                                                  MaskT<Detached> &active) const {
     require(ready_, "SceneEdge::nearest_edge(ray): BVH is not built.");
+    drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
 
     const int query_count = static_cast<int>(slices(ray.o));
     ClosestEdgeCandidate result;

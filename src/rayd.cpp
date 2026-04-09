@@ -156,8 +156,6 @@ NB_MODULE(rayd, m) {
         drjit::bind_all<drjit::CUDADiffArray<float>>(b);
     }
 
-    jit_set_flag(JitFlag::SymbolicLoops, false);
-
     m.doc() = "Differentiable geometry queries built on Dr.Jit and OptiX.";
     m.attr("__name__") = "rayd";
     m.def("device_count",

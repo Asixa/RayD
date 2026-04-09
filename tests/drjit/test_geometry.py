@@ -44,6 +44,28 @@ def run_json_case(script: str, timeout: int = 120):
 
 
 class GeometryCoreTests(unittest.TestCase):
+    def test_import_does_not_force_disable_symbolic_loops(self):
+        data = run_json_case(
+            """
+            import json
+            import drjit as dr
+
+            before = bool(dr.flag(dr.JitFlag.SymbolicLoops))
+            import rayd as pj
+            after = bool(dr.flag(dr.JitFlag.SymbolicLoops))
+
+            print(json.dumps({
+                "before": before,
+                "after": after,
+                "has_scene": hasattr(pj, "Scene"),
+            }))
+            """
+        )
+
+        self.assertTrue(data["before"])
+        self.assertTrue(data["after"])
+        self.assertTrue(data["has_scene"])
+
     def test_device_selection_api_round_trips_and_preserves_optix_queries(self):
         data = run_json_case(
             """
@@ -300,6 +322,224 @@ class GeometryCoreTests(unittest.TestCase):
         )
 
         self.assertEqual(data["values"], [True, False])
+
+    def test_split_queries_remain_lazy_until_results_are_consumed(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_OPTIX_SPLIT_MODE"] = "on"
+
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            static_mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                               [0.0, 0.0, 1.0],
+                                               [0.0, 0.0, 0.0]),
+                                  cuda.Array3i([0], [1], [2]))
+            dynamic_mesh = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                                [0.0, 0.0, 1.0],
+                                                [0.0, 0.0, 0.0]),
+                                   cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(static_mesh, dynamic=False)
+            scene.add_mesh(dynamic_mesh, dynamic=True)
+            scene.build()
+
+            static_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                                        cuda.Array3f([0.0], [0.0], [1.0]))
+            dynamic_ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+                                         cuda.Array3f([0.0], [0.0], [1.0]))
+
+            with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
+                its = scene.intersect(static_ray)
+                shadow = scene.shadow_test(dynamic_ray)
+                lazy_hist = dr.kernel_history()
+
+                t_value = float(its.t[0])
+                shadow_value = bool(shadow[0])
+                consume_hist = dr.kernel_history()
+
+            print(json.dumps({
+                "lazy_jit": sum(1 for h in lazy_hist if str(h.get("type")) == "KernelType.JIT"),
+                "lazy_optix": sum(1 for h in lazy_hist if bool(h.get("uses_optix", False))),
+                "consume_jit": sum(1 for h in consume_hist if str(h.get("type")) == "KernelType.JIT"),
+                "consume_optix": sum(1 for h in consume_hist if bool(h.get("uses_optix", False))),
+                "t": t_value,
+                "shadow": shadow_value,
+            }))
+            """
+        )
+
+        self.assertEqual(data["lazy_jit"], 0)
+        self.assertEqual(data["lazy_optix"], 0)
+        self.assertGreaterEqual(data["consume_jit"], 1)
+        self.assertGreaterEqual(data["consume_optix"], 1)
+        self.assertAlmostEqual(data["t"], 1.0, places=5)
+        self.assertTrue(data["shadow"])
+
+    def test_split_queries_work_in_default_symbolic_loop_mode_without_manual_eval(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_OPTIX_SPLIT_MODE"] = "on"
+
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            static_mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                               [0.0, 0.0, 1.0],
+                                               [0.0, 0.0, 0.0]),
+                                  cuda.Array3i([0], [1], [2]))
+            dynamic_mesh = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                                [0.0, 0.0, 1.0],
+                                                [0.0, 0.0, 0.0]),
+                                   cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(static_mesh, dynamic=False)
+            scene.add_mesh(dynamic_mesh, dynamic=True)
+            scene.build()
+
+            direction = ad.Array3f([0.0], [0.0], [1.0])
+
+            def body(i, origin, acc):
+                ray = pj.Ray(origin, direction)
+                its = scene.intersect(ray)
+                shadow = scene.shadow_test(ray)
+                next_origin = its.p + ad.Array3f([0.0], [0.0], [-1.0])
+                return i + 1, next_origin, acc + its.t + dr.select(shadow, 1.0, 0.0)
+
+            iterations, origin_out, acc = dr.while_loop(
+                state=(
+                    cuda.Int([0]),
+                    ad.Array3f([0.25], [0.25], [-1.0]),
+                    ad.Float([0.0]),
+                ),
+                cond=lambda i, origin, acc: i < 2,
+                body=body,
+            )
+
+            print(json.dumps({
+                "symbolic_loops": bool(dr.flag(dr.JitFlag.SymbolicLoops)),
+                "iterations": int(iterations[0]),
+                "acc": float(acc[0]),
+                "origin_z": float(origin_out[2][0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["symbolic_loops"])
+        self.assertEqual(data["iterations"], 2)
+        self.assertAlmostEqual(data["acc"], 4.0, places=5)
+        self.assertAlmostEqual(data["origin_z"], -1.0, places=5)
+
+    def test_nearest_edge_queries_remain_correct_when_symbolic_loops_enabled(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            dr.set_flag(dr.JitFlag.SymbolicLoops, True)
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
+                                       [0.0, 0.0, 1.0, 1.0],
+                                       [0.0, 0.0, 0.0, 0.0]),
+                          cuda.Array3i([0, 0], [1, 2], [2, 3]))
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            point = cuda.Array3f([0.5], [-0.2], [0.0])
+            point_hit = scene.nearest_edge(point)
+
+            ray = pj.RayDetached(cuda.Array3f([0.5], [0.5], [1.0]),
+                                 cuda.Array3f([0.0], [0.0], [-1.0]))
+            ray_hit = scene.nearest_edge(ray)
+
+            print(json.dumps({
+                "symbolic_loops": bool(dr.flag(dr.JitFlag.SymbolicLoops)),
+                "point_valid": bool(point_hit.is_valid()[0]),
+                "point_distance": float(point_hit.distance[0]),
+                "point_edge": int(point_hit.edge_id[0]),
+                "ray_valid": bool(ray_hit.is_valid()[0]),
+                "ray_distance": float(ray_hit.distance[0]),
+                "ray_edge": int(ray_hit.edge_id[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["symbolic_loops"])
+        self.assertTrue(data["point_valid"])
+        self.assertGreaterEqual(data["point_distance"], 0.0)
+        self.assertGreaterEqual(data["point_edge"], 0)
+        self.assertTrue(data["ray_valid"])
+        self.assertGreaterEqual(data["ray_distance"], 0.0)
+        self.assertGreaterEqual(data["ray_edge"], 0)
+
+    def test_trace_reflections_work_in_symbolic_loop_without_manual_eval(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_OPTIX_SPLIT_MODE"] = "on"
+
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            static_mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                               [0.0, 0.0, 1.0],
+                                               [0.0, 0.0, 0.0]),
+                                  cuda.Array3i([0], [1], [2]))
+            dynamic_mesh = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                                [0.0, 0.0, 1.0],
+                                                [0.0, 0.0, 0.0]),
+                                   cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(static_mesh, dynamic=False)
+            scene.add_mesh(dynamic_mesh, dynamic=True)
+            scene.build()
+
+            direction = ad.Array3f([0.0], [0.0], [1.0])
+
+            def body(i, origin, acc):
+                chain = scene.trace_reflections(pj.Ray(origin, direction), max_bounces=1)
+                next_origin = chain.hit_points + ad.Array3f([0.0], [0.0], [-1.0])
+                return i + 1, next_origin, acc + chain.t + dr.select(chain.is_valid(), 1.0, 0.0)
+
+            iterations, origin_out, acc = dr.while_loop(
+                state=(
+                    cuda.Int([0]),
+                    ad.Array3f([2.25], [0.25], [-1.0]),
+                    ad.Float([0.0]),
+                ),
+                cond=lambda i, origin, acc: i < 2,
+                body=body,
+            )
+
+            print(json.dumps({
+                "symbolic_loops": bool(dr.flag(dr.JitFlag.SymbolicLoops)),
+                "iterations": int(iterations[0]),
+                "acc": float(acc[0]),
+                "origin_z": float(origin_out[2][0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["symbolic_loops"])
+        self.assertEqual(data["iterations"], 2)
+        self.assertAlmostEqual(data["acc"], 4.0, places=5)
+        self.assertAlmostEqual(data["origin_z"], -1.0, places=5)
 
     def test_trace_reflections_returns_expected_two_bounce_chain(self):
         data = run_json_case(

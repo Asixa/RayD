@@ -45,7 +45,8 @@ public:
     OptixScene();
     ~OptixScene();
 
-    void build(const std::vector<OptixSceneMeshDesc> &meshes);
+    void build(const std::vector<OptixSceneMeshDesc> &meshes,
+               const OptixScene *trace_source = nullptr);
     void sync(const std::vector<OptixSceneMeshDesc> &meshes,
               const std::vector<OptixSceneMeshUpdate> &updates);
     bool is_ready() const;

@@ -75,6 +75,16 @@ bool should_split_optix_scene(OptixSplitMode mode,
     return false;
 }
 
+bool uses_symbolic_optix_query_path() {
+    // Dr.Jit symbolic recording cannot mix multiple OptiX pipelines/SBTs
+    // within a single captured kernel. Fall back to the unified scene path.
+    return jit_flag(JitFlag::Recording);
+}
+
+bool uses_symbolic_reflection_trace_path() {
+    return jit_flag(JitFlag::Recording);
+}
+
 template <bool Detached>
 NearestPointEdgeT<Detached> initialize_nearest_point_edge_result(int query_count) {
     NearestPointEdgeT<Detached> result;
@@ -210,6 +220,24 @@ ArrayD prefix_array(const ArrayD &value, int count) {
     return gather<ArrayD>(value, arange<IntDetached>(count));
 }
 
+template <typename ArrayD>
+ArrayD concat_array_sequence(const std::vector<ArrayD> &parts) {
+    require(!parts.empty(),
+            "concat_array_sequence(): at least one array is required.");
+    ArrayD result = parts.front();
+    for (size_t i = 1; i < parts.size(); ++i) {
+        result = concat(result, parts[i]);
+    }
+    return result;
+}
+
+IntDetached reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
+    const IntDetached slot = arange<IntDetached>(ray_count * max_bounces);
+    const IntDetached ray_index = slot / IntDetached(max_bounces);
+    const IntDetached bounce_index = slot - ray_index * IntDetached(max_bounces);
+    return bounce_index * IntDetached(ray_count) + ray_index;
+}
+
 template <bool Detached>
 MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
                                         MaskT<Detached> active) {
@@ -239,6 +267,225 @@ MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
         active_detached &= ~drjit::isfinite(ray.tmax) || (ray.tmax > 0.f);
     }
     return active_detached;
+}
+
+template <bool Detached>
+ReflectionChainT<Detached> trace_reflections_symbolic_fallback(const Scene &scene,
+                                                               const RayT<Detached> &ray,
+                                                               int max_bounces,
+                                                               MaskT<Detached> active) {
+    const int ray_count = static_cast<int>(slices(ray.o));
+    ReflectionChainT<Detached> result =
+        initialize_reflection_chain_result<Detached>(ray_count, max_bounces);
+    if (ray_count == 0) {
+        return result;
+    }
+
+    const MaskDetached sanitized_active_detached =
+        sanitize_reflection_active<Detached>(ray, active);
+
+    if constexpr (Detached) {
+        result.representative_ray_index = arange<IntDetached>(ray_count);
+    } else {
+        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
+    }
+
+    RayT<Detached> current_ray = ray;
+    MaskT<Detached> current_active;
+    if constexpr (Detached) {
+        current_active = sanitized_active_detached;
+    } else {
+        current_active = Mask(sanitized_active_detached);
+    }
+    Vector3fT<Detached> current_image_source = ray.o;
+    std::vector<FloatT<Detached>> t_parts;
+    std::vector<FloatT<Detached>> hit_x_parts;
+    std::vector<FloatT<Detached>> hit_y_parts;
+    std::vector<FloatT<Detached>> hit_z_parts;
+    std::vector<FloatT<Detached>> norm_x_parts;
+    std::vector<FloatT<Detached>> norm_y_parts;
+    std::vector<FloatT<Detached>> norm_z_parts;
+    std::vector<FloatT<Detached>> img_x_parts;
+    std::vector<FloatT<Detached>> img_y_parts;
+    std::vector<FloatT<Detached>> img_z_parts;
+    std::vector<IntT<Detached>> shape_id_parts;
+    std::vector<IntT<Detached>> prim_id_parts;
+    t_parts.reserve(static_cast<size_t>(max_bounces));
+    hit_x_parts.reserve(static_cast<size_t>(max_bounces));
+    hit_y_parts.reserve(static_cast<size_t>(max_bounces));
+    hit_z_parts.reserve(static_cast<size_t>(max_bounces));
+    norm_x_parts.reserve(static_cast<size_t>(max_bounces));
+    norm_y_parts.reserve(static_cast<size_t>(max_bounces));
+    norm_z_parts.reserve(static_cast<size_t>(max_bounces));
+    img_x_parts.reserve(static_cast<size_t>(max_bounces));
+    img_y_parts.reserve(static_cast<size_t>(max_bounces));
+    img_z_parts.reserve(static_cast<size_t>(max_bounces));
+    shape_id_parts.reserve(static_cast<size_t>(max_bounces));
+    prim_id_parts.reserve(static_cast<size_t>(max_bounces));
+
+    for (int bounce = 0; bounce < max_bounces; ++bounce) {
+        const IntersectionT<Detached> its =
+            scene.template intersect<Detached>(current_ray, current_active, RayFlags::Geometric);
+        const MaskT<Detached> bounce_hit = current_active && its.is_valid();
+
+        Vector3fT<Detached> geo_normal = its.geo_n;
+        geo_normal = select(dot(current_ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
+        const FloatT<Detached> plane_distance =
+            dot(current_image_source - its.p, geo_normal);
+        const Vector3fT<Detached> reflected_image_source =
+            current_image_source - 2.f * plane_distance * geo_normal;
+        const FloatT<Detached> miss_t = full<FloatT<Detached>>(Infinity, ray_count);
+        const FloatT<Detached> zero_f = zeros<FloatT<Detached>>(ray_count);
+        const IntT<Detached> miss_id = full<IntT<Detached>>(-1, ray_count);
+
+        t_parts.push_back(select(bounce_hit, its.t, miss_t));
+        hit_x_parts.push_back(select(bounce_hit, its.p.x(), zero_f));
+        hit_y_parts.push_back(select(bounce_hit, its.p.y(), zero_f));
+        hit_z_parts.push_back(select(bounce_hit, its.p.z(), zero_f));
+        norm_x_parts.push_back(select(bounce_hit, geo_normal.x(), zero_f));
+        norm_y_parts.push_back(select(bounce_hit, geo_normal.y(), zero_f));
+        norm_z_parts.push_back(select(bounce_hit, geo_normal.z(), zero_f));
+        img_x_parts.push_back(select(bounce_hit, reflected_image_source.x(), zero_f));
+        img_y_parts.push_back(select(bounce_hit, reflected_image_source.y(), zero_f));
+        img_z_parts.push_back(select(bounce_hit, reflected_image_source.z(), zero_f));
+        shape_id_parts.push_back(select(bounce_hit, its.shape_id, miss_id));
+        prim_id_parts.push_back(select(bounce_hit, its.prim_id, miss_id));
+
+        result.bounce_count += select(bounce_hit,
+                                      full<IntT<Detached>>(1, ray_count),
+                                      full<IntT<Detached>>(0, ray_count));
+
+        const FloatT<Detached> ray_dot_normal = dot(current_ray.d, geo_normal);
+        const Vector3fT<Detached> reflected_direction =
+            current_ray.d - 2.f * ray_dot_normal * geo_normal;
+        current_ray.o = select(bounce_hit,
+                               its.p + Epsilon * reflected_direction,
+                               current_ray.o);
+        current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
+        current_ray.tmax = select(bounce_hit,
+                                  full<FloatT<Detached>>(Infinity, ray_count),
+                                  current_ray.tmax);
+        current_image_source =
+            select(bounce_hit, reflected_image_source, current_image_source);
+        current_active = bounce_hit;
+    }
+
+    const int slot_count = ray_count * max_bounces;
+    const IntDetached bounce_pattern =
+        tile(arange<IntDetached>(max_bounces), ray_count);
+    FloatT<Detached> trace_t = full<FloatT<Detached>>(Infinity, slot_count);
+    FloatT<Detached> trace_hit_x = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_hit_y = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_hit_z = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_norm_x = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_norm_y = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_norm_z = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_img_x = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_img_y = zeros<FloatT<Detached>>(slot_count);
+    FloatT<Detached> trace_img_z = zeros<FloatT<Detached>>(slot_count);
+    IntT<Detached> trace_shape_ids = full<IntT<Detached>>(-1, slot_count);
+    IntT<Detached> trace_prim_ids = full<IntT<Detached>>(-1, slot_count);
+
+    for (int bounce = 0; bounce < max_bounces; ++bounce) {
+        const MaskDetached select_bounce = bounce_pattern == IntDetached(bounce);
+        trace_t = select(select_bounce, repeat(t_parts[static_cast<size_t>(bounce)], max_bounces), trace_t);
+        trace_hit_x = select(select_bounce,
+                             repeat(hit_x_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_hit_x);
+        trace_hit_y = select(select_bounce,
+                             repeat(hit_y_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_hit_y);
+        trace_hit_z = select(select_bounce,
+                             repeat(hit_z_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_hit_z);
+        trace_norm_x = select(select_bounce,
+                              repeat(norm_x_parts[static_cast<size_t>(bounce)], max_bounces),
+                              trace_norm_x);
+        trace_norm_y = select(select_bounce,
+                              repeat(norm_y_parts[static_cast<size_t>(bounce)], max_bounces),
+                              trace_norm_y);
+        trace_norm_z = select(select_bounce,
+                              repeat(norm_z_parts[static_cast<size_t>(bounce)], max_bounces),
+                              trace_norm_z);
+        trace_img_x = select(select_bounce,
+                             repeat(img_x_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_img_x);
+        trace_img_y = select(select_bounce,
+                             repeat(img_y_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_img_y);
+        trace_img_z = select(select_bounce,
+                             repeat(img_z_parts[static_cast<size_t>(bounce)], max_bounces),
+                             trace_img_z);
+        trace_shape_ids = select(select_bounce,
+                                 repeat(shape_id_parts[static_cast<size_t>(bounce)], max_bounces),
+                                 trace_shape_ids);
+        trace_prim_ids = select(select_bounce,
+                                repeat(prim_id_parts[static_cast<size_t>(bounce)], max_bounces),
+                                trace_prim_ids);
+    }
+
+    const Vector3fT<Detached> hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
+    const Vector3fT<Detached> plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
+    const Vector3fT<Detached> image_sources(trace_img_x, trace_img_y, trace_img_z);
+
+    result.t = trace_t;
+    result.hit_points = hit_points;
+    result.geo_normals = plane_normals;
+    result.image_sources = image_sources;
+    result.plane_points = hit_points;
+    result.plane_normals = plane_normals;
+    result.shape_ids = trace_shape_ids;
+    result.prim_ids = trace_prim_ids;
+    result.discovery_count = select(result.bounce_count > 0,
+                                    full<IntT<Detached>>(1, ray_count),
+                                    full<IntT<Detached>>(0, ray_count));
+    return result;
+}
+
+template <bool Detached>
+ReflectionChainT<Detached> trace_reflections_symbolic_single_bounce(const Scene &scene,
+                                                                    const RayT<Detached> &ray,
+                                                                    MaskT<Detached> active) {
+    const int ray_count = static_cast<int>(slices(ray.o));
+    ReflectionChainT<Detached> result =
+        initialize_reflection_chain_result<Detached>(ray_count, 1);
+    if (ray_count == 0) {
+        return result;
+    }
+
+    const MaskDetached sanitized_active_detached =
+        sanitize_reflection_active<Detached>(ray, active);
+    MaskT<Detached> current_active;
+    if constexpr (Detached) {
+        current_active = sanitized_active_detached;
+        result.representative_ray_index = arange<IntDetached>(ray_count);
+    } else {
+        current_active = Mask(sanitized_active_detached);
+        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
+    }
+
+    const IntersectionT<Detached> its =
+        scene.template intersect<Detached>(ray, current_active, RayFlags::Geometric);
+    const MaskT<Detached> bounce_hit = current_active && its.is_valid();
+    Vector3fT<Detached> geo_normal = its.geo_n;
+    geo_normal = select(dot(ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
+    const FloatT<Detached> plane_distance = dot(ray.o - its.p, geo_normal);
+    const Vector3fT<Detached> image_sources =
+        ray.o - 2.f * plane_distance * geo_normal;
+
+    result.bounce_count = select(bounce_hit,
+                                 full<IntT<Detached>>(1, ray_count),
+                                 full<IntT<Detached>>(0, ray_count));
+    result.discovery_count = result.bounce_count;
+    result.t = select(bounce_hit, its.t, result.t);
+    result.hit_points = select(bounce_hit, its.p, result.hit_points);
+    result.geo_normals = select(bounce_hit, geo_normal, result.geo_normals);
+    result.image_sources = select(bounce_hit, image_sources, result.image_sources);
+    result.plane_points = result.hit_points;
+    result.plane_normals = result.geo_normals;
+    result.shape_ids = select(bounce_hit, its.shape_id, result.shape_ids);
+    result.prim_ids = select(bounce_hit, its.prim_id, result.prim_ids);
+    return result;
 }
 
 int face_edge_slot(const std::array<int, 3> &face_vertices, int v0, int v1) {
@@ -709,8 +956,9 @@ void Scene::build() {
         optix_scene_ = std::make_unique<OptixScene>();
         optix_static_scene_ = std::make_unique<OptixScene>();
         optix_dynamic_scene_ = std::make_unique<OptixScene>();
-        optix_static_scene_->build(static_mesh_descs);
-        optix_dynamic_scene_->build(dynamic_mesh_descs);
+        optix_scene_->build(mesh_descs);
+        optix_static_scene_->build(static_mesh_descs, optix_scene_.get());
+        optix_dynamic_scene_->build(dynamic_mesh_descs, optix_scene_.get());
     } else {
         optix_scene_ = std::make_unique<OptixScene>();
         optix_static_scene_ = std::make_unique<OptixScene>();
@@ -886,6 +1134,10 @@ void Scene::sync() {
 
     const auto optix_start = Clock::now();
     if (optix_split_active_) {
+        if (!updates.empty()) {
+            optix_scene_->sync(mesh_descs, updates);
+        }
+
         std::vector<OptixSceneMeshDesc> dynamic_mesh_descs;
         dynamic_mesh_descs.reserve(optix_dynamic_mesh_indices_.size());
         for (int mesh_index : optix_dynamic_mesh_indices_) {
@@ -909,10 +1161,15 @@ void Scene::sync() {
         }
         last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - optix_start).count();
+        if (!updates.empty()) {
+            const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
+            last_sync_profile_.optix_gas_update_ms += optix_profile.gas_update_ms;
+            last_sync_profile_.optix_ias_update_ms += optix_profile.ias_update_ms;
+        }
         if (!dynamic_updates.empty()) {
             const OptixSyncProfile &optix_profile = optix_dynamic_scene_->last_sync_profile();
-            last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
-            last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+            last_sync_profile_.optix_gas_update_ms += optix_profile.gas_update_ms;
+            last_sync_profile_.optix_ias_update_ms += optix_profile.ias_update_ms;
         }
     } else {
         optix_scene_->sync(mesh_descs, updates);
@@ -1032,7 +1289,8 @@ VectoriT<2, true> Scene::edge_adjacent_faces(const IntDetached &edge_id, bool gl
 bool Scene::is_ready() const {
     const bool optix_ready =
         optix_split_active_
-            ? (optix_static_scene_ != nullptr && optix_dynamic_scene_ != nullptr &&
+            ? (optix_scene_ != nullptr && optix_static_scene_ != nullptr &&
+               optix_dynamic_scene_ != nullptr && optix_scene_->is_ready() &&
                optix_static_scene_->is_ready() && optix_dynamic_scene_->is_ready())
             : (optix_scene_ != nullptr && optix_scene_->is_ready());
     return is_ready_ && edge_bvh_ != nullptr && edge_bvh_->is_ready() && optix_ready;
@@ -1047,6 +1305,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     const bool want_geo_n   = has_flag(flags, RayFlags::Geometric);
     const bool want_shading = has_flag(flags, RayFlags::ShadingN);
     const bool want_uv      = has_flag(flags, RayFlags::UV);
+    const bool symbolic_optix_query = optix_split_active_ && uses_symbolic_optix_query_path();
 
     IntersectionT<Detached> intersection;
     intersection.t = full<FloatT<Detached>>(Infinity, ray_count);
@@ -1060,27 +1319,11 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
     MaskT<Detached> hit_mask = active;
     OptixIntersection optix_hit;
-    if (optix_split_active_) {
+    if (optix_split_active_ && !symbolic_optix_query) {
         MaskT<Detached> static_hit_mask = active;
         MaskT<Detached> dynamic_hit_mask = active;
         const OptixIntersection static_hit =
             optix_static_scene_->template intersect<Detached>(ray, static_hit_mask);
-        if constexpr (!Detached) {
-            drjit::eval(static_hit.t,
-                        static_hit.barycentric[0],
-                        static_hit.barycentric[1],
-                        static_hit.shape_id,
-                        static_hit.global_prim_id,
-                        detach<false>(static_hit_mask));
-        } else {
-            drjit::eval(static_hit.t,
-                        static_hit.barycentric[0],
-                        static_hit.barycentric[1],
-                        static_hit.shape_id,
-                        static_hit.global_prim_id,
-                        static_hit_mask);
-        }
-        drjit::sync_thread();
         const OptixIntersection dynamic_hit =
             optix_dynamic_scene_->template intersect<Detached>(ray, dynamic_hit_mask);
 
@@ -1227,6 +1470,15 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         initialize_reflection_chain_result<Detached>(ray_count, max_bounces);
     if (ray_count == 0) {
         return result;
+    }
+
+    const bool symbolic_reflection_trace = uses_symbolic_reflection_trace_path();
+    require(!symbolic_reflection_trace || !options.deduplicate,
+            "Scene::trace_reflections(): symbolic recording does not support deduplicate=true yet.");
+    if (symbolic_reflection_trace) {
+        require(max_bounces == 1,
+                "Scene::trace_reflections(): symbolic recording currently supports max_bounces=1 only.");
+        return trace_reflections_symbolic_single_bounce<Detached>(*this, ray, active);
     }
 
     const MaskDetached active_detached = sanitize_reflection_active<Detached>(ray, active);
@@ -1535,21 +1787,15 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
 
-    if (!optix_split_active_) {
+    const bool symbolic_optix_query = optix_split_active_ && uses_symbolic_optix_query_path();
+    if (!optix_split_active_ || symbolic_optix_query) {
         return optix_scene_->template shadow_test<Detached>(ray, active);
     }
 
     const MaskT<Detached> static_hit =
         optix_static_scene_->template shadow_test<Detached>(ray, active);
-    if constexpr (!Detached) {
-        drjit::eval(detach<false>(static_hit));
-    } else {
-        drjit::eval(static_hit);
-    }
-    drjit::sync_thread();
-    const MaskT<Detached> dynamic_active = active && !static_hit;
     const MaskT<Detached> dynamic_hit =
-        optix_dynamic_scene_->template shadow_test<Detached>(ray, dynamic_active);
+        optix_dynamic_scene_->template shadow_test<Detached>(ray, active);
     return static_hit || dynamic_hit;
 }
 

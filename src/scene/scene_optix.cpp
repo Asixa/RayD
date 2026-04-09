@@ -116,12 +116,11 @@ struct OptixMeshState {
 
 void write_optix_instance(OptixInstance &instance,
                           const OptixSceneMeshDesc &mesh_desc,
-                          const OptixMeshState &mesh_state,
-                          size_t mesh_index) {
+                          const OptixMeshState &mesh_state) {
     std::memset(&instance, 0, sizeof(instance));
     fill_optix_transform(instance.transform, mesh_desc.mesh->full_transform());
     instance.instanceId = static_cast<unsigned int>(mesh_desc.mesh_id);
-    instance.sbtOffset = static_cast<unsigned int>(mesh_index);
+    instance.sbtOffset = static_cast<unsigned int>(mesh_desc.mesh_id);
     instance.visibilityMask = 255u;
     instance.flags = OPTIX_INSTANCE_FLAG_NONE;
     instance.traversableHandle = mesh_state.gas_handle;
@@ -149,6 +148,7 @@ struct OptixState {
     OptixDeviceContext context = 0;
     bool has_dynamic_meshes = false;
     bool has_static_meshes = false;
+    bool owns_trace_handles = true;
 
     UInt64Detached handle;
     UIntDetached pipeline_handle;
@@ -237,7 +237,12 @@ static void destroy_optix_state(OptixState *state) {
     }
 
     jit_sync_thread();
-    retire_optix_jit_resources(state);
+    if (state->owns_trace_handles) {
+        retire_optix_jit_resources(state);
+    } else {
+        state->pipeline_handle = UIntDetached();
+        state->sbt_handle = UIntDetached();
+    }
 
     for (OptixMeshState &mesh_state : state->mesh_states) {
         destroy_mesh_state(mesh_state);
@@ -464,8 +469,7 @@ static void initialize_instances(OptixState *state, const std::vector<OptixScene
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
         write_optix_instance(state->instances[mesh_index],
                              meshes[mesh_index],
-                             state->mesh_states[mesh_index],
-                             mesh_index);
+                             state->mesh_states[mesh_index]);
     }
 
     upload_instance_span(state, 0, state->instances.size());
@@ -486,8 +490,7 @@ static void update_dirty_instances(OptixState *state,
                 "OptixScene::sync(): dirty instance index is out of range.");
         write_optix_instance(state->instances[static_cast<size_t>(mesh_index)],
                              meshes[static_cast<size_t>(mesh_index)],
-                             state->mesh_states[static_cast<size_t>(mesh_index)],
-                             static_cast<size_t>(mesh_index));
+                             state->mesh_states[static_cast<size_t>(mesh_index)]);
     }
 
     if (dirty_instance_indices.size() == state->instances.size()) {
@@ -572,25 +575,30 @@ OptixScene::~OptixScene() {
     destroy_optix_state(m_accel);
 }
 
-void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes) {
+void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes,
+                       const OptixScene *trace_source) {
     require(!meshes.empty(), "OptixScene::build(): missing meshes.");
+    require(trace_source == nullptr || trace_source->m_accel != nullptr,
+            "OptixScene::build(): trace_source must be built first.");
 
     destroy_optix_state(m_accel);
 
     init_optix_api();
     m_accel = new OptixState();
     m_accel->context = jit_optix_context();
+    m_accel->owns_trace_handles = trace_source == nullptr;
 
-    m_accel->pipeline_compile_options.usesMotionBlur = false;
-    m_accel->pipeline_compile_options.traversableGraphFlags =
-        OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    m_accel->pipeline_compile_options.numPayloadValues = 0;
-    m_accel->pipeline_compile_options.numAttributeValues = 2;
-    m_accel->pipeline_compile_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
-    m_accel->pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
-    m_accel->pipeline_compile_options.usesPrimitiveTypeFlags =
-        static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
-    m_accel->pipeline_compile_options.allowOpacityMicromaps = 0;
+    if (trace_source == nullptr) {
+        m_accel->pipeline_compile_options.usesMotionBlur = false;
+        m_accel->pipeline_compile_options.traversableGraphFlags =
+            OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
+        m_accel->pipeline_compile_options.numPayloadValues = 0;
+        m_accel->pipeline_compile_options.numAttributeValues = 2;
+        m_accel->pipeline_compile_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
+        m_accel->pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
+        m_accel->pipeline_compile_options.usesPrimitiveTypeFlags =
+            static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
+        m_accel->pipeline_compile_options.allowOpacityMicromaps = 0;
 
     // No PTX module needed — built-in triangle intersection with HitObject API
     // (invoke=0) never executes CH/miss programs.  Program groups with nullptr
@@ -615,10 +623,13 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes) {
     jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[0], reinterpret_cast<void *>(m_accel->sbt.missRecordBase)));
 
     m_accel->hg_sbts = std::vector<HitGroupSbtRecord>(meshes.size());
-    for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
-        m_accel->hg_sbts[mesh_index].data.shape_offset = meshes[mesh_index].face_offset;
-        m_accel->hg_sbts[mesh_index].data.shape_id = meshes[mesh_index].mesh_id;
-        jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[1], &m_accel->hg_sbts[mesh_index]));
+    for (const OptixSceneMeshDesc &mesh_desc : meshes) {
+        const size_t sbt_index = static_cast<size_t>(mesh_desc.mesh_id);
+        require(sbt_index < m_accel->hg_sbts.size(),
+                "OptixScene::build(): mesh_id is out of range for SBT records.");
+        m_accel->hg_sbts[sbt_index].data.shape_offset = mesh_desc.face_offset;
+        m_accel->hg_sbts[sbt_index].data.shape_id = mesh_desc.mesh_id;
+        jit_optix_check(optixSbtRecordPackHeader(m_accel->pg[1], &m_accel->hg_sbts[sbt_index]));
     }
 
     m_accel->sbt.hitgroupRecordBase = jit_malloc(AllocType::HostPinned, meshes.size() * sizeof(HitGroupSbtRecord));
@@ -634,12 +645,16 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes) {
     m_accel->sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(
         jit_malloc_migrate(reinterpret_cast<void *>(m_accel->sbt.hitgroupRecordBase), AllocType::Device, 1));
 
-    m_accel->pipeline_handle = UIntDetached::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options,
-                                                                                nullptr,
-                                                                                m_accel->pg,
-                                                                                2));
-    m_accel->sbt_handle = UIntDetached::steal(
-        jit_optix_configure_sbt(&m_accel->sbt, m_accel->pipeline_handle.index()));
+        m_accel->pipeline_handle = UIntDetached::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options,
+                                                                                    nullptr,
+                                                                                    m_accel->pg,
+                                                                                    2));
+        m_accel->sbt_handle = UIntDetached::steal(
+            jit_optix_configure_sbt(&m_accel->sbt, m_accel->pipeline_handle.index()));
+    } else {
+        m_accel->pipeline_handle = trace_source->m_accel->pipeline_handle;
+        m_accel->sbt_handle = trace_source->m_accel->sbt_handle;
+    }
 
     m_accel->mesh_states.resize(meshes.size());
     for (size_t mesh_index = 0; mesh_index < meshes.size(); ++mesh_index) {
@@ -770,10 +785,6 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
 
     MaskDetached active_detached = detach<false>(active);
 
-    if (drjit::none(active_detached)) {
-        return intersection;
-    }
-
     FloatDetached t_min = RayEpsilon;
     FloatDetached t_max = select(drjit::isfinite(t_max_input),
                                  t_max_input,
@@ -882,10 +893,6 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     }
 
     MaskDetached active_detached = detach<false>(active);
-
-    if (drjit::none(active_detached)) {
-        return hit;
-    }
 
     FloatDetached t_min = RayEpsilon;
     FloatDetached t_max = select(drjit::isfinite(t_max_input),
