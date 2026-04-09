@@ -22,6 +22,18 @@ using ReflectionChainT = ReflectionChainData<FloatT<Detached>>;
 using ReflectionChain = ReflectionChainT<false>;
 using ReflectionChainDetached = ReflectionChainT<true>;
 
+template <typename> struct ReflectionBounceData;
+template <bool Detached>
+using ReflectionBounceT = ReflectionBounceData<FloatT<Detached>>;
+using ReflectionBounce = ReflectionBounceT<false>;
+using ReflectionBounceDetached = ReflectionBounceT<true>;
+
+template <typename> struct ReflectionTraceData;
+template <bool Detached>
+using ReflectionTraceT = ReflectionTraceData<FloatT<Detached>>;
+using ReflectionTrace = ReflectionTraceT<false>;
+using ReflectionTraceDetached = ReflectionTraceT<true>;
+
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>
 using NearestPointEdgeT = NearestPointEdgeData<FloatT<Detached>>;

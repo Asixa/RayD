@@ -484,7 +484,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertGreaterEqual(data["ray_distance"], 0.0)
         self.assertGreaterEqual(data["ray_edge"], 0)
 
-    def test_trace_reflections_work_in_symbolic_loop_without_manual_eval(self):
+    def test_trace_reflections_defaults_to_symbolic_trace_in_symbolic_loop(self):
         data = run_json_case(
             """
             import os
@@ -513,9 +513,10 @@ class GeometryCoreTests(unittest.TestCase):
             direction = ad.Array3f([0.0], [0.0], [1.0])
 
             def body(i, origin, acc):
-                chain = scene.trace_reflections(pj.Ray(origin, direction), max_bounces=1)
-                next_origin = chain.hit_points + ad.Array3f([0.0], [0.0], [-1.0])
-                return i + 1, next_origin, acc + chain.t + dr.select(chain.is_valid(), 1.0, 0.0)
+                trace = scene.trace_reflections(pj.Ray(origin, direction), max_bounces=1)
+                bounce = trace.bounce(0)
+                next_origin = bounce.hit_points + ad.Array3f([0.0], [0.0], [-1.0])
+                return i + 1, next_origin, acc + bounce.t + dr.select(bounce.is_valid(), 1.0, 0.0)
 
             iterations, origin_out, acc = dr.while_loop(
                 state=(
@@ -573,7 +574,7 @@ class GeometryCoreTests(unittest.TestCase):
                 cuda.Array3f([0.0], [0.0], [0.5]),
                 cuda.Array3f([inv_sqrt2], [0.0], [inv_sqrt2]),
             )
-            chain = scene.trace_reflections(ray, max_bounces=3)
+            chain = scene.trace_reflections(ray, max_bounces=3, symbolic=False)
             dr.eval(chain.bounce_count, chain.t, chain.hit_points,
                     chain.image_sources, chain.shape_ids, chain.prim_ids)
             dr.sync_thread()
@@ -635,7 +636,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
-            chain = scene.trace_reflections(ray, max_bounces=1)
+            chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
             dr.backward(dr.sum(chain.t))
             grad = dr.grad(verts)
 
@@ -652,6 +653,236 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertAlmostEqual(data["t"], 1.0, places=5)
         self.assertGreater(data["grad_z_sum"], 0.0)
+
+    def test_trace_reflections_supports_multi_bounce_symbolic_trace(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            wall = pj.Mesh(
+                cuda.Array3f([1.0, 1.0, 1.0, 1.0],
+                             [-1.0, 1.0, 1.0, -1.0],
+                             [0.0, 0.0, 2.0, 2.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            ceiling = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [2.0, 2.0, 2.0, 2.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+
+            scene = pj.Scene()
+            scene.add_mesh(wall)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            inv_sqrt2 = 1.0 / math.sqrt(2.0)
+            ray_o = ad.Array3f([0.0], [0.0], [0.5])
+            ray_d = ad.Array3f([inv_sqrt2], [0.0], [inv_sqrt2])
+
+            def body(i, acc):
+                trace = scene.trace_reflections(
+                    pj.Ray(ray_o, ray_d),
+                    max_bounces=2,
+                    symbolic=True,
+                )
+                bounce0 = trace.bounce(0)
+                bounce1 = trace.bounce(1)
+                total = bounce0.t + dr.select(bounce1.is_valid(), bounce1.t, 0.0)
+                return i + 1, acc + total
+
+            iterations, acc = dr.while_loop(
+                state=(cuda.Int([0]), ad.Float([0.0])),
+                cond=lambda i, acc: i < 2,
+                body=body,
+            )
+
+            print(json.dumps({
+                "symbolic_loops": bool(dr.flag(dr.JitFlag.SymbolicLoops)),
+                "iterations": int(iterations[0]),
+                "acc": float(acc[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["symbolic_loops"])
+        self.assertEqual(data["iterations"], 2)
+        self.assertAlmostEqual(data["acc"], 2.0 * (math.sqrt(2.0) + math.sqrt(0.5)), places=4)
+
+    def test_trace_reflections_returns_expected_two_bounce_symbolic_trace(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            wall = pj.Mesh(
+                cuda.Array3f([1.0, 1.0, 1.0, 1.0],
+                             [-1.0, 1.0, 1.0, -1.0],
+                             [0.0, 0.0, 2.0, 2.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            ceiling = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [2.0, 2.0, 2.0, 2.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+
+            scene = pj.Scene()
+            scene.add_mesh(wall)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            inv_sqrt2 = 1.0 / math.sqrt(2.0)
+            ray = pj.RayDetached(
+                cuda.Array3f([0.0], [0.0], [0.5]),
+                cuda.Array3f([inv_sqrt2], [0.0], [inv_sqrt2]),
+            )
+            trace = scene.trace_reflections(ray, max_bounces=3, symbolic=True)
+            bounce0 = trace.bounce(0)
+            bounce1 = trace.bounce(1)
+            bounce2 = trace.bounce(2)
+            dr.eval(trace.bounce_count,
+                    trace.dedup_keep_mask,
+                    trace.discovery_count,
+                    trace.representative_ray_index,
+                    bounce0.t,
+                    bounce0.hit_points,
+                    bounce0.image_sources,
+                    bounce1.t,
+                    bounce1.hit_points,
+                    bounce1.image_sources,
+                    bounce2.t)
+            dr.sync_thread()
+
+            print(json.dumps({
+                "max_bounces": int(trace.max_bounces),
+                "num_bounces": len(trace.bounces),
+                "bounce_count": int(trace.bounce_count[0]),
+                "keep_mask": bool(trace.dedup_keep_mask[0]),
+                "discovery_count": int(trace.discovery_count[0]),
+                "representative_ray_index": int(trace.representative_ray_index[0]),
+                "bounce0_valid": bool(bounce0.is_valid()[0]),
+                "bounce1_valid": bool(bounce1.is_valid()[0]),
+                "bounce2_valid": bool(bounce2.is_valid()[0]),
+                "bounce0_t": float(bounce0.t[0]),
+                "bounce1_t": float(bounce1.t[0]),
+                "hit0": [float(bounce0.hit_points[0][0]), float(bounce0.hit_points[1][0]), float(bounce0.hit_points[2][0])],
+                "hit1": [float(bounce1.hit_points[0][0]), float(bounce1.hit_points[1][0]), float(bounce1.hit_points[2][0])],
+                "img0": [float(bounce0.image_sources[0][0]), float(bounce0.image_sources[1][0]), float(bounce0.image_sources[2][0])],
+                "img1": [float(bounce1.image_sources[0][0]), float(bounce1.image_sources[1][0]), float(bounce1.image_sources[2][0])],
+            }))
+            """
+        )
+
+        self.assertEqual(data["max_bounces"], 3)
+        self.assertEqual(data["num_bounces"], 3)
+        self.assertEqual(data["bounce_count"], 2)
+        self.assertTrue(data["keep_mask"])
+        self.assertEqual(data["discovery_count"], 1)
+        self.assertEqual(data["representative_ray_index"], 0)
+        self.assertTrue(data["bounce0_valid"])
+        self.assertTrue(data["bounce1_valid"])
+        self.assertFalse(data["bounce2_valid"])
+        self.assertAlmostEqual(data["bounce0_t"], math.sqrt(2.0), places=4)
+        self.assertAlmostEqual(data["bounce1_t"], math.sqrt(0.5), places=4)
+        self.assertAlmostEqual(data["hit0"][0], 1.0, places=4)
+        self.assertAlmostEqual(data["hit0"][1], 0.0, places=4)
+        self.assertAlmostEqual(data["hit0"][2], 1.5, places=4)
+        self.assertAlmostEqual(data["hit1"][0], 0.5, places=4)
+        self.assertAlmostEqual(data["hit1"][1], 0.0, places=4)
+        self.assertAlmostEqual(data["hit1"][2], 2.0, places=4)
+        self.assertAlmostEqual(data["img0"][0], 2.0, places=4)
+        self.assertAlmostEqual(data["img0"][1], 0.0, places=4)
+        self.assertAlmostEqual(data["img0"][2], 0.5, places=4)
+        self.assertAlmostEqual(data["img1"][0], 2.0, places=4)
+        self.assertAlmostEqual(data["img1"][1], 0.0, places=4)
+        self.assertAlmostEqual(data["img1"][2], 3.5, places=4)
+
+    def test_trace_reflections_symbolic_trace_preserves_gradients_for_ad_inputs(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                        [0.0, 0.0, 1.0],
+                                        [0.0, 0.0, 0.0]),
+                           cuda.Array3i([0], [1], [2]))
+
+            verts = ad.Array3f([0.0, 1.0, 0.0],
+                               [0.0, 0.0, 1.0],
+                               [0.0, 0.0, 0.0])
+            dr.enable_grad(verts)
+            mesh.vertex_positions = verts
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+                         ad.Array3f([0.0], [0.0], [1.0]))
+            trace = scene.trace_reflections(ray, max_bounces=2, symbolic=True)
+            bounce0 = trace.bounce(0)
+            dr.backward(dr.sum(bounce0.t))
+            grad = dr.grad(verts)
+
+            print(json.dumps({
+                "bounce_count": int(trace.bounce_count[0]),
+                "valid": bool(bounce0.is_valid()[0]),
+                "t": float(bounce0.t[0]),
+                "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertTrue(data["valid"])
+        self.assertAlmostEqual(data["t"], 1.0, places=5)
+        self.assertGreater(data["grad_z_sum"], 0.0)
+
+    def test_trace_reflections_symbolic_trace_rejects_deduplicate_for_now(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
+                                        [0.0, 0.0, 1.0],
+                                        [0.0, 0.0, 0.0]),
+                           cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                                 cuda.Array3f([0.0], [0.0], [1.0]))
+
+            error = ""
+            try:
+                scene.trace_reflections(ray, max_bounces=1, deduplicate=True, symbolic=True)
+            except RuntimeError as exc:
+                error = str(exc)
+
+            print(json.dumps({"error": error}))
+            """
+        )
+
+        self.assertIn("deduplicate=true is not implemented with symbolic=true yet", data["error"])
 
     def test_trace_reflections_gpu_deduplicate_merges_duplicate_and_canonical_paths(self):
         data = run_json_case(
@@ -681,12 +912,13 @@ class GeometryCoreTests(unittest.TestCase):
                              [0.2, 0.2, 0.2]),
             )
 
-            chain = scene.trace_reflections(ray, max_bounces=1, deduplicate=True)
+            chain = scene.trace_reflections(ray, max_bounces=1, deduplicate=True, symbolic=False)
             chain_canon = scene.trace_reflections(
                 ray,
                 max_bounces=1,
                 deduplicate=True,
                 canonical_prim_table=cuda.Int([0, 0]),
+                symbolic=False,
             )
             dr.eval(chain.discovery_count,
                     chain.hit_points,

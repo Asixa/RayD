@@ -76,6 +76,17 @@ public:
                                                  int max_bounces,
                                                  MaskT<Detached> active = true) const;
     template <bool Detached>
+    ReflectionTraceT<Detached> trace_bounces(
+        const RayT<Detached> &ray,
+        int max_bounces,
+        const ReflectionTraceOptions &options,
+        MaskT<Detached> active) const;
+    template <bool Detached>
+    ReflectionTraceT<Detached> trace_bounces(
+        const RayT<Detached> &ray,
+        int max_bounces,
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
     NearestPointEdgeT<Detached> nearest_edge(const Vector3fT<Detached> &point,

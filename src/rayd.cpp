@@ -300,6 +300,68 @@ NB_MODULE(rayd, m) {
             .def_ro("shape_ids", &ReflectionChain::shape_ids)
             .def_ro("prim_ids", &ReflectionChain::prim_ids);
 
+        nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
+            .def("is_valid", &ReflectionBounceDetached::is_valid)
+            .def_ro("t", &ReflectionBounceDetached::t)
+            .def_ro("hit_points", &ReflectionBounceDetached::hit_points)
+            .def_ro("geo_normals", &ReflectionBounceDetached::geo_normals)
+            .def_ro("image_sources", &ReflectionBounceDetached::image_sources)
+            .def_ro("plane_points", &ReflectionBounceDetached::plane_points)
+            .def_ro("plane_normals", &ReflectionBounceDetached::plane_normals)
+            .def_ro("shape_ids", &ReflectionBounceDetached::shape_ids)
+            .def_ro("prim_ids", &ReflectionBounceDetached::prim_ids);
+
+        nb::class_<ReflectionBounce>(m, "ReflectionBounce")
+            .def("is_valid", &ReflectionBounce::is_valid)
+            .def_ro("t", &ReflectionBounce::t)
+            .def_ro("hit_points", &ReflectionBounce::hit_points)
+            .def_ro("geo_normals", &ReflectionBounce::geo_normals)
+            .def_ro("image_sources", &ReflectionBounce::image_sources)
+            .def_ro("plane_points", &ReflectionBounce::plane_points)
+            .def_ro("plane_normals", &ReflectionBounce::plane_normals)
+            .def_ro("shape_ids", &ReflectionBounce::shape_ids)
+            .def_ro("prim_ids", &ReflectionBounce::prim_ids);
+
+        nb::class_<ReflectionTraceDetached>(m, "ReflectionTraceDetached")
+            .def("is_valid", &ReflectionTraceDetached::is_valid)
+            .def("bounce",
+                 [](const ReflectionTraceDetached &trace, int index) {
+                     if (index < 0 || index >= trace.max_bounces) {
+                         throw std::out_of_range("ReflectionTraceDetached.bounce(): index out of range.");
+                     }
+                     return trace.bounces[static_cast<size_t>(index)];
+                 },
+                 "index"_a)
+            .def_ro("max_bounces", &ReflectionTraceDetached::max_bounces)
+            .def_ro("ray_count", &ReflectionTraceDetached::ray_count)
+            .def_ro("deduplicate_requested", &ReflectionTraceDetached::deduplicate_requested)
+            .def_ro("deduplicate_applied", &ReflectionTraceDetached::deduplicate_applied)
+            .def_ro("bounce_count", &ReflectionTraceDetached::bounce_count)
+            .def_ro("discovery_count", &ReflectionTraceDetached::discovery_count)
+            .def_ro("representative_ray_index", &ReflectionTraceDetached::representative_ray_index)
+            .def_ro("dedup_keep_mask", &ReflectionTraceDetached::dedup_keep_mask)
+            .def_ro("bounces", &ReflectionTraceDetached::bounces);
+
+        nb::class_<ReflectionTrace>(m, "ReflectionTrace")
+            .def("is_valid", &ReflectionTrace::is_valid)
+            .def("bounce",
+                 [](const ReflectionTrace &trace, int index) {
+                     if (index < 0 || index >= trace.max_bounces) {
+                         throw std::out_of_range("ReflectionTrace.bounce(): index out of range.");
+                     }
+                     return trace.bounces[static_cast<size_t>(index)];
+                 },
+                 "index"_a)
+            .def_ro("max_bounces", &ReflectionTrace::max_bounces)
+            .def_ro("ray_count", &ReflectionTrace::ray_count)
+            .def_ro("deduplicate_requested", &ReflectionTrace::deduplicate_requested)
+            .def_ro("deduplicate_applied", &ReflectionTrace::deduplicate_applied)
+            .def_ro("bounce_count", &ReflectionTrace::bounce_count)
+            .def_ro("discovery_count", &ReflectionTrace::discovery_count)
+            .def_ro("representative_ray_index", &ReflectionTrace::representative_ray_index)
+            .def_ro("dedup_keep_mask", &ReflectionTrace::dedup_keep_mask)
+            .def_ro("bounces", &ReflectionTrace::bounces);
+
         nb::class_<NearestPointEdgeDetached>(m, "NearestPointEdgeDetached")
             .def("is_valid", &NearestPointEdgeDetached::is_valid)
             .def_ro("distance", &NearestPointEdgeDetached::distance)
@@ -522,33 +584,63 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
             .def("trace_reflections",
-                 [](const Scene &scene, const RayDetached &ray, int max_bounces, rayd::MaskDetached active) {
-                     return scene.trace_reflections<true>(ray, max_bounces, active);
+                 [](const Scene &scene,
+                    const RayDetached &ray,
+                    int max_bounces,
+                    rayd::MaskDetached active,
+                    bool symbolic) -> nb::object {
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<true>(ray, max_bounces, active));
+                     }
+                     return nb::cast(scene.trace_reflections<true>(ray, max_bounces, active));
                  },
-                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true, "symbolic"_a = true)
             .def("trace_reflections",
-                 [](const Scene &scene, const Ray &ray, int max_bounces, rayd::Mask active) {
-                     return scene.trace_reflections<false>(ray, max_bounces, active);
+                 [](const Scene &scene,
+                    const Ray &ray,
+                    int max_bounces,
+                    rayd::Mask active,
+                    bool symbolic) -> nb::object {
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<false>(ray, max_bounces, active));
+                     }
+                     return nb::cast(scene.trace_reflections<false>(ray, max_bounces, active));
                  },
-                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+                 nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true, "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
                     const RayDetached &ray,
                     int max_bounces,
                     const ReflectionTraceOptions &options,
-                    rayd::MaskDetached active) {
-                     return scene.trace_reflections<true>(ray, max_bounces, options, active);
+                    rayd::MaskDetached active,
+                    bool symbolic) -> nb::object {
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<true>(ray, max_bounces, options, active));
+                     }
+                     return nb::cast(scene.trace_reflections<true>(ray, max_bounces, options, active));
                  },
-                 nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a, "active"_a = true)
+                 nb::arg("ray").noconvert(),
+                 "max_bounces"_a,
+                 "options"_a,
+                 "active"_a = true,
+                 "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
                     const Ray &ray,
                     int max_bounces,
                     const ReflectionTraceOptions &options,
-                    rayd::Mask active) {
-                     return scene.trace_reflections<false>(ray, max_bounces, options, active);
+                    rayd::Mask active,
+                    bool symbolic) -> nb::object {
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<false>(ray, max_bounces, options, active));
+                     }
+                     return nb::cast(scene.trace_reflections<false>(ray, max_bounces, options, active));
                  },
-                 nb::arg("ray").noconvert(), "max_bounces"_a, "options"_a, "active"_a = true)
+                 nb::arg("ray").noconvert(),
+                 "max_bounces"_a,
+                 "options"_a,
+                 "active"_a = true,
+                 "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
                     const RayDetached &ray,
@@ -556,19 +648,24 @@ NB_MODULE(rayd, m) {
                     bool deduplicate,
                     const IntDetached &canonical_prim_table,
                     float image_source_tolerance,
-                    rayd::MaskDetached active) {
+                    rayd::MaskDetached active,
+                    bool symbolic) -> nb::object {
                      ReflectionTraceOptions options;
                      options.deduplicate = deduplicate;
                      options.canonical_prim_table = canonical_prim_table;
                      options.image_source_tolerance = image_source_tolerance;
-                     return scene.trace_reflections<true>(ray, max_bounces, options, active);
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<true>(ray, max_bounces, options, active));
+                     }
+                     return nb::cast(scene.trace_reflections<true>(ray, max_bounces, options, active));
                  },
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
                  "canonical_prim_table"_a = IntDetached(),
                  "image_source_tolerance"_a = 1e-5f,
-                 "active"_a = true)
+                 "active"_a = true,
+                 "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
                     const Ray &ray,
@@ -576,19 +673,24 @@ NB_MODULE(rayd, m) {
                     bool deduplicate,
                     const IntDetached &canonical_prim_table,
                     float image_source_tolerance,
-                    rayd::Mask active) {
+                    rayd::Mask active,
+                    bool symbolic) -> nb::object {
                      ReflectionTraceOptions options;
                      options.deduplicate = deduplicate;
                      options.canonical_prim_table = canonical_prim_table;
                      options.image_source_tolerance = image_source_tolerance;
-                     return scene.trace_reflections<false>(ray, max_bounces, options, active);
+                     if (symbolic) {
+                         return nb::cast(scene.trace_bounces<false>(ray, max_bounces, options, active));
+                     }
+                     return nb::cast(scene.trace_reflections<false>(ray, max_bounces, options, active));
                  },
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
                  "canonical_prim_table"_a = IntDetached(),
                  "image_source_tolerance"_a = 1e-5f,
-                 "active"_a = true)
+                 "active"_a = true,
+                 "symbolic"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

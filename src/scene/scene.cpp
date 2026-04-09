@@ -81,7 +81,7 @@ bool uses_symbolic_optix_query_path() {
     return jit_flag(JitFlag::Recording);
 }
 
-bool uses_symbolic_reflection_trace_path() {
+bool recording_reflections() {
     return jit_flag(JitFlag::Recording);
 }
 
@@ -155,6 +155,35 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
     result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
     result.shape_ids = full<IntT<Detached>>(-1, slot_count);
     result.prim_ids = full<IntT<Detached>>(-1, slot_count);
+    return result;
+}
+
+template <bool Detached>
+ReflectionBounceT<Detached> initialize_reflection_bounce_result(int ray_count) {
+    ReflectionBounceT<Detached> result;
+    result.t = full<FloatT<Detached>>(Infinity, ray_count);
+    result.hit_points = zeros<Vector3fT<Detached>>(ray_count);
+    result.geo_normals = zeros<Vector3fT<Detached>>(ray_count);
+    result.image_sources = zeros<Vector3fT<Detached>>(ray_count);
+    result.plane_points = zeros<Vector3fT<Detached>>(ray_count);
+    result.plane_normals = zeros<Vector3fT<Detached>>(ray_count);
+    result.shape_ids = full<IntT<Detached>>(-1, ray_count);
+    result.prim_ids = full<IntT<Detached>>(-1, ray_count);
+    return result;
+}
+
+template <bool Detached>
+ReflectionTraceT<Detached> initialize_reflection_trace_result(
+    int ray_count,
+    int max_bounces) {
+    ReflectionTraceT<Detached> result;
+    result.max_bounces = max_bounces;
+    result.ray_count = ray_count;
+    result.bounce_count = full<IntT<Detached>>(0, ray_count);
+    result.discovery_count = full<IntT<Detached>>(0, ray_count);
+    result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
+    result.dedup_keep_mask = full<MaskT<Detached>>(false, ray_count);
+    result.bounces.reserve(static_cast<size_t>(max_bounces));
     return result;
 }
 
@@ -270,13 +299,19 @@ MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-ReflectionChainT<Detached> trace_reflections_symbolic_fallback(const Scene &scene,
-                                                               const RayT<Detached> &ray,
-                                                               int max_bounces,
-                                                               MaskT<Detached> active) {
+ReflectionTraceT<Detached> trace_bounces_impl(
+    const Scene &scene,
+    const RayT<Detached> &ray,
+    int max_bounces,
+    const ReflectionTraceOptions &options,
+    MaskT<Detached> active) {
+    require(!options.deduplicate,
+            "Scene::trace_reflections(): deduplicate=true is not implemented with symbolic=true yet.");
+
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflectionChainT<Detached> result =
-        initialize_reflection_chain_result<Detached>(ray_count, max_bounces);
+    ReflectionTraceT<Detached> result =
+        initialize_reflection_trace_result<Detached>(ray_count, max_bounces);
+    result.deduplicate_requested = options.deduplicate;
     if (ray_count == 0) {
         return result;
     }
@@ -284,44 +319,22 @@ ReflectionChainT<Detached> trace_reflections_symbolic_fallback(const Scene &scen
     const MaskDetached sanitized_active_detached =
         sanitize_reflection_active<Detached>(ray, active);
 
-    if constexpr (Detached) {
-        result.representative_ray_index = arange<IntDetached>(ray_count);
-    } else {
-        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
-    }
-
     RayT<Detached> current_ray = ray;
     MaskT<Detached> current_active;
     if constexpr (Detached) {
         current_active = sanitized_active_detached;
+        result.representative_ray_index = arange<IntDetached>(ray_count);
     } else {
         current_active = Mask(sanitized_active_detached);
+        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
     }
     Vector3fT<Detached> current_image_source = ray.o;
-    std::vector<FloatT<Detached>> t_parts;
-    std::vector<FloatT<Detached>> hit_x_parts;
-    std::vector<FloatT<Detached>> hit_y_parts;
-    std::vector<FloatT<Detached>> hit_z_parts;
-    std::vector<FloatT<Detached>> norm_x_parts;
-    std::vector<FloatT<Detached>> norm_y_parts;
-    std::vector<FloatT<Detached>> norm_z_parts;
-    std::vector<FloatT<Detached>> img_x_parts;
-    std::vector<FloatT<Detached>> img_y_parts;
-    std::vector<FloatT<Detached>> img_z_parts;
-    std::vector<IntT<Detached>> shape_id_parts;
-    std::vector<IntT<Detached>> prim_id_parts;
-    t_parts.reserve(static_cast<size_t>(max_bounces));
-    hit_x_parts.reserve(static_cast<size_t>(max_bounces));
-    hit_y_parts.reserve(static_cast<size_t>(max_bounces));
-    hit_z_parts.reserve(static_cast<size_t>(max_bounces));
-    norm_x_parts.reserve(static_cast<size_t>(max_bounces));
-    norm_y_parts.reserve(static_cast<size_t>(max_bounces));
-    norm_z_parts.reserve(static_cast<size_t>(max_bounces));
-    img_x_parts.reserve(static_cast<size_t>(max_bounces));
-    img_y_parts.reserve(static_cast<size_t>(max_bounces));
-    img_z_parts.reserve(static_cast<size_t>(max_bounces));
-    shape_id_parts.reserve(static_cast<size_t>(max_bounces));
-    prim_id_parts.reserve(static_cast<size_t>(max_bounces));
+
+    const FloatT<Detached> miss_t = full<FloatT<Detached>>(Infinity, ray_count);
+    const IntT<Detached> miss_id = full<IntT<Detached>>(-1, ray_count);
+    const Vector3fT<Detached> zero_v = zeros<Vector3fT<Detached>>(ray_count);
+    const IntT<Detached> one_i = full<IntT<Detached>>(1, ray_count);
+    const IntT<Detached> zero_i = full<IntT<Detached>>(0, ray_count);
 
     for (int bounce = 0; bounce < max_bounces; ++bounce) {
         const IntersectionT<Detached> its =
@@ -334,26 +347,20 @@ ReflectionChainT<Detached> trace_reflections_symbolic_fallback(const Scene &scen
             dot(current_image_source - its.p, geo_normal);
         const Vector3fT<Detached> reflected_image_source =
             current_image_source - 2.f * plane_distance * geo_normal;
-        const FloatT<Detached> miss_t = full<FloatT<Detached>>(Infinity, ray_count);
-        const FloatT<Detached> zero_f = zeros<FloatT<Detached>>(ray_count);
-        const IntT<Detached> miss_id = full<IntT<Detached>>(-1, ray_count);
 
-        t_parts.push_back(select(bounce_hit, its.t, miss_t));
-        hit_x_parts.push_back(select(bounce_hit, its.p.x(), zero_f));
-        hit_y_parts.push_back(select(bounce_hit, its.p.y(), zero_f));
-        hit_z_parts.push_back(select(bounce_hit, its.p.z(), zero_f));
-        norm_x_parts.push_back(select(bounce_hit, geo_normal.x(), zero_f));
-        norm_y_parts.push_back(select(bounce_hit, geo_normal.y(), zero_f));
-        norm_z_parts.push_back(select(bounce_hit, geo_normal.z(), zero_f));
-        img_x_parts.push_back(select(bounce_hit, reflected_image_source.x(), zero_f));
-        img_y_parts.push_back(select(bounce_hit, reflected_image_source.y(), zero_f));
-        img_z_parts.push_back(select(bounce_hit, reflected_image_source.z(), zero_f));
-        shape_id_parts.push_back(select(bounce_hit, its.shape_id, miss_id));
-        prim_id_parts.push_back(select(bounce_hit, its.prim_id, miss_id));
+        ReflectionBounceT<Detached> bounce_result =
+            initialize_reflection_bounce_result<Detached>(ray_count);
+        bounce_result.t = select(bounce_hit, its.t, miss_t);
+        bounce_result.hit_points = select(bounce_hit, its.p, zero_v);
+        bounce_result.geo_normals = select(bounce_hit, geo_normal, zero_v);
+        bounce_result.image_sources = select(bounce_hit, reflected_image_source, zero_v);
+        bounce_result.plane_points = bounce_result.hit_points;
+        bounce_result.plane_normals = bounce_result.geo_normals;
+        bounce_result.shape_ids = select(bounce_hit, its.shape_id, miss_id);
+        bounce_result.prim_ids = select(bounce_hit, its.prim_id, miss_id);
+        result.bounces.push_back(std::move(bounce_result));
 
-        result.bounce_count += select(bounce_hit,
-                                      full<IntT<Detached>>(1, ray_count),
-                                      full<IntT<Detached>>(0, ray_count));
+        result.bounce_count += select(bounce_hit, one_i, zero_i);
 
         const FloatT<Detached> ray_dot_normal = dot(current_ray.d, geo_normal);
         const Vector3fT<Detached> reflected_direction =
@@ -370,121 +377,12 @@ ReflectionChainT<Detached> trace_reflections_symbolic_fallback(const Scene &scen
         current_active = bounce_hit;
     }
 
-    const int slot_count = ray_count * max_bounces;
-    const IntDetached bounce_pattern =
-        tile(arange<IntDetached>(max_bounces), ray_count);
-    FloatT<Detached> trace_t = full<FloatT<Detached>>(Infinity, slot_count);
-    FloatT<Detached> trace_hit_x = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_hit_y = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_hit_z = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_norm_x = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_norm_y = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_norm_z = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_img_x = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_img_y = zeros<FloatT<Detached>>(slot_count);
-    FloatT<Detached> trace_img_z = zeros<FloatT<Detached>>(slot_count);
-    IntT<Detached> trace_shape_ids = full<IntT<Detached>>(-1, slot_count);
-    IntT<Detached> trace_prim_ids = full<IntT<Detached>>(-1, slot_count);
-
-    for (int bounce = 0; bounce < max_bounces; ++bounce) {
-        const MaskDetached select_bounce = bounce_pattern == IntDetached(bounce);
-        trace_t = select(select_bounce, repeat(t_parts[static_cast<size_t>(bounce)], max_bounces), trace_t);
-        trace_hit_x = select(select_bounce,
-                             repeat(hit_x_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_hit_x);
-        trace_hit_y = select(select_bounce,
-                             repeat(hit_y_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_hit_y);
-        trace_hit_z = select(select_bounce,
-                             repeat(hit_z_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_hit_z);
-        trace_norm_x = select(select_bounce,
-                              repeat(norm_x_parts[static_cast<size_t>(bounce)], max_bounces),
-                              trace_norm_x);
-        trace_norm_y = select(select_bounce,
-                              repeat(norm_y_parts[static_cast<size_t>(bounce)], max_bounces),
-                              trace_norm_y);
-        trace_norm_z = select(select_bounce,
-                              repeat(norm_z_parts[static_cast<size_t>(bounce)], max_bounces),
-                              trace_norm_z);
-        trace_img_x = select(select_bounce,
-                             repeat(img_x_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_img_x);
-        trace_img_y = select(select_bounce,
-                             repeat(img_y_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_img_y);
-        trace_img_z = select(select_bounce,
-                             repeat(img_z_parts[static_cast<size_t>(bounce)], max_bounces),
-                             trace_img_z);
-        trace_shape_ids = select(select_bounce,
-                                 repeat(shape_id_parts[static_cast<size_t>(bounce)], max_bounces),
-                                 trace_shape_ids);
-        trace_prim_ids = select(select_bounce,
-                                repeat(prim_id_parts[static_cast<size_t>(bounce)], max_bounces),
-                                trace_prim_ids);
-    }
-
-    const Vector3fT<Detached> hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
-    const Vector3fT<Detached> plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
-    const Vector3fT<Detached> image_sources(trace_img_x, trace_img_y, trace_img_z);
-
-    result.t = trace_t;
-    result.hit_points = hit_points;
-    result.geo_normals = plane_normals;
-    result.image_sources = image_sources;
-    result.plane_points = hit_points;
-    result.plane_normals = plane_normals;
-    result.shape_ids = trace_shape_ids;
-    result.prim_ids = trace_prim_ids;
-    result.discovery_count = select(result.bounce_count > 0,
-                                    full<IntT<Detached>>(1, ray_count),
-                                    full<IntT<Detached>>(0, ray_count));
-    return result;
-}
-
-template <bool Detached>
-ReflectionChainT<Detached> trace_reflections_symbolic_single_bounce(const Scene &scene,
-                                                                    const RayT<Detached> &ray,
-                                                                    MaskT<Detached> active) {
-    const int ray_count = static_cast<int>(slices(ray.o));
-    ReflectionChainT<Detached> result =
-        initialize_reflection_chain_result<Detached>(ray_count, 1);
-    if (ray_count == 0) {
-        return result;
-    }
-
-    const MaskDetached sanitized_active_detached =
-        sanitize_reflection_active<Detached>(ray, active);
-    MaskT<Detached> current_active;
-    if constexpr (Detached) {
-        current_active = sanitized_active_detached;
-        result.representative_ray_index = arange<IntDetached>(ray_count);
-    } else {
-        current_active = Mask(sanitized_active_detached);
-        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
-    }
-
-    const IntersectionT<Detached> its =
-        scene.template intersect<Detached>(ray, current_active, RayFlags::Geometric);
-    const MaskT<Detached> bounce_hit = current_active && its.is_valid();
-    Vector3fT<Detached> geo_normal = its.geo_n;
-    geo_normal = select(dot(ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
-    const FloatT<Detached> plane_distance = dot(ray.o - its.p, geo_normal);
-    const Vector3fT<Detached> image_sources =
-        ray.o - 2.f * plane_distance * geo_normal;
-
-    result.bounce_count = select(bounce_hit,
-                                 full<IntT<Detached>>(1, ray_count),
-                                 full<IntT<Detached>>(0, ray_count));
-    result.discovery_count = result.bounce_count;
-    result.t = select(bounce_hit, its.t, result.t);
-    result.hit_points = select(bounce_hit, its.p, result.hit_points);
-    result.geo_normals = select(bounce_hit, geo_normal, result.geo_normals);
-    result.image_sources = select(bounce_hit, image_sources, result.image_sources);
-    result.plane_points = result.hit_points;
-    result.plane_normals = result.geo_normals;
-    result.shape_ids = select(bounce_hit, its.shape_id, result.shape_ids);
-    result.prim_ids = select(bounce_hit, its.prim_id, result.prim_ids);
+    result.dedup_keep_mask = result.bounce_count > 0;
+    result.discovery_count = select(result.dedup_keep_mask, one_i, zero_i);
+    result.representative_ray_index =
+        select(result.dedup_keep_mask,
+               result.representative_ray_index,
+               full<IntT<Detached>>(-1, ray_count));
     return result;
 }
 
@@ -1456,6 +1354,30 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
+ReflectionTraceT<Detached> Scene::trace_bounces(
+    const RayT<Detached> &ray,
+    int max_bounces,
+    MaskT<Detached> active) const {
+    return this->template trace_bounces<Detached>(
+        ray, max_bounces, ReflectionTraceOptions(), active);
+}
+
+template <bool Detached>
+ReflectionTraceT<Detached> Scene::trace_bounces(
+    const RayT<Detached> &ray,
+    int max_bounces,
+    const ReflectionTraceOptions &options,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::trace_reflections(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0,
+            "Scene::trace_reflections(): max_bounces must be positive.");
+    return trace_bounces_impl<Detached>(
+        *this, ray, max_bounces, options, active);
+}
+
+template <bool Detached>
 ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                                                     int max_bounces,
                                                     const ReflectionTraceOptions &options,
@@ -1472,13 +1394,29 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         return result;
     }
 
-    const bool symbolic_reflection_trace = uses_symbolic_reflection_trace_path();
+    const bool symbolic_reflection_trace = recording_reflections();
     require(!symbolic_reflection_trace || !options.deduplicate,
             "Scene::trace_reflections(): symbolic recording does not support deduplicate=true yet.");
     if (symbolic_reflection_trace) {
         require(max_bounces == 1,
                 "Scene::trace_reflections(): symbolic recording currently supports max_bounces=1 only.");
-        return trace_reflections_symbolic_single_bounce<Detached>(*this, ray, active);
+        const ReflectionTraceT<Detached> trace =
+            this->template trace_bounces<Detached>(ray, 1, options, active);
+        result.bounce_count = trace.bounce_count;
+        result.discovery_count = trace.discovery_count;
+        result.representative_ray_index = trace.representative_ray_index;
+        if (!trace.bounces.empty()) {
+            const ReflectionBounceT<Detached> &bounce = trace.bounces.front();
+            result.t = bounce.t;
+            result.hit_points = bounce.hit_points;
+            result.geo_normals = bounce.geo_normals;
+            result.image_sources = bounce.image_sources;
+            result.plane_points = bounce.plane_points;
+            result.plane_normals = bounce.plane_normals;
+            result.shape_ids = bounce.shape_ids;
+            result.prim_ids = bounce.prim_ids;
+        }
+        return result;
     }
 
     const MaskDetached active_detached = sanitize_reflection_active<Detached>(ray, active);
@@ -2085,6 +2023,24 @@ template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetache
 template ReflectionChain Scene::trace_reflections<false>(const Ray &ray,
                                                          int max_bounces,
                                                          Mask active) const;
+template ReflectionTraceDetached Scene::trace_bounces<true>(
+    const RayDetached &ray,
+    int max_bounces,
+    const ReflectionTraceOptions &options,
+    MaskDetached active) const;
+template ReflectionTrace Scene::trace_bounces<false>(
+    const Ray &ray,
+    int max_bounces,
+    const ReflectionTraceOptions &options,
+    Mask active) const;
+template ReflectionTraceDetached Scene::trace_bounces<true>(
+    const RayDetached &ray,
+    int max_bounces,
+    MaskDetached active) const;
+template ReflectionTrace Scene::trace_bounces<false>(
+    const Ray &ray,
+    int max_bounces,
+    Mask active) const;
 template MaskDetached Scene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask Scene::shadow_test<false>(const Ray &ray, Mask active) const;
 template NearestPointEdgeDetached Scene::nearest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
