@@ -654,6 +654,46 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["t"], 1.0, places=5)
         self.assertGreater(data["grad_z_sum"], 0.0)
 
+    def test_trace_reflections_preserves_gradients_for_ad_mesh_constructor_inputs(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            verts = ad.Array3f([0.0, 1.0, 0.0],
+                               [0.0, 0.0, 1.0],
+                               [0.0, 0.0, 0.0])
+            dr.enable_grad(verts)
+
+            mesh = pj.Mesh(verts, cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+                         ad.Array3f([0.0], [0.0], [1.0]))
+            chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
+            dr.backward(dr.sum(chain.t))
+            grad = dr.grad(verts)
+
+            print(json.dumps({
+                "bounce_count": int(chain.bounce_count[0]),
+                "valid": bool(chain.is_valid()[0]),
+                "t": float(chain.t[0]),
+                "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertTrue(data["valid"])
+        self.assertAlmostEqual(data["t"], 1.0, places=5)
+        self.assertGreater(data["grad_z_sum"], 0.0)
+
     def test_trace_reflections_supports_multi_bounce_symbolic_trace(self):
         data = run_json_case(
             """

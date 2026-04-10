@@ -504,6 +504,61 @@ NB_MODULE(rayd, m) {
             .def(nb::init<>())
             .def("__init__",
                  [](Mesh *mesh,
+                    nb::handle v_obj,
+                    const Vector3iDetached &f,
+                    nb::handle uv_obj,
+                    const Vector3iDetached &f_uv,
+                    bool verbose) {
+                     const std::string v_module_name =
+                         nb::cast<std::string>(v_obj.type().attr("__module__"));
+                     const std::string v_type_name =
+                         nb::cast<std::string>(v_obj.type().attr("__name__"));
+                     const std::string uv_module_name =
+                         nb::cast<std::string>(uv_obj.type().attr("__module__"));
+                     const std::string uv_type_name =
+                         nb::cast<std::string>(uv_obj.type().attr("__name__"));
+
+                     const bool has_live_v =
+                         v_module_name == "drjit.cuda.ad" && v_type_name == "Array3f";
+                     const bool has_live_uv =
+                         uv_module_name == "drjit.cuda.ad" && uv_type_name == "Array2f";
+                     if (!has_live_v && !has_live_uv) {
+                         throw nb::next_overload();
+                     }
+
+                     Vector3fDetached v_detached;
+                     if (has_live_v) {
+                         const Vector3f v_live = nb::cast<Vector3f>(v_obj);
+                         v_detached = detach<false>(v_live);
+                     } else if (!drjit_try_load<Vector3fDetached>(v_obj, v_detached, true)) {
+                         throw nb::next_overload();
+                     }
+
+                     Vector2fDetached uv_detached;
+                     if (has_live_uv) {
+                         const Vector2f uv_live = nb::cast<Vector2f>(uv_obj);
+                         uv_detached = detach<false>(uv_live);
+                     } else if (!drjit_try_load<Vector2fDetached>(uv_obj, uv_detached, true)) {
+                         throw nb::next_overload();
+                     }
+
+                     new (mesh) Mesh(v_detached, f, uv_detached, f_uv, verbose);
+                     if (has_live_v) {
+                         const Vector3f v_live = nb::cast<Vector3f>(v_obj);
+                         mesh->set_vertex_positions(v_live);
+                     }
+                     if (has_live_uv) {
+                         const Vector2f uv_live = nb::cast<Vector2f>(uv_obj);
+                         mesh->set_vertex_uv(uv_live);
+                     }
+                 },
+                 "v"_a,
+                 "f"_a,
+                 "uv"_a = Vector2fDetached(),
+                 "f_uv"_a = Vector3iDetached(),
+                 "verbose"_a = false)
+            .def("__init__",
+                 [](Mesh *mesh,
                     const Vector3fDetached &v,
                     const Vector3iDetached &f,
                     const Vector2fDetached &uv,
