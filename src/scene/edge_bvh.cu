@@ -545,6 +545,45 @@ __global__ void initialize_leaf_costs_kernel(int primitive_count,
                            inflation);
 }
 
+__global__ void initialize_internal_costs_kernel(int primitive_count,
+                                                 const int *left_child,
+                                                 const int *right_child,
+                                                 const int *parent,
+                                                 const float *node_bbox_min_x,
+                                                 const float *node_bbox_min_y,
+                                                 const float *node_bbox_min_z,
+                                                 const float *node_bbox_max_x,
+                                                 const float *node_bbox_max_y,
+                                                 const float *node_bbox_max_z,
+                                                 float *node_cost,
+                                                 int *arrival_counter,
+                                                 float inflation) {
+    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (leaf_index >= primitive_count) {
+        return;
+    }
+
+    int current = parent[primitive_count - 1 + leaf_index];
+    while (current >= 0) {
+        if (atomicAdd(arrival_counter + current, 1) == 0) {
+            return;
+        }
+
+        node_cost[current] =
+            bbox_cost_inflated(load_bounds(current,
+                                           node_bbox_min_x,
+                                           node_bbox_min_y,
+                                           node_bbox_min_z,
+                                           node_bbox_max_x,
+                                           node_bbox_max_y,
+                                           node_bbox_max_z),
+                               inflation) +
+            node_cost[left_child[current]] + node_cost[right_child[current]];
+        __threadfence();
+        current = parent[current];
+    }
+}
+
 __global__ void update_internal_nodes_kernel(int node_count,
                                              const int *node_indices,
                                              const int *left_child,
@@ -1792,6 +1831,34 @@ void build_edge_bvh_gpu(
                                      block_size, 1, 1,
                                      static_cast<uint64_t>(primitive_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-cost initialization");
+            CudaBuffer<int> internal_cost_arrival_counter(static_cast<size_t>(node_count));
+            memset_int_async(internal_cost_arrival_counter.get(),
+                             0,
+                             static_cast<size_t>(node_count),
+                             bounds_stream,
+                             "build_edge_lbvh_gpu(): failed to init internal-cost arrivals");
+            if (internal_count > 0) {
+                initialize_internal_costs_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
+                    primitive_count,
+                    left_child,
+                    right_child,
+                    parent.get(),
+                    node_bbox_min_x,
+                    node_bbox_min_y,
+                    node_bbox_min_z,
+                    node_bbox_max_x,
+                    node_bbox_max_y,
+                    node_bbox_max_z,
+                    node_costs.get(),
+                    internal_cost_arrival_counter.get(),
+                    inflation);
+                audit_cuda_kernel_launch("initialize_internal_costs_kernel",
+                                         static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                         block_size, 1, 1,
+                                         static_cast<uint64_t>(primitive_count));
+                check_cuda_last_error(
+                    "build_edge_lbvh_gpu(): failed to launch internal-cost initialization");
+            }
 
             if (gpu_flat_treelet_prepare) {
                 const size_t level_slot_count =
@@ -1992,30 +2059,17 @@ void build_edge_bvh_gpu(
                 audit_cuda_stream_synchronize();
                 check_cuda_call(cudaStreamSynchronize(bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to finalize node bounds");
-                std::vector<std::vector<int>> recompute_levels(static_cast<size_t>(max_height + 1));
                 std::vector<std::vector<int>> optimize_levels(static_cast<size_t>(max_height + 1));
                 for (int node_index = 0; node_index < internal_count; ++node_index) {
                     const int height = node_heights[static_cast<size_t>(node_index)];
                     if (subtree_leaf_counts[static_cast<size_t>(node_index)] >=
                         EdgeBVHTreeletMinSubtreeLeaves) {
                         optimize_levels[static_cast<size_t>(height)].push_back(node_index);
-                    } else {
-                        recompute_levels[static_cast<size_t>(height)].push_back(node_index);
                     }
                 }
-                const FlatNodeLevels recompute_schedule = flatten_node_levels(recompute_levels);
                 const FlatNodeLevels optimize_schedule = flatten_node_levels(optimize_levels);
-                CudaBuffer<int> recompute_nodes_device(recompute_schedule.nodes.size());
                 CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
                 if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
-                    if (!recompute_schedule.nodes.empty()) {
-                        audit_cuda_memcpy();
-                        check_cuda_call(cudaMemcpy(recompute_nodes_device.get(),
-                                                   recompute_schedule.nodes.data(),
-                                                   recompute_schedule.nodes.size() * sizeof(int),
-                                                   cudaMemcpyHostToDevice),
-                                        "build_edge_lbvh_gpu(): failed to upload recompute schedule");
-                    }
                     if (!optimize_schedule.nodes.empty()) {
                         audit_cuda_memcpy();
                         check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
@@ -2027,63 +2081,6 @@ void build_edge_bvh_gpu(
                 }
 
                 for (int height = 1; height <= max_height; ++height) {
-                    const int recompute_start =
-                        recompute_schedule.level_offsets[static_cast<size_t>(height)];
-                    const int recompute_end =
-                        recompute_schedule.level_offsets[static_cast<size_t>(height + 1)];
-                    const int recompute_count = recompute_end - recompute_start;
-                    if (recompute_count > 0) {
-                        const int level_blocks = (recompute_count + block_size - 1) / block_size;
-                        if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
-                            update_internal_nodes_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                                recompute_count,
-                                recompute_nodes_device.get() + recompute_start,
-                                left_child,
-                                right_child,
-                                node_bbox_min_x,
-                                node_bbox_min_y,
-                                node_bbox_min_z,
-                                node_bbox_max_x,
-                                node_bbox_max_y,
-                                node_bbox_max_z,
-                                node_costs.get(),
-                                inflation);
-                            audit_cuda_kernel_launch("update_internal_nodes_kernel",
-                                                     static_cast<uint32_t>(level_blocks), 1, 1,
-                                                     block_size, 1, 1,
-                                                     static_cast<uint64_t>(recompute_count));
-                        } else {
-                            const std::vector<int> &recompute_nodes =
-                                recompute_levels[static_cast<size_t>(height)];
-                            CudaBuffer<int> device_nodes(recompute_nodes.size());
-                            audit_cuda_memcpy();
-                            check_cuda_call(cudaMemcpy(device_nodes.get(),
-                                                       recompute_nodes.data(),
-                                                       recompute_nodes.size() * sizeof(int),
-                                                       cudaMemcpyHostToDevice),
-                                            "build_edge_lbvh_gpu(): failed to upload recompute nodes");
-                            update_internal_nodes_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                                recompute_count,
-                                device_nodes.get(),
-                                left_child,
-                                right_child,
-                                node_bbox_min_x,
-                                node_bbox_min_y,
-                                node_bbox_min_z,
-                                node_bbox_max_x,
-                                node_bbox_max_y,
-                                node_bbox_max_z,
-                                node_costs.get(),
-                                inflation);
-                            audit_cuda_kernel_launch("update_internal_nodes_kernel",
-                                                     static_cast<uint32_t>(level_blocks), 1, 1,
-                                                     block_size, 1, 1,
-                                                     static_cast<uint64_t>(recompute_count));
-                        }
-                        check_cuda_last_error(
-                            "build_edge_lbvh_gpu(): failed to launch internal-node recompute");
-                    }
-
                     const int optimize_start =
                         optimize_schedule.level_offsets[static_cast<size_t>(height)];
                     const int optimize_end =
