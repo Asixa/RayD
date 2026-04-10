@@ -8,6 +8,7 @@
 #include <string>
 
 #include <rayd/rayd.h>
+#include "../native_launch_audit.h"
 
 namespace rayd {
 
@@ -366,17 +367,24 @@ int reflection_dedup_gpu(
                                     sizeof(int) * static_cast<size_t>(n_rays),
                                     stream),
                     "reflection_dedup_gpu(): failed to clear discovery counts");
+    audit_cuda_memset_async();
     check_cuda_call(cudaMemsetAsync(out_representative_ray_index,
                                     0xFF,
                                     sizeof(int) * static_cast<size_t>(n_rays),
                                     stream),
                     "reflection_dedup_gpu(): failed to clear representative indices");
+    audit_cuda_memset_async();
     check_cuda_call(cudaMemsetAsync(unique_count_device.get(),
                                     0,
                                     sizeof(int),
                                     stream),
                     "reflection_dedup_gpu(): failed to clear unique counter");
+    audit_cuda_memset_async();
 
+    audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_build_keys_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays,
         max_bounces,
@@ -392,6 +400,7 @@ int reflection_dedup_gpu(
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch build-keys kernel");
 
     size_t sort_temp_size = 0;
+    audit_cub_sort();
     check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr,
                                                     sort_temp_size,
                                                     keys_in.get(),
@@ -404,6 +413,7 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to size first radix sort");
     CudaBuffer<char> sort_temp(std::max<size_t>(sort_temp_size, 1));
+    audit_cub_sort();
     check_cuda_call(cub::DeviceRadixSort::SortPairs(sort_temp.get(),
                                                     sort_temp_size,
                                                     keys_in.get(),
@@ -416,11 +426,16 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to run first radix sort");
 
+    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_mark_boundaries_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays, keys_out.get(), boundary_flags.get());
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch first boundary kernel");
 
     size_t scan_temp_size = 0;
+    audit_cub_scan();
     check_cuda_call(cub::DeviceScan::InclusiveSum(nullptr,
                                                   scan_temp_size,
                                                   boundary_flags.get(),
@@ -429,6 +444,7 @@ int reflection_dedup_gpu(
                                                   stream),
                     "reflection_dedup_gpu(): failed to size first scan");
     CudaBuffer<char> scan_temp(std::max<size_t>(scan_temp_size, 1));
+    audit_cub_scan();
     check_cuda_call(cub::DeviceScan::InclusiveSum(scan_temp.get(),
                                                   scan_temp_size,
                                                   boundary_flags.get(),
@@ -436,10 +452,18 @@ int reflection_dedup_gpu(
                                                   n_rays,
                                                   stream),
                     "reflection_dedup_gpu(): failed to run first scan");
+    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_zero_base_ids_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays, keys_out.get(), hash_group_ids.get());
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch first id-fix kernel");
 
+    audit_cuda_kernel_launch("reflection_dedup_sub_cluster_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_sub_cluster_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays,
         max_bounces,
@@ -456,6 +480,7 @@ int reflection_dedup_gpu(
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch sub-cluster kernel");
 
     size_t cluster_sort_temp_size = 0;
+    audit_cub_sort();
     check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr,
                                                     cluster_sort_temp_size,
                                                     cluster_keys_in.get(),
@@ -468,6 +493,7 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to size second radix sort");
     CudaBuffer<char> cluster_sort_temp(std::max<size_t>(cluster_sort_temp_size, 1));
+    audit_cub_sort();
     check_cuda_call(cub::DeviceRadixSort::SortPairs(cluster_sort_temp.get(),
                                                     cluster_sort_temp_size,
                                                     cluster_keys_in.get(),
@@ -480,10 +506,15 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to run second radix sort");
 
+    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_mark_boundaries_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays, cluster_keys_out.get(), boundary_flags.get());
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch second boundary kernel");
 
+    audit_cub_scan();
     check_cuda_call(cub::DeviceScan::InclusiveSum(scan_temp.get(),
                                                   scan_temp_size,
                                                   boundary_flags.get(),
@@ -491,10 +522,18 @@ int reflection_dedup_gpu(
                                                   n_rays,
                                                   stream),
                     "reflection_dedup_gpu(): failed to run second scan");
+    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_zero_base_ids_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays, cluster_keys_out.get(), unique_path_ids.get());
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch second id-fix kernel");
 
+    audit_cuda_kernel_launch("reflection_dedup_compact_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     reflection_dedup_compact_kernel<<<block_count, block_size, 0, stream>>>(
         n_rays,
         max_bounces,
@@ -537,12 +576,14 @@ int reflection_dedup_gpu(
     check_cuda_last_error("reflection_dedup_gpu(): failed to launch compact kernel");
 
     int unique_count = 0;
+    audit_cuda_memcpy_async();
     check_cuda_call(cudaMemcpyAsync(&unique_count,
                                     unique_count_device.get(),
                                     sizeof(int),
                                     cudaMemcpyDeviceToHost,
                                     stream),
                     "reflection_dedup_gpu(): failed to copy unique count");
+    audit_cuda_stream_synchronize();
     check_cuda_call(cudaStreamSynchronize(stream),
                     "reflection_dedup_gpu(): failed to finish dedup stream");
     return unique_count;

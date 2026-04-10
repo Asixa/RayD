@@ -15,6 +15,8 @@
 #include <rayd/camera.h>
 #include <rayd/scene/scene.h>
 
+#include "native_launch_audit.h"
+
 namespace nb = nanobind;
 using namespace nb::literals;
 using namespace rayd;
@@ -139,6 +141,44 @@ struct type_caster<T, std::enable_if_t<drjit::is_array_v<T>, int>> {
 } // namespace nanobind::detail
 
 NB_MODULE(rayd, m) {
+    auto native_kernel_dict = [](const NativeKernelLaunchStat &entry) {
+        nb::dict result;
+        result["label"] = entry.label;
+        result["launches"] = entry.launches;
+        result["total_threads"] = entry.total_threads;
+        result["max_threads"] = entry.max_threads;
+        result["total_items"] = entry.total_items;
+        result["max_items"] = entry.max_items;
+        return result;
+    };
+
+    auto native_stage_dict = [&](const NativeLaunchStageStats &stats) {
+        nb::list kernels;
+        for (const NativeKernelLaunchStat &entry : stats.kernels) {
+            kernels.append(native_kernel_dict(entry));
+        }
+
+        nb::dict result;
+        result["cuda_kernel_launches"] = stats.cuda_kernel_launches;
+        result["cuda_kernel_total_threads"] = stats.cuda_kernel_total_threads;
+        result["cuda_memcpy"] = stats.cuda_memcpy;
+        result["cuda_memcpy_async"] = stats.cuda_memcpy_async;
+        result["cuda_memset_async"] = stats.cuda_memset_async;
+        result["cuda_stream_synchronize"] = stats.cuda_stream_synchronize;
+        result["cuda_event_record"] = stats.cuda_event_record;
+        result["cuda_stream_wait_event"] = stats.cuda_stream_wait_event;
+        result["cub_reduce"] = stats.cub_reduce;
+        result["cub_sort"] = stats.cub_sort;
+        result["cub_scan"] = stats.cub_scan;
+        result["jit_memcpy"] = stats.jit_memcpy;
+        result["jit_memcpy_async"] = stats.jit_memcpy_async;
+        result["optix_accel_build"] = stats.optix_accel_build;
+        result["optix_accel_compact"] = stats.optix_accel_compact;
+        result["optix_launch"] = stats.optix_launch;
+        result["kernels"] = kernels;
+        return result;
+    };
+
     auto bind_section = [](const char *name, auto &&fn) {
         try {
             fn();
@@ -164,6 +204,20 @@ NB_MODULE(rayd, m) {
     m.def("current_device",
           []() { return checked_cuda_device_count() > 0 ? jit_cuda_device() : 0; },
           "Return the current thread's active Dr.Jit CUDA device index.");
+    m.def("native_launch_audit_clear",
+          &native_launch_audit_clear,
+          "Clear grouped native launch audit counters.");
+    m.def("native_launch_audit",
+          [native_stage_dict]() {
+              const NativeLaunchAuditSnapshot snapshot = native_launch_audit_snapshot();
+              nb::dict result;
+              result["unknown"] = native_stage_dict(snapshot.unknown);
+              result["build"] = native_stage_dict(snapshot.build);
+              result["sync"] = native_stage_dict(snapshot.sync);
+              result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
+              return result;
+          },
+          "Return grouped native launch audit counters.");
     m.def("set_device",
           &set_rayd_device,
           "device"_a,

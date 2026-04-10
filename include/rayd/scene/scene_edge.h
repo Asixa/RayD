@@ -64,6 +64,7 @@ public:
 
 private:
     void build_bvh(const SecondaryEdgeInfo &edge_info);
+    void set_all_active_state();
     void update_active_counts_from_mask(const MaskDetached &mask);
     IntDetached refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfo &edge_info,
                                                         const IntDetached &primitive_indices);

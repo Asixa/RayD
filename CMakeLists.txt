@@ -143,6 +143,8 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
+    ${RAYD_SOURCE_DIR}/native_launch_audit.h
+    ${RAYD_SOURCE_DIR}/native_launch_audit.cpp
 
     ${RAYD_INCLUDE_DIR}/slang/interop.h
     ${RAYD_INCLUDE_DIR}/slang/interop_types.h

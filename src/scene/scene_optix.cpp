@@ -12,6 +12,8 @@
 #include <rayd/mesh.h>
 #include <rayd/scene/scene_optix.h>
 
+#include "../native_launch_audit.h"
+
 namespace rayd {
 
 // No PTX module — HitObject API with invoke=0 never executes programs.
@@ -297,6 +299,7 @@ static void upload_instance_span(OptixState *state, size_t begin, size_t count) 
     ensure_instance_buffer(state);
     const size_t byte_offset = begin * sizeof(OptixInstance);
     const size_t byte_count = count * sizeof(OptixInstance);
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                reinterpret_cast<uint8_t *>(state->instance_buffer) + byte_offset,
                state->instances.data() + begin,
@@ -311,6 +314,7 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
         mesh_state.vertex_buffer_ptr = mesh_state.vertex_buffer;
     }
 
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                mesh_state.vertex_buffer,
                mesh.vertex_buffer().data(),
@@ -371,6 +375,7 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
         emit_count = 1;
     }
 
+    audit_optix_accel_build();
     jit_optix_check(optixAccelBuild(state->context,
                                     jit_cuda_stream(),
                                     &mesh_state.accel_options,
@@ -391,11 +396,13 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
     }
 
     size_t compacted_size = mesh_state.gas_buffer_sizes.outputSizeInBytes;
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA, &compacted_size, d_compacted_size, sizeof(size_t));
     jit_free(d_compacted_size);
 
     if (compacted_size < mesh_state.gas_buffer_sizes.outputSizeInBytes) {
         void *gas_compact = jit_malloc(AllocType::Device, compacted_size);
+        audit_optix_accel_compact();
         jit_optix_check(optixAccelCompact(state->context,
                                           jit_cuda_stream(),
                                           mesh_state.gas_handle,
@@ -413,6 +420,7 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
 }
 
 static void update_gas(OptixState *state, OptixMeshState &mesh_state, const Mesh &mesh) {
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                mesh_state.vertex_buffer,
                mesh.vertex_buffer().data(),
@@ -448,6 +456,7 @@ static void update_gas(OptixState *state, OptixMeshState &mesh_state, const Mesh
                          mesh_state.gas_temp_buffer_size,
                          update_temp_size);
 
+    audit_optix_accel_build();
     jit_optix_check(optixAccelBuild(state->context,
                                     jit_cuda_stream(),
                                     &mesh_state.accel_options,
@@ -553,6 +562,7 @@ static void build_ias(OptixState *state, bool update) {
     const size_t temp_size = update ? state->ias_buffer_sizes.tempUpdateSizeInBytes
                                     : state->ias_buffer_sizes.tempSizeInBytes;
 
+    audit_optix_accel_build();
     jit_optix_check(optixAccelBuild(state->context,
                                     jit_cuda_stream(),
                                     &state->ias_options,
@@ -635,6 +645,7 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes,
     m_accel->sbt.hitgroupRecordBase = jit_malloc(AllocType::HostPinned, meshes.size() * sizeof(HitGroupSbtRecord));
     m_accel->sbt.hitgroupRecordStrideInBytes = sizeof(HitGroupSbtRecord);
     m_accel->sbt.hitgroupRecordCount = static_cast<unsigned int>(meshes.size());
+    audit_jit_memcpy_async();
     jit_memcpy_async(JitBackend::CUDA,
                      reinterpret_cast<void *>(m_accel->sbt.hitgroupRecordBase),
                      m_accel->hg_sbts.data(),

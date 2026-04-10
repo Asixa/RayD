@@ -1436,7 +1436,7 @@ Vector3fDetached SceneEdge::gather_node_bbox_max(const IntDetached &node_indices
 void SceneEdge::build(const SecondaryEdgeInfo &edge_info) {
     build_bvh(edge_info);
     if (primitive_count_ > 0) {
-        set_mask(full<MaskDetached>(true, primitive_count_));
+        set_all_active_state();
     } else {
         all_active_ = true;
         active_primitive_count_ = 0;
@@ -1524,8 +1524,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
 
     edge_p0_ = detach<false>(edge_info.start);
     edge_e1_ = detach<false>(edge_info.edge);
-    drjit::eval(edge_p0_, edge_e1_);
-    drjit::sync_thread();
 
     const int build_node_count = std::max(2 * primitive_count_ - 1, 1);
     node_count_ = build_node_count;
@@ -1617,7 +1615,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         }
 
         if (needs_host_build_topology) {
-            drjit::sync_thread();
             left_child = copy_ints_to_host(left_child_);
             right_child = copy_ints_to_host(right_child_);
             is_leaf = copy_ints_to_host(build_is_leaf);
@@ -1729,7 +1726,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
                               leaf_primitives_.data(),
                               primitive_leaf_node_.data());
 
-        drjit::sync_thread();
         final_left_child = copy_ints_to_host(left_child_);
         final_right_child = copy_ints_to_host(right_child_);
         final_is_leaf.assign(static_cast<size_t>(node_count_), 0);
@@ -1908,28 +1904,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     dirty_level_count_ = zeros<IntDetached>(1);
 
     rebuild_packed_node_layout();
-
-    drjit::eval(edge_p0_,
-                edge_e1_,
-                primitive_bbox_min_,
-                primitive_bbox_max_,
-                node_bbox_min_,
-                node_bbox_max_,
-                packed_node_bounds_,
-                left_child_,
-                right_child_,
-                leaf_nodes_,
-                primitive_active_flags_,
-                node_active_count_,
-                node_subtree_primitive_count_,
-                node_parent_,
-                dirty_node_marks_,
-                dirty_level_nodes_,
-                dirty_level_count_,
-                packed_node_children_,
-                leaf_primitives_,
-                primitive_leaf_node_);
-    drjit::sync_thread();
     ready_ = true;
 }
 
@@ -1979,17 +1953,12 @@ void SceneEdge::update_active_counts_from_mask(const MaskDetached &mask) {
         scatter(node_active_count_, left_count + right_count, level);
     }
 
-    drjit::eval(primitive_active_flags_, node_active_count_);
-    drjit::sync_thread();
-
     const std::vector<int> root_active_count =
         copy_ints_to_host(gather<IntDetached>(node_active_count_, zeros<IntDetached>(1)));
     active_primitive_count_ = root_active_count.empty() ? 0 : root_active_count.front();
     all_active_ = active_primitive_count_ == primitive_count_;
     if (all_active_) {
-        node_active_count_ = node_subtree_primitive_count_;
-        drjit::eval(node_active_count_);
-        drjit::sync_thread();
+        set_all_active_state();
     }
 }
 
@@ -2070,6 +2039,13 @@ SceneEdgeBVHStats SceneEdge::stats() const {
             result.sibling_overlap_surface_area_sum / result.internal_surface_area_sum;
     }
     return result;
+}
+
+void SceneEdge::set_all_active_state() {
+    primitive_active_flags_ = primitive_count_ > 0 ? full<IntDetached>(1, primitive_count_) : IntDetached();
+    node_active_count_ = node_subtree_primitive_count_;
+    all_active_ = true;
+    active_primitive_count_ = primitive_count_;
 }
 
 IntDetached SceneEdge::refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfo &edge_info,
@@ -2175,8 +2151,6 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<IntDetached> &dirty
         return;
     }
 
-    drjit::sync_thread();
-
     for (const IntDetached &level : refit_levels_) {
         const int level_count = static_cast<int>(level.size());
         if (level_count <= 0) {
@@ -2236,14 +2210,6 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
         refit_internal_nodes_full();
     }
 
-    drjit::eval(edge_p0_,
-                edge_e1_,
-                primitive_bbox_min_,
-                primitive_bbox_max_,
-                node_bbox_min_,
-                node_bbox_max_,
-                packed_node_bounds_);
-    drjit::sync_thread();
 }
 
 void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
@@ -2273,14 +2239,6 @@ void SceneEdge::refit(const SecondaryEdgeInfo &edge_info,
         refit_internal_nodes_full();
     }
 
-    drjit::eval(edge_p0_,
-                edge_e1_,
-                primitive_bbox_min_,
-                primitive_bbox_max_,
-                node_bbox_min_,
-                node_bbox_max_,
-                packed_node_bounds_);
-    drjit::sync_thread();
 }
 
 IntDetached SceneEdge::map_to_global(const IntDetached &bvh_ids,

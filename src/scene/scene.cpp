@@ -15,6 +15,7 @@
 
 #include "../multipath/reflection_dedup.h"
 #include "../multipath/reflection_trace_host.h"
+#include "../native_launch_audit.h"
 
 namespace rayd {
 
@@ -575,7 +576,6 @@ void Scene::ensure_scene_edge_data_ready() const {
         return;
     }
 
-    bool updated_edge_data = false;
     for (const SceneMeshRecord &record : mesh_records_) {
         if (!record.edge_dirty) {
             continue;
@@ -583,12 +583,6 @@ void Scene::ensure_scene_edge_data_ready() const {
 
         const_cast<Scene *>(this)->scatter_mesh_edge_data(record, false);
         record.edge_dirty = false;
-        updated_edge_data = true;
-    }
-
-    if (updated_edge_data) {
-        drjit::eval(edge_info_);
-        drjit::sync_thread();
     }
 
     ensure_edge_bvh_ready();
@@ -636,6 +630,7 @@ void Scene::invalidate_primary_edge_observers() {
 }
 
 void Scene::build() {
+    ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::Build);
     require(!mesh_records_.empty(), "Scene::build(): missing meshes.");
 
     std::vector<int> face_offsets;
@@ -801,22 +796,6 @@ void Scene::build() {
         scatter_mesh_edge_data(record, true);
     }
 
-    drjit::eval(face_offsets_,
-                triangle_info_,
-                triangle_info_detached_,
-                triangle_uv_,
-                triangle_uv_detached_,
-                triangle_face_normal_mask_,
-                triangle_face_normal_mask_detached_,
-                edge_offsets_,
-                triangle_edge_ids_,
-                edge_info_,
-                edge_mask_,
-                edge_topology_,
-                edge_shape_ids_,
-                edge_local_ids_);
-    drjit::sync_thread();
-
     int static_mesh_count = 0;
     int dynamic_mesh_count = 0;
     for (const SceneMeshRecord &record : mesh_records_) {
@@ -924,6 +903,7 @@ void Scene::set_edge_mask(const MaskDetached &mask) {
 }
 
 void Scene::sync() {
+    ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::Sync);
     require(is_ready(), "Scene::sync(): scene is not built.");
     last_sync_profile_ = SceneSyncProfile();
 
@@ -981,32 +961,8 @@ void Scene::sync() {
         record.transform_dirty = false;
     }
 
-    if (!updates.empty()) {
-        const auto eval_start = Clock::now();
-        drjit::eval(triangle_info_.p0,
-                    triangle_info_.e1,
-                    triangle_info_.e2,
-                    triangle_info_.n0,
-                    triangle_info_.n1,
-                    triangle_info_.n2,
-                    triangle_info_.face_normal,
-                    triangle_info_.face_area,
-                    triangle_info_detached_.p0,
-                    triangle_info_detached_.e1,
-                    triangle_info_detached_.e2,
-                    triangle_info_detached_.n0,
-                    triangle_info_detached_.n1,
-                    triangle_info_detached_.n2,
-                    triangle_info_detached_.face_normal,
-                    triangle_info_detached_.face_area);
-        drjit::sync_thread();
-        last_sync_profile_.triangle_eval_ms = std::chrono::duration<double, std::milli>(
-            Clock::now() - eval_start).count();
-    }
-
     if (edge_bvh_dirty_) {
         const auto edge_scatter_start = Clock::now();
-        bool updated_edge_data = false;
         for (SceneMeshRecord &record : mesh_records_) {
             if (!record.edge_dirty) {
                 continue;
@@ -1014,12 +970,6 @@ void Scene::sync() {
 
             scatter_mesh_edge_data(record, false);
             record.edge_dirty = false;
-            updated_edge_data = true;
-        }
-
-        if (updated_edge_data) {
-            drjit::eval(edge_info_);
-            drjit::sync_thread();
         }
         last_sync_profile_.edge_scatter_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - edge_scatter_start).count();
@@ -1368,6 +1318,7 @@ ReflectionTraceT<Detached> Scene::trace_bounces(
     int max_bounces,
     const ReflectionTraceOptions &options,
     MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
     require(!pending_updates_,
             "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
@@ -1382,6 +1333,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                                                     int max_bounces,
                                                     const ReflectionTraceOptions &options,
                                                     MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_reflections(): scene is not built.");
     require(!pending_updates_,
             "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
@@ -1469,7 +1421,6 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     if (options.deduplicate && slices(options.canonical_prim_table) > 0) {
         drjit::eval(options.canonical_prim_table);
     }
-    drjit::sync_thread();
 
     ReflectionTraceRaw raw = allocate_reflection_trace_raw(ray_count, max_bounces);
     initialize_reflection_trace_raw(raw);

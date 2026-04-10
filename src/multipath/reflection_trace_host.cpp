@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "reflection_trace_ptx.h"
+#include "../native_launch_audit.h"
 
 namespace rayd {
 
@@ -161,6 +162,7 @@ void ReflectionTracePipeline::build(OptixDeviceContext context,
     check_optix(optixSbtRecordPackHeader(pg_raygen_, &raygen_record),
                 "optixSbtRecordPackHeader(raygen)");
     sbt_raygen_record_ = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                sbt_raygen_record_,
                &raygen_record,
@@ -170,6 +172,7 @@ void ReflectionTracePipeline::build(OptixDeviceContext context,
     check_optix(optixSbtRecordPackHeader(pg_miss_, &miss_record),
                 "optixSbtRecordPackHeader(miss)");
     sbt_miss_record_ = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                sbt_miss_record_,
                &miss_record,
@@ -182,6 +185,7 @@ void ReflectionTracePipeline::build(OptixDeviceContext context,
     }
     sbt_hitgroup_records_ = jit_malloc(AllocType::Device,
                                        sizeof(EmptySbtRecord) * hitgroup_records.size());
+    audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
                sbt_hitgroup_records_,
                hitgroup_records.data(),
@@ -195,6 +199,7 @@ void ReflectionTracePipeline::build(OptixDeviceContext context,
 void ReflectionTracePipeline::launch(const ReflectionTraceParams &params) const {
     require(ready_, "ReflectionTracePipeline::launch(): pipeline is not ready.");
 
+    audit_jit_memcpy_async();
     jit_memcpy_async(JitBackend::CUDA,
                      params_buffer_,
                      &params,
@@ -209,6 +214,7 @@ void ReflectionTracePipeline::launch(const ReflectionTraceParams &params) const 
     sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     sbt.hitgroupRecordCount = static_cast<unsigned int>(hitgroup_record_count_);
 
+    audit_optix_launch();
     check_optix(optixLaunch(pipeline_,
                             jit_cuda_stream(),
                             reinterpret_cast<CUdeviceptr>(params_buffer_),

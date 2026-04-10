@@ -1,6 +1,7 @@
 #include "edge_bvh.h"
 #include "edge_bvh_config.h"
 #include "experimental/edge_bvh_ploc.h"
+#include "../native_launch_audit.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -1167,6 +1168,7 @@ void check_cuda_last_error(const char *message) {
 }
 
 void synchronize_cuda(const char *message) {
+    audit_cuda_stream_synchronize();
     check_cuda_call(cudaDeviceSynchronize(), message);
 }
 
@@ -1224,6 +1226,7 @@ void memset_int_async(int *ptr,
     }
 
     const unsigned char byte_value = static_cast<unsigned char>(value & 0xff);
+    audit_cuda_memset_async();
     check_cuda_call(cudaMemsetAsync(ptr, byte_value, count * sizeof(int), stream), message);
 }
 
@@ -1238,6 +1241,7 @@ std::vector<int> copy_int_buffer_to_host(const int *device_ptr, size_t count, co
                                count * sizeof(int),
                                cudaMemcpyDeviceToHost),
                     message);
+    audit_cuda_memcpy();
     return result;
 }
 
@@ -1449,9 +1453,14 @@ void build_edge_bvh_gpu(
             primitive_bbox_max_y,
             primitive_bbox_max_z,
             primitive_bounds.get());
+        audit_cuda_kernel_launch("compute_primitive_bounds_kernel",
+                                 static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(primitive_count));
         check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch primitive-bounds kernel");
 
         size_t reduce_temp_size = 0;
+        audit_cub_reduce();
         check_cuda_call(
             cub::DeviceReduce::Reduce(nullptr,
                                       reduce_temp_size,
@@ -1463,6 +1472,7 @@ void build_edge_bvh_gpu(
                                       bounds_stream),
             "build_edge_lbvh_gpu(): failed to size scene-bound reduction");
         CudaBuffer<char> reduce_temp(reduce_temp_size);
+        audit_cub_reduce();
         check_cuda_call(
             cub::DeviceReduce::Reduce(reduce_temp.get(),
                                       reduce_temp_size,
@@ -1476,6 +1486,7 @@ void build_edge_bvh_gpu(
         check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch scene-bound reduction");
 
         Bounds3 scene_bounds = Bounds3::empty();
+        audit_cuda_memcpy_async();
         check_cuda_call(cudaMemcpyAsync(&scene_bounds,
                                         reduced_bounds.get(),
                                         sizeof(Bounds3),
@@ -1484,11 +1495,17 @@ void build_edge_bvh_gpu(
                         "build_edge_lbvh_gpu(): failed to copy scene bounds");
         init_sequence_kernel<<<primitive_blocks, block_size, 0, sequence_stream>>>(
             primitive_count, primitive_indices_in.get());
+        audit_cuda_kernel_launch("init_sequence_kernel",
+                                 static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(primitive_count));
         check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch primitive-index initialization");
         if (overlap_build_streams) {
+            audit_cuda_event_record();
             check_cuda_call(cudaEventRecord(sequence_ready_event.get(), sequence_stream),
                             "build_edge_lbvh_gpu(): failed to record sequence-ready event");
         }
+        audit_cuda_stream_synchronize();
         check_cuda_call(cudaStreamSynchronize(bounds_stream),
                         "build_edge_lbvh_gpu(): failed to reduce scene bounds");
 
@@ -1502,13 +1519,19 @@ void build_edge_bvh_gpu(
             primitive_bbox_max_y,
             primitive_bbox_max_z,
             morton_codes_in.get());
+        audit_cuda_kernel_launch("compute_morton_codes_kernel",
+                                 static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(primitive_count));
         check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch Morton-code kernel");
         if (overlap_build_streams) {
+            audit_cuda_stream_wait_event();
             check_cuda_call(cudaStreamWaitEvent(bounds_stream, sequence_ready_event.get(), 0),
                             "build_edge_lbvh_gpu(): failed to join primitive-index stream");
         }
 
         size_t sort_temp_size = 0;
+        audit_cub_sort();
         check_cuda_call(
             cub::DeviceRadixSort::SortPairs(nullptr,
                                             sort_temp_size,
@@ -1522,6 +1545,7 @@ void build_edge_bvh_gpu(
                                             bounds_stream),
             "build_edge_lbvh_gpu(): failed to size radix sort");
         CudaBuffer<char> sort_temp(sort_temp_size);
+        audit_cub_sort();
         check_cuda_call(
             cub::DeviceRadixSort::SortPairs(sort_temp.get(),
                                             sort_temp_size,
@@ -1582,12 +1606,17 @@ void build_edge_bvh_gpu(
                 left_child,
                 right_child,
                 parent.get());
+            audit_cuda_kernel_launch("build_radix_tree_kernel",
+                                     static_cast<uint32_t>(internal_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(internal_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch radix-tree kernel");
         }
 
         if (internal_count > 0 &&
             (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel ||
              (treelet_enabled && !gpu_flat_treelet_prepare))) {
+            audit_cuda_stream_synchronize();
             check_cuda_call(cudaStreamSynchronize(bounds_stream),
                             "build_edge_lbvh_gpu(): failed to prepare host topology");
             host_left_child = copy_int_buffer_to_host(left_child,
@@ -1646,9 +1675,14 @@ void build_edge_bvh_gpu(
                 leaf_primitive,
                 is_leaf,
                 primitive_leaf_node);
+            audit_cuda_kernel_launch("finalize_leaf_nodes_kernel",
+                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(primitive_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-finalization kernel");
             CudaBuffer<int> internal_nodes_device(internal_level_schedule.nodes.size());
             if (!internal_level_schedule.nodes.empty()) {
+                audit_cuda_memcpy();
                 check_cuda_call(cudaMemcpy(internal_nodes_device.get(),
                                            internal_level_schedule.nodes.data(),
                                            internal_level_schedule.nodes.size() * sizeof(int),
@@ -1676,6 +1710,10 @@ void build_edge_bvh_gpu(
                     node_bbox_max_x,
                     node_bbox_max_y,
                     node_bbox_max_z);
+                audit_cuda_kernel_launch("merge_internal_bounds_kernel",
+                                         static_cast<uint32_t>(level_blocks), 1, 1,
+                                         block_size, 1, 1,
+                                         static_cast<uint64_t>(level_count));
                 check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch internal-node merge");
             }
         } else if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel) {
@@ -1697,6 +1735,10 @@ void build_edge_bvh_gpu(
                 leaf_primitive,
                 is_leaf,
                 primitive_leaf_node);
+            audit_cuda_kernel_launch("finalize_leaf_nodes_kernel",
+                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(primitive_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-finalization kernel");
         } else if (finalize_mode == EdgeBVHFinalizeMode::Atomic) {
             finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
@@ -1721,6 +1763,10 @@ void build_edge_bvh_gpu(
                 is_leaf,
                 primitive_leaf_node,
                 merge_counters.get());
+            audit_cuda_kernel_launch("finalize_leaves_and_bounds_kernel",
+                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(primitive_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch bounds-finalization kernel");
         }
 
@@ -1741,6 +1787,10 @@ void build_edge_bvh_gpu(
                 node_bbox_max_z,
                 node_costs.get(),
                 inflation);
+            audit_cuda_kernel_launch("initialize_leaf_costs_kernel",
+                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(primitive_count));
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-cost initialization");
 
             if (gpu_flat_treelet_prepare) {
@@ -1795,6 +1845,10 @@ void build_edge_bvh_gpu(
                     subtree_leaf_count_device.get(),
                     node_height_device.get(),
                     arrival_counter_device.get());
+                audit_cuda_kernel_launch("finalize_treelet_metrics_kernel",
+                                         static_cast<uint32_t>(node_blocks), 1, 1,
+                                         block_size, 1, 1,
+                                         static_cast<uint64_t>(node_count));
                 check_cuda_last_error(
                     "build_edge_lbvh_gpu(): failed to launch treelet metric finalization");
 
@@ -1804,8 +1858,13 @@ void build_edge_bvh_gpu(
                     node_height_device.get(),
                     recompute_level_count_device.get(),
                     optimize_level_count_device.get());
+                audit_cuda_kernel_launch("count_treelet_level_nodes_kernel",
+                                         static_cast<uint32_t>(internal_blocks), 1, 1,
+                                         block_size, 1, 1,
+                                         static_cast<uint64_t>(internal_count));
                 check_cuda_last_error(
                     "build_edge_lbvh_gpu(): failed to launch treelet level counting");
+                audit_cuda_stream_synchronize();
                 check_cuda_call(cudaStreamSynchronize(bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to finalize treelet level counts");
 
@@ -1826,6 +1885,7 @@ void build_edge_bvh_gpu(
                     }
                 }
 
+                audit_cub_scan();
                 check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
                                                               level_scan_temp_size,
                                                               recompute_level_count_device.get(),
@@ -1834,6 +1894,7 @@ void build_edge_bvh_gpu(
                                                               bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to size recompute level scan");
                 CudaBuffer<char> level_scan_temp(level_scan_temp_size);
+                audit_cub_scan();
                 check_cuda_call(cub::DeviceScan::ExclusiveSum(level_scan_temp.get(),
                                                               level_scan_temp_size,
                                                               recompute_level_count_device.get(),
@@ -1841,6 +1902,7 @@ void build_edge_bvh_gpu(
                                                               static_cast<int>(level_slot_count),
                                                               bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to scan recompute level offsets");
+                audit_cub_scan();
                 check_cuda_call(cub::DeviceScan::ExclusiveSum(level_scan_temp.get(),
                                                               level_scan_temp_size,
                                                               optimize_level_count_device.get(),
@@ -1848,12 +1910,14 @@ void build_edge_bvh_gpu(
                                                               static_cast<int>(level_slot_count),
                                                               bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to scan optimize level offsets");
+                audit_cuda_memcpy_async();
                 check_cuda_call(cudaMemcpyAsync(recompute_level_cursor_device.get(),
                                                 recompute_level_offset_device.get(),
                                                 level_slot_count * sizeof(int),
                                                 cudaMemcpyDeviceToDevice,
                                                 bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to copy recompute level offsets");
+                audit_cuda_memcpy_async();
                 check_cuda_call(cudaMemcpyAsync(optimize_level_cursor_device.get(),
                                                 optimize_level_offset_device.get(),
                                                 level_slot_count * sizeof(int),
@@ -1869,6 +1933,10 @@ void build_edge_bvh_gpu(
                     optimize_level_cursor_device.get(),
                     recompute_nodes_device.get(),
                     optimize_nodes_device.get());
+                audit_cuda_kernel_launch("scatter_treelet_level_nodes_kernel",
+                                         static_cast<uint32_t>(internal_blocks), 1, 1,
+                                         block_size, 1, 1,
+                                         static_cast<uint64_t>(internal_count));
                 check_cuda_last_error(
                     "build_edge_lbvh_gpu(): failed to launch treelet level scatter");
 
@@ -1888,6 +1956,10 @@ void build_edge_bvh_gpu(
                         node_bbox_max_z,
                         node_costs.get(),
                         inflation);
+                    audit_cuda_kernel_launch("update_flat_treelet_level_kernel",
+                                             static_cast<uint32_t>(internal_blocks), 1, 1,
+                                             block_size, 1, 1,
+                                             static_cast<uint64_t>(internal_count));
                     check_cuda_last_error(
                         "build_edge_lbvh_gpu(): failed to launch flat internal-node recompute");
 
@@ -1909,10 +1981,15 @@ void build_edge_bvh_gpu(
                         leaf_primitive,
                         node_costs.get(),
                         inflation);
+                    audit_cuda_kernel_launch("optimize_flat_treelet_level_kernel",
+                                             static_cast<uint32_t>(internal_blocks), 1, 1,
+                                             block_size, 1, 1,
+                                             static_cast<uint64_t>(internal_count));
                     check_cuda_last_error(
                         "build_edge_lbvh_gpu(): failed to launch flat GPU treelet optimization");
                 }
             } else {
+                audit_cuda_stream_synchronize();
                 check_cuda_call(cudaStreamSynchronize(bounds_stream),
                                 "build_edge_lbvh_gpu(): failed to finalize node bounds");
                 std::vector<std::vector<int>> recompute_levels(static_cast<size_t>(max_height + 1));
@@ -1932,6 +2009,7 @@ void build_edge_bvh_gpu(
                 CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
                 if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
                     if (!recompute_schedule.nodes.empty()) {
+                        audit_cuda_memcpy();
                         check_cuda_call(cudaMemcpy(recompute_nodes_device.get(),
                                                    recompute_schedule.nodes.data(),
                                                    recompute_schedule.nodes.size() * sizeof(int),
@@ -1939,6 +2017,7 @@ void build_edge_bvh_gpu(
                                         "build_edge_lbvh_gpu(): failed to upload recompute schedule");
                     }
                     if (!optimize_schedule.nodes.empty()) {
+                        audit_cuda_memcpy();
                         check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
                                                    optimize_schedule.nodes.data(),
                                                    optimize_schedule.nodes.size() * sizeof(int),
@@ -1969,10 +2048,15 @@ void build_edge_bvh_gpu(
                                 node_bbox_max_z,
                                 node_costs.get(),
                                 inflation);
+                            audit_cuda_kernel_launch("update_internal_nodes_kernel",
+                                                     static_cast<uint32_t>(level_blocks), 1, 1,
+                                                     block_size, 1, 1,
+                                                     static_cast<uint64_t>(recompute_count));
                         } else {
                             const std::vector<int> &recompute_nodes =
                                 recompute_levels[static_cast<size_t>(height)];
                             CudaBuffer<int> device_nodes(recompute_nodes.size());
+                            audit_cuda_memcpy();
                             check_cuda_call(cudaMemcpy(device_nodes.get(),
                                                        recompute_nodes.data(),
                                                        recompute_nodes.size() * sizeof(int),
@@ -1991,6 +2075,10 @@ void build_edge_bvh_gpu(
                                 node_bbox_max_z,
                                 node_costs.get(),
                                 inflation);
+                            audit_cuda_kernel_launch("update_internal_nodes_kernel",
+                                                     static_cast<uint32_t>(level_blocks), 1, 1,
+                                                     block_size, 1, 1,
+                                                     static_cast<uint64_t>(recompute_count));
                         }
                         check_cuda_last_error(
                             "build_edge_lbvh_gpu(): failed to launch internal-node recompute");
@@ -2020,10 +2108,15 @@ void build_edge_bvh_gpu(
                                 leaf_primitive,
                                 node_costs.get(),
                                 inflation);
+                            audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
+                                                     static_cast<uint32_t>(level_blocks), 1, 1,
+                                                     block_size, 1, 1,
+                                                     static_cast<uint64_t>(optimize_count));
                         } else {
                             const std::vector<int> &optimize_nodes =
                                 optimize_levels[static_cast<size_t>(height)];
                             CudaBuffer<int> device_nodes(optimize_nodes.size());
+                            audit_cuda_memcpy();
                             check_cuda_call(cudaMemcpy(device_nodes.get(),
                                                        optimize_nodes.data(),
                                                        optimize_nodes.size() * sizeof(int),
@@ -2045,6 +2138,10 @@ void build_edge_bvh_gpu(
                                 leaf_primitive,
                                 node_costs.get(),
                                 inflation);
+                            audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
+                                                     static_cast<uint32_t>(level_blocks), 1, 1,
+                                                     block_size, 1, 1,
+                                                     static_cast<uint64_t>(optimize_count));
                         }
                         check_cuda_last_error(
                             "build_edge_lbvh_gpu(): failed to launch GPU treelet optimization");
@@ -2053,6 +2150,7 @@ void build_edge_bvh_gpu(
             }
         }
 
+        audit_cuda_stream_synchronize();
         check_cuda_call(cudaStreamSynchronize(bounds_stream),
                         "build_edge_lbvh_gpu(): failed to complete build");
     } catch (const std::exception &e) {
@@ -2271,6 +2369,10 @@ void collapse_edge_bvh_gpu(
             raw_left_child,
             raw_right_child,
             parent.get());
+        audit_cuda_kernel_launch("build_raw_parent_links_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to build raw parent links");
 
         finalize_raw_subtree_leaf_counts_kernel<<<node_blocks, block_size, 0, stream>>>(
@@ -2279,6 +2381,10 @@ void collapse_edge_bvh_gpu(
             parent.get(),
             subtree_leaf_count.get(),
             arrival_counter.get());
+        audit_cuda_kernel_launch("finalize_raw_subtree_leaf_counts_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to accumulate subtree leaf counts");
 
         mark_collapsible_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
@@ -2286,6 +2392,10 @@ void collapse_edge_bvh_gpu(
             subtree_leaf_count.get(),
             raw_leaf_primitive,
             collapse_flag.get());
+        audit_cuda_kernel_launch("mark_collapsible_raw_nodes_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark collapsible nodes");
 
         mark_live_collapsed_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
@@ -2295,9 +2405,14 @@ void collapse_edge_bvh_gpu(
             subtree_leaf_count.get(),
             live_flag.get(),
             live_leaf_count.get());
+        audit_cuda_kernel_launch("mark_live_collapsed_raw_nodes_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark live nodes");
 
         size_t scan_temp_size = 0;
+        audit_cub_scan();
         check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
                                                       scan_temp_size,
                                                       live_leaf_count.get(),
@@ -2306,6 +2421,7 @@ void collapse_edge_bvh_gpu(
                                                       stream),
                         "collapse_edge_bvh_gpu(): failed to size leaf packing scan");
         CudaBuffer<char> scan_temp(scan_temp_size);
+        audit_cub_scan();
         check_cuda_call(cub::DeviceScan::ExclusiveSum(scan_temp.get(),
                                                       scan_temp_size,
                                                       live_leaf_count.get(),
@@ -2335,6 +2451,10 @@ void collapse_edge_bvh_gpu(
             leaf_begin.get(),
             out_left_child,
             out_right_child);
+        audit_cuda_kernel_launch("emit_collapsed_raw_nodes_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed node topology");
 
         emit_collapsed_raw_leaf_primitives_kernel<<<node_blocks, block_size, 0, stream>>>(
@@ -2348,8 +2468,13 @@ void collapse_edge_bvh_gpu(
             raw_leaf_primitive,
             out_leaf_primitives,
             out_primitive_leaf_node);
+        audit_cuda_kernel_launch("emit_collapsed_raw_leaf_primitives_kernel",
+                                 static_cast<uint32_t>(node_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(raw_node_count));
         check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed leaf primitives");
 
+        audit_cuda_stream_synchronize();
         check_cuda_call(cudaStreamSynchronize(stream),
                         "collapse_edge_bvh_gpu(): failed to finish subtree collapse");
     } catch (const std::exception &e) {
@@ -2479,26 +2604,31 @@ void compact_edge_bvh_gpu(
         CudaBuffer<int> device_leaf_count(static_cast<size_t>(compacted_node_count));
 
         if (compacted_node_count > 0) {
+            audit_cuda_memcpy();
             check_cuda_call(cudaMemcpy(device_compacted_left.get(),
                                        compacted_left_child,
                                        sizeof(int) * static_cast<size_t>(compacted_node_count),
                                        cudaMemcpyHostToDevice),
                             "compact_edge_bvh_gpu(): failed to upload left-child plan");
+            audit_cuda_memcpy();
             check_cuda_call(cudaMemcpy(device_compacted_right.get(),
                                        compacted_right_child,
                                        sizeof(int) * static_cast<size_t>(compacted_node_count),
                                        cudaMemcpyHostToDevice),
                             "compact_edge_bvh_gpu(): failed to upload right-child plan");
+            audit_cuda_memcpy();
             check_cuda_call(cudaMemcpy(device_new_to_old.get(),
                                        compacted_new_to_old,
                                        sizeof(int) * static_cast<size_t>(compacted_node_count),
                                        cudaMemcpyHostToDevice),
                             "compact_edge_bvh_gpu(): failed to upload preorder map");
+            audit_cuda_memcpy();
             check_cuda_call(cudaMemcpy(device_leaf_begin.get(),
                                        compacted_leaf_begin,
                                        sizeof(int) * static_cast<size_t>(compacted_node_count),
                                        cudaMemcpyHostToDevice),
                             "compact_edge_bvh_gpu(): failed to upload leaf-begin plan");
+            audit_cuda_memcpy();
             check_cuda_call(cudaMemcpy(device_leaf_count.get(),
                                        compacted_leaf_count,
                                        sizeof(int) * static_cast<size_t>(compacted_node_count),
@@ -2523,6 +2653,10 @@ void compact_edge_bvh_gpu(
                 out_node_bbox_max_z,
                 out_left_child,
                 out_right_child);
+            audit_cuda_kernel_launch("emit_compacted_nodes_kernel",
+                                     static_cast<uint32_t>(node_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(compacted_node_count));
             check_cuda_last_error("compact_edge_bvh_gpu(): failed to emit compacted nodes");
             emit_compacted_leaf_primitives_kernel<<<node_blocks, block_size>>>(
                 compacted_node_count,
@@ -2534,6 +2668,10 @@ void compact_edge_bvh_gpu(
                 raw_leaf_primitive,
                 out_leaf_primitives,
                 out_primitive_leaf_node);
+            audit_cuda_kernel_launch("emit_compacted_leaf_primitives_kernel",
+                                     static_cast<uint32_t>(node_blocks), 1, 1,
+                                     block_size, 1, 1,
+                                     static_cast<uint64_t>(compacted_node_count));
             check_cuda_last_error("compact_edge_bvh_gpu(): failed to emit compacted leaves");
         }
 
@@ -2567,6 +2705,7 @@ void mark_edge_bvh_dirty_ancestors_gpu(
         }
 
         if (clear_marks) {
+            audit_cuda_memset_async();
             check_cuda_call(
                 cudaMemset(out_dirty_marks, 0, sizeof(int) * static_cast<size_t>(node_count)),
                 "mark_edge_bvh_dirty_ancestors_gpu(): failed to clear dirty marks");
@@ -2580,6 +2719,10 @@ void mark_edge_bvh_dirty_ancestors_gpu(
         const int block_count = (leaf_count + block_size - 1) / block_size;
         mark_dirty_ancestors_kernel<<<block_count, block_size>>>(
             leaf_count, leaf_nodes, node_parent, out_dirty_marks);
+        audit_cuda_kernel_launch("mark_dirty_ancestors_kernel",
+                                 static_cast<uint32_t>(block_count), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(leaf_count));
         check_cuda_last_error(
             "mark_edge_bvh_dirty_ancestors_gpu(): failed to launch dirty-ancestor kernel");
     } catch (const std::exception &e) {
@@ -2634,6 +2777,7 @@ void compact_and_refit_edge_bvh_level_gpu(
             return;
         }
 
+        audit_cuda_memset_async();
         check_cuda_call(cudaMemset(scratch_selected_count, 0, sizeof(int)),
                         "compact_and_refit_edge_bvh_level_gpu(): failed to clear selected count");
 
@@ -2645,6 +2789,10 @@ void compact_and_refit_edge_bvh_level_gpu(
             dirty_marks,
             scratch_selected_nodes,
             scratch_selected_count);
+        audit_cuda_kernel_launch("compact_dirty_level_kernel",
+                                 static_cast<uint32_t>(block_count), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(level_count));
         check_cuda_last_error(
             "compact_and_refit_edge_bvh_level_gpu(): failed to launch dirty-level compaction");
 
@@ -2661,6 +2809,10 @@ void compact_and_refit_edge_bvh_level_gpu(
             node_bbox_max_y,
             node_bbox_max_z,
             packed_node_bounds);
+        audit_cuda_kernel_launch("refit_selected_internal_nodes_kernel",
+                                 static_cast<uint32_t>(block_count), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(level_count));
         check_cuda_last_error(
             "compact_and_refit_edge_bvh_level_gpu(): failed to launch dirty-level refit");
     } catch (const std::exception &e) {
