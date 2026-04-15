@@ -91,7 +91,8 @@ chain = scene.trace_reflections(ray, max_bounces=3,
 # PyTorch
 chain = scene.trace_reflections(ray, max_bounces=3, deduplicate=True)
 chain.ray_count        # M (unique paths, not input ray count)
-chain.prim_ids         # [M, B]
+chain.prim_ids         # [M, B]  (mesh-local)
+chain.global_prim_ids  # [M, B]  (scene-global)
 chain.image_sources    # [M, B, 3]
 chain.discovery_count  # [M]
 ```
@@ -110,8 +111,8 @@ New CUDA kernel: `reflection_dedup_build_keys`
 
 For each ray `i`:
 1. If `bounce_count[i] == 0` → key = `UINT64_MAX` (dead lane, sorted last)
-2. Optionally remap prim_ids through `canonical_prim_table`
-3. Hash the prim_id chain into a 64-bit key:
+2. Build / remap the scene-global prim chain through `canonical_prim_table`
+3. Hash the global prim-id chain into a 64-bit key:
 
 ```cuda
 __global__ void reflection_dedup_build_keys(

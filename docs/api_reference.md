@@ -16,10 +16,14 @@ Public top-level exports:
 - `Camera`
 - `Ray`
 - `Intersection`
+- `ReflectionChain`
 - `NearestPointEdge`
 - `NearestRayEdge`
 - `PrimaryEdgeSample`
 - `SecondaryEdgeInfo`
+- `SceneEdgeInfo`
+- `SceneEdgeTopology`
+- `SceneGlobalGeometry`
 
 All array-valued inputs and outputs use Dr.Jit CUDA arrays or tensors.
 
@@ -137,8 +141,15 @@ Methods:
 - `is_ready() -> bool`
 - `has_pending_updates() -> bool`
 - `intersect(ray, active=True) -> Intersection`
+- `trace_reflections(ray, max_bounces, active=True, *, deduplicate=False, canonical_prim_table=None, image_source_tolerance=1e-5) -> ReflectionChain`
 - `nearest_edge(point, active=True) -> NearestPointEdge`
 - `nearest_edge(ray, active=True) -> NearestRayEdge`
+- `edge_info() -> SceneEdgeInfo`
+- `edge_topology() -> SceneEdgeTopology`
+- `global_geometry() -> SceneGlobalGeometry`
+- `mesh_face_offsets()`
+- `mesh_edge_offsets()`
+- `mesh_vertex_offsets()`
 
 Properties:
 
@@ -251,10 +262,57 @@ Fields:
 - `barycentric`
 - `shape_id`
 - `prim_id`
+- `local_prim_id`
+- `global_prim_id`
 
 Methods:
 
 - `is_valid()`
+
+Notes:
+
+- `prim_id` is kept as the mesh-local triangle id for compatibility.
+- `local_prim_id` is identical to `prim_id`.
+- `global_prim_id` is the scene-global triangle id.
+
+### `ReflectionChain`
+
+Result of `Scene.trace_reflections(...)`.
+
+Fields:
+
+- `bounce_count`
+- `discovery_count`
+- `representative_ray_index`
+- `t`
+- `hit_points`
+- `geo_normals`
+- `image_sources`
+- `plane_points`
+- `plane_normals`
+- `shape_ids`
+- `prim_ids`
+- `local_prim_ids`
+- `global_prim_ids`
+
+Notes:
+
+- `prim_ids` remains mesh-local for compatibility.
+- `local_prim_ids` is identical to `prim_ids`.
+- `global_prim_ids` is the scene-global triangle id chain.
+
+### `SceneGlobalGeometry`
+
+Canonical scene-global geometry cache exposed by `Scene.global_geometry()`.
+
+Fields:
+
+- `vertices`
+- `faces`
+- `face_normal`
+- `shape_id`
+- `local_prim_id`
+- `global_prim_id`
 
 ## Nearest-Edge Types
 

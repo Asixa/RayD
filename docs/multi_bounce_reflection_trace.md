@@ -46,12 +46,19 @@ ReflectionChain trace_reflections(const RayDetached &ray,
                                   MaskDetached active = true) const;
 ```
 
+Current API note:
+
+- `prim_ids` is mesh-local for compatibility.
+- `local_prim_ids` is identical to `prim_ids`.
+- `global_prim_ids` is the scene-global triangle-id chain.
+
 ### Python (nanobind)
 
 ```python
 chain = scene.trace_reflections(ray, max_bounces=3)
 chain.bounce_count   # drjit.cuda.Int    [N]
 chain.prim_ids       # drjit.cuda.Int    [N*B]
+chain.global_prim_ids# drjit.cuda.Int    [N*B]
 chain.hit_points     # drjit.cuda.Array3f [N*B]
 chain.image_sources  # drjit.cuda.Array3f [N*B]
 # ...
@@ -63,6 +70,7 @@ chain.image_sources  # drjit.cuda.Array3f [N*B]
 chain = scene.trace_reflections(ray, max_bounces=3)
 chain.bounce_count   # torch.Tensor int32   [N]
 chain.prim_ids       # torch.Tensor int32   [N, B]
+chain.global_prim_ids# torch.Tensor int32   [N, B]
 chain.hit_points     # torch.Tensor float32 [N, B, 3]
 chain.image_sources  # torch.Tensor float32 [N, B, 3]
 # ...
@@ -1035,5 +1043,4 @@ file(WRITE "${OUTPUT_FILE}"
     "static const size_t ${VAR_NAME}_size = ${PTX_SIZE};\n"
 )
 ```
-
 
