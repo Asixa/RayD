@@ -173,24 +173,32 @@ struct SceneEdgeInfo {
 struct SceneEdgeTopology {
     IntDetached v0;
     IntDetached v1;
+    IntDetached v0_global;
+    IntDetached v1_global;
     IntDetached face0_local;
     IntDetached face1_local;
     IntDetached face0_global;
     IntDetached face1_global;
     IntDetached opposite_vertex0;
     IntDetached opposite_vertex1;
+    IntDetached opposite_vertex0_global;
+    IntDetached opposite_vertex1_global;
 
     int size() const { return v0.size(); }
 
     DRJIT_STRUCT(SceneEdgeTopology,
                  v0,
                  v1,
+                 v0_global,
+                 v1_global,
                  face0_local,
                  face1_local,
                  face0_global,
                  face1_global,
                  opposite_vertex0,
-                 opposite_vertex1)
+                 opposite_vertex1,
+                 opposite_vertex0_global,
+                 opposite_vertex1_global)
 };
 
 } // namespace rayd

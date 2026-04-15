@@ -33,6 +33,8 @@ class Intersection(_StructRepr):
         "barycentric": object,
         "shape_id": object,
         "prim_id": object,
+        "local_prim_id": object,
+        "global_prim_id": object,
     }
 
     def __init__(
@@ -45,6 +47,8 @@ class Intersection(_StructRepr):
         barycentric: Any = None,
         shape_id: Any = None,
         prim_id: Any = None,
+        local_prim_id: Any = None,
+        global_prim_id: Any = None,
     ):
         self.t = t
         self.p = p
@@ -54,6 +58,8 @@ class Intersection(_StructRepr):
         self.barycentric = barycentric
         self.shape_id = shape_id
         self.prim_id = prim_id
+        self.local_prim_id = local_prim_id
+        self.global_prim_id = global_prim_id
 
     def is_valid(self) -> Any:
         return self.prim_id >= 0
@@ -72,6 +78,8 @@ class ReflectionChain(_StructRepr):
         "plane_normals": object,
         "shape_ids": object,
         "prim_ids": object,
+        "local_prim_ids": object,
+        "global_prim_ids": object,
     }
 
     def __init__(
@@ -87,6 +95,8 @@ class ReflectionChain(_StructRepr):
         plane_normals: Any = None,
         shape_ids: Any = None,
         prim_ids: Any = None,
+        local_prim_ids: Any = None,
+        global_prim_ids: Any = None,
         max_bounces: int = 0,
         ray_count: int = 0,
     ):
@@ -101,6 +111,8 @@ class ReflectionChain(_StructRepr):
         self.plane_normals = plane_normals
         self.shape_ids = shape_ids
         self.prim_ids = prim_ids
+        self.local_prim_ids = local_prim_ids
+        self.global_prim_ids = global_prim_ids
         self._max_bounces_hint = int(max_bounces)
         self._ray_count_hint = int(ray_count)
 
@@ -311,39 +323,92 @@ class SceneEdgeTopology(_StructRepr):
     DRJIT_STRUCT = {
         "v0": object,
         "v1": object,
+        "v0_global": object,
+        "v1_global": object,
         "face0_local": object,
         "face1_local": object,
         "face0_global": object,
         "face1_global": object,
         "opposite_vertex0": object,
         "opposite_vertex1": object,
+        "opposite_vertex0_global": object,
+        "opposite_vertex1_global": object,
     }
 
     def __init__(
         self,
         v0: Any = None,
         v1: Any = None,
+        v0_global: Any = None,
+        v1_global: Any = None,
         face0_local: Any = None,
         face1_local: Any = None,
         face0_global: Any = None,
         face1_global: Any = None,
         opposite_vertex0: Any = None,
         opposite_vertex1: Any = None,
+        opposite_vertex0_global: Any = None,
+        opposite_vertex1_global: Any = None,
     ):
         self.v0 = v0
         self.v1 = v1
+        self.v0_global = v0_global
+        self.v1_global = v1_global
         self.face0_local = face0_local
         self.face1_local = face1_local
         self.face0_global = face0_global
         self.face1_global = face1_global
         self.opposite_vertex0 = opposite_vertex0
         self.opposite_vertex1 = opposite_vertex1
+        self.opposite_vertex0_global = opposite_vertex0_global
+        self.opposite_vertex1_global = opposite_vertex1_global
 
     def size(self) -> int:
         if self.v0 is None:
             return 0
         from ._util import _shape_tuple
         return int(_shape_tuple(self.v0)[0])
+
+
+class SceneGlobalGeometry(_StructRepr):
+    DRJIT_STRUCT = {
+        "vertices": object,
+        "faces": object,
+        "face_normal": object,
+        "shape_id": object,
+        "local_prim_id": object,
+        "global_prim_id": object,
+    }
+
+    def __init__(
+        self,
+        vertices: Any = None,
+        faces: Any = None,
+        face_normal: Any = None,
+        shape_id: Any = None,
+        local_prim_id: Any = None,
+        global_prim_id: Any = None,
+    ):
+        self.vertices = vertices
+        self.faces = faces
+        self.face_normal = face_normal
+        self.shape_id = shape_id
+        self.local_prim_id = local_prim_id
+        self.global_prim_id = global_prim_id
+
+    def vertex_count(self) -> int:
+        if self.vertices is None:
+            return 0
+        from ._util import _shape_tuple
+        shape = _shape_tuple(self.vertices)
+        return int(shape[0]) if len(shape) >= 1 else 0
+
+    def face_count(self) -> int:
+        if self.global_prim_id is None:
+            return 0
+        from ._util import _shape_tuple
+        shape = _shape_tuple(self.global_prim_id)
+        return int(shape[0]) if len(shape) >= 1 else 0
 
 
 class SceneSyncProfile:

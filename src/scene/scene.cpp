@@ -137,6 +137,25 @@ struct ReflectionTraceRaw {
     FloatDetached img_z;
 };
 
+IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
+                                    const IntDetached &shape_ids,
+                                    const IntDetached &face_offsets) {
+    const int ray_count = static_cast<int>(slices(local_prim_ids));
+    if (ray_count == 0) {
+        return IntDetached();
+    }
+
+    const int mesh_count = std::max(0, static_cast<int>(slices(face_offsets)) - 1);
+    const MaskDetached valid =
+        (local_prim_ids >= 0) && (shape_ids >= 0) && (shape_ids < mesh_count);
+    const IntDetached safe_shape_ids = select(valid, shape_ids, zeros<IntDetached>(ray_count));
+    const IntDetached mesh_face_offsets =
+        gather<IntDetached>(face_offsets, safe_shape_ids, valid);
+    return select(valid,
+                  local_prim_ids + mesh_face_offsets,
+                  full<IntDetached>(-1, ray_count));
+}
+
 template <bool Detached>
 ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
                                                               int max_bounces) {
@@ -156,6 +175,8 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
     result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
     result.shape_ids = full<IntT<Detached>>(-1, slot_count);
     result.prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.local_prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.global_prim_ids = full<IntT<Detached>>(-1, slot_count);
     return result;
 }
 
@@ -170,6 +191,8 @@ ReflectionBounceT<Detached> initialize_reflection_bounce_result(int ray_count) {
     result.plane_normals = zeros<Vector3fT<Detached>>(ray_count);
     result.shape_ids = full<IntT<Detached>>(-1, ray_count);
     result.prim_ids = full<IntT<Detached>>(-1, ray_count);
+    result.local_prim_ids = full<IntT<Detached>>(-1, ray_count);
+    result.global_prim_ids = full<IntT<Detached>>(-1, ray_count);
     return result;
 }
 
@@ -359,6 +382,8 @@ ReflectionTraceT<Detached> trace_bounces_impl(
         bounce_result.plane_normals = bounce_result.geo_normals;
         bounce_result.shape_ids = select(bounce_hit, its.shape_id, miss_id);
         bounce_result.prim_ids = select(bounce_hit, its.prim_id, miss_id);
+        bounce_result.local_prim_ids = select(bounce_hit, its.local_prim_id, miss_id);
+        bounce_result.global_prim_ids = select(bounce_hit, its.global_prim_id, miss_id);
         result.bounces.push_back(std::move(bounce_result));
 
         result.bounce_count += select(bounce_hit, one_i, zero_i);
@@ -457,6 +482,8 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     mesh_count_ = static_cast<int>(mesh_records_.size());
     is_ready_ = false;
     pending_updates_ = false;
+    vertex_offsets_ = IntDetached();
+    global_geometry_ = SceneGlobalGeometry();
     edge_mask_ = MaskDetached();
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
@@ -637,6 +664,10 @@ void Scene::build() {
     face_offsets.reserve(mesh_records_.size() + 1);
     face_offsets.push_back(0);
 
+    std::vector<int> vertex_offsets;
+    vertex_offsets.reserve(mesh_records_.size() + 1);
+    vertex_offsets.push_back(0);
+
     std::vector<int> edge_offsets;
     edge_offsets.reserve(mesh_records_.size() + 1);
     edge_offsets.push_back(0);
@@ -646,18 +677,23 @@ void Scene::build() {
 
     std::vector<int> topology_v0;
     std::vector<int> topology_v1;
+    std::vector<int> topology_v0_global;
+    std::vector<int> topology_v1_global;
     std::vector<int> topology_face0_local;
     std::vector<int> topology_face1_local;
     std::vector<int> topology_face0_global;
     std::vector<int> topology_face1_global;
     std::vector<int> topology_opposite0;
     std::vector<int> topology_opposite1;
+    std::vector<int> topology_opposite0_global;
+    std::vector<int> topology_opposite1_global;
 
     for (size_t mesh_index = 0; mesh_index < mesh_records_.size(); ++mesh_index) {
         SceneMeshRecord &record = mesh_records_[mesh_index];
         Mesh &mesh = *record.mesh;
         mesh.set_mesh_id(static_cast<int>(mesh_index));
         mesh.build();
+        record.vertex_offset = vertex_offsets.back();
         record.face_offset = face_offsets.back();
         const SecondaryEdgeInfo *mesh_edge_info = mesh.secondary_edge_info();
         const int mesh_edge_count = mesh_edge_info != nullptr ? mesh_edge_info->size() : 0;
@@ -666,24 +702,41 @@ void Scene::build() {
         record.transform_dirty = false;
         record.edge_dirty = false;
 
+        vertex_offsets.push_back(vertex_offsets.back() + mesh.vertex_count());
         face_offsets.push_back(face_offsets.back() + mesh.face_count());
         edge_offsets.push_back(edge_offsets.back() + mesh_edge_count);
         mesh_descs.push_back({ &mesh, record.dynamic, record.face_offset, static_cast<int>(mesh_index) });
     }
 
     mesh_count_ = static_cast<int>(mesh_records_.size());
+    const int total_vertex_count = vertex_offsets.back();
     const int total_face_count = face_offsets.back();
     require(total_face_count > 0, "Scene::build(): scene has no triangles.");
 
     edge_count_ = edge_offsets.back();
     topology_v0.reserve(edge_count_);
     topology_v1.reserve(edge_count_);
+    topology_v0_global.reserve(edge_count_);
+    topology_v1_global.reserve(edge_count_);
     topology_face0_local.reserve(edge_count_);
     topology_face1_local.reserve(edge_count_);
     topology_face0_global.reserve(edge_count_);
     topology_face1_global.reserve(edge_count_);
     topology_opposite0.reserve(edge_count_);
     topology_opposite1.reserve(edge_count_);
+    topology_opposite0_global.reserve(edge_count_);
+    topology_opposite1_global.reserve(edge_count_);
+
+    std::array<std::vector<int>, 3> global_face_indices_cpu;
+    for (auto &global_face_indices : global_face_indices_cpu) {
+        global_face_indices.reserve(total_face_count);
+    }
+    std::vector<int> global_shape_ids_cpu;
+    std::vector<int> global_local_prim_ids_cpu;
+    std::vector<int> global_prim_ids_cpu;
+    global_shape_ids_cpu.reserve(total_face_count);
+    global_local_prim_ids_cpu.reserve(total_face_count);
+    global_prim_ids_cpu.reserve(total_face_count);
 
     std::array<std::vector<int>, 3> triangle_edge_ids_cpu;
     for (auto &triangle_edge_ids : triangle_edge_ids_cpu) {
@@ -694,6 +747,20 @@ void Scene::build() {
         const Mesh &mesh = *record.mesh;
         const auto &mesh_edge_indices = mesh.edge_indices();
         const int mesh_edge_count = mesh.edges_enabled() ? static_cast<int>(slices(mesh_edge_indices)) : 0;
+        const Vector3iDetached mesh_face_indices(detach<false>(mesh.face_indices()[0]),
+                                                 detach<false>(mesh.face_indices()[1]),
+                                                 detach<false>(mesh.face_indices()[2]));
+        std::array<std::vector<int>, 3> mesh_face_cpu;
+        copy_cuda_array(mesh_face_indices, mesh_face_cpu);
+        for (int local_face_id = 0; local_face_id < mesh.face_count(); ++local_face_id) {
+            global_face_indices_cpu[0].push_back(record.vertex_offset + mesh_face_cpu[0][local_face_id]);
+            global_face_indices_cpu[1].push_back(record.vertex_offset + mesh_face_cpu[1][local_face_id]);
+            global_face_indices_cpu[2].push_back(record.vertex_offset + mesh_face_cpu[2][local_face_id]);
+            global_shape_ids_cpu.push_back(mesh.mesh_id());
+            global_local_prim_ids_cpu.push_back(local_face_id);
+            global_prim_ids_cpu.push_back(record.face_offset + local_face_id);
+        }
+
         if (mesh_edge_count == 0) {
             continue;
         }
@@ -701,20 +768,17 @@ void Scene::build() {
         std::array<std::vector<int>, 5> mesh_edge_cpu;
         copy_cuda_array(mesh_edge_indices, mesh_edge_cpu);
 
-        const Vector3iDetached mesh_face_indices(detach<false>(mesh.face_indices()[0]),
-                                                 detach<false>(mesh.face_indices()[1]),
-                                                 detach<false>(mesh.face_indices()[2]));
-        std::array<std::vector<int>, 3> mesh_face_cpu;
-        copy_cuda_array(mesh_face_indices, mesh_face_cpu);
-
         for (int local_edge_id = 0; local_edge_id < mesh_edge_count; ++local_edge_id) {
             const int v0 = mesh_edge_cpu[0][local_edge_id];
             const int v1 = mesh_edge_cpu[1][local_edge_id];
+            const int v0_global = record.vertex_offset + v0;
+            const int v1_global = record.vertex_offset + v1;
             const int face0_local = mesh_edge_cpu[2][local_edge_id];
             const int face1_local = mesh_edge_cpu[3][local_edge_id];
             const int face0_global = record.face_offset + face0_local;
             const int face1_global = face1_local >= 0 ? record.face_offset + face1_local : -1;
             const int opposite0 = mesh_edge_cpu[4][local_edge_id];
+            const int opposite0_global = opposite0 >= 0 ? record.vertex_offset + opposite0 : -1;
             const int global_edge_id = record.edge_offset + local_edge_id;
 
             const std::array<int, 3> face0_vertices {
@@ -731,10 +795,14 @@ void Scene::build() {
                     mesh_face_cpu[2][face1_local]
                 };
                 opposite1 = face_opposite_vertex(face1_vertices, v0, v1);
+                const int opposite1_global = opposite1 >= 0 ? record.vertex_offset + opposite1 : -1;
                 const int face1_slot = face_edge_slot(face1_vertices, v0, v1);
                 if (face1_slot >= 0) {
                     triangle_edge_ids_cpu[face1_slot][face1_global] = global_edge_id;
                 }
+                topology_opposite1_global.push_back(opposite1_global);
+            } else {
+                topology_opposite1_global.push_back(-1);
             }
 
             const int face0_slot = face_edge_slot(face0_vertices, v0, v1);
@@ -744,12 +812,15 @@ void Scene::build() {
 
             topology_v0.push_back(v0);
             topology_v1.push_back(v1);
+            topology_v0_global.push_back(v0_global);
+            topology_v1_global.push_back(v1_global);
             topology_face0_local.push_back(face0_local);
             topology_face1_local.push_back(face1_local);
             topology_face0_global.push_back(face0_global);
             topology_face1_global.push_back(face1_global);
             topology_opposite0.push_back(opposite0);
             topology_opposite1.push_back(opposite1);
+            topology_opposite0_global.push_back(opposite0_global);
         }
     }
 
@@ -759,12 +830,22 @@ void Scene::build() {
 
     face_offsets_ = load<IntDetached>(face_offsets.data(), face_offsets.size());
     edge_offsets_ = load<IntDetached>(edge_offsets.data(), edge_offsets.size());
+    vertex_offsets_ = load<IntDetached>(vertex_offsets.data(), vertex_offsets.size());
     triangle_info_ = empty<TriangleInfo>(total_face_count);
     triangle_info_detached_ = empty<TriangleInfoDetached>(total_face_count);
     triangle_uv_ = zeros<TriangleUV>(total_face_count);
     triangle_uv_detached_ = zeros<TriangleUVDetached>(total_face_count);
     triangle_face_normal_mask_ = empty<Mask>(total_face_count);
     triangle_face_normal_mask_detached_ = empty<MaskDetached>(total_face_count);
+    global_geometry_.vertices = total_vertex_count > 0 ? empty<Vector3f>(total_vertex_count) : Vector3f();
+    global_geometry_.faces = Vector3iDetached(
+        load<IntDetached>(global_face_indices_cpu[0].data(), total_face_count),
+        load<IntDetached>(global_face_indices_cpu[1].data(), total_face_count),
+        load<IntDetached>(global_face_indices_cpu[2].data(), total_face_count));
+    global_geometry_.shape_id = load<IntDetached>(global_shape_ids_cpu.data(), total_face_count);
+    global_geometry_.local_prim_id =
+        load<IntDetached>(global_local_prim_ids_cpu.data(), total_face_count);
+    global_geometry_.global_prim_id = load<IntDetached>(global_prim_ids_cpu.data(), total_face_count);
     triangle_edge_ids_ = VectoriT<3, true>(load<IntDetached>(triangle_edge_ids_cpu[0].data(), total_face_count),
                                            load<IntDetached>(triangle_edge_ids_cpu[1].data(), total_face_count),
                                            load<IntDetached>(triangle_edge_ids_cpu[2].data(), total_face_count));
@@ -773,12 +854,16 @@ void Scene::build() {
         edge_topology_ = SceneEdgeTopology {
             load_or_empty(topology_v0),
             load_or_empty(topology_v1),
+            load_or_empty(topology_v0_global),
+            load_or_empty(topology_v1_global),
             load_or_empty(topology_face0_local),
             load_or_empty(topology_face1_local),
             load_or_empty(topology_face0_global),
             load_or_empty(topology_face1_global),
             load_or_empty(topology_opposite0),
-            load_or_empty(topology_opposite1)
+            load_or_empty(topology_opposite1),
+            load_or_empty(topology_opposite0_global),
+            load_or_empty(topology_opposite1_global)
         };
         edge_shape_ids_ = empty<IntDetached>(edge_count_);
         edge_local_ids_ = empty<IntDetached>(edge_count_);
@@ -794,7 +879,14 @@ void Scene::build() {
     for (const SceneMeshRecord &record : mesh_records_) {
         scatter_mesh_data(record, true);
         scatter_mesh_edge_data(record, true);
+        const Mesh &mesh = *record.mesh;
+        const int mesh_vertex_count = mesh.vertex_count();
+        if (mesh_vertex_count > 0) {
+            const Int vertex_scatter_indices = arange<Int>(mesh_vertex_count) + record.vertex_offset;
+            scatter(global_geometry_.vertices, mesh.vertex_positions_world(), vertex_scatter_indices);
+        }
     }
+    global_geometry_.face_normal = triangle_info_.face_normal;
 
     int static_mesh_count = 0;
     int dynamic_mesh_count = 0;
@@ -936,6 +1028,13 @@ void Scene::sync() {
 
         const auto scatter_start = Clock::now();
         scatter_mesh_data(record, false);
+        const int mesh_vertex_count = record.mesh->vertex_count();
+        if (mesh_vertex_count > 0) {
+            const Int vertex_scatter_indices = arange<Int>(mesh_vertex_count) + record.vertex_offset;
+            scatter(global_geometry_.vertices,
+                    record.mesh->vertex_positions_world(),
+                    vertex_scatter_indices);
+        }
         last_sync_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - scatter_start).count();
 
@@ -959,6 +1058,9 @@ void Scene::sync() {
         }
         record.vertices_dirty = false;
         record.transform_dirty = false;
+    }
+    if (!updates.empty()) {
+        global_geometry_.face_normal = triangle_info_.face_normal;
     }
 
     if (edge_bvh_dirty_) {
@@ -1077,6 +1179,13 @@ const SceneEdgeTopology &Scene::edge_topology() const {
 const MaskDetached &Scene::edge_mask() const {
     require(is_ready(), "Scene::edge_mask(): scene is not built.");
     return edge_mask_;
+}
+
+const SceneGlobalGeometry &Scene::global_geometry() const {
+    require(is_ready(), "Scene::global_geometry(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::global_geometry(): scene has pending updates. Call Scene::sync() first.");
+    return global_geometry_;
 }
 
 VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool global) const {
@@ -1291,7 +1400,13 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     intersection.p = select(hit_mask, hit_position, intersection.p);
     intersection.barycentric = select(hit_mask, barycentric_coordinates, intersection.barycentric);
     intersection.shape_id = select(hit_mask, IntT<Detached>(shape_id), intersection.shape_id);
-    intersection.prim_id = select(hit_mask, IntT<Detached>(local_primitive_id), intersection.prim_id);
+    const IntT<Detached> local_primitive_id_t = IntT<Detached>(local_primitive_id);
+    const IntT<Detached> global_primitive_id_t = IntT<Detached>(global_primitive_id);
+    intersection.prim_id = select(hit_mask, local_primitive_id_t, intersection.prim_id);
+    intersection.local_prim_id =
+        select(hit_mask, local_primitive_id_t, intersection.local_prim_id);
+    intersection.global_prim_id =
+        select(hit_mask, global_primitive_id_t, intersection.global_prim_id);
     return intersection;
 }
 
@@ -1367,6 +1482,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             result.plane_normals = bounce.plane_normals;
             result.shape_ids = bounce.shape_ids;
             result.prim_ids = bounce.prim_ids;
+            result.local_prim_ids = bounce.local_prim_ids;
+            result.global_prim_ids = bounce.global_prim_ids;
         }
         return result;
     }
@@ -1561,6 +1678,9 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.ray_count = trace_ray_count;
     }
 
+    const IntDetached trace_global_prim_ids =
+        globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
+
     if constexpr (Detached) {
         const Vector3fDetached hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
         const Vector3fDetached plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
@@ -1575,6 +1695,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.plane_normals = plane_normals;
         result.shape_ids = trace_shape_ids;
         result.prim_ids = trace_prim_ids;
+        result.local_prim_ids = trace_prim_ids;
+        result.global_prim_ids = trace_global_prim_ids;
         return result;
     } else {
         result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
@@ -1583,6 +1705,8 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.representative_ray_index = Int(trace_representative_ray_index);
         result.shape_ids = Int(trace_shape_ids);
         result.prim_ids = Int(trace_prim_ids);
+        result.local_prim_ids = Int(trace_prim_ids);
+        result.global_prim_ids = Int(trace_global_prim_ids);
 
         if (trace_ray_count == 0) {
             return result;

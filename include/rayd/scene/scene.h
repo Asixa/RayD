@@ -57,6 +57,8 @@ public:
     const MaskDetached &edge_mask() const;
     const IntDetached &mesh_face_offsets() const { return face_offsets_; }
     const IntDetached &mesh_edge_offsets() const { return edge_offsets_; }
+    const IntDetached &mesh_vertex_offsets() const { return vertex_offsets_; }
+    const SceneGlobalGeometry &global_geometry() const;
     uint64_t version() const { return scene_version_; }
     uint64_t edge_version() const { return edge_version_; }
     VectoriT<3, true> triangle_edge_indices(const IntDetached &prim_id, bool global = true) const;
@@ -107,6 +109,7 @@ private:
         bool vertices_dirty = false;
         bool transform_dirty = false;
         mutable bool edge_dirty = false;
+        int vertex_offset = 0;
         int face_offset = 0;
         int edge_offset = 0;
     };
@@ -126,12 +129,14 @@ private:
 
     IntDetached face_offsets_;
     IntDetached edge_offsets_;
+    IntDetached vertex_offsets_;
     TriangleInfo triangle_info_;
     TriangleInfoDetached triangle_info_detached_;
     TriangleUV triangle_uv_;
     TriangleUVDetached triangle_uv_detached_;
     Mask triangle_face_normal_mask_;
     MaskDetached triangle_face_normal_mask_detached_;
+    SceneGlobalGeometry global_geometry_;
     SecondaryEdgeInfo edge_info_;
     SceneEdgeTopology edge_topology_;
     IntDetached edge_shape_ids_;

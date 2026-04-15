@@ -24,6 +24,7 @@ from .types import (
     SceneSyncProfile,
     SceneEdgeInfo,
     SceneEdgeTopology,
+    SceneGlobalGeometry,
     SecondaryEdgeInfo,
 )
 from .mesh import Mesh
@@ -50,6 +51,7 @@ __all__ = [
     "SceneSyncProfile",
     "SceneEdgeInfo",
     "SceneEdgeTopology",
+    "SceneGlobalGeometry",
     "SecondaryEdgeInfo",
     "set_device",
 ]

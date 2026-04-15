@@ -32,6 +32,8 @@ struct ReflectionBounceData {
     Vec3f plane_normals = zeros<Vec3f>(1);
     Int_ shape_ids = full<Int_>(-1, 1);
     Int_ prim_ids = full<Int_>(-1, 1);
+    Int_ local_prim_ids = full<Int_>(-1, 1);
+    Int_ global_prim_ids = full<Int_>(-1, 1);
 
     DRJIT_STRUCT(ReflectionBounceData,
                  t,
@@ -41,7 +43,9 @@ struct ReflectionBounceData {
                  plane_points,
                  plane_normals,
                  shape_ids,
-                 prim_ids)
+                 prim_ids,
+                 local_prim_ids,
+                 global_prim_ids)
 };
 
 template <typename Float_>
@@ -70,6 +74,8 @@ struct ReflectionChainData {
     Vec3f plane_normals = zeros<Vec3f>(1);
     Int_ shape_ids = full<Int_>(-1, 1);
     Int_ prim_ids = full<Int_>(-1, 1);
+    Int_ local_prim_ids = full<Int_>(-1, 1);
+    Int_ global_prim_ids = full<Int_>(-1, 1);
 
     DRJIT_STRUCT(ReflectionChainData,
                  bounce_count,
@@ -82,7 +88,9 @@ struct ReflectionChainData {
                  plane_points,
                  plane_normals,
                  shape_ids,
-                 prim_ids)
+                 prim_ids,
+                 local_prim_ids,
+                 global_prim_ids)
 };
 
 template <typename Float_>

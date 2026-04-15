@@ -130,4 +130,24 @@ using TriangleUVDetached = TriangleUvData<FloatDetached>;
 template <bool Detached_>
 using TriangleUVT = std::conditional_t<Detached_, TriangleUVDetached, TriangleUV>;
 
+struct SceneGlobalGeometry {
+    Vector3f vertices;
+    Vector3iDetached faces;
+    Vector3f face_normal;
+    IntDetached shape_id;
+    IntDetached local_prim_id;
+    IntDetached global_prim_id;
+
+    int vertex_count() const { return vertices.x().size(); }
+    int face_count() const { return global_prim_id.size(); }
+
+    DRJIT_STRUCT(SceneGlobalGeometry,
+                 vertices,
+                 faces,
+                 face_normal,
+                 shape_id,
+                 local_prim_id,
+                 global_prim_id)
+};
+
 } // namespace rayd

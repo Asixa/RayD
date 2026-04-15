@@ -37,6 +37,7 @@ from .types import (
     Ray,
     SceneEdgeInfo,
     SceneEdgeTopology,
+    SceneGlobalGeometry,
     SecondaryEdgeInfo,
 )
 from ._state import _MeshState, _CameraState
@@ -319,6 +320,8 @@ def _intersection_from_native(its: Any) -> Intersection:
         barycentric=_vec3_to_tensor(its.barycentric),
         shape_id=_scalar_array_to_tensor(its.shape_id),
         prim_id=_scalar_array_to_tensor(its.prim_id),
+        local_prim_id=_scalar_array_to_tensor(its.local_prim_id),
+        global_prim_id=_scalar_array_to_tensor(its.global_prim_id),
     )
 
 
@@ -337,6 +340,8 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     plane_normals = _vec3_to_tensor(chain.plane_normals)
     shape_ids = _scalar_array_to_tensor(chain.shape_ids)
     prim_ids = _scalar_array_to_tensor(chain.prim_ids)
+    local_prim_ids = _scalar_array_to_tensor(chain.local_prim_ids)
+    global_prim_ids = _scalar_array_to_tensor(chain.global_prim_ids)
 
     if ray_count <= 0 and hasattr(bounce_count, "numel"):
         ray_count = int(bounce_count.numel())
@@ -358,6 +363,8 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     plane_normals = dr.reshape(type(plane_normals), plane_normals, shape=(ray_count, max_bounces, 3))
     shape_ids = dr.reshape(type(shape_ids), shape_ids, shape=(ray_count, max_bounces))
     prim_ids = dr.reshape(type(prim_ids), prim_ids, shape=(ray_count, max_bounces))
+    local_prim_ids = dr.reshape(type(local_prim_ids), local_prim_ids, shape=(ray_count, max_bounces))
+    global_prim_ids = dr.reshape(type(global_prim_ids), global_prim_ids, shape=(ray_count, max_bounces))
 
     return ReflectionChain(
         bounce_count=bounce_count,
@@ -371,6 +378,8 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
         plane_normals=plane_normals,
         shape_ids=shape_ids,
         prim_ids=prim_ids,
+        local_prim_ids=local_prim_ids,
+        global_prim_ids=global_prim_ids,
         max_bounces=max_bounces,
         ray_count=ray_count,
     )
@@ -433,12 +442,27 @@ def _scene_edge_topology_from_native(info: Any) -> SceneEdgeTopology:
     return SceneEdgeTopology(
         v0=_scalar_array_to_tensor(info.v0),
         v1=_scalar_array_to_tensor(info.v1),
+        v0_global=_scalar_array_to_tensor(info.v0_global),
+        v1_global=_scalar_array_to_tensor(info.v1_global),
         face0_local=_scalar_array_to_tensor(info.face0_local),
         face1_local=_scalar_array_to_tensor(info.face1_local),
         face0_global=_scalar_array_to_tensor(info.face0_global),
         face1_global=_scalar_array_to_tensor(info.face1_global),
         opposite_vertex0=_scalar_array_to_tensor(info.opposite_vertex0),
         opposite_vertex1=_scalar_array_to_tensor(info.opposite_vertex1),
+        opposite_vertex0_global=_scalar_array_to_tensor(info.opposite_vertex0_global),
+        opposite_vertex1_global=_scalar_array_to_tensor(info.opposite_vertex1_global),
+    )
+
+
+def _scene_global_geometry_from_native(geometry: Any) -> SceneGlobalGeometry:
+    return SceneGlobalGeometry(
+        vertices=_vec3_to_tensor(geometry.vertices),
+        faces=_vec3_to_tensor(geometry.faces),
+        face_normal=_vec3_to_tensor(geometry.face_normal),
+        shape_id=_scalar_array_to_tensor(geometry.shape_id),
+        local_prim_id=_scalar_array_to_tensor(geometry.local_prim_id),
+        global_prim_id=_scalar_array_to_tensor(geometry.global_prim_id),
     )
 
 

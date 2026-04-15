@@ -144,6 +144,8 @@ class GeometryCoreTests(unittest.TestCase):
                 "valid": bool(its.is_valid()[0]),
                 "shape": int(its.shape_id[0]),
                 "prim": int(its.prim_id[0]),
+                "local_prim": int(its.local_prim_id[0]),
+                "global_prim": int(its.global_prim_id[0]),
                 "t": float(its.t[0]),
                 "p": [float(its.p[0][0]), float(its.p[1][0]), float(its.p[2][0])],
                 "n": [float(its.n[0][0]), float(its.n[1][0]), float(its.n[2][0])],
@@ -155,6 +157,8 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertEqual(data["shape"], 0)
         self.assertEqual(data["prim"], 0)
+        self.assertEqual(data["local_prim"], 0)
+        self.assertEqual(data["global_prim"], 0)
         self.assertAlmostEqual(data["t"], 1.0, places=5)
         self.assertAlmostEqual(data["p"][0], 0.25, places=5)
         self.assertAlmostEqual(data["p"][1], 0.25, places=5)
@@ -576,13 +580,18 @@ class GeometryCoreTests(unittest.TestCase):
             )
             chain = scene.trace_reflections(ray, max_bounces=3, symbolic=False)
             dr.eval(chain.bounce_count, chain.t, chain.hit_points,
-                    chain.image_sources, chain.shape_ids, chain.prim_ids)
+                    chain.image_sources, chain.shape_ids, chain.prim_ids,
+                    chain.local_prim_ids, chain.global_prim_ids)
             dr.sync_thread()
 
             print(json.dumps({
                 "bounce_count": int(chain.bounce_count[0]),
                 "valid": [bool(v) for v in list(chain.is_valid())],
+                "face_offsets": [int(v) for v in list(scene.mesh_face_offsets())],
                 "shape_ids": [int(v) for v in list(chain.shape_ids)],
+                "local_prim_ids": [int(v) for v in list(chain.local_prim_ids)],
+                "global_prim_ids": [int(v) for v in list(chain.global_prim_ids)],
+                "compat_prim_ids": [int(v) for v in list(chain.prim_ids)],
                 "t": [float(v) for v in list(chain.t)],
                 "hit0": [float(chain.hit_points[0][0]), float(chain.hit_points[1][0]), float(chain.hit_points[2][0])],
                 "hit1": [float(chain.hit_points[0][1]), float(chain.hit_points[1][1]), float(chain.hit_points[2][1])],
@@ -595,6 +604,14 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["bounce_count"], 2)
         self.assertEqual(data["valid"], [True, True, False])
         self.assertEqual(data["shape_ids"][:2], [0, 1])
+        self.assertEqual(data["compat_prim_ids"], data["local_prim_ids"])
+        for shape_id, local_prim_id, global_prim_id in zip(
+            data["shape_ids"], data["local_prim_ids"], data["global_prim_ids"]
+        ):
+            if local_prim_id < 0:
+                self.assertEqual(global_prim_id, -1)
+            else:
+                self.assertEqual(global_prim_id, data["face_offsets"][shape_id] + local_prim_id)
         self.assertAlmostEqual(data["t"][0], math.sqrt(2.0), places=4)
         self.assertAlmostEqual(data["t"][1], math.sqrt(0.5), places=4)
         self.assertAlmostEqual(data["hit0"][0], 1.0, places=4)
@@ -1872,13 +1889,18 @@ class GeometryCoreTests(unittest.TestCase):
                 "edge1_boundary": bool(edge_info.is_boundary[1]),
                 "face_offsets": [int(v) for v in list(scene.mesh_face_offsets())],
                 "edge_offsets": [int(v) for v in list(scene.mesh_edge_offsets())],
+                "vertex_offsets": [int(v) for v in list(scene.mesh_vertex_offsets())],
                 "topology_edge1": {
                     "v0": int(topology.v0[1]),
                     "v1": int(topology.v1[1]),
+                    "v0_global": int(topology.v0_global[1]),
+                    "v1_global": int(topology.v1_global[1]),
                     "face0_global": int(topology.face0_global[1]),
                     "face1_global": int(topology.face1_global[1]),
                     "opposite0": int(topology.opposite_vertex0[1]),
                     "opposite1": int(topology.opposite_vertex1[1]),
+                    "opposite0_global": int(topology.opposite_vertex0_global[1]),
+                    "opposite1_global": int(topology.opposite_vertex1_global[1]),
                 },
                 "tri0_edges": [int(tri0_edges[i][0]) for i in range(3)],
                 "tri1_edges": [int(tri1_edges[i][0]) for i in range(3)],
@@ -1903,19 +1925,93 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertFalse(data["edge1_boundary"])
         self.assertEqual(data["face_offsets"], [0, 2, 3])
         self.assertEqual(data["edge_offsets"], [0, 5, 8])
+        self.assertEqual(data["vertex_offsets"], [0, 4, 7])
         self.assertEqual(data["topology_edge1"], {
             "v0": 0,
             "v1": 2,
+            "v0_global": 0,
+            "v1_global": 2,
             "face0_global": 0,
             "face1_global": 1,
             "opposite0": 1,
             "opposite1": 3,
+            "opposite0_global": 1,
+            "opposite1_global": 3,
         })
         self.assertEqual(data["tri0_edges"], [0, 3, 1])
         self.assertEqual(data["tri1_edges"], [1, 4, 2])
         self.assertEqual(data["tri2_edges_local"], [0, 2, 1])
         self.assertEqual(data["adj_faces"], [0, 1])
         self.assertEqual(data["adj_faces_local"], [0, 1])
+
+    def test_scene_global_geometry_exposes_scene_global_vertices_faces_and_metadata(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            mesh_a = pj.Mesh(cuda.Array3f([0.0, 1.0, 1.0, 0.0],
+                                         [0.0, 0.0, 1.0, 1.0],
+                                         [0.0, 0.0, 0.0, 0.0]),
+                             cuda.Array3i([0, 0], [1, 2], [2, 3]))
+            mesh_b = pj.Mesh(cuda.Array3f([2.0, 3.0, 2.0],
+                                         [0.0, 0.0, 1.0],
+                                         [0.0, 0.0, 0.0]),
+                             cuda.Array3i([0], [1], [2]))
+
+            scene = pj.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.build()
+
+            geometry = scene.global_geometry()
+
+            print(json.dumps({
+                "vertex_count": int(geometry.vertex_count()),
+                "face_count": int(geometry.face_count()),
+                "vertices": [
+                    [float(geometry.vertices[0][i]), float(geometry.vertices[1][i]), float(geometry.vertices[2][i])]
+                    for i in range(geometry.vertex_count())
+                ],
+                "faces": [
+                    [int(geometry.faces[0][i]), int(geometry.faces[1][i]), int(geometry.faces[2][i])]
+                    for i in range(geometry.face_count())
+                ],
+                "face_normal": [
+                    [float(geometry.face_normal[0][i]), float(geometry.face_normal[1][i]), float(geometry.face_normal[2][i])]
+                    for i in range(geometry.face_count())
+                ],
+                "shape_id": [int(v) for v in list(geometry.shape_id)],
+                "local_prim_id": [int(v) for v in list(geometry.local_prim_id)],
+                "global_prim_id": [int(v) for v in list(geometry.global_prim_id)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["vertex_count"], 7)
+        self.assertEqual(data["face_count"], 3)
+        self.assertEqual(data["vertices"], [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+        ])
+        self.assertEqual(data["faces"], [
+            [0, 1, 2],
+            [0, 2, 3],
+            [4, 5, 6],
+        ])
+        self.assertEqual(data["shape_id"], [0, 0, 1])
+        self.assertEqual(data["local_prim_id"], [0, 1, 0])
+        self.assertEqual(data["global_prim_id"], [0, 1, 2])
+        for normal in data["face_normal"]:
+            self.assertAlmostEqual(normal[0], 0.0, places=5)
+            self.assertAlmostEqual(normal[1], 0.0, places=5)
+            self.assertAlmostEqual(normal[2], 1.0, places=5)
 
     def test_scene_edge_version_and_commit_profile_track_dynamic_updates(self):
         data = run_json_case(
@@ -2173,6 +2269,43 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertEqual(data["profile_updated_edges"], 5)
         self.assertEqual(data["noop_profile_total_ms"], 0.0)
         self.assertEqual(data["noop_profile_updated_edges"], 0)
+
+    def test_scene_global_geometry_preserves_gradients_for_ad_vertices(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            verts = ad.Array3f([0.0, 1.0, 0.0],
+                               [0.0, 0.0, 1.0],
+                               [0.0, 0.0, 0.0])
+            dr.enable_grad(verts)
+
+            mesh = pj.Mesh(verts, cuda.Array3i([0], [1], [2]))
+            scene = pj.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            geometry = scene.global_geometry()
+            dr.backward(dr.sum(geometry.vertices[2]))
+            grad = dr.grad(verts)
+
+            print(json.dumps({
+                "vertex_count": int(geometry.vertex_count()),
+                "face_count": int(geometry.face_count()),
+                "grad_z": [float(grad[2][i]) for i in range(3)],
+                "grad_z_sum": float(dr.sum(grad[2])[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["vertex_count"], 3)
+        self.assertEqual(data["face_count"], 1)
+        self.assertEqual(data["grad_z"], [1.0, 1.0, 1.0])
+        self.assertAlmostEqual(data["grad_z_sum"], 3.0, places=5)
 
     def test_scene_nearest_edge_gradients_flow_for_point_and_ray_queries(self):
         data = run_json_case(

@@ -43,8 +43,20 @@ struct IntersectionData {
     Vec3f barycentric = zeros<Vec3f>(1);
     Int_ shape_id = full<Int_>(-1, 1);
     Int_ prim_id = full<Int_>(-1, 1);
+    Int_ local_prim_id = full<Int_>(-1, 1);
+    Int_ global_prim_id = full<Int_>(-1, 1);
 
-    DRJIT_STRUCT(IntersectionData, t, p, n, geo_n, uv, barycentric, shape_id, prim_id)
+    DRJIT_STRUCT(IntersectionData,
+                 t,
+                 p,
+                 n,
+                 geo_n,
+                 uv,
+                 barycentric,
+                 shape_id,
+                 prim_id,
+                 local_prim_id,
+                 global_prim_id)
 };
 
 } // namespace rayd

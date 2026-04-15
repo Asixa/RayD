@@ -149,12 +149,16 @@ class TorchGeometryTests(unittest.TestCase):
                 "single_valid": bool(its.is_valid()[0].item()),
                 "single_shape": int(its.shape_id[0].item()),
                 "single_prim": int(its.prim_id[0].item()),
+                "single_local_prim": int(its.local_prim_id[0].item()),
+                "single_global_prim": int(its.global_prim_id[0].item()),
                 "single_t": float(its.t[0].item()),
                 "single_p": [float(v) for v in its.p[0].tolist()],
                 "single_shape_tensor": list(its.p.shape),
                 "batched_valid": [bool(v) for v in batched.is_valid().tolist()],
                 "batched_shape": [int(v) for v in batched.shape_id.tolist()],
                 "batched_prim": [int(v) for v in batched.prim_id.tolist()],
+                "batched_local_prim": [int(v) for v in batched.local_prim_id.tolist()],
+                "batched_global_prim": [int(v) for v in batched.global_prim_id.tolist()],
                 "batched_t_inf": math.isinf(float(batched.t[1].item())),
                 "shadow_dtype": str(shadow.dtype),
                 "shadow_values": [bool(v) for v in shadow.tolist()],
@@ -165,12 +169,16 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertTrue(data["single_valid"])
         self.assertEqual(data["single_shape"], 0)
         self.assertEqual(data["single_prim"], 0)
+        self.assertEqual(data["single_local_prim"], 0)
+        self.assertEqual(data["single_global_prim"], 0)
         self.assertAlmostEqual(data["single_t"], 1.0, places=5)
         self.assertEqual(data["single_shape_tensor"], [1, 3])
         self.assertAlmostEqual(data["single_p"][0], 0.25, places=5)
         self.assertEqual(data["batched_valid"], [True, False])
         self.assertEqual(data["batched_shape"], [0, -1])
         self.assertEqual(data["batched_prim"], [0, -1])
+        self.assertEqual(data["batched_local_prim"], [0, -1])
+        self.assertEqual(data["batched_global_prim"], [0, -1])
         self.assertTrue(data["batched_t_inf"])
         self.assertEqual(data["shadow_dtype"], "torch.bool")
         self.assertEqual(data["shadow_values"], [True, False])
@@ -295,7 +303,11 @@ class TorchGeometryTests(unittest.TestCase):
                 "bounce_count": int(chain.bounce_count[0].item()),
                 "t_shape": list(chain.t.shape),
                 "hit_shape": list(chain.hit_points.shape),
+                "face_offsets": [int(v) for v in scene.mesh_face_offsets().tolist()],
                 "shape_ids": [int(v) for v in chain.shape_ids[0].tolist()],
+                "local_prim_ids": [int(v) for v in chain.local_prim_ids[0].tolist()],
+                "global_prim_ids": [int(v) for v in chain.global_prim_ids[0].tolist()],
+                "compat_prim_ids": [int(v) for v in chain.prim_ids[0].tolist()],
                 "hit0": [float(v) for v in chain.hit_points[0, 0].tolist()],
                 "hit1": [float(v) for v in chain.hit_points[0, 1].tolist()],
                 "img1": [float(v) for v in chain.image_sources[0, 1].tolist()],
@@ -308,6 +320,14 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertEqual(data["t_shape"], [1, 3])
         self.assertEqual(data["hit_shape"], [1, 3, 3])
         self.assertEqual(data["shape_ids"][:2], [0, 1])
+        self.assertEqual(data["compat_prim_ids"], data["local_prim_ids"])
+        for shape_id, local_prim_id, global_prim_id in zip(
+            data["shape_ids"], data["local_prim_ids"], data["global_prim_ids"]
+        ):
+            if local_prim_id < 0:
+                self.assertEqual(global_prim_id, -1)
+            else:
+                self.assertEqual(global_prim_id, data["face_offsets"][shape_id] + local_prim_id)
         self.assertAlmostEqual(data["hit0"][0], 1.0, places=4)
         self.assertAlmostEqual(data["hit0"][2], 1.5, places=4)
         self.assertAlmostEqual(data["hit1"][0], 0.5, places=4)
@@ -597,8 +617,19 @@ class TorchGeometryTests(unittest.TestCase):
                 "topology_count": int(topology.size()),
                 "face_offsets": [int(v) for v in scene.mesh_face_offsets().tolist()],
                 "edge_offsets": [int(v) for v in scene.mesh_edge_offsets().tolist()],
+                "vertex_offsets": [int(v) for v in scene.mesh_vertex_offsets().tolist()],
                 "shape_ids": [int(v) for v in edge_info.shape_id.tolist()],
                 "global_edge_ids": [int(v) for v in edge_info.global_edge_id.tolist()],
+                "topology_edge1": {
+                    "v0": int(topology.v0[1].item()),
+                    "v1": int(topology.v1[1].item()),
+                    "v0_global": int(topology.v0_global[1].item()),
+                    "v1_global": int(topology.v1_global[1].item()),
+                    "face0_global": int(topology.face0_global[1].item()),
+                    "face1_global": int(topology.face1_global[1].item()),
+                    "opposite0_global": int(topology.opposite_vertex0_global[1].item()),
+                    "opposite1_global": int(topology.opposite_vertex1_global[1].item()),
+                },
                 "tri0_edges": [int(v) for v in [tri0_edges[0][0].item(), tri0_edges[1][0].item(), tri0_edges[2][0].item()]],
                 "adj_faces": [int(v) for v in [adj_faces[0][0].item(), adj_faces[1][0].item()]],
             }))
@@ -611,10 +642,107 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertEqual(data["topology_count"], 8)
         self.assertEqual(data["face_offsets"], [0, 2, 3])
         self.assertEqual(data["edge_offsets"], [0, 5, 8])
+        self.assertEqual(data["vertex_offsets"], [0, 4, 7])
         self.assertEqual(data["shape_ids"], [0, 0, 0, 0, 0, 1, 1, 1])
         self.assertEqual(data["global_edge_ids"], list(range(8)))
+        self.assertEqual(data["topology_edge1"], {
+            "v0": 0,
+            "v1": 2,
+            "v0_global": 0,
+            "v1_global": 2,
+            "face0_global": 0,
+            "face1_global": 1,
+            "opposite0_global": 1,
+            "opposite1_global": 3,
+        })
         self.assertEqual(data["tri0_edges"], [0, 3, 1])
         self.assertEqual(data["adj_faces"], [0, 1])
+
+    def test_scene_global_geometry_exposes_scene_global_vertices_faces_metadata_and_gradients(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            mesh_a = rt.Mesh(
+                torch.tensor([[0.0, 0.0, 0.0],
+                              [1.0, 0.0, 0.0],
+                              [1.0, 1.0, 0.0],
+                              [0.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            mesh_b = rt.Mesh(
+                torch.tensor([[2.0, 0.0, 0.0],
+                              [3.0, 0.0, 0.0],
+                              [2.0, 1.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+            )
+
+            scene = rt.Scene()
+            scene.add_mesh(mesh_a)
+            scene.add_mesh(mesh_b)
+            scene.build()
+            geometry = scene.global_geometry()
+
+            grad_verts = torch.tensor([[0.0, 0.0, 0.0],
+                                       [1.0, 0.0, 0.0],
+                                       [0.0, 1.0, 0.0]], device=device, requires_grad=True)
+            grad_scene = rt.Scene()
+            grad_scene.add_mesh(
+                rt.Mesh(
+                    grad_verts,
+                    torch.tensor([[0, 1, 2]], device=device, dtype=torch.int32),
+                )
+            )
+            grad_scene.build()
+            grad_geometry = grad_scene.global_geometry()
+            grad_geometry.vertices[:, 2].sum().backward()
+
+            print(json.dumps({
+                "vertex_count": int(geometry.vertex_count()),
+                "face_count": int(geometry.face_count()),
+                "vertices": [[float(v) for v in row] for row in geometry.vertices.tolist()],
+                "faces": [[int(v) for v in row] for row in geometry.faces.tolist()],
+                "face_normal": [[float(v) for v in row] for row in geometry.face_normal.tolist()],
+                "shape_id": [int(v) for v in geometry.shape_id.tolist()],
+                "local_prim_id": [int(v) for v in geometry.local_prim_id.tolist()],
+                "global_prim_id": [int(v) for v in geometry.global_prim_id.tolist()],
+                "faces_dtype": str(geometry.faces.dtype),
+                "grad_z": [float(v) for v in grad_verts.grad[:, 2].tolist()],
+                "grad_z_sum": float(grad_verts.grad[:, 2].sum().item()),
+            }))
+            """
+        )
+
+        self.assertEqual(data["vertex_count"], 7)
+        self.assertEqual(data["face_count"], 3)
+        self.assertEqual(data["vertices"], [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+        ])
+        self.assertEqual(data["faces"], [
+            [0, 1, 2],
+            [0, 2, 3],
+            [4, 5, 6],
+        ])
+        self.assertEqual(data["shape_id"], [0, 0, 1])
+        self.assertEqual(data["local_prim_id"], [0, 1, 0])
+        self.assertEqual(data["global_prim_id"], [0, 1, 2])
+        self.assertEqual(data["faces_dtype"], "torch.int32")
+        for normal in data["face_normal"]:
+            self.assertAlmostEqual(normal[0], 0.0, places=5)
+            self.assertAlmostEqual(normal[1], 0.0, places=5)
+            self.assertAlmostEqual(normal[2], 1.0, places=5)
+        self.assertEqual(data["grad_z"], [1.0, 1.0, 1.0])
+        self.assertAlmostEqual(data["grad_z_sum"], 3.0, places=5)
 
     def test_scene_edge_interfaces_handle_empty_and_invalid_edge_queries(self):
         data = run_json_case(

@@ -280,12 +280,27 @@ NB_MODULE(rayd, m) {
             .def("size", &SceneEdgeTopology::size)
             .def_ro("v0", &SceneEdgeTopology::v0)
             .def_ro("v1", &SceneEdgeTopology::v1)
+            .def_ro("v0_global", &SceneEdgeTopology::v0_global)
+            .def_ro("v1_global", &SceneEdgeTopology::v1_global)
             .def_ro("face0_local", &SceneEdgeTopology::face0_local)
             .def_ro("face1_local", &SceneEdgeTopology::face1_local)
             .def_ro("face0_global", &SceneEdgeTopology::face0_global)
             .def_ro("face1_global", &SceneEdgeTopology::face1_global)
             .def_ro("opposite_vertex0", &SceneEdgeTopology::opposite_vertex0)
-            .def_ro("opposite_vertex1", &SceneEdgeTopology::opposite_vertex1);
+            .def_ro("opposite_vertex1", &SceneEdgeTopology::opposite_vertex1)
+            .def_ro("opposite_vertex0_global", &SceneEdgeTopology::opposite_vertex0_global)
+            .def_ro("opposite_vertex1_global", &SceneEdgeTopology::opposite_vertex1_global);
+
+        nb::class_<SceneGlobalGeometry>(m, "SceneGlobalGeometry")
+            .def(nb::init<>())
+            .def("vertex_count", &SceneGlobalGeometry::vertex_count)
+            .def("face_count", &SceneGlobalGeometry::face_count)
+            .def_ro("vertices", &SceneGlobalGeometry::vertices)
+            .def_ro("faces", &SceneGlobalGeometry::faces)
+            .def_ro("face_normal", &SceneGlobalGeometry::face_normal)
+            .def_ro("shape_id", &SceneGlobalGeometry::shape_id)
+            .def_ro("local_prim_id", &SceneGlobalGeometry::local_prim_id)
+            .def_ro("global_prim_id", &SceneGlobalGeometry::global_prim_id);
 
         nb::enum_<RayFlags>(m, "RayFlags", nb::is_arithmetic())
             .value("None", RayFlags::None)
@@ -309,7 +324,9 @@ NB_MODULE(rayd, m) {
             .def_ro("uv", &IntersectionDetached::uv)
             .def_ro("barycentric", &IntersectionDetached::barycentric)
             .def_ro("shape_id", &IntersectionDetached::shape_id)
-            .def_ro("prim_id", &IntersectionDetached::prim_id);
+            .def_ro("prim_id", &IntersectionDetached::prim_id)
+            .def_ro("local_prim_id", &IntersectionDetached::local_prim_id)
+            .def_ro("global_prim_id", &IntersectionDetached::global_prim_id);
 
         nb::class_<Intersection>(m, "Intersection")
             .def("is_valid", &Intersection::is_valid)
@@ -320,7 +337,9 @@ NB_MODULE(rayd, m) {
             .def_ro("uv", &Intersection::uv)
             .def_ro("barycentric", &Intersection::barycentric)
             .def_ro("shape_id", &Intersection::shape_id)
-            .def_ro("prim_id", &Intersection::prim_id);
+            .def_ro("prim_id", &Intersection::prim_id)
+            .def_ro("local_prim_id", &Intersection::local_prim_id)
+            .def_ro("global_prim_id", &Intersection::global_prim_id);
 
         nb::class_<ReflectionChainDetached>(m, "ReflectionChainDetached")
             .def("is_valid", &ReflectionChainDetached::is_valid)
@@ -336,7 +355,9 @@ NB_MODULE(rayd, m) {
             .def_ro("plane_points", &ReflectionChainDetached::plane_points)
             .def_ro("plane_normals", &ReflectionChainDetached::plane_normals)
             .def_ro("shape_ids", &ReflectionChainDetached::shape_ids)
-            .def_ro("prim_ids", &ReflectionChainDetached::prim_ids);
+            .def_ro("prim_ids", &ReflectionChainDetached::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionChainDetached::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionChainDetached::global_prim_ids);
 
         nb::class_<ReflectionChain>(m, "ReflectionChain")
             .def("is_valid", &ReflectionChain::is_valid)
@@ -352,7 +373,9 @@ NB_MODULE(rayd, m) {
             .def_ro("plane_points", &ReflectionChain::plane_points)
             .def_ro("plane_normals", &ReflectionChain::plane_normals)
             .def_ro("shape_ids", &ReflectionChain::shape_ids)
-            .def_ro("prim_ids", &ReflectionChain::prim_ids);
+            .def_ro("prim_ids", &ReflectionChain::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionChain::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionChain::global_prim_ids);
 
         nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
             .def("is_valid", &ReflectionBounceDetached::is_valid)
@@ -363,7 +386,9 @@ NB_MODULE(rayd, m) {
             .def_ro("plane_points", &ReflectionBounceDetached::plane_points)
             .def_ro("plane_normals", &ReflectionBounceDetached::plane_normals)
             .def_ro("shape_ids", &ReflectionBounceDetached::shape_ids)
-            .def_ro("prim_ids", &ReflectionBounceDetached::prim_ids);
+            .def_ro("prim_ids", &ReflectionBounceDetached::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionBounceDetached::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionBounceDetached::global_prim_ids);
 
         nb::class_<ReflectionBounce>(m, "ReflectionBounce")
             .def("is_valid", &ReflectionBounce::is_valid)
@@ -374,7 +399,9 @@ NB_MODULE(rayd, m) {
             .def_ro("plane_points", &ReflectionBounce::plane_points)
             .def_ro("plane_normals", &ReflectionBounce::plane_normals)
             .def_ro("shape_ids", &ReflectionBounce::shape_ids)
-            .def_ro("prim_ids", &ReflectionBounce::prim_ids);
+            .def_ro("prim_ids", &ReflectionBounce::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionBounce::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionBounce::global_prim_ids);
 
         nb::class_<ReflectionTraceDetached>(m, "ReflectionTraceDetached")
             .def("is_valid", &ReflectionTraceDetached::is_valid)
@@ -668,6 +695,8 @@ NB_MODULE(rayd, m) {
             .def("edge_mask", &Scene::edge_mask)
             .def("mesh_face_offsets", &Scene::mesh_face_offsets)
             .def("mesh_edge_offsets", &Scene::mesh_edge_offsets)
+            .def("mesh_vertex_offsets", &Scene::mesh_vertex_offsets)
+            .def("global_geometry", &Scene::global_geometry)
             .def("triangle_edge_indices",
                  [](const Scene &scene, const IntDetached &prim_id, bool global) {
                      const auto edge_ids = scene.triangle_edge_indices(prim_id, global);
