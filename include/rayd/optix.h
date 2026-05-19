@@ -41,9 +41,11 @@ using OptixVisibilityMask = unsigned int;
 // =====================================================
 
 #define OPTIX_BUILD_INPUT_TYPE_TRIANGLES 0x2141
+#define OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES 0x2142
 #define OPTIX_BUILD_INPUT_TYPE_INSTANCES 0x2143
 #define OPTIX_BUILD_OPERATION_BUILD 0x2161
 #define OPTIX_BUILD_OPERATION_UPDATE 0x2162
+#define OPTIX_GEOMETRY_FLAG_NONE 0
 #define OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT 1
 #define OPTIX_VERTEX_FORMAT_FLOAT3 0x2121
 #define OPTIX_SBT_RECORD_HEADER_SIZE 32
@@ -71,6 +73,7 @@ using OptixVisibilityMask = unsigned int;
 #define OPTIX_PROGRAM_GROUP_KIND_HITGROUP 0x2424
 #define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS 1
 #define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING 2
+#define OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM (1 << 0)
 #define OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE (1 << 31)
 #define OPTIX_RAY_FLAG_DISABLE_ANYHIT 1u
 #define OPTIX_RAY_FLAG_ENFORCE_ANYHIT (1u << 1)
@@ -121,6 +124,18 @@ struct OptixBuildInputTriangleArray {
     OptixTransformFormat transformFormat;
 };
 
+struct OptixBuildInputCustomPrimitiveArray {
+    const CUdeviceptr *aabbBuffers;
+    unsigned int numPrimitives;
+    unsigned int strideInBytes;
+    const unsigned int *flags;
+    unsigned int numSbtRecords;
+    CUdeviceptr sbtIndexOffsetBuffer;
+    unsigned int sbtIndexOffsetSizeInBytes;
+    unsigned int sbtIndexOffsetStrideInBytes;
+    unsigned int primitiveIndexOffset;
+};
+
 struct OptixInstance {
     float transform[12];
     unsigned int instanceId;
@@ -141,6 +156,7 @@ struct OptixBuildInput {
     OptixBuildInputType type;
     union {
         OptixBuildInputTriangleArray triangleArray;
+        OptixBuildInputCustomPrimitiveArray customPrimitiveArray;
         OptixBuildInputInstanceArray instanceArray;
         char pad[1024];
     };

@@ -842,6 +842,37 @@ __global__ void compute_primitive_bounds_kernel(
     primitive_bounds[primitive] = Bounds3{ bbox_min, bbox_max };
 }
 
+__global__ void compute_edge_optix_aabbs_kernel(
+    int primitive_count,
+    const float *edge_p0_x,
+    const float *edge_p0_y,
+    const float *edge_p0_z,
+    const float *edge_e1_x,
+    const float *edge_e1_y,
+    const float *edge_e1_z,
+    float inflation,
+    float *out_aabbs) {
+    const int primitive = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (primitive >= primitive_count) {
+        return;
+    }
+
+    const Float3 p0(edge_p0_x[primitive], edge_p0_y[primitive], edge_p0_z[primitive]);
+    const Float3 p1(p0.x + edge_e1_x[primitive],
+                    p0.y + edge_e1_y[primitive],
+                    p0.z + edge_e1_z[primitive]);
+    const Float3 bbox_min = min3(p0, p1);
+    const Float3 bbox_max = max3(p0, p1);
+    const float radius = fmaxf(inflation, 0.0f);
+    const int base = primitive * 6;
+    out_aabbs[base + 0] = bbox_min.x - radius;
+    out_aabbs[base + 1] = bbox_min.y - radius;
+    out_aabbs[base + 2] = bbox_min.z - radius;
+    out_aabbs[base + 3] = bbox_max.x + radius;
+    out_aabbs[base + 4] = bbox_max.y + radius;
+    out_aabbs[base + 5] = bbox_max.z + radius;
+}
+
 __global__ void init_sequence_kernel(int count, int *values) {
     const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (index >= count) {
@@ -1402,6 +1433,50 @@ HostTreeLevels build_host_tree_levels_from_topology(const std::vector<int> &left
 }
 
 } // namespace
+
+void compute_edge_optix_aabbs_gpu(
+    int primitive_count,
+    const float *edge_p0_x,
+    const float *edge_p0_y,
+    const float *edge_p0_z,
+    const float *edge_e1_x,
+    const float *edge_e1_y,
+    const float *edge_e1_z,
+    float inflation,
+    float *out_aabbs) {
+    require_local(primitive_count >= 0, "compute_edge_optix_aabbs_gpu(): primitive_count must be non-negative.");
+    if (primitive_count == 0) {
+        return;
+    }
+    require_local(edge_p0_x != nullptr && edge_p0_y != nullptr && edge_p0_z != nullptr,
+                  "compute_edge_optix_aabbs_gpu(): edge start pointer is null.");
+    require_local(edge_e1_x != nullptr && edge_e1_y != nullptr && edge_e1_z != nullptr,
+                  "compute_edge_optix_aabbs_gpu(): edge vector pointer is null.");
+    require_local(out_aabbs != nullptr, "compute_edge_optix_aabbs_gpu(): output pointer is null.");
+
+    try {
+        constexpr int block_size = 256;
+        const int block_count = (primitive_count + block_size - 1) / block_size;
+        compute_edge_optix_aabbs_kernel<<<block_count, block_size>>>(
+            primitive_count,
+            edge_p0_x,
+            edge_p0_y,
+            edge_p0_z,
+            edge_e1_x,
+            edge_e1_y,
+            edge_e1_z,
+            inflation,
+            out_aabbs);
+        audit_cuda_kernel_launch("compute_edge_optix_aabbs_kernel",
+                                 static_cast<uint32_t>(block_count), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(primitive_count));
+        check_cuda_last_error("compute_edge_optix_aabbs_gpu(): failed to launch AABB kernel");
+        synchronize_cuda("compute_edge_optix_aabbs_gpu(): failed to finish AABB kernel");
+    } catch (const std::exception &e) {
+        throw_runtime_error_local(std::string("compute_edge_optix_aabbs_gpu(): ") + e.what());
+    }
+}
 
 void build_edge_bvh_gpu(
     int primitive_count,

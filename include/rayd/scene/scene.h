@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <rayd/rayd.h>
@@ -11,6 +12,7 @@
 #include <rayd/reflection.h>
 #include <rayd/segment_visibility.h>
 #include <rayd/scene/scene_edge.h>
+#include <rayd/scene/scene_edge_optix.h>
 #include <rayd/scene/scene_optix.h>
 
 namespace rayd {
@@ -35,10 +37,15 @@ struct SceneSyncProfile {
     int updated_edges = 0;
 };
 
+enum class EdgeBVHBackend {
+    DrJit,
+    Optix
+};
+
 /// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
 public:
-    Scene();
+    explicit Scene(const std::string &edge_bvh_backend = "drjit");
     ~Scene();
 
     int add_mesh(const Mesh &mesh, bool dynamic = false);
@@ -54,6 +61,7 @@ public:
     void sync();
     const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
     SceneEdgeInfo edge_info() const;
+    std::string edge_bvh_backend() const;
     SceneEdgeBVHStats edge_bvh_stats() const;
     const SceneEdgeTopology &edge_topology() const;
     const MaskDetached &edge_mask() const;
@@ -191,6 +199,8 @@ private:
     mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
     mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
     std::unique_ptr<SceneEdge> edge_bvh_;
+    std::unique_ptr<SceneEdgeOptix> edge_optix_;
+    EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::DrJit;
     SceneSyncProfile last_sync_profile_;
 
     friend class Camera;

@@ -1495,6 +1495,139 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["edge_point"][1][1], 0.25, places=5)
         self.assertAlmostEqual(data["edge_point"][2][1], 0.0, places=5)
 
+    def test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            def make_mesh(offset_x=0.0):
+                return pj.Mesh(cuda.Array3f([offset_x + 0.0, offset_x + 1.0, offset_x + 0.0],
+                                            [0.0, 0.0, 1.0],
+                                            [0.0, 0.0, 0.0]),
+                               cuda.Array3i([0], [1], [2]))
+
+            def make_scene(backend, dynamic=False):
+                scene = pj.Scene(edge_bvh_backend=backend)
+                mesh_id = scene.add_mesh(make_mesh(), dynamic=dynamic)
+                scene.build()
+                return scene, mesh_id
+
+            query_points = cuda.Array3f([0.25, -0.1],
+                                        [-0.2, 0.25],
+                                        [0.1, 0.0])
+            rays = pj.RayDetached(cuda.Array3f([0.25, -0.2],
+                                               [0.0, 0.25],
+                                               [1.0, 0.0]),
+                                  cuda.Array3f([0.0, 1.0],
+                                               [0.0, 0.0],
+                                               [-1.0, 0.0]))
+            rays.tmax = cuda.Float([0.5, 1.0])
+
+            drjit_scene, _ = make_scene("drjit")
+            optix_scene, _ = make_scene("optix")
+            drjit_point = drjit_scene.nearest_edge(query_points)
+            optix_point = optix_scene.nearest_edge(query_points)
+            drjit_ray = drjit_scene.nearest_edge(rays)
+            optix_ray = optix_scene.nearest_edge(rays)
+            topk_query = cuda.Array3f([0.35], [0.2], [0.0])
+            drjit_topk = drjit_scene.nearest_edges_topk(topk_query, 3)
+            optix_topk = optix_scene.nearest_edges_topk(topk_query, 3)
+
+            mask = cuda.Bool([False, True, False])
+            drjit_scene.set_edge_mask(mask)
+            optix_scene.set_edge_mask(mask)
+            drjit_scene.sync()
+            optix_scene.sync()
+            masked_query = cuda.Array3f([0.25], [-0.2], [0.1])
+            drjit_masked = drjit_scene.nearest_edge(masked_query)
+            optix_masked = optix_scene.nearest_edge(masked_query)
+
+            drjit_dynamic, drjit_mesh_id = make_scene("drjit", dynamic=True)
+            optix_dynamic, optix_mesh_id = make_scene("optix", dynamic=True)
+            shifted = cuda.Array3f([2.0, 3.0, 2.0],
+                                   [0.0, 0.0, 1.0],
+                                   [0.0, 0.0, 0.0])
+            drjit_dynamic.update_mesh_vertices(drjit_mesh_id, shifted)
+            optix_dynamic.update_mesh_vertices(optix_mesh_id, shifted)
+            drjit_dynamic.sync()
+            optix_dynamic.sync()
+            dynamic_query = cuda.Array3f([2.25], [-0.2], [0.1])
+            drjit_updated = drjit_dynamic.nearest_edge(dynamic_query)
+            optix_updated = optix_dynamic.nearest_edge(dynamic_query)
+
+            print(json.dumps({
+                "default_backend": pj.Scene().edge_bvh_backend,
+                "optix_backend": optix_scene.edge_bvh_backend,
+                "point_ids": {
+                    "drjit": [int(v) for v in list(drjit_point.global_edge_id)],
+                    "optix": [int(v) for v in list(optix_point.global_edge_id)],
+                },
+                "point_distances": {
+                    "drjit": [float(v) for v in list(drjit_point.distance)],
+                    "optix": [float(v) for v in list(optix_point.distance)],
+                },
+                "ray_ids": {
+                    "drjit": [int(v) for v in list(drjit_ray.global_edge_id)],
+                    "optix": [int(v) for v in list(optix_ray.global_edge_id)],
+                },
+                "ray_distances": {
+                    "drjit": [float(v) for v in list(drjit_ray.distance)],
+                    "optix": [float(v) for v in list(optix_ray.distance)],
+                },
+                "ray_t": {
+                    "drjit": [float(v) for v in list(drjit_ray.ray_t)],
+                    "optix": [float(v) for v in list(optix_ray.ray_t)],
+                },
+                "topk_ids": {
+                    "drjit": [int(v) for v in list(drjit_topk.global_edge_ids)],
+                    "optix": [int(v) for v in list(optix_topk.global_edge_ids)],
+                },
+                "topk_distances": {
+                    "drjit": [float(v) for v in list(drjit_topk.distances)],
+                    "optix": [float(v) for v in list(optix_topk.distances)],
+                },
+                "masked_id": {
+                    "drjit": int(drjit_masked.global_edge_id[0]),
+                    "optix": int(optix_masked.global_edge_id[0]),
+                },
+                "updated_id": {
+                    "drjit": int(drjit_updated.global_edge_id[0]),
+                    "optix": int(optix_updated.global_edge_id[0]),
+                },
+                "updated_distance": {
+                    "drjit": float(drjit_updated.distance[0]),
+                    "optix": float(optix_updated.distance[0]),
+                },
+                "updated_edge_point_x": {
+                    "drjit": float(drjit_updated.edge_point[0][0]),
+                    "optix": float(optix_updated.edge_point[0][0]),
+                },
+            }))
+            """
+        )
+
+        self.assertEqual(data["default_backend"], "drjit")
+        self.assertEqual(data["optix_backend"], "optix")
+        self.assertEqual(data["point_ids"]["optix"], data["point_ids"]["drjit"])
+        self.assertEqual(data["ray_ids"]["optix"], data["ray_ids"]["drjit"])
+        for got, expected in zip(data["point_distances"]["optix"], data["point_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["ray_distances"]["optix"], data["ray_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["ray_t"]["optix"], data["ray_t"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
+        self.assertEqual(data["topk_ids"]["optix"], data["topk_ids"]["drjit"])
+        for got, expected in zip(data["topk_distances"]["optix"], data["topk_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
+        self.assertEqual(data["masked_id"]["optix"], data["masked_id"]["drjit"])
+        self.assertEqual(data["masked_id"]["optix"], 1)
+        self.assertEqual(data["updated_id"]["optix"], data["updated_id"]["drjit"])
+        self.assertAlmostEqual(data["updated_distance"]["optix"], data["updated_distance"]["drjit"], places=5)
+        self.assertAlmostEqual(data["updated_edge_point_x"]["optix"], 2.25, places=5)
+
     def test_scene_nearest_edge_multi_mesh_maps_shape_and_global_ids(self):
         data = run_json_case(
             """
