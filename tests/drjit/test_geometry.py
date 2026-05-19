@@ -1667,6 +1667,104 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["updated_edge_point_x"]["optix"], 2.25, places=5)
         self.assertAlmostEqual(data["updated_edge_point_x"]["hybrid"], 2.25, places=5)
 
+    def test_scene_edge_bvh_hybrid_tiled_point_and_topk_match_drjit_distances(self):
+        data = run_json_case(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+            from tests.benchmark_support import _make_grid_mesh_data
+
+            def shift_mesh_data(mesh_data, *, x_offset=0.0, y_offset=0.0, z_offset=0.0):
+                return {
+                    "x": [float(value) + x_offset for value in mesh_data["x"]],
+                    "y": [float(value) + y_offset for value in mesh_data["y"]],
+                    "z": [float(value) + z_offset for value in mesh_data["z"]],
+                    "i0": list(mesh_data["i0"]),
+                    "i1": list(mesh_data["i1"]),
+                    "i2": list(mesh_data["i2"]),
+                }
+
+            def make_mesh(mesh_data):
+                return pj.Mesh(
+                    cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+                    cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
+                )
+
+            def make_tiled_scene(backend):
+                scene = pj.Scene(edge_bvh_backend=backend)
+                base = _make_grid_mesh_data(32)
+                for tile_y in range(8):
+                    for tile_x in range(8):
+                        scene.add_mesh(make_mesh(shift_mesh_data(
+                            base,
+                            x_offset=tile_x * 1.25,
+                            y_offset=tile_y * 1.25,
+                            z_offset=tile_y * 0.02,
+                        )))
+                scene.build()
+                return scene
+
+            def scalar_int(value):
+                return int(value[0])
+
+            def scalar_float(value):
+                return float(value[0])
+
+            query_side = 64
+            xs = []
+            ys = []
+            zs = []
+            max_x = (8 - 1) * 1.25 + 1.0
+            max_y = (8 - 1) * 1.25 + 1.0
+            for iy in range(query_side):
+                fy = (iy + 0.5) / query_side
+                for ix in range(query_side):
+                    fx = (ix + 0.5) / query_side
+                    jitter_x = ((ix % 7) - 3) * 1e-4
+                    jitter_y = ((iy % 5) - 2) * 1.3e-4
+                    xs.append(min(max(fx * max_x + jitter_x, 0.0), max_x))
+                    ys.append(min(max(fy * max_y + jitter_y, 0.0), max_y))
+                    zs.append(0.05)
+            query_points = cuda.Array3f(xs, ys, zs)
+
+            drjit_scene = make_tiled_scene("drjit")
+            hybrid_scene = make_tiled_scene("hybrid")
+            drjit_point = drjit_scene.nearest_edge(query_points)
+            hybrid_point = hybrid_scene.nearest_edge(query_points)
+            drjit_topk = drjit_scene.nearest_edges_topk(query_points, 4)
+            hybrid_topk = hybrid_scene.nearest_edges_topk(query_points, 4)
+            dr.eval(
+                drjit_point.global_edge_id,
+                hybrid_point.global_edge_id,
+                drjit_point.distance,
+                hybrid_point.distance,
+                drjit_topk.global_edge_ids,
+                hybrid_topk.global_edge_ids,
+                drjit_topk.distances,
+                hybrid_topk.distances,
+            )
+
+            print(json.dumps({
+                "hybrid_backend": hybrid_scene.edge_bvh_backend,
+                "query_count": len(xs),
+                "edge_count": int(dr.width(drjit_scene.edge_info().global_edge_id)),
+                "point_id_mismatch_count": scalar_int(dr.count(drjit_point.global_edge_id != hybrid_point.global_edge_id)),
+                "point_max_distance_diff": scalar_float(dr.max(dr.abs(drjit_point.distance - hybrid_point.distance))),
+                "topk_id_mismatch_count": scalar_int(dr.count(drjit_topk.global_edge_ids != hybrid_topk.global_edge_ids)),
+                "topk_max_distance_diff": scalar_float(dr.max(dr.abs(drjit_topk.distances - hybrid_topk.distances))),
+            }))
+            """,
+            timeout=180,
+        )
+
+        self.assertEqual(data["hybrid_backend"], "hybrid")
+        self.assertEqual(data["edge_count"], 200704)
+        self.assertEqual(data["query_count"], 4096)
+        self.assertLessEqual(data["point_max_distance_diff"], 2e-3)
+        self.assertLessEqual(data["topk_max_distance_diff"], 1e-2)
+
     def test_scene_nearest_edge_multi_mesh_maps_shape_and_global_ids(self):
         data = run_json_case(
             """

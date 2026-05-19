@@ -56,6 +56,7 @@ public:
                const std::vector<EdgeDirtyRange> &dirty_ranges);
     void refit(const SecondaryEdgeInfo &edge_info,
                const IntDetached &primitive_indices);
+    void materialize() const;
     IntDetached map_to_global(const IntDetached &bvh_ids,
                               const MaskDetached &valid) const;
     bool is_ready() const { return ready_; }

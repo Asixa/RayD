@@ -2042,6 +2042,30 @@ void SceneEdge::update_active_counts_from_mask(const MaskDetached &mask) {
     }
 }
 
+void SceneEdge::materialize() const {
+    require(ready_, "SceneEdge::materialize(): BVH is not built.");
+    drjit::eval(edge_p0_,
+                edge_e1_,
+                primitive_bbox_min_,
+                primitive_bbox_max_,
+                node_bbox_min_,
+                node_bbox_max_,
+                packed_node_bounds_,
+                left_child_,
+                right_child_,
+                packed_node_children_,
+                leaf_primitives_,
+                primitive_leaf_node_,
+                leaf_nodes_,
+                primitive_active_flags_,
+                node_active_count_,
+                node_subtree_primitive_count_,
+                node_parent_,
+                dirty_node_marks_,
+                dirty_level_nodes_,
+                dirty_level_count_);
+}
+
 SceneEdgeBVHStats SceneEdge::stats() const {
     require(ready_, "SceneEdge::stats(): BVH is not built.");
 

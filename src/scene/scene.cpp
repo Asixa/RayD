@@ -796,11 +796,17 @@ void Scene::ensure_edge_bvh_ready() const {
 
     Scene *scene = const_cast<Scene *>(this);
     if (mask_dirty_) {
-        if (edge_backend_builds_optix(edge_bvh_backend_)) {
-            scene->edge_optix_->set_mask(scene->edge_mask_);
-        }
         if (edge_backend_builds_drjit(edge_bvh_backend_)) {
             scene->edge_bvh_->set_mask(scene->edge_mask_);
+            if (edge_backend_builds_optix(edge_bvh_backend_)) {
+                scene->edge_bvh_->materialize();
+            }
+        }
+        if (edge_backend_builds_optix(edge_bvh_backend_)) {
+            scene->edge_optix_->set_mask(scene->edge_mask_);
+            if (edge_backend_builds_drjit(edge_bvh_backend_)) {
+                scene->edge_bvh_->materialize();
+            }
         }
         scene->mask_dirty_ = false;
     }
@@ -810,11 +816,17 @@ void Scene::ensure_edge_bvh_ready() const {
         return;
     }
 
-    if (edge_backend_builds_optix(edge_bvh_backend_)) {
-        scene->edge_optix_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
-    }
     if (edge_backend_builds_drjit(edge_bvh_backend_)) {
         scene->edge_bvh_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
+        if (edge_backend_builds_optix(edge_bvh_backend_)) {
+            scene->edge_bvh_->materialize();
+        }
+    }
+    if (edge_backend_builds_optix(edge_bvh_backend_)) {
+        scene->edge_optix_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
+        if (edge_backend_builds_drjit(edge_bvh_backend_)) {
+            scene->edge_bvh_->materialize();
+        }
     }
     scene->pending_edge_bvh_dirty_ranges_.clear();
     scene->edge_bvh_dirty_ = false;
@@ -1123,11 +1135,17 @@ void Scene::build() {
     mask_dirty_ = false;
     edge_bvh_ = std::make_unique<SceneEdge>();
     edge_optix_ = std::make_unique<SceneEdgeOptix>();
-    if (edge_backend_builds_optix(edge_bvh_backend_)) {
-        edge_optix_->build(edge_info_, edge_mask_);
-    }
     if (edge_backend_builds_drjit(edge_bvh_backend_)) {
         edge_bvh_->build(edge_info_, edge_mask_);
+        if (edge_backend_builds_optix(edge_bvh_backend_)) {
+            edge_bvh_->materialize();
+        }
+    }
+    if (edge_backend_builds_optix(edge_bvh_backend_)) {
+        edge_optix_->build(edge_info_, edge_mask_);
+        if (edge_backend_builds_drjit(edge_bvh_backend_)) {
+            edge_bvh_->materialize();
+        }
     }
     is_ready_ = true;
     pending_updates_ = false;
