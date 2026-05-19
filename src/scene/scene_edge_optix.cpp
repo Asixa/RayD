@@ -273,7 +273,7 @@ void SceneEdgeOptix::ensure_pipeline() {
     OptixPipelineCompileOptions pipeline_options = {};
     pipeline_options.usesMotionBlur = 0;
     pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipeline_options.numPayloadValues = 5;
+    pipeline_options.numPayloadValues = 16;
     pipeline_options.numAttributeValues = 3;
     pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
@@ -454,8 +454,8 @@ std::vector<float> SceneEdgeOptix::compute_search_radii(const SecondaryEdgeInfo 
         radii.push_back(std::min(std::max(radius, 1.0e-5f), full_radius));
     };
 
-    add_radius(edge_scale * 8.0f);
-    add_radius(edge_scale * 36.0f);
+    add_radius(edge_scale * 4.0f);
+    add_radius(edge_scale * 34.0f);
     add_radius(full_radius);
 
     std::sort(radii.begin(), radii.end());

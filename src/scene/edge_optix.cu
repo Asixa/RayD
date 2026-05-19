@@ -217,6 +217,97 @@ static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
     params.out_valid[base + insert] = 1u;
 }
 
+static __forceinline__ __device__ uint32_t get_topk_payload_id(int slot) {
+    switch (slot) {
+    case 0: return optixGetPayload_0();
+    case 1: return optixGetPayload_1();
+    case 2: return optixGetPayload_2();
+    case 3: return optixGetPayload_3();
+    case 4: return optixGetPayload_4();
+    case 5: return optixGetPayload_5();
+    case 6: return optixGetPayload_6();
+    default: return optixGetPayload_7();
+    }
+}
+
+static __forceinline__ __device__ uint32_t get_topk_payload_distance(int slot) {
+    switch (slot) {
+    case 0: return optixGetPayload_8();
+    case 1: return optixGetPayload_9();
+    case 2: return optixGetPayload_10();
+    case 3: return optixGetPayload_11();
+    case 4: return optixGetPayload_12();
+    case 5: return optixGetPayload_13();
+    case 6: return optixGetPayload_14();
+    default: return optixGetPayload_15();
+    }
+}
+
+static __forceinline__ __device__ void set_topk_payload_slot(int slot,
+                                                             uint32_t edge_id,
+                                                             uint32_t distance_sq) {
+    switch (slot) {
+    case 0:
+        optixSetPayload_0(edge_id);
+        optixSetPayload_8(distance_sq);
+        break;
+    case 1:
+        optixSetPayload_1(edge_id);
+        optixSetPayload_9(distance_sq);
+        break;
+    case 2:
+        optixSetPayload_2(edge_id);
+        optixSetPayload_10(distance_sq);
+        break;
+    case 3:
+        optixSetPayload_3(edge_id);
+        optixSetPayload_11(distance_sq);
+        break;
+    case 4:
+        optixSetPayload_4(edge_id);
+        optixSetPayload_12(distance_sq);
+        break;
+    case 5:
+        optixSetPayload_5(edge_id);
+        optixSetPayload_13(distance_sq);
+        break;
+    case 6:
+        optixSetPayload_6(edge_id);
+        optixSetPayload_14(distance_sq);
+        break;
+    default:
+        optixSetPayload_7(edge_id);
+        optixSetPayload_15(distance_sq);
+        break;
+    }
+}
+
+static __forceinline__ __device__ void insert_topk_payload_candidate(int edge_id,
+                                                                     float distance_sq) {
+    const int k = params.k;
+    if (k <= 0 || k > 8) {
+        return;
+    }
+
+    const uint32_t candidate_distance = __float_as_uint(distance_sq);
+    if (distance_sq >= __uint_as_float(get_topk_payload_distance(k - 1))) {
+        return;
+    }
+
+    int insert = k - 1;
+    while (insert > 0 &&
+           distance_sq < __uint_as_float(get_topk_payload_distance(insert - 1))) {
+        set_topk_payload_slot(insert,
+                              get_topk_payload_id(insert - 1),
+                              get_topk_payload_distance(insert - 1));
+        --insert;
+    }
+
+    set_topk_payload_slot(insert,
+                          static_cast<uint32_t>(edge_id),
+                          candidate_distance);
+}
+
 } // namespace
 
 extern "C" __global__ void __intersection__edge_point() {
@@ -312,10 +403,15 @@ extern "C" __global__ void __anyhit__edge_ray() {
 }
 
 extern "C" __global__ void __anyhit__edge_topk_point() {
-    insert_topk_candidate(optixGetLaunchIndex().x,
-                          static_cast<int>(optixGetPrimitiveIndex()),
-                          __uint_as_float(optixGetAttribute_0()),
-                          __uint_as_float(optixGetAttribute_1()));
+    if (params.k <= 8) {
+        insert_topk_payload_candidate(static_cast<int>(optixGetPrimitiveIndex()),
+                                      __uint_as_float(optixGetAttribute_0()));
+    } else {
+        insert_topk_candidate(optixGetLaunchIndex().x,
+                              static_cast<int>(optixGetPrimitiveIndex()),
+                              __uint_as_float(optixGetAttribute_0()),
+                              __uint_as_float(optixGetAttribute_1()));
+    }
     optixIgnoreIntersection();
 }
 
@@ -436,19 +532,79 @@ extern "C" __global__ void __raygen__edge_topk_point() {
         return;
     }
 
-    uint32_t dummy = 0u;
-    optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-               load_query_point(query),
-               make_float3(0.0f, 0.0f, -1.0f),
-               0.0f,
-               kPointProbeTMax,
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
-               2,
-               1,
-               0,
-               dummy);
+    if (k <= 8) {
+        uint32_t edge0 = kInvalidEdgeId;
+        uint32_t edge1 = kInvalidEdgeId;
+        uint32_t edge2 = kInvalidEdgeId;
+        uint32_t edge3 = kInvalidEdgeId;
+        uint32_t edge4 = kInvalidEdgeId;
+        uint32_t edge5 = kInvalidEdgeId;
+        uint32_t edge6 = kInvalidEdgeId;
+        uint32_t edge7 = kInvalidEdgeId;
+        uint32_t dist0 = __float_as_uint(3.4028234663852886e38f);
+        uint32_t dist1 = dist0;
+        uint32_t dist2 = dist0;
+        uint32_t dist3 = dist0;
+        uint32_t dist4 = dist0;
+        uint32_t dist5 = dist0;
+        uint32_t dist6 = dist0;
+        uint32_t dist7 = dist0;
+
+        optixTrace(static_cast<OptixTraversableHandle>(params.handle),
+                   load_query_point(query),
+                   make_float3(0.0f, 0.0f, -1.0f),
+                   0.0f,
+                   kPointProbeTMax,
+                   0.0f,
+                   255u,
+                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
+                   2,
+                   1,
+                   0,
+                   edge0,
+                   edge1,
+                   edge2,
+                   edge3,
+                   edge4,
+                   edge5,
+                   edge6,
+                   edge7,
+                   dist0,
+                   dist1,
+                   dist2,
+                   dist3,
+                   dist4,
+                   dist5,
+                   dist6,
+                   dist7);
+
+        uint32_t edges[8] = { edge0, edge1, edge2, edge3, edge4, edge5, edge6, edge7 };
+        uint32_t distances[8] = { dist0, dist1, dist2, dist3, dist4, dist5, dist6, dist7 };
+        for (int slot = 0; slot < k; ++slot) {
+            const int out_index = base + slot;
+            const bool valid = edges[slot] != kInvalidEdgeId;
+            params.out_edge_ids[out_index] = valid ? static_cast<int>(edges[slot]) : -1;
+            params.out_distance_sq[out_index] = valid
+                ? __uint_as_float(distances[slot])
+                : 3.4028234663852886e38f;
+            params.out_edge_t[out_index] = 0.0f;
+            params.out_valid[out_index] = valid ? 1u : 0u;
+        }
+    } else {
+        uint32_t dummy = 0u;
+        optixTrace(static_cast<OptixTraversableHandle>(params.handle),
+                   load_query_point(query),
+                   make_float3(0.0f, 0.0f, -1.0f),
+                   0.0f,
+                   kPointProbeTMax,
+                   0.0f,
+                   255u,
+                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
+                   2,
+                   1,
+                   0,
+                   dummy);
+    }
 }
 
 } // namespace rayd
