@@ -12,6 +12,7 @@ option(RAYD_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL
 option(RAYD_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
 option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
 option(RAYD_REGENERATE_REFLECTION_TRACE_PTX "Regenerate reflection_trace PTX during the build. Requires OptiX SDK headers." OFF)
+option(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX "Regenerate segment_visibility PTX during the build. Requires OptiX SDK headers." OFF)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 execute_process(
@@ -113,6 +114,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/ray.h
     ${RAYD_INCLUDE_DIR}/intersection.h
     ${RAYD_INCLUDE_DIR}/reflection.h
+    ${RAYD_INCLUDE_DIR}/segment_visibility.h
     ${RAYD_INCLUDE_DIR}/transform.h
 
     ${RAYD_INCLUDE_DIR}/edge.h
@@ -130,6 +132,9 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
+    ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.h
+    ${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h
+    ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.cpp
     ${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h
     ${RAYD_INCLUDE_DIR}/scene/scene_edge.h
     ${RAYD_SOURCE_DIR}/scene/scene_edge.cpp
@@ -313,6 +318,91 @@ else()
             "Restore it or enable RAYD_REGENERATE_REFLECTION_TRACE_PTX with OptiX SDK headers available.")
     endif()
     list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
+endif()
+
+set(RAYD_SEGMENT_VISIBILITY_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu")
+set(RAYD_SEGMENT_VISIBILITY_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_ptx.h")
+set(RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_ptx.h")
+
+if(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX)
+    find_path(OPTIX_INCLUDE_DIR optix.h
+        HINTS
+            ENV OPTIX_INCLUDE_DIR
+            ENV OPTIX_PATH
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
+            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+        PATH_SUFFIXES include
+    )
+    if(NOT OPTIX_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "Could not locate OptiX SDK headers needed to regenerate segment_visibility PTX. "
+            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX.")
+    endif()
+
+    set(RAYD_SEGMENT_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility.ptx")
+    if(WIN32)
+        set(RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_segment_visibility_ptx.bat")
+        file(GENERATE OUTPUT "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SEGMENT_VISIBILITY_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SEGMENT_VISIBILITY_PTX}\"\r\n\
+")
+        add_custom_command(
+            OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX}"
+            COMMAND "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
+            DEPENDS
+                "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
+                "${RAYD_SEGMENT_VISIBILITY_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX}"
+            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
+                    "${RAYD_SEGMENT_VISIBILITY_CU}"
+                    -I"${OPTIX_INCLUDE_DIR}"
+                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                    ${RAYD_CUDA_DEFINITIONS_LIST}
+                    -o "${RAYD_SEGMENT_VISIBILITY_PTX}"
+            DEPENDS
+                "${RAYD_SEGMENT_VISIBILITY_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h"
+            VERBATIM
+        )
+    endif()
+
+    add_custom_command(
+        OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX_H}"
+        COMMAND ${CMAKE_COMMAND}
+            -DPTX_FILE=${RAYD_SEGMENT_VISIBILITY_PTX}
+            -DOUTPUT_FILE=${RAYD_SEGMENT_VISIBILITY_PTX_H}
+            -DVAR_NAME=segment_visibility_ptx
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        DEPENDS
+            "${RAYD_SEGMENT_VISIBILITY_PTX}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        VERBATIM
+    )
+    set_source_files_properties("${RAYD_SEGMENT_VISIBILITY_PTX_H}" PROPERTIES GENERATED TRUE)
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H}")
+else()
+    if(NOT EXISTS "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
+        message(FATAL_ERROR
+            "Missing committed segment_visibility PTX header at "
+            "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}. "
+            "Restore it or enable RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX with OptiX SDK headers available.")
+    endif()
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
 endif()
 
 set(RAYD_NANOBIND_ARGS NB_DOMAIN drjit)

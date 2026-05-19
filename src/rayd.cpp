@@ -10,6 +10,7 @@
 #include <rayd/ray.h>
 #include <rayd/transform.h>
 #include <rayd/edge.h>
+#include <rayd/segment_visibility.h>
 #include <rayd/mesh.h>
 #include <rayd/optix.h>
 #include <rayd/camera.h>
@@ -489,6 +490,58 @@ NB_MODULE(rayd, m) {
             .def_ro("global_edge_id", &NearestRayEdge::global_edge_id)
             .def_ro("is_boundary", &NearestRayEdge::is_boundary);
 
+        nb::class_<NearestEdgesTopKDetached>(m, "NearestEdgesTopKDetached")
+            .def_ro("query_count", &NearestEdgesTopKDetached::query_count)
+            .def_ro("k", &NearestEdgesTopKDetached::k)
+            .def_ro("is_valid", &NearestEdgesTopKDetached::is_valid)
+            .def_ro("distances", &NearestEdgesTopKDetached::distances)
+            .def_ro("points", &NearestEdgesTopKDetached::points)
+            .def_ro("edge_t", &NearestEdgesTopKDetached::edge_t)
+            .def_ro("edge_points", &NearestEdgesTopKDetached::edge_points)
+            .def_ro("shape_ids", &NearestEdgesTopKDetached::shape_ids)
+            .def_ro("edge_ids", &NearestEdgesTopKDetached::edge_ids)
+            .def_ro("global_edge_ids", &NearestEdgesTopKDetached::global_edge_ids)
+            .def_ro("is_boundary", &NearestEdgesTopKDetached::is_boundary);
+
+        nb::class_<NearestEdgesTopK>(m, "NearestEdgesTopK")
+            .def_ro("query_count", &NearestEdgesTopK::query_count)
+            .def_ro("k", &NearestEdgesTopK::k)
+            .def_ro("is_valid", &NearestEdgesTopK::is_valid)
+            .def_ro("distances", &NearestEdgesTopK::distances)
+            .def_ro("points", &NearestEdgesTopK::points)
+            .def_ro("edge_t", &NearestEdgesTopK::edge_t)
+            .def_ro("edge_points", &NearestEdgesTopK::edge_points)
+            .def_ro("shape_ids", &NearestEdgesTopK::shape_ids)
+            .def_ro("edge_ids", &NearestEdgesTopK::edge_ids)
+            .def_ro("global_edge_ids", &NearestEdgesTopK::global_edge_ids)
+            .def_ro("is_boundary", &NearestEdgesTopK::is_boundary);
+
+        nb::class_<SegmentVisibilityDetached>(m, "SegmentVisibilityDetached")
+            .def_ro("ray_count", &SegmentVisibilityDetached::ray_count)
+            .def_ro("visible", &SegmentVisibilityDetached::visible);
+
+        nb::class_<SegmentVisibility>(m, "SegmentVisibility")
+            .def_ro("ray_count", &SegmentVisibility::ray_count)
+            .def_ro("visible", &SegmentVisibility::visible);
+
+        nb::class_<SegmentPairVisibilityDetached>(m, "SegmentPairVisibilityDetached")
+            .def_ro("ray_count", &SegmentPairVisibilityDetached::ray_count)
+            .def_ro("visible_a", &SegmentPairVisibilityDetached::visible_a)
+            .def_ro("visible_b", &SegmentPairVisibilityDetached::visible_b);
+
+        nb::class_<SegmentPairVisibility>(m, "SegmentPairVisibility")
+            .def_ro("ray_count", &SegmentPairVisibility::ray_count)
+            .def_ro("visible_a", &SegmentPairVisibility::visible_a)
+            .def_ro("visible_b", &SegmentPairVisibility::visible_b);
+
+        nb::class_<AxialEdgeVisibilityDetached>(m, "AxialEdgeVisibilityDetached")
+            .def_ro("state_count", &AxialEdgeVisibilityDetached::state_count)
+            .def_ro("any_visible", &AxialEdgeVisibilityDetached::any_visible);
+
+        nb::class_<AxialEdgeVisibility>(m, "AxialEdgeVisibility")
+            .def_ro("state_count", &AxialEdgeVisibility::state_count)
+            .def_ro("any_visible", &AxialEdgeVisibility::any_visible);
+
         nb::class_<SceneSyncProfile>(m, "SceneSyncProfile")
             .def_ro("mesh_update_ms", &SceneSyncProfile::mesh_update_ms)
             .def_ro("triangle_scatter_ms", &SceneSyncProfile::triangle_scatter_ms)
@@ -839,6 +892,136 @@ NB_MODULE(rayd, m) {
                      return scene.shadow_test<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
+            .def("trace_segment_visibility",
+                 [](const Scene &scene,
+                    nb::handle start_obj,
+                    nb::handle end_obj,
+                    const IntDetached &ignore_prim_ids,
+                    nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(start_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(start_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f start = nb::cast<Vector3f>(start_obj);
+                         Vector3f end = nb::cast<Vector3f>(end_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.trace_segment_visibility<false>(
+                             start, end, ignore_prim_ids, active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached start = nb::cast<Vector3fDetached>(start_obj);
+                         Vector3fDetached end = nb::cast<Vector3fDetached>(end_obj);
+                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.trace_segment_visibility<true>(
+                             start, end, ignore_prim_ids, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("start"),
+                 nb::arg("end"),
+                 "ignore_prim_ids"_a = IntDetached(),
+                 "active"_a = true)
+            .def("trace_segment_pair_visibility",
+                 [](const Scene &scene,
+                    nb::handle start_obj,
+                    nb::handle end_a_obj,
+                    nb::handle end_b_obj,
+                    const IntDetached &ignore_prim_ids,
+                    nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(start_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(start_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f start = nb::cast<Vector3f>(start_obj);
+                         Vector3f end_a = nb::cast<Vector3f>(end_a_obj);
+                         Vector3f end_b = nb::cast<Vector3f>(end_b_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.trace_segment_pair_visibility<false>(
+                             start, end_a, end_b, ignore_prim_ids, active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached start = nb::cast<Vector3fDetached>(start_obj);
+                         Vector3fDetached end_a = nb::cast<Vector3fDetached>(end_a_obj);
+                         Vector3fDetached end_b = nb::cast<Vector3fDetached>(end_b_obj);
+                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.trace_segment_pair_visibility<true>(
+                             start, end_a, end_b, ignore_prim_ids, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("start"),
+                 nb::arg("end_a"),
+                 nb::arg("end_b"),
+                 "ignore_prim_ids"_a = IntDetached(),
+                 "active"_a = true)
+            .def("trace_axial_edge_visibility",
+                 [](const Scene &scene,
+                    nb::handle source_pos_obj,
+                    nb::handle edge_pos_obj,
+                    nb::handle edge_dir_obj,
+                    nb::handle edge_line_min_obj,
+                    nb::handle edge_line_max_obj,
+                    const std::vector<float> &sample_fractions,
+                    nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(source_pos_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(source_pos_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f source_pos = nb::cast<Vector3f>(source_pos_obj);
+                         Vector3f edge_pos = nb::cast<Vector3f>(edge_pos_obj);
+                         Vector3f edge_dir = nb::cast<Vector3f>(edge_dir_obj);
+                         Float edge_line_min = nb::cast<Float>(edge_line_min_obj);
+                         Float edge_line_max = nb::cast<Float>(edge_line_max_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.trace_axial_edge_visibility<false>(
+                             source_pos,
+                             edge_pos,
+                             edge_dir,
+                             edge_line_min,
+                             edge_line_max,
+                             sample_fractions,
+                             active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached source_pos =
+                             nb::cast<Vector3fDetached>(source_pos_obj);
+                         Vector3fDetached edge_pos =
+                             nb::cast<Vector3fDetached>(edge_pos_obj);
+                         Vector3fDetached edge_dir =
+                             nb::cast<Vector3fDetached>(edge_dir_obj);
+                         FloatDetached edge_line_min =
+                             nb::cast<FloatDetached>(edge_line_min_obj);
+                         FloatDetached edge_line_max =
+                             nb::cast<FloatDetached>(edge_line_max_obj);
+                         rayd::MaskDetached active =
+                             nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.trace_axial_edge_visibility<true>(
+                             source_pos,
+                             edge_pos,
+                             edge_dir,
+                             edge_line_min,
+                             edge_line_max,
+                             sample_fractions,
+                             active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("source_pos"),
+                 nb::arg("edge_pos"),
+                 nb::arg("edge_dir"),
+                 "edge_line_min"_a,
+                 "edge_line_max"_a,
+                 "sample_fractions"_a = std::vector<float>{ 0.f, 0.25f, 0.5f, 0.75f, 1.f },
+                 "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, nb::handle point_obj, nb::handle active_obj) -> nb::object {
                      const std::string module_name =
@@ -870,6 +1053,27 @@ NB_MODULE(rayd, m) {
                      return scene.nearest_edge<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
+            .def("nearest_edges_topk",
+                 [](const Scene &scene, nb::handle point_obj, int k, nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(point_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(point_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f point = nb::cast<Vector3f>(point_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.nearest_edges_topk<false>(point, k, active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached point_detached = nb::cast<Vector3fDetached>(point_obj);
+                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.nearest_edges_topk<true>(point_detached, k, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("point"), "k"_a, "active"_a = true)
             .def_prop_ro("num_meshes", &Scene::num_meshes)
             .def_prop_ro("version", &Scene::version)
             .def_prop_ro("edge_version", &Scene::edge_version)

@@ -340,7 +340,7 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
     build_input.triangleArray.primitiveIndexOffset = 0;
     build_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
 
-    unsigned int triangle_input_flags[] = { OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT };
+    unsigned int triangle_input_flags[] = { 0u };
     build_input.triangleArray.flags = triangle_input_flags;
 
     mesh_state.accel_options.buildFlags = mesh_state.dynamic
@@ -446,7 +446,7 @@ static void update_gas(OptixState *state, OptixMeshState &mesh_state, const Mesh
     build_input.triangleArray.primitiveIndexOffset = 0;
     build_input.triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
 
-    unsigned int triangle_input_flags[] = { OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT };
+    unsigned int triangle_input_flags[] = { 0u };
     build_input.triangleArray.flags = triangle_input_flags;
 
     mesh_state.accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 
 #include "../multipath/reflection_dedup.h"
 #include "../multipath/reflection_trace_host.h"
+#include "../multipath/segment_visibility_host.h"
 #include "../native_launch_audit.h"
 
 namespace rayd {
@@ -323,6 +325,112 @@ MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
+MaskDetached sanitize_segment_active(const Vector3fT<Detached> &start,
+                                     const Vector3fT<Detached> &end,
+                                     MaskT<Detached> active) {
+    MaskDetached active_detached;
+    if constexpr (!Detached) {
+        active_detached = detach<false>(active);
+        active_detached &= drjit::isfinite(detach<false>(start.x())) &&
+                           drjit::isfinite(detach<false>(start.y())) &&
+                           drjit::isfinite(detach<false>(start.z()));
+        active_detached &= drjit::isfinite(detach<false>(end.x())) &&
+                           drjit::isfinite(detach<false>(end.y())) &&
+                           drjit::isfinite(detach<false>(end.z()));
+    } else {
+        active_detached = active;
+        active_detached &= drjit::isfinite(start.x()) &&
+                           drjit::isfinite(start.y()) &&
+                           drjit::isfinite(start.z());
+        active_detached &= drjit::isfinite(end.x()) &&
+                           drjit::isfinite(end.y()) &&
+                           drjit::isfinite(end.z());
+    }
+    return active_detached;
+}
+
+void ensure_segment_visibility_pipeline(
+    std::unique_ptr<SegmentVisibilityPipeline> &pipeline,
+    const OptixScene &optix_scene,
+    int mesh_count) {
+    if (!pipeline) {
+        pipeline = std::make_unique<SegmentVisibilityPipeline>();
+        pipeline->build(optix_scene.context(), mesh_count);
+    }
+}
+
+void eval_segment_visibility_common(const Vector3fDetached &start,
+                                    const IntDetached &face_offsets,
+                                    const IntDetached &ignore_prim_ids,
+                                    int ignore_k,
+                                    const MaskDetached &active_detached) {
+    if (ignore_k > 0) {
+        drjit::eval(start, face_offsets, ignore_prim_ids, active_detached);
+    } else {
+        drjit::eval(start, face_offsets, active_detached);
+    }
+}
+
+SegmentVisibilityParams make_segment_visibility_params(
+    const OptixScene &optix_scene,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &start,
+    const IntDetached &ignore_prim_ids,
+    int ignore_k,
+    const MaskDetached &active_detached,
+    int ray_count) {
+    SegmentVisibilityParams params = {};
+    params.handle = optix_scene.ias_handle();
+    params.face_offsets = face_offsets.data();
+    params.n_meshes = mesh_count;
+    params.start_x = start.x().data();
+    params.start_y = start.y().data();
+    params.start_z = start.z().data();
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_ids.data() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.n_rays = ray_count;
+    return params;
+}
+
+MaskDetached launch_segment_visibility_detached(
+    const OptixScene &optix_scene,
+    const SegmentVisibilityPipeline &pipeline,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &start,
+    const Vector3fDetached &end,
+    const IntDetached &ignore_prim_ids,
+    int ignore_k,
+    const MaskDetached &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    if (ray_count == 0) {
+        return MaskDetached();
+    }
+
+    MaskDetached visible = empty<MaskDetached>(ray_count);
+    eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(optix_scene,
+                                       face_offsets,
+                                       mesh_count,
+                                       start,
+                                       ignore_prim_ids,
+                                       ignore_k,
+                                       active_detached,
+                                       ray_count);
+    params.end_x = end.x().data();
+    params.end_y = end.y().data();
+    params.end_z = end.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
+    pipeline.launch(SegmentVisibilityLaunchKind::Segment, params);
+    return visible;
+}
+
+template <bool Detached>
 ReflectionTraceT<Detached> trace_bounces_impl(
     const Scene &scene,
     const RayT<Detached> &ray,
@@ -493,6 +601,7 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     optix_dynamic_mesh_indices_.clear();
     optix_dynamic_mesh_local_index_.clear();
     reflection_pipeline_.reset();
+    segment_visibility_pipeline_.reset();
     invalidate_primary_edge_observers();
     return mesh_count_ - 1;
 }
@@ -935,6 +1044,7 @@ void Scene::build() {
         optix_scene_->build(mesh_descs);
     }
     reflection_pipeline_.reset();
+    segment_visibility_pipeline_.reset();
     mask_dirty_ = false;
     edge_bvh_->build(edge_info_, edge_mask_);
     is_ready_ = true;
@@ -1813,6 +1923,266 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
 }
 
 template <bool Detached>
+SegmentVisibilityT<Detached> Scene::trace_segment_visibility(
+    const Vector3fT<Detached> &start,
+    const Vector3fT<Detached> &end,
+    const IntDetached &ignore_prim_ids,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::trace_segment_visibility(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_segment_visibility(): scene has pending updates. Call Scene::sync() first.");
+
+    const int ray_count = static_cast<int>(slices(start));
+    require(static_cast<int>(slices(end)) == ray_count,
+            "Scene::trace_segment_visibility(): start and end must have the same width.");
+
+    SegmentVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+    result.visible = full<MaskT<Detached>>(false, ray_count);
+    if (ray_count == 0) {
+        return result;
+    }
+
+    const int ignore_count = static_cast<int>(slices(ignore_prim_ids));
+    int ignore_k = 0;
+    if (ignore_count > 0) {
+        require(ignore_count % ray_count == 0,
+                "Scene::trace_segment_visibility(): ignore_prim_ids width must be a multiple of ray count.");
+        ignore_k = ignore_count / ray_count;
+        require(ignore_k <= 8,
+                "Scene::trace_segment_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
+    }
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+
+    const MaskDetached active_detached = sanitize_segment_active<Detached>(start, end, active);
+    Vector3fDetached start_detached;
+    Vector3fDetached end_detached;
+    if constexpr (!Detached) {
+        start_detached = detach<false>(start);
+        end_detached = detach<false>(end);
+    } else {
+        start_detached = start;
+        end_detached = end;
+    }
+
+    const MaskDetached visible_detached =
+        launch_segment_visibility_detached(*optix_scene_,
+                                           *segment_visibility_pipeline_,
+                                           face_offsets_,
+                                           mesh_count_,
+                                           start_detached,
+                                           end_detached,
+                                           ignore_prim_ids,
+                                           ignore_k,
+                                           active_detached);
+    if constexpr (!Detached) {
+        result.visible = Mask(visible_detached);
+    } else {
+        result.visible = visible_detached;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentPairVisibilityT<Detached> Scene::trace_segment_pair_visibility(
+    const Vector3fT<Detached> &start,
+    const Vector3fT<Detached> &end_a,
+    const Vector3fT<Detached> &end_b,
+    const IntDetached &ignore_prim_ids,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::trace_segment_pair_visibility(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_segment_pair_visibility(): scene has pending updates. Call Scene::sync() first.");
+
+    const int ray_count = static_cast<int>(slices(start));
+    require(static_cast<int>(slices(end_a)) == ray_count &&
+                static_cast<int>(slices(end_b)) == ray_count,
+            "Scene::trace_segment_pair_visibility(): start, end_a, and end_b must have the same width.");
+
+    SegmentPairVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+    result.visible_a = full<MaskT<Detached>>(false, ray_count);
+    result.visible_b = full<MaskT<Detached>>(false, ray_count);
+    if (ray_count == 0) {
+        return result;
+    }
+
+    const int ignore_count = static_cast<int>(slices(ignore_prim_ids));
+    int ignore_k = 0;
+    if (ignore_count > 0) {
+        require(ignore_count % ray_count == 0,
+                "Scene::trace_segment_pair_visibility(): ignore_prim_ids width must be a multiple of ray count.");
+        ignore_k = ignore_count / ray_count;
+        require(ignore_k <= 8,
+                "Scene::trace_segment_pair_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
+    }
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+
+    const MaskDetached active_detached =
+        sanitize_segment_active<Detached>(start, end_a, active) &&
+        sanitize_segment_active<Detached>(start, end_b, active);
+    Vector3fDetached start_detached;
+    Vector3fDetached end_a_detached;
+    Vector3fDetached end_b_detached;
+    if constexpr (!Detached) {
+        start_detached = detach<false>(start);
+        end_a_detached = detach<false>(end_a);
+        end_b_detached = detach<false>(end_b);
+    } else {
+        start_detached = start;
+        end_a_detached = end_a;
+        end_b_detached = end_b;
+    }
+
+    MaskDetached visible_a = empty<MaskDetached>(ray_count);
+    MaskDetached visible_b = empty<MaskDetached>(ray_count);
+    eval_segment_visibility_common(start_detached,
+                                   face_offsets_,
+                                   ignore_prim_ids,
+                                   ignore_k,
+                                   active_detached);
+    drjit::eval(end_a_detached, end_b_detached);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(*optix_scene_,
+                                       face_offsets_,
+                                       mesh_count_,
+                                       start_detached,
+                                       ignore_prim_ids,
+                                       ignore_k,
+                                       active_detached,
+                                       ray_count);
+    params.end_x = end_a_detached.x().data();
+    params.end_y = end_a_detached.y().data();
+    params.end_z = end_a_detached.z().data();
+    params.end_b_x = end_b_detached.x().data();
+    params.end_b_y = end_b_detached.y().data();
+    params.end_b_z = end_b_detached.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
+    params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
+    segment_visibility_pipeline_->launch(SegmentVisibilityLaunchKind::SegmentPair, params);
+
+    if constexpr (!Detached) {
+        result.visible_a = Mask(visible_a);
+        result.visible_b = Mask(visible_b);
+    } else {
+        result.visible_a = visible_a;
+        result.visible_b = visible_b;
+    }
+    return result;
+}
+
+template <bool Detached>
+AxialEdgeVisibilityT<Detached> Scene::trace_axial_edge_visibility(
+    const Vector3fT<Detached> &source_pos,
+    const Vector3fT<Detached> &edge_pos,
+    const Vector3fT<Detached> &edge_dir,
+    const FloatT<Detached> &edge_line_min,
+    const FloatT<Detached> &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    MaskT<Detached> active) const {
+    require(!sample_fractions.empty(),
+            "Scene::trace_axial_edge_visibility(): sample_fractions must not be empty.");
+    require(sample_fractions.size() <= SegmentVisibilityMaxSamples,
+            "Scene::trace_axial_edge_visibility(): at most 16 sample fractions are supported.");
+    require(is_ready(), "Scene::trace_axial_edge_visibility(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_axial_edge_visibility(): scene has pending updates. Call Scene::sync() first.");
+
+    const int state_count = static_cast<int>(slices(source_pos));
+    require(static_cast<int>(slices(edge_pos)) == state_count &&
+                static_cast<int>(slices(edge_dir)) == state_count &&
+                static_cast<int>(slices(edge_line_min)) == state_count &&
+                static_cast<int>(slices(edge_line_max)) == state_count,
+            "Scene::trace_axial_edge_visibility(): all inputs must have the same width.");
+
+    AxialEdgeVisibilityT<Detached> result;
+    result.state_count = state_count;
+    result.any_visible = full<MaskT<Detached>>(false, state_count);
+    if (state_count == 0) {
+        return result;
+    }
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+
+    MaskDetached active_detached;
+    Vector3fDetached source_detached;
+    Vector3fDetached edge_pos_detached;
+    Vector3fDetached edge_dir_detached;
+    FloatDetached edge_line_min_detached;
+    FloatDetached edge_line_max_detached;
+    if constexpr (!Detached) {
+        active_detached = detach<false>(active);
+        source_detached = detach<false>(source_pos);
+        edge_pos_detached = detach<false>(edge_pos);
+        edge_dir_detached = detach<false>(edge_dir);
+        edge_line_min_detached = detach<false>(edge_line_min);
+        edge_line_max_detached = detach<false>(edge_line_max);
+    } else {
+        active_detached = active;
+        source_detached = source_pos;
+        edge_pos_detached = edge_pos;
+        edge_dir_detached = edge_dir;
+        edge_line_min_detached = edge_line_min;
+        edge_line_max_detached = edge_line_max;
+    }
+
+    active_detached &= drjit::isfinite(source_detached.x()) &&
+                       drjit::isfinite(source_detached.y()) &&
+                       drjit::isfinite(source_detached.z()) &&
+                       drjit::isfinite(edge_pos_detached.x()) &&
+                       drjit::isfinite(edge_pos_detached.y()) &&
+                       drjit::isfinite(edge_pos_detached.z()) &&
+                       drjit::isfinite(edge_dir_detached.x()) &&
+                       drjit::isfinite(edge_dir_detached.y()) &&
+                       drjit::isfinite(edge_dir_detached.z()) &&
+                       drjit::isfinite(edge_line_min_detached) &&
+                       drjit::isfinite(edge_line_max_detached);
+
+    MaskDetached any_visible = empty<MaskDetached>(state_count);
+    drjit::eval(source_detached,
+                edge_pos_detached,
+                edge_dir_detached,
+                edge_line_min_detached,
+                edge_line_max_detached,
+                face_offsets_,
+                active_detached);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(*optix_scene_,
+                                       face_offsets_,
+                                       mesh_count_,
+                                       source_detached,
+                                       IntDetached(),
+                                       0,
+                                       active_detached,
+                                       state_count);
+    params.end_x = edge_pos_detached.x().data();
+    params.end_y = edge_pos_detached.y().data();
+    params.end_z = edge_pos_detached.z().data();
+    params.edge_dir_x = edge_dir_detached.x().data();
+    params.edge_dir_y = edge_dir_detached.y().data();
+    params.edge_dir_z = edge_dir_detached.z().data();
+    params.edge_line_min = edge_line_min_detached.data();
+    params.edge_line_max = edge_line_max_detached.data();
+    params.sample_count = static_cast<int>(sample_fractions.size());
+    for (size_t i = 0; i < sample_fractions.size(); ++i) {
+        params.sample_fractions[i] = sample_fractions[i];
+    }
+    params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
+    segment_visibility_pipeline_->launch(SegmentVisibilityLaunchKind::AxialEdge, params);
+
+    if constexpr (!Detached) {
+        result.any_visible = Mask(any_visible);
+    } else {
+        result.any_visible = any_visible;
+    }
+    return result;
+}
+
+template <bool Detached>
 NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point, MaskT<Detached> active) const {
     require(is_ready(), "Scene::nearest_edge(point): scene is not built.");
     require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::sync() first.");
@@ -2082,6 +2452,128 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
     return result;
 }
 
+template <bool Detached>
+NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> &point,
+                                                       int k,
+                                                       MaskT<Detached> active) const {
+    require(is_ready(), "Scene::nearest_edges_topk(point): scene is not built.");
+    require(!pending_updates_,
+            "Scene::nearest_edges_topk(point): scene has pending updates. Call Scene::sync() first.");
+    require(k > 0, "Scene::nearest_edges_topk(point): k must be positive.");
+    require(k <= 16, "Scene::nearest_edges_topk(point): k must be <= 16.");
+
+    const int query_count = static_cast<int>(slices(point));
+    const int output_count = query_count * k;
+    NearestEdgesTopKT<Detached> result;
+    result.query_count = query_count;
+    result.k = k;
+    result.is_valid = full<MaskT<Detached>>(false, output_count);
+    result.distances = full<FloatT<Detached>>(Infinity, output_count);
+    result.points = zeros<Vector3fT<Detached>>(output_count);
+    result.edge_t = zeros<FloatT<Detached>>(output_count);
+    result.edge_points = zeros<Vector3fT<Detached>>(output_count);
+    result.shape_ids = full<IntT<Detached>>(-1, output_count);
+    result.edge_ids = full<IntT<Detached>>(-1, output_count);
+    result.global_edge_ids = full<IntT<Detached>>(-1, output_count);
+    result.is_boundary = full<MaskT<Detached>>(false, output_count);
+    if (query_count == 0 || edge_count_ == 0) {
+        return result;
+    }
+
+    ensure_scene_edge_data_ready();
+
+    MaskDetached active_detached;
+    if constexpr (!Detached) {
+        active_detached = detach<false>(active);
+        active_detached &= drjit::isfinite(detach<false>(point.x())) &&
+                           drjit::isfinite(detach<false>(point.y())) &&
+                           drjit::isfinite(detach<false>(point.z()));
+        active &= Mask(active_detached);
+    } else {
+        active_detached = active;
+        active_detached &= drjit::isfinite(point.x()) &&
+                           drjit::isfinite(point.y()) &&
+                           drjit::isfinite(point.z());
+        active = active_detached;
+    }
+
+    if (drjit::none(active_detached)) {
+        return result;
+    }
+
+    MaskT<Detached> query_mask = active;
+    const ClosestEdgeTopKCandidate candidate =
+        edge_bvh_->template nearest_edges_topk<Detached>(point, k, query_mask);
+    const MaskDetached valid_detached = candidate.is_valid;
+    if (drjit::none(valid_detached)) {
+        return result;
+    }
+
+    const IntDetached output_index = arange<IntDetached>(output_count);
+    const IntDetached output_query = output_index / k;
+    const IntDetached global_edge_id_detached =
+        edge_bvh_->map_to_global(candidate.global_edge_ids, valid_detached);
+    const IntDetached shape_id_detached =
+        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
+    const IntDetached edge_id_detached =
+        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
+
+    if constexpr (!Detached) {
+        const Mask valid = Mask(valid_detached);
+        const Int global_edge_id = Int(global_edge_id_detached);
+        const Int query_id = Int(output_query);
+        const Vector3f output_point = gather<Vector3f>(point, query_id, valid);
+        const Vector3f edge_start =
+            gather<Vector3f>(edge_info_.start, global_edge_id, valid);
+        const Vector3f edge_vector =
+            gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
+        const Mask boundary =
+            gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
+
+        Float edge_t;
+        Vector3f edge_point;
+        Float distance_sq;
+        std::tie(edge_t, edge_point, distance_sq) =
+            closest_point_on_segment<false>(output_point, edge_start, edge_vector);
+
+        result.is_valid = valid;
+        result.distances = select(valid, sqrt(distance_sq), result.distances);
+        result.points = select(valid, output_point, result.points);
+        result.edge_t = select(valid, edge_t, result.edge_t);
+        result.edge_points = select(valid, edge_point, result.edge_points);
+        result.shape_ids = select(valid, Int(shape_id_detached), result.shape_ids);
+        result.edge_ids = select(valid, Int(edge_id_detached), result.edge_ids);
+        result.global_edge_ids = select(valid, global_edge_id, result.global_edge_ids);
+        result.is_boundary = select(valid, boundary, result.is_boundary);
+    } else {
+        const Vector3fDetached output_point =
+            gather<Vector3fDetached>(point, output_query, valid_detached);
+        const Vector3fDetached edge_start =
+            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
+        const Vector3fDetached edge_vector =
+            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
+        const MaskDetached boundary =
+            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
+
+        FloatDetached edge_t;
+        Vector3fDetached edge_point;
+        FloatDetached distance_sq;
+        std::tie(edge_t, edge_point, distance_sq) =
+            closest_point_on_segment<true>(output_point, edge_start, edge_vector);
+
+        result.is_valid = valid_detached;
+        result.distances = select(valid_detached, sqrt(distance_sq), result.distances);
+        result.points = select(valid_detached, output_point, result.points);
+        result.edge_t = select(valid_detached, edge_t, result.edge_t);
+        result.edge_points = select(valid_detached, edge_point, result.edge_points);
+        result.shape_ids = select(valid_detached, shape_id_detached, result.shape_ids);
+        result.edge_ids = select(valid_detached, edge_id_detached, result.edge_ids);
+        result.global_edge_ids = select(valid_detached, global_edge_id_detached, result.global_edge_ids);
+        result.is_boundary = select(valid_detached, boundary, result.is_boundary);
+    }
+    return result;
+}
+
 template IntersectionDetached Scene::intersect<true>(const RayDetached &ray, MaskDetached active, RayFlags flags) const;
 template Intersection Scene::intersect<false>(const Ray &ray, Mask active, RayFlags flags) const;
 template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetached &ray,
@@ -2118,10 +2610,56 @@ template ReflectionTrace Scene::trace_bounces<false>(
     Mask active) const;
 template MaskDetached Scene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask Scene::shadow_test<false>(const Ray &ray, Mask active) const;
+template SegmentVisibilityDetached Scene::trace_segment_visibility<true>(
+    const Vector3fDetached &start,
+    const Vector3fDetached &end,
+    const IntDetached &ignore_prim_ids,
+    MaskDetached active) const;
+template SegmentVisibility Scene::trace_segment_visibility<false>(
+    const Vector3f &start,
+    const Vector3f &end,
+    const IntDetached &ignore_prim_ids,
+    Mask active) const;
+template SegmentPairVisibilityDetached Scene::trace_segment_pair_visibility<true>(
+    const Vector3fDetached &start,
+    const Vector3fDetached &end_a,
+    const Vector3fDetached &end_b,
+    const IntDetached &ignore_prim_ids,
+    MaskDetached active) const;
+template SegmentPairVisibility Scene::trace_segment_pair_visibility<false>(
+    const Vector3f &start,
+    const Vector3f &end_a,
+    const Vector3f &end_b,
+    const IntDetached &ignore_prim_ids,
+    Mask active) const;
+template AxialEdgeVisibilityDetached Scene::trace_axial_edge_visibility<true>(
+    const Vector3fDetached &source_pos,
+    const Vector3fDetached &edge_pos,
+    const Vector3fDetached &edge_dir,
+    const FloatDetached &edge_line_min,
+    const FloatDetached &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    MaskDetached active) const;
+template AxialEdgeVisibility Scene::trace_axial_edge_visibility<false>(
+    const Vector3f &source_pos,
+    const Vector3f &edge_pos,
+    const Vector3f &edge_dir,
+    const Float &edge_line_min,
+    const Float &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    Mask active) const;
 template NearestPointEdgeDetached Scene::nearest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
 template NearestPointEdge Scene::nearest_edge<false>(const Vector3f &point, Mask active) const;
 template NearestRayEdgeDetached Scene::nearest_edge<true>(const RayDetached &ray, MaskDetached active) const;
 template NearestRayEdge Scene::nearest_edge<false>(const Ray &ray, Mask active) const;
+template NearestEdgesTopKDetached Scene::nearest_edges_topk<true>(
+    const Vector3fDetached &point,
+    int k,
+    MaskDetached active) const;
+template NearestEdgesTopK Scene::nearest_edges_topk<false>(
+    const Vector3f &point,
+    int k,
+    Mask active) const;
 
 } // namespace rayd
 

@@ -83,6 +83,45 @@ using NearestRayEdgeT = NearestRayEdgeData<FloatT<Detached>>;
 using NearestRayEdge = NearestRayEdgeT<false>;
 using NearestRayEdgeDetached = NearestRayEdgeT<true>;
 
+template <typename Float_>
+struct NearestEdgesTopKData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+
+    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
+    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+
+    int query_count = 0;
+    int k = 0;
+
+    Mask_ is_valid = full<Mask_>(false, 1);
+    Float_ distances = full<Float_>(Infinity, 1);
+    Vec3f points = zeros<Vec3f>(1);
+    Float_ edge_t = zeros<Float_>(1);
+    Vec3f edge_points = zeros<Vec3f>(1);
+    Int_ shape_ids = full<Int_>(-1, 1);
+    Int_ edge_ids = full<Int_>(-1, 1);
+    Int_ global_edge_ids = full<Int_>(-1, 1);
+    Mask_ is_boundary = full<Mask_>(false, 1);
+
+    DRJIT_STRUCT(NearestEdgesTopKData,
+                 is_valid,
+                 distances,
+                 points,
+                 edge_t,
+                 edge_points,
+                 shape_ids,
+                 edge_ids,
+                 global_edge_ids,
+                 is_boundary)
+};
+
+template <bool Detached>
+using NearestEdgesTopKT = NearestEdgesTopKData<FloatT<Detached>>;
+
+using NearestEdgesTopK = NearestEdgesTopKT<false>;
+using NearestEdgesTopKDetached = NearestEdgesTopKT<true>;
+
 /// Primary-edge sample returned by image-space edge sampling.
 struct PrimaryEdgeSample {
     Float x_dot_n;

@@ -9,12 +9,14 @@
 #include <rayd/intersection.h>
 #include <rayd/mesh.h>
 #include <rayd/reflection.h>
+#include <rayd/segment_visibility.h>
 #include <rayd/scene/scene_edge.h>
 #include <rayd/scene/scene_optix.h>
 
 namespace rayd {
 
 class ReflectionTracePipeline;
+class SegmentVisibilityPipeline;
 
 struct SceneSyncProfile {
     double mesh_update_ms = 0.0;
@@ -91,11 +93,37 @@ public:
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
+    SegmentVisibilityT<Detached> trace_segment_visibility(
+        const Vector3fT<Detached> &start,
+        const Vector3fT<Detached> &end,
+        const IntDetached &ignore_prim_ids = IntDetached(),
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
+    SegmentPairVisibilityT<Detached> trace_segment_pair_visibility(
+        const Vector3fT<Detached> &start,
+        const Vector3fT<Detached> &end_a,
+        const Vector3fT<Detached> &end_b,
+        const IntDetached &ignore_prim_ids = IntDetached(),
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
+    AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility(
+        const Vector3fT<Detached> &source_pos,
+        const Vector3fT<Detached> &edge_pos,
+        const Vector3fT<Detached> &edge_dir,
+        const FloatT<Detached> &edge_line_min,
+        const FloatT<Detached> &edge_line_max,
+        const std::vector<float> &sample_fractions,
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
     NearestPointEdgeT<Detached> nearest_edge(const Vector3fT<Detached> &point,
                                              MaskT<Detached> active = true) const;
     template <bool Detached>
     NearestRayEdgeT<Detached> nearest_edge(const RayT<Detached> &ray,
                                            MaskT<Detached> active = true) const;
+    template <bool Detached>
+    NearestEdgesTopKT<Detached> nearest_edges_topk(const Vector3fT<Detached> &point,
+                                                   int k,
+                                                   MaskT<Detached> active = true) const;
 
     int num_meshes() const { return mesh_count_; }
     std::vector<const Mesh *> meshes() const;
@@ -161,6 +189,7 @@ private:
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
     mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
+    mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     SceneSyncProfile last_sync_profile_;
 

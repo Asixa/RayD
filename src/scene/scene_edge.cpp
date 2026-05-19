@@ -27,6 +27,27 @@ constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
 constexpr int EdgeBVHSAHBins = 12;
 using TraversalStack = IntDetached;
 
+struct TopKTraversalState {
+    FloatDetached distance0, distance1, distance2, distance3;
+    FloatDetached distance4, distance5, distance6, distance7;
+    FloatDetached distance8, distance9, distance10, distance11;
+    FloatDetached distance12, distance13, distance14, distance15;
+    IntDetached primitive0, primitive1, primitive2, primitive3;
+    IntDetached primitive4, primitive5, primitive6, primitive7;
+    IntDetached primitive8, primitive9, primitive10, primitive11;
+    IntDetached primitive12, primitive13, primitive14, primitive15;
+
+    DRJIT_STRUCT(TopKTraversalState,
+                 distance0, distance1, distance2, distance3,
+                 distance4, distance5, distance6, distance7,
+                 distance8, distance9, distance10, distance11,
+                 distance12, distance13, distance14, distance15,
+                 primitive0, primitive1, primitive2, primitive3,
+                 primitive4, primitive5, primitive6, primitive7,
+                 primitive8, primitive9, primitive10, primitive11,
+                 primitive12, primitive13, primitive14, primitive15)
+};
+
 enum class EdgeBVHRefitStrategy {
     Auto,
     Full,
@@ -1292,6 +1313,65 @@ IntDetached stack_pop(TraversalStack &stack,
     return select(can_pop, value, full<IntDetached>(-1, query_count));
 }
 
+TopKTraversalState make_empty_topk_state(int query_count) {
+    const FloatDetached inf = full<FloatDetached>(Infinity, query_count);
+    const IntDetached none = full<IntDetached>(-1, query_count);
+    return TopKTraversalState{
+        inf, inf, inf, inf,
+        inf, inf, inf, inf,
+        inf, inf, inf, inf,
+        inf, inf, inf, inf,
+        none, none, none, none,
+        none, none, none, none,
+        none, none, none, none,
+        none, none, none, none,
+    };
+}
+
+std::array<FloatDetached *, 16> topk_distance_slots(TopKTraversalState &state) {
+    return { &state.distance0, &state.distance1, &state.distance2, &state.distance3,
+             &state.distance4, &state.distance5, &state.distance6, &state.distance7,
+             &state.distance8, &state.distance9, &state.distance10, &state.distance11,
+             &state.distance12, &state.distance13, &state.distance14, &state.distance15 };
+}
+
+std::array<IntDetached *, 16> topk_primitive_slots(TopKTraversalState &state) {
+    return { &state.primitive0, &state.primitive1, &state.primitive2, &state.primitive3,
+             &state.primitive4, &state.primitive5, &state.primitive6, &state.primitive7,
+             &state.primitive8, &state.primitive9, &state.primitive10, &state.primitive11,
+             &state.primitive12, &state.primitive13, &state.primitive14, &state.primitive15 };
+}
+
+void topk_insert_candidate(TopKTraversalState &state,
+                           int k,
+                           const IntDetached &primitive_index,
+                           const FloatDetached &candidate_distance_sq,
+                           const MaskDetached &active) {
+    auto distances = topk_distance_slots(state);
+    auto primitives = topk_primitive_slots(state);
+
+    MaskDetached carry_active = active;
+    IntDetached carry_primitive = primitive_index;
+    FloatDetached carry_distance_sq = candidate_distance_sq;
+
+    for (int rank = 0; rank < k; ++rank) {
+        const FloatDetached slot_distance_sq = *distances[static_cast<size_t>(rank)];
+        const IntDetached slot_primitive = *primitives[static_cast<size_t>(rank)];
+        const MaskDetached insert =
+            carry_active && (carry_distance_sq < slot_distance_sq);
+
+        *distances[static_cast<size_t>(rank)] =
+            select(insert, carry_distance_sq, slot_distance_sq);
+        *primitives[static_cast<size_t>(rank)] =
+            select(insert, carry_primitive, slot_primitive);
+
+        const MaskDetached ejected_active = insert && (slot_primitive >= 0);
+        carry_distance_sq = select(insert, slot_distance_sq, carry_distance_sq);
+        carry_primitive = select(insert, slot_primitive, carry_primitive);
+        carry_active = (carry_active && !insert) || ejected_active;
+    }
+}
+
 DRJIT_INLINE MaskDetached node_is_leaf(const IntDetached &encoded_left_child) {
     return encoded_left_child < 0;
 }
@@ -2377,9 +2457,155 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3fDetach
     return result;
 }
 
+ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk_point_detached(
+    const Vector3fDetached &point,
+    int k,
+    const MaskDetached &active) const {
+    const int query_count = static_cast<int>(slices(point));
+    const int output_count = query_count * k;
+
+    ClosestEdgeTopKCandidate result;
+    result.query_count = query_count;
+    result.k = k;
+    result.is_valid = full<MaskDetached>(false, output_count);
+    result.global_edge_ids = full<IntDetached>(-1, output_count);
+    result.distance_sq = full<FloatDetached>(Infinity, output_count);
+    if (primitive_count_ == 0 || active_primitive_count_ == 0 || drjit::none(active)) {
+        return result;
+    }
+
+    const IntDetached query_index = arange<IntDetached>(query_count);
+    const IntDetached stack_base =
+        query_index * static_cast<int>(EdgeBVHTraversalStackSize);
+
+    auto [current_node,
+          stack_size,
+          stack,
+          topk] = drjit::while_loop(
+        drjit::make_tuple(select(active, zeros<IntDetached>(query_count), full<IntDetached>(-1, query_count)),
+                          zeros<IntDetached>(query_count),
+                          make_empty_stack(query_count),
+                          make_empty_topk_state(query_count)),
+        [](const IntDetached &current_node,
+           const IntDetached &stack_size,
+           const TraversalStack &,
+           const TopKTraversalState &) {
+            return (current_node >= 0) || (stack_size > 0);
+        },
+        [this, &point, &stack_base, query_count, k](IntDetached &current_node,
+                                                    IntDetached &stack_size,
+                                                    TraversalStack &stack,
+                                                    TopKTraversalState &topk) {
+            const MaskDetached need_pop = (current_node < 0) && (stack_size > 0);
+            const IntDetached popped_node = stack_pop(stack, stack_base, stack_size, need_pop);
+            current_node = select(need_pop, popped_node, current_node);
+
+            const MaskDetached lane_active = current_node >= 0;
+            const MaskDetached node_active =
+                all_active_ ? lane_active :
+                              lane_active &&
+                                  (gather_node_active_count(current_node, lane_active) > 0);
+            auto distance_slots = topk_distance_slots(topk);
+            const FloatDetached worst_distance_sq =
+                *distance_slots[static_cast<size_t>(k - 1)];
+            const Vector3fDetached bbox_min = gather_node_bbox_min(current_node, lane_active);
+            const Vector3fDetached bbox_max = gather_node_bbox_max(current_node, lane_active);
+            const FloatDetached node_bound = point_aabb_distance_sq(point, bbox_min, bbox_max);
+            const MaskDetached visit = node_active && (node_bound <= worst_distance_sq);
+
+            const IntDetached encoded_left = gather_node_left_child(current_node, lane_active);
+            const MaskDetached leaf_node = lane_active && node_is_leaf(encoded_left);
+            const MaskDetached leaf_visit = visit && leaf_node;
+            const IntDetached leaf_begin = node_leaf_begin(encoded_left);
+            const IntDetached leaf_count = gather_node_right_child(current_node, lane_active);
+            for (int slot = 0; slot < EdgeBVHLeafSize; ++slot) {
+                const MaskDetached slot_lane = leaf_visit && (leaf_count > slot);
+                const IntDetached primitive_offset = leaf_begin + full<IntDetached>(slot, query_count);
+                const IntDetached primitive_index =
+                    gather<IntDetached>(leaf_primitives_, primitive_offset, slot_lane);
+                const MaskDetached slot_visit =
+                    all_active_ ? slot_lane :
+                                  slot_lane &&
+                                      (gather<IntDetached>(primitive_active_flags_,
+                                                           primitive_index,
+                                                           slot_lane) > 0);
+                const Vector3fDetached edge_p0 = gather<Vector3fDetached>(edge_p0_, primitive_index, slot_visit);
+                const Vector3fDetached edge_e1 = gather<Vector3fDetached>(edge_e1_, primitive_index, slot_visit);
+
+                FloatDetached edge_t;
+                Vector3fDetached edge_point;
+                FloatDetached candidate_distance_sq;
+                std::tie(edge_t, edge_point, candidate_distance_sq) =
+                    closest_point_on_segment<true>(point, edge_p0, edge_e1);
+                DRJIT_MARK_USED(edge_t);
+                DRJIT_MARK_USED(edge_point);
+
+                topk_insert_candidate(topk,
+                                      k,
+                                      primitive_index,
+                                      candidate_distance_sq,
+                                      slot_visit);
+            }
+
+            const MaskDetached internal_visit = visit && !leaf_node;
+            const IntDetached left = select(internal_visit, encoded_left, full<IntDetached>(-1, query_count));
+            const IntDetached right = gather_node_right_child(current_node, internal_visit);
+
+            const Vector3fDetached left_bbox_min = gather_node_bbox_min(left, internal_visit);
+            const Vector3fDetached left_bbox_max = gather_node_bbox_max(left, internal_visit);
+            const Vector3fDetached right_bbox_min = gather_node_bbox_min(right, internal_visit);
+            const Vector3fDetached right_bbox_max = gather_node_bbox_max(right, internal_visit);
+            const FloatDetached left_bound = point_aabb_distance_sq(point, left_bbox_min, left_bbox_max);
+            const FloatDetached right_bound = point_aabb_distance_sq(point, right_bbox_min, right_bbox_max);
+            const FloatDetached updated_worst_distance_sq =
+                *distance_slots[static_cast<size_t>(k - 1)];
+
+            const MaskDetached left_nonempty =
+                all_active_ ? internal_visit :
+                              internal_visit &&
+                                  (gather_node_active_count(left, internal_visit) > 0);
+            const MaskDetached right_nonempty =
+                all_active_ ? internal_visit :
+                              internal_visit &&
+                                  (gather_node_active_count(right, internal_visit) > 0);
+            const MaskDetached left_visit = left_nonempty && (left_bound <= updated_worst_distance_sq);
+            const MaskDetached right_visit = right_nonempty && (right_bound <= updated_worst_distance_sq);
+            const MaskDetached both_children = left_visit && right_visit;
+            const MaskDetached only_left = left_visit && !right_visit;
+            const MaskDetached only_right = right_visit && !left_visit;
+            const MaskDetached left_first = left_bound <= right_bound;
+
+            const IntDetached near_child = select(left_first, left, right);
+            const IntDetached far_child = select(left_first, right, left);
+            stack_push(stack, stack_base, stack_size, far_child, both_children);
+
+            IntDetached next_node = full<IntDetached>(-1, query_count);
+            next_node = select(both_children, near_child, next_node);
+            next_node = select(only_left, left, next_node);
+            next_node = select(only_right, right, next_node);
+            current_node = select(lane_active, next_node, current_node);
+        },
+        "nearest_edges_topk_point_bvh");
+
+    const IntDetached top_base = query_index * k;
+    auto distance_slots = topk_distance_slots(topk);
+    auto primitive_slots = topk_primitive_slots(topk);
+    for (int rank = 0; rank < k; ++rank) {
+        const IntDetached output_slot =
+            top_base + full<IntDetached>(rank, query_count);
+        const IntDetached primitive = *primitive_slots[static_cast<size_t>(rank)];
+        const FloatDetached distance_sq = *distance_slots[static_cast<size_t>(rank)];
+        const MaskDetached valid = primitive >= 0;
+        scatter(result.global_edge_ids, primitive, output_slot, valid);
+        scatter(result.distance_sq, distance_sq, output_slot, valid);
+        scatter(result.is_valid, valid, output_slot, valid);
+    }
+    return result;
+}
+
 ClosestEdgeCandidate SceneEdge::nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
-                                                                     const Vector3fDetached &segment,
-                                                                     const MaskDetached &active) const {
+                                                                      const Vector3fDetached &segment,
+                                                                      const MaskDetached &active) const {
     const int query_count = static_cast<int>(slices(origin));
 
     ClosestEdgeCandidate result;
@@ -2639,7 +2865,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_infinite_ray_detached(const Vector3
 
 template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
-                                                 MaskT<Detached> &active) const {
+                                                  MaskT<Detached> &active) const {
     require(ready_, "SceneEdge::nearest_edge(point): BVH is not built.");
     drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
 
@@ -2667,8 +2893,46 @@ ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
 }
 
 template <bool Detached>
+ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk(const Vector3fT<Detached> &point,
+                                                       int k,
+                                                       MaskT<Detached> &active) const {
+    require(ready_, "SceneEdge::nearest_edges_topk(point): BVH is not built.");
+    require(k > 0, "SceneEdge::nearest_edges_topk(point): k must be positive.");
+    require(k <= 16, "SceneEdge::nearest_edges_topk(point): k must be <= 16.");
+    drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
+
+    const int query_count = static_cast<int>(slices(point));
+    ClosestEdgeTopKCandidate result;
+    result.query_count = query_count;
+    result.k = k;
+    result.is_valid = full<MaskDetached>(false, query_count * k);
+    result.global_edge_ids = full<IntDetached>(-1, query_count * k);
+    result.distance_sq = full<FloatDetached>(Infinity, query_count * k);
+    if (primitive_count_ == 0) {
+        if constexpr (!Detached) {
+            active &= false;
+        } else {
+            active = false;
+        }
+        return result;
+    }
+
+    const MaskDetached active_detached = detach<false>(active);
+    result = nearest_edges_topk_point_detached(detach<false>(point), k, active_detached);
+    const IntDetached first_slot = arange<IntDetached>(query_count) * k;
+    const MaskDetached has_any =
+        gather<MaskDetached>(result.is_valid, first_slot, active_detached);
+    if constexpr (!Detached) {
+        active &= Mask(has_any);
+    } else {
+        active &= has_any;
+    }
+    return result;
+}
+
+template <bool Detached>
 ClosestEdgeCandidate SceneEdge::nearest_edge(const RayT<Detached> &ray,
-                                                 MaskT<Detached> &active) const {
+                                                  MaskT<Detached> &active) const {
     require(ready_, "SceneEdge::nearest_edge(ray): BVH is not built.");
     drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
 
@@ -2719,13 +2983,21 @@ ClosestEdgeCandidate SceneEdge::nearest_edge(const RayT<Detached> &ray,
 }
 
 template ClosestEdgeCandidate SceneEdge::nearest_edge<true>(const Vector3fDetached &point,
-                                                                MaskDetached &active) const;
+                                                                 MaskDetached &active) const;
 template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const Vector3f &point,
-                                                                 Mask &active) const;
+                                                                  Mask &active) const;
+template ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk<true>(
+    const Vector3fDetached &point,
+    int k,
+    MaskDetached &active) const;
+template ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk<false>(
+    const Vector3f &point,
+    int k,
+    Mask &active) const;
 template ClosestEdgeCandidate SceneEdge::nearest_edge<true>(const RayDetached &ray,
-                                                                MaskDetached &active) const;
+                                                                 MaskDetached &active) const;
 template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const Ray &ray,
-                                                                 Mask &active) const;
+                                                                  Mask &active) const;
 
 } // namespace rayd
 

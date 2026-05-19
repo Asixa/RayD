@@ -17,6 +17,14 @@ struct ClosestEdgeCandidate {
     FloatDetached distance_sq;
 };
 
+struct ClosestEdgeTopKCandidate {
+    int query_count = 0;
+    int k = 0;
+    MaskDetached is_valid;
+    IntDetached global_edge_ids;
+    FloatDetached distance_sq;
+};
+
 struct SceneEdgeBVHStats {
     int primitive_count = 0;
     int node_count = 0;
@@ -59,6 +67,11 @@ public:
                                       MaskT<Detached> &active) const;
 
     template <bool Detached>
+    ClosestEdgeTopKCandidate nearest_edges_topk(const Vector3fT<Detached> &point,
+                                                int k,
+                                                MaskT<Detached> &active) const;
+
+    template <bool Detached>
     ClosestEdgeCandidate nearest_edge(const RayT<Detached> &ray,
                                       MaskT<Detached> &active) const;
 
@@ -72,6 +85,9 @@ private:
     void refit_internal_nodes_dirty(const std::vector<IntDetached> &dirty_leaf_chunks);
     ClosestEdgeCandidate nearest_edge_point_detached(const Vector3fDetached &point,
                                                      const MaskDetached &active) const;
+    ClosestEdgeTopKCandidate nearest_edges_topk_point_detached(const Vector3fDetached &point,
+                                                               int k,
+                                                               const MaskDetached &active) const;
     ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
                                                           const Vector3fDetached &segment,
                                                           const MaskDetached &active) const;
