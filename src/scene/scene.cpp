@@ -79,8 +79,12 @@ EdgeBVHBackend parse_edge_backend(const std::string &value) {
     if (normalized == "optix" || normalized == "custom_aabb") {
         return EdgeBVHBackend::Optix;
     }
+    if (normalized == "hybrid" || normalized == "mixed" ||
+        normalized == "optix_ray" || normalized == "ray_optix") {
+        return EdgeBVHBackend::Hybrid;
+    }
     throw std::runtime_error(
-        "Invalid edge_bvh_backend. Expected one of: 'drjit', 'optix'.");
+        "Invalid edge_bvh_backend. Expected one of: 'drjit', 'optix', 'hybrid'.");
 }
 
 const char *edge_backend_name(EdgeBVHBackend backend) {
@@ -89,8 +93,33 @@ const char *edge_backend_name(EdgeBVHBackend backend) {
         return "drjit";
     case EdgeBVHBackend::Optix:
         return "optix";
+    case EdgeBVHBackend::Hybrid:
+        return "hybrid";
     }
     return "drjit";
+}
+
+bool edge_backend_builds_drjit(EdgeBVHBackend backend) {
+    return backend == EdgeBVHBackend::DrJit ||
+           backend == EdgeBVHBackend::Hybrid;
+}
+
+bool edge_backend_builds_optix(EdgeBVHBackend backend) {
+    return backend == EdgeBVHBackend::Optix ||
+           backend == EdgeBVHBackend::Hybrid;
+}
+
+bool edge_backend_uses_optix_point(EdgeBVHBackend backend) {
+    return backend == EdgeBVHBackend::Optix;
+}
+
+bool edge_backend_uses_optix_ray(EdgeBVHBackend backend) {
+    return backend == EdgeBVHBackend::Optix ||
+           backend == EdgeBVHBackend::Hybrid;
+}
+
+bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {
+    return backend == EdgeBVHBackend::Optix;
 }
 
 bool should_split_optix_scene(OptixSplitMode mode,
@@ -767,9 +796,10 @@ void Scene::ensure_edge_bvh_ready() const {
 
     Scene *scene = const_cast<Scene *>(this);
     if (mask_dirty_) {
-        if (edge_bvh_backend_ == EdgeBVHBackend::Optix) {
+        if (edge_backend_builds_optix(edge_bvh_backend_)) {
             scene->edge_optix_->set_mask(scene->edge_mask_);
-        } else {
+        }
+        if (edge_backend_builds_drjit(edge_bvh_backend_)) {
             scene->edge_bvh_->set_mask(scene->edge_mask_);
         }
         scene->mask_dirty_ = false;
@@ -780,9 +810,10 @@ void Scene::ensure_edge_bvh_ready() const {
         return;
     }
 
-    if (edge_bvh_backend_ == EdgeBVHBackend::Optix) {
+    if (edge_backend_builds_optix(edge_bvh_backend_)) {
         scene->edge_optix_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
-    } else {
+    }
+    if (edge_backend_builds_drjit(edge_bvh_backend_)) {
         scene->edge_bvh_->refit(scene->edge_info_, scene->pending_edge_bvh_dirty_ranges_);
     }
     scene->pending_edge_bvh_dirty_ranges_.clear();
@@ -1092,9 +1123,10 @@ void Scene::build() {
     mask_dirty_ = false;
     edge_bvh_ = std::make_unique<SceneEdge>();
     edge_optix_ = std::make_unique<SceneEdgeOptix>();
-    if (edge_bvh_backend_ == EdgeBVHBackend::Optix) {
+    if (edge_backend_builds_optix(edge_bvh_backend_)) {
         edge_optix_->build(edge_info_, edge_mask_);
-    } else {
+    }
+    if (edge_backend_builds_drjit(edge_bvh_backend_)) {
         edge_bvh_->build(edge_info_, edge_mask_);
     }
     is_ready_ = true;
@@ -1414,10 +1446,13 @@ bool Scene::is_ready() const {
                optix_dynamic_scene_ != nullptr && optix_scene_->is_ready() &&
                optix_static_scene_->is_ready() && optix_dynamic_scene_->is_ready())
             : (optix_scene_ != nullptr && optix_scene_->is_ready());
-    const bool edge_ready =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
-            ? (edge_optix_ != nullptr && edge_optix_->is_ready())
-            : (edge_bvh_ != nullptr && edge_bvh_->is_ready());
+    bool edge_ready = true;
+    if (edge_backend_builds_optix(edge_bvh_backend_)) {
+        edge_ready &= edge_optix_ != nullptr && edge_optix_->is_ready();
+    }
+    if (edge_backend_builds_drjit(edge_bvh_backend_)) {
+        edge_ready &= edge_bvh_ != nullptr && edge_bvh_->is_ready();
+    }
     return is_ready_ && edge_ready && optix_ready;
 }
 
@@ -2271,8 +2306,9 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
     }
 
     MaskT<Detached> query_mask = active;
+    const bool use_optix_candidate = edge_backend_uses_optix_point(edge_bvh_backend_);
     ClosestEdgeCandidate candidate =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? edge_optix_->template nearest_edge<Detached>(point, query_mask)
             : edge_bvh_->template nearest_edge<Detached>(point, query_mask);
     const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
@@ -2281,7 +2317,7 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
     }
 
     const IntDetached global_edge_id_detached =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? candidate.global_edge_id
             : edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
@@ -2379,8 +2415,9 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
     }
 
     MaskT<Detached> query_mask = active;
+    const bool use_optix_candidate = edge_backend_uses_optix_ray(edge_bvh_backend_);
     ClosestEdgeCandidate candidate =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? edge_optix_->template nearest_edge<Detached>(ray, query_mask)
             : edge_bvh_->template nearest_edge<Detached>(ray, query_mask);
     const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
@@ -2390,7 +2427,7 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
 
     const MaskDetached finite_tmax = drjit::isfinite(t_max_input);
     const IntDetached global_edge_id_detached =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? candidate.global_edge_id
             : edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
     const IntDetached shape_id_detached =
@@ -2570,8 +2607,9 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
     }
 
     MaskT<Detached> query_mask = active;
+    const bool use_optix_candidate = edge_backend_uses_optix_topk(edge_bvh_backend_);
     const ClosestEdgeTopKCandidate candidate =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? edge_optix_->template nearest_edges_topk<Detached>(point, k, query_mask)
             : edge_bvh_->template nearest_edges_topk<Detached>(point, k, query_mask);
     const MaskDetached valid_detached = candidate.is_valid;
@@ -2582,7 +2620,7 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
     const IntDetached output_index = arange<IntDetached>(output_count);
     const IntDetached output_query = output_index / k;
     const IntDetached global_edge_id_detached =
-        edge_bvh_backend_ == EdgeBVHBackend::Optix
+        use_optix_candidate
             ? candidate.global_edge_ids
             : edge_bvh_->map_to_global(candidate.global_edge_ids, valid_detached);
     const IntDetached shape_id_detached =

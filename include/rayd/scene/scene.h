@@ -39,7 +39,8 @@ struct SceneSyncProfile {
 
 enum class EdgeBVHBackend {
     DrJit,
-    Optix
+    Optix,
+    Hybrid
 };
 
 /// Collection of built meshes and the acceleration data required for intersection queries.

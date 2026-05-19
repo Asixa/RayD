@@ -1528,82 +1528,105 @@ class GeometryCoreTests(unittest.TestCase):
 
             drjit_scene, _ = make_scene("drjit")
             optix_scene, _ = make_scene("optix")
+            hybrid_scene, _ = make_scene("hybrid")
             drjit_point = drjit_scene.nearest_edge(query_points)
             optix_point = optix_scene.nearest_edge(query_points)
+            hybrid_point = hybrid_scene.nearest_edge(query_points)
             drjit_ray = drjit_scene.nearest_edge(rays)
             optix_ray = optix_scene.nearest_edge(rays)
+            hybrid_ray = hybrid_scene.nearest_edge(rays)
             topk_query = cuda.Array3f([0.35], [0.2], [0.0])
             drjit_topk = drjit_scene.nearest_edges_topk(topk_query, 3)
             optix_topk = optix_scene.nearest_edges_topk(topk_query, 3)
+            hybrid_topk = hybrid_scene.nearest_edges_topk(topk_query, 3)
 
             mask = cuda.Bool([False, True, False])
             drjit_scene.set_edge_mask(mask)
             optix_scene.set_edge_mask(mask)
+            hybrid_scene.set_edge_mask(mask)
             drjit_scene.sync()
             optix_scene.sync()
+            hybrid_scene.sync()
             masked_query = cuda.Array3f([0.25], [-0.2], [0.1])
             drjit_masked = drjit_scene.nearest_edge(masked_query)
             optix_masked = optix_scene.nearest_edge(masked_query)
+            hybrid_masked = hybrid_scene.nearest_edge(masked_query)
 
             drjit_dynamic, drjit_mesh_id = make_scene("drjit", dynamic=True)
             optix_dynamic, optix_mesh_id = make_scene("optix", dynamic=True)
+            hybrid_dynamic, hybrid_mesh_id = make_scene("hybrid", dynamic=True)
             shifted = cuda.Array3f([2.0, 3.0, 2.0],
                                    [0.0, 0.0, 1.0],
                                    [0.0, 0.0, 0.0])
             drjit_dynamic.update_mesh_vertices(drjit_mesh_id, shifted)
             optix_dynamic.update_mesh_vertices(optix_mesh_id, shifted)
+            hybrid_dynamic.update_mesh_vertices(hybrid_mesh_id, shifted)
             drjit_dynamic.sync()
             optix_dynamic.sync()
+            hybrid_dynamic.sync()
             dynamic_query = cuda.Array3f([2.25], [-0.2], [0.1])
             drjit_updated = drjit_dynamic.nearest_edge(dynamic_query)
             optix_updated = optix_dynamic.nearest_edge(dynamic_query)
+            hybrid_updated = hybrid_dynamic.nearest_edge(dynamic_query)
 
             print(json.dumps({
                 "default_backend": pj.Scene().edge_bvh_backend,
                 "optix_backend": optix_scene.edge_bvh_backend,
+                "hybrid_backend": hybrid_scene.edge_bvh_backend,
                 "point_ids": {
                     "drjit": [int(v) for v in list(drjit_point.global_edge_id)],
                     "optix": [int(v) for v in list(optix_point.global_edge_id)],
+                    "hybrid": [int(v) for v in list(hybrid_point.global_edge_id)],
                 },
                 "point_distances": {
                     "drjit": [float(v) for v in list(drjit_point.distance)],
                     "optix": [float(v) for v in list(optix_point.distance)],
+                    "hybrid": [float(v) for v in list(hybrid_point.distance)],
                 },
                 "ray_ids": {
                     "drjit": [int(v) for v in list(drjit_ray.global_edge_id)],
                     "optix": [int(v) for v in list(optix_ray.global_edge_id)],
+                    "hybrid": [int(v) for v in list(hybrid_ray.global_edge_id)],
                 },
                 "ray_distances": {
                     "drjit": [float(v) for v in list(drjit_ray.distance)],
                     "optix": [float(v) for v in list(optix_ray.distance)],
+                    "hybrid": [float(v) for v in list(hybrid_ray.distance)],
                 },
                 "ray_t": {
                     "drjit": [float(v) for v in list(drjit_ray.ray_t)],
                     "optix": [float(v) for v in list(optix_ray.ray_t)],
+                    "hybrid": [float(v) for v in list(hybrid_ray.ray_t)],
                 },
                 "topk_ids": {
                     "drjit": [int(v) for v in list(drjit_topk.global_edge_ids)],
                     "optix": [int(v) for v in list(optix_topk.global_edge_ids)],
+                    "hybrid": [int(v) for v in list(hybrid_topk.global_edge_ids)],
                 },
                 "topk_distances": {
                     "drjit": [float(v) for v in list(drjit_topk.distances)],
                     "optix": [float(v) for v in list(optix_topk.distances)],
+                    "hybrid": [float(v) for v in list(hybrid_topk.distances)],
                 },
                 "masked_id": {
                     "drjit": int(drjit_masked.global_edge_id[0]),
                     "optix": int(optix_masked.global_edge_id[0]),
+                    "hybrid": int(hybrid_masked.global_edge_id[0]),
                 },
                 "updated_id": {
                     "drjit": int(drjit_updated.global_edge_id[0]),
                     "optix": int(optix_updated.global_edge_id[0]),
+                    "hybrid": int(hybrid_updated.global_edge_id[0]),
                 },
                 "updated_distance": {
                     "drjit": float(drjit_updated.distance[0]),
                     "optix": float(optix_updated.distance[0]),
+                    "hybrid": float(hybrid_updated.distance[0]),
                 },
                 "updated_edge_point_x": {
                     "drjit": float(drjit_updated.edge_point[0][0]),
                     "optix": float(optix_updated.edge_point[0][0]),
+                    "hybrid": float(hybrid_updated.edge_point[0][0]),
                 },
             }))
             """
@@ -1611,22 +1634,38 @@ class GeometryCoreTests(unittest.TestCase):
 
         self.assertEqual(data["default_backend"], "drjit")
         self.assertEqual(data["optix_backend"], "optix")
+        self.assertEqual(data["hybrid_backend"], "hybrid")
         self.assertEqual(data["point_ids"]["optix"], data["point_ids"]["drjit"])
+        self.assertEqual(data["point_ids"]["hybrid"], data["point_ids"]["drjit"])
         self.assertEqual(data["ray_ids"]["optix"], data["ray_ids"]["drjit"])
+        self.assertEqual(data["ray_ids"]["hybrid"], data["ray_ids"]["drjit"])
         for got, expected in zip(data["point_distances"]["optix"], data["point_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["point_distances"]["hybrid"], data["point_distances"]["drjit"]):
             self.assertAlmostEqual(got, expected, places=5)
         for got, expected in zip(data["ray_distances"]["optix"], data["ray_distances"]["drjit"]):
             self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["ray_distances"]["hybrid"], data["ray_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
         for got, expected in zip(data["ray_t"]["optix"], data["ray_t"]["drjit"]):
             self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["ray_t"]["hybrid"], data["ray_t"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
         self.assertEqual(data["topk_ids"]["optix"], data["topk_ids"]["drjit"])
+        self.assertEqual(data["topk_ids"]["hybrid"], data["topk_ids"]["drjit"])
         for got, expected in zip(data["topk_distances"]["optix"], data["topk_distances"]["drjit"]):
             self.assertAlmostEqual(got, expected, places=5)
+        for got, expected in zip(data["topk_distances"]["hybrid"], data["topk_distances"]["drjit"]):
+            self.assertAlmostEqual(got, expected, places=5)
         self.assertEqual(data["masked_id"]["optix"], data["masked_id"]["drjit"])
+        self.assertEqual(data["masked_id"]["hybrid"], data["masked_id"]["drjit"])
         self.assertEqual(data["masked_id"]["optix"], 1)
         self.assertEqual(data["updated_id"]["optix"], data["updated_id"]["drjit"])
+        self.assertEqual(data["updated_id"]["hybrid"], data["updated_id"]["drjit"])
         self.assertAlmostEqual(data["updated_distance"]["optix"], data["updated_distance"]["drjit"], places=5)
+        self.assertAlmostEqual(data["updated_distance"]["hybrid"], data["updated_distance"]["drjit"], places=5)
         self.assertAlmostEqual(data["updated_edge_point_x"]["optix"], 2.25, places=5)
+        self.assertAlmostEqual(data["updated_edge_point_x"]["hybrid"], 2.25, places=5)
 
     def test_scene_nearest_edge_multi_mesh_maps_shape_and_global_ids(self):
         data = run_json_case(

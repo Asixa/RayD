@@ -124,7 +124,12 @@ Construction:
 
 ```python
 scene = rd.Scene()
+scene = rd.Scene(edge_bvh_backend="hybrid")
 ```
+
+`edge_bvh_backend` accepts `"drjit"` (default), `"optix"`, or `"hybrid"`.
+The hybrid backend keeps point and top-K edge queries on the Dr.Jit edge BVH
+and routes ray edge queries through the OptiX custom-AABB GAS.
 
 Methods:
 
@@ -154,6 +159,7 @@ Methods:
 Properties:
 
 - `num_meshes`
+- `edge_bvh_backend`
 - `last_sync_profile`
 
 Notes:

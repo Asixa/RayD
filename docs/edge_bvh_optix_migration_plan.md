@@ -605,10 +605,11 @@ replacement. Selection is by build-time flag:
 
 ```python
 scene = rd.Scene(edge_bvh_backend="optix")   # new path
+scene = rd.Scene(edge_bvh_backend="hybrid")  # Dr.Jit point/top-K, OptiX ray
 scene = rd.Scene(edge_bvh_backend="drjit")   # current path (default initially)
 ```
 
-Both backends share the public Python API; only the C++ implementation
+All backends share the public Python API; only the C++ implementation
 differs. This lets benchmarks and acceptance tests compare them
 side-by-side under identical workloads.
 
