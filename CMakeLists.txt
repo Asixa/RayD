@@ -148,10 +148,6 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene_edge_optix.cpp
     ${RAYD_SOURCE_DIR}/scene/edge_bvh.h
     ${RAYD_SOURCE_DIR}/scene/edge_optix_params.h
-    ${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc.h
-    ${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_build.inc
-    ${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_kernels.inc
-    ${RAYD_SOURCE_DIR}/scene/experimental/scene_edge_ploc.inc
 
     ${RAYD_INCLUDE_DIR}/scene/scene.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
@@ -181,9 +177,6 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_CUDA_BUILD_SCRIPT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_build.inc"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_kernels.inc"
         VERBATIM
     )
 else()
@@ -198,9 +191,6 @@ else()
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_build.inc"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/experimental/edge_bvh_ploc_kernels.inc"
         VERBATIM
     )
 endif()

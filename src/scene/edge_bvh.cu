@@ -1,6 +1,5 @@
 #include "edge_bvh.h"
 #include "edge_bvh_config.h"
-#include "experimental/edge_bvh_ploc.h"
 #include "../native_launch_audit.h"
 
 #include <algorithm>
@@ -137,15 +136,6 @@ struct BoundsUnion {
         return merge_bounds(a, b);
     }
 };
-
-bool experimental_gpu_treelet_prep_enabled() {
-    static const bool value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_EXPERIMENTAL_GPU_TREELET_PREP");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        return normalized == "1" || normalized == "true" || normalized == "on" || normalized == "yes";
-    }();
-    return value;
-}
 
 __host__ __device__ inline uint32_t expand_bits_10(uint32_t value) {
     value &= 0x000003ffu;
@@ -912,8 +902,6 @@ __device__ inline float bbox_surface_area_bounds(const Bounds3 &bounds) {
     return 2.f * (dx * dy + dx * dz + dy * dz);
 }
 
-#include "experimental/edge_bvh_ploc_kernels.inc"
-
 __device__ inline int longest_common_prefix(const uint32_t *morton_codes,
                                             const int *sorted_primitives,
                                             int primitive_count,
@@ -1522,11 +1510,7 @@ void build_edge_bvh_gpu(
             post_build_strategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
             primitive_count >= EdgeBVHTreeletMinPrimitives &&
             internal_count > 0;
-        const bool gpu_flat_treelet_prepare =
-            treelet_enabled &&
-            finalize_mode == EdgeBVHFinalizeMode::Atomic &&
-            treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels &&
-            experimental_gpu_treelet_prep_enabled();
+        const bool gpu_flat_treelet_prepare = false;
 
         CudaBuffer<Bounds3> primitive_bounds(static_cast<size_t>(primitive_count));
         CudaBuffer<Bounds3> reduced_bounds(1);
@@ -2229,8 +2213,6 @@ void build_edge_bvh_gpu(
         throw_runtime_error_local(std::string("build_edge_lbvh_gpu(): ") + e.what());
     }
 }
-
-#include "experimental/edge_bvh_ploc_build.inc"
 
 __global__ void build_raw_parent_links_kernel(int node_count,
                                               const int *raw_left_child,

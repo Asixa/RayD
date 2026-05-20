@@ -35,11 +35,6 @@ enum class EdgeBVHCompactionMode {
     GpuEmit
 };
 
-enum class EdgeBVHBuildAlgorithm {
-    LBVH,
-    PLOC
-};
-
 enum class EdgeBVHNodeLayoutMode {
     ScalarArrays,
     Packed
@@ -55,9 +50,6 @@ constexpr EdgeBVHTreeletScheduleMode EdgeBVHDefaultTreeletScheduleMode =
     EdgeBVHTreeletScheduleMode::FlatLevels;
 constexpr EdgeBVHCompactionMode EdgeBVHDefaultCompactionMode =
     EdgeBVHCompactionMode::HostUploadRaw;
-// Stable default remains LBVH + GPU treelet. PLOC stays available as an experimental override.
-constexpr EdgeBVHBuildAlgorithm EdgeBVHDefaultBuildAlgorithm =
-    EdgeBVHBuildAlgorithm::LBVH;
 constexpr EdgeBVHNodeLayoutMode EdgeBVHDefaultNodeLayoutMode =
     EdgeBVHNodeLayoutMode::ScalarArrays;
 constexpr int EdgeBVHLeafSize = 4;
@@ -176,25 +168,6 @@ inline EdgeBVHCompactionMode active_edge_bvh_compaction_mode() {
         throw std::runtime_error(
             "Invalid RAYD_EDGE_BVH_COMPACTION_MODE. Expected one of: host_upload_raw, "
             "host_upload_exact, gpu_emit.");
-    }();
-    return value;
-}
-
-inline EdgeBVHBuildAlgorithm active_edge_bvh_build_algorithm() {
-    static const EdgeBVHBuildAlgorithm value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_BUILD_ALGORITHM");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        if (normalized.empty()) {
-            return EdgeBVHDefaultBuildAlgorithm;
-        }
-        if (normalized == "lbvh") {
-            return EdgeBVHBuildAlgorithm::LBVH;
-        }
-        if (normalized == "ploc") {
-            return EdgeBVHBuildAlgorithm::PLOC;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_BUILD_ALGORITHM. Expected one of: lbvh, ploc.");
     }();
     return value;
 }

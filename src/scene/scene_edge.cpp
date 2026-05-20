@@ -8,7 +8,6 @@
 
 #include "edge_bvh.h"
 #include "edge_bvh_config.h"
-#include "experimental/edge_bvh_ploc.h"
 
 #include <rayd/scene/scene_edge.h>
 #include <rayd/utils.h>
@@ -1270,8 +1269,6 @@ float optimize_treelets_recursive(int node_index,
     return subtree_costs[static_cast<size_t>(node_index)];
 }
 
-#include "experimental/scene_edge_ploc.inc"
-
 TraversalStack make_empty_stack(int query_count) {
     if (query_count <= 0) {
         return IntDetached();
@@ -1579,27 +1576,18 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
         return;
     }
 
-    const EdgeBVHBuildAlgorithm build_algorithm = active_edge_bvh_build_algorithm();
     const EdgeBVHNodeLayoutMode node_layout_mode = active_edge_bvh_node_layout_mode();
     const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
     const EdgeBVHCompactionMode compaction_mode = active_edge_bvh_compaction_mode();
-    const bool force_gpu_ploc_finalize = build_algorithm == EdgeBVHBuildAlgorithm::PLOC;
     const bool use_gpu_compaction =
-        force_gpu_ploc_finalize || compaction_mode == EdgeBVHCompactionMode::GpuEmit;
+        compaction_mode == EdgeBVHCompactionMode::GpuEmit;
     const bool use_exact_host_compaction =
-        !force_gpu_ploc_finalize &&
         !use_gpu_compaction &&
         compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
-    const bool needs_host_build_topology =
-        build_algorithm == EdgeBVHBuildAlgorithm::LBVH ||
-        post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH;
     require(!(compaction_mode == EdgeBVHCompactionMode::GpuEmit &&
               post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
             "SceneEdge::build(): GPU compaction is incompatible with the HybridTopLevelSAH path. "
             "Choose host_upload_raw or host_upload_exact for a clean benchmark.");
-    require(!(build_algorithm == EdgeBVHBuildAlgorithm::PLOC &&
-              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
-            "SceneEdge::build(): PLOC no longer supports the host HybridTopLevelSAH rebuild.");
     packed_node_layout_enabled_ = node_layout_mode == EdgeBVHNodeLayoutMode::Packed;
 
     edge_p0_ = detach<false>(edge_info.start);
@@ -1638,73 +1626,40 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
 
-    if (build_algorithm == EdgeBVHBuildAlgorithm::LBVH ||
-        build_algorithm == EdgeBVHBuildAlgorithm::PLOC) {
-        if (build_algorithm == EdgeBVHBuildAlgorithm::LBVH) {
-            build_edge_bvh_gpu(
-                primitive_count_,
-                edge_p0_[0].data(),
-                edge_p0_[1].data(),
-                edge_p0_[2].data(),
-                edge_e1_[0].data(),
-                edge_e1_[1].data(),
-                edge_e1_[2].data(),
-                primitive_bbox_min_[0].data(),
-                primitive_bbox_min_[1].data(),
-                primitive_bbox_min_[2].data(),
-                primitive_bbox_max_[0].data(),
-                primitive_bbox_max_[1].data(),
-                primitive_bbox_max_[2].data(),
-                node_bbox_min_[0].data(),
-                node_bbox_min_[1].data(),
-                node_bbox_min_[2].data(),
-                node_bbox_max_[0].data(),
-                node_bbox_max_[1].data(),
-                node_bbox_max_[2].data(),
-                left_child_.data(),
-                right_child_.data(),
-                build_leaf_primitive.data(),
-                build_is_leaf.data(),
-                primitive_leaf_node_.data());
-        } else {
-            build_edge_ploc_bvh_gpu(
-                primitive_count_,
-                edge_p0_[0].data(),
-                edge_p0_[1].data(),
-                edge_p0_[2].data(),
-                edge_e1_[0].data(),
-                edge_e1_[1].data(),
-                edge_e1_[2].data(),
-                primitive_bbox_min_[0].data(),
-                primitive_bbox_min_[1].data(),
-                primitive_bbox_min_[2].data(),
-                primitive_bbox_max_[0].data(),
-                primitive_bbox_max_[1].data(),
-                primitive_bbox_max_[2].data(),
-                node_bbox_min_[0].data(),
-                node_bbox_min_[1].data(),
-                node_bbox_min_[2].data(),
-                node_bbox_max_[0].data(),
-                node_bbox_max_[1].data(),
-                node_bbox_max_[2].data(),
-                left_child_.data(),
-                right_child_.data(),
-                build_leaf_primitive.data(),
-                build_is_leaf.data(),
-                primitive_leaf_node_.data());
-        }
+    build_edge_bvh_gpu(
+        primitive_count_,
+        edge_p0_[0].data(),
+        edge_p0_[1].data(),
+        edge_p0_[2].data(),
+        edge_e1_[0].data(),
+        edge_e1_[1].data(),
+        edge_e1_[2].data(),
+        primitive_bbox_min_[0].data(),
+        primitive_bbox_min_[1].data(),
+        primitive_bbox_min_[2].data(),
+        primitive_bbox_max_[0].data(),
+        primitive_bbox_max_[1].data(),
+        primitive_bbox_max_[2].data(),
+        node_bbox_min_[0].data(),
+        node_bbox_min_[1].data(),
+        node_bbox_min_[2].data(),
+        node_bbox_max_[0].data(),
+        node_bbox_max_[1].data(),
+        node_bbox_max_[2].data(),
+        left_child_.data(),
+        right_child_.data(),
+        build_leaf_primitive.data(),
+        build_is_leaf.data(),
+        primitive_leaf_node_.data());
 
-        if (needs_host_build_topology) {
-            left_child = copy_ints_to_host(left_child_);
-            right_child = copy_ints_to_host(right_child_);
-            is_leaf = copy_ints_to_host(build_is_leaf);
-            leaf_primitive = copy_ints_to_host(build_leaf_primitive);
-            optimized_left_child = left_child;
-            optimized_right_child = right_child;
-            optimized_is_leaf = is_leaf;
-            optimized_leaf_primitive = leaf_primitive;
-        }
-    }
+    left_child = copy_ints_to_host(left_child_);
+    right_child = copy_ints_to_host(right_child_);
+    is_leaf = copy_ints_to_host(build_is_leaf);
+    leaf_primitive = copy_ints_to_host(build_leaf_primitive);
+    optimized_left_child = left_child;
+    optimized_right_child = right_child;
+    optimized_is_leaf = is_leaf;
+    optimized_leaf_primitive = leaf_primitive;
     const bool needs_host_primitive_bbox = use_exact_host_compaction;
     const bool needs_host_bbox =
         post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH ||
@@ -1789,32 +1744,7 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfo &edge_info) {
     std::vector<int> final_right_child;
     std::vector<int> final_is_leaf;
 
-    if (force_gpu_ploc_finalize) {
-        node_count_ = build_node_count;
-        left_child_ = full<IntDetached>(-1, node_count_);
-        right_child_ = full<IntDetached>(0, node_count_);
-        leaf_primitives_ = full<IntDetached>(-1, primitive_count_);
-        primitive_leaf_node_ = full<IntDetached>(-1, primitive_count_);
-
-        collapse_edge_bvh_gpu(primitive_count_,
-                              build_node_count,
-                              raw_left_child.data(),
-                              raw_right_child.data(),
-                              build_leaf_primitive.data(),
-                              left_child_.data(),
-                              right_child_.data(),
-                              leaf_primitives_.data(),
-                              primitive_leaf_node_.data());
-
-        final_left_child = copy_ints_to_host(left_child_);
-        final_right_child = copy_ints_to_host(right_child_);
-        final_is_leaf.assign(static_cast<size_t>(node_count_), 0);
-        for (int node_index = 0; node_index < node_count_; ++node_index) {
-            final_is_leaf[static_cast<size_t>(node_index)] =
-                final_left_child[static_cast<size_t>(node_index)] < 0 &&
-                final_right_child[static_cast<size_t>(node_index)] > 0 ? 1 : 0;
-        }
-    } else if (use_gpu_compaction) {
+    if (use_gpu_compaction) {
         std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
         compute_subtree_leaf_count(
             0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);

@@ -64,7 +64,6 @@ MODE_ENV_VARS = {
     "finalize_mode": "RAYD_EDGE_BVH_FINALIZE_MODE",
     "treelet_schedule_mode": "RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE",
     "compaction_mode": "RAYD_EDGE_BVH_COMPACTION_MODE",
-    "build_algorithm": "RAYD_EDGE_BVH_BUILD_ALGORITHM",
     "node_layout_mode": "RAYD_EDGE_BVH_NODE_LAYOUT_MODE",
 }
 
@@ -74,7 +73,6 @@ DEFAULT_EDGE_BVH_MODES = {
     "finalize_mode": "atomic",
     "treelet_schedule_mode": "flat_levels",
     "compaction_mode": "host_upload_raw",
-    "build_algorithm": "lbvh",
     "node_layout_mode": "scalar_arrays",
 }
 
@@ -497,11 +495,6 @@ def main() -> int:
         "--compaction-mode",
         choices=("host_upload_raw", "host_upload_exact", "gpu_emit"),
         help="Explicit Edge BVH compaction mode for this stage run.",
-    )
-    parser.add_argument(
-        "--build-algorithm",
-        choices=("lbvh", "ploc"),
-        help="Explicit Edge BVH build algorithm for this stage run.",
     )
     parser.add_argument(
         "--node-layout-mode",
