@@ -98,7 +98,8 @@ public:
         const PrimitiveMaterialPayloadT<Detached> &material,
         int max_bounces,
         const ReflectionAccumulationOptions &options,
-        MaskT<Detached> active = true) const;
+        MaskT<Detached> active,
+        const Vector3fT<Detached> &tx_polarization) const;
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
         const RayT<Detached> &ray,

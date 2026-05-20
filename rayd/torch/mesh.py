@@ -9,7 +9,6 @@ from ._util import (
     _empty_vec3,
     _normalize_matrix_tensor,
     _normalize_vector_tensor,
-    _torch_or_default,
 )
 from ._convert import _scalar_array_to_tensor, _to_torch_struct, _vec3_to_tensor
 from .types import SecondaryEdgeInfo
@@ -31,7 +30,6 @@ class Mesh:
         f_uv: Any = None,
         verbose: bool = False,
     ):
-        self._built = False
         if v is None and f is None:
             self._state = _MeshState(verbose=bool(verbose))
             return
@@ -48,9 +46,6 @@ class Mesh:
             verbose=bool(verbose),
         )
 
-    def _invalidate(self) -> None:
-        self._built = False
-
     def _native_detached(self) -> Any:
         mesh = _build_native_mesh(self._state, preserve_gradients=False)
         mesh.build()
@@ -58,7 +53,6 @@ class Mesh:
 
     def build(self) -> None:
         self._native_detached()
-        self._built = True
 
     def set_transform(self, mat: Any, set_left: bool = True) -> None:
         if set_left:
@@ -95,7 +89,6 @@ class Mesh:
     @to_world.setter
     def to_world(self, value: Any) -> None:
         self._state.to_world = _normalize_matrix_tensor(value, "to_world")
-        self._invalidate()
 
     @property
     def to_world_left(self) -> _torch.Tensor:
@@ -104,7 +97,6 @@ class Mesh:
     @to_world_left.setter
     def to_world_left(self, value: Any) -> None:
         self._state.to_world_left = _normalize_matrix_tensor(value, "to_world_left")
-        self._invalidate()
 
     @property
     def to_world_right(self) -> _torch.Tensor:
@@ -113,16 +105,15 @@ class Mesh:
     @to_world_right.setter
     def to_world_right(self, value: Any) -> None:
         self._state.to_world_right = _normalize_matrix_tensor(value, "to_world_right")
-        self._invalidate()
 
     @property
     def vertex_positions(self) -> _torch.Tensor:
-        return _torch_or_default(self._state.vertex_positions, _empty_vec3(_mesh_device(self._state)))
+        value = self._state.vertex_positions
+        return _empty_vec3(_mesh_device(self._state)) if value is None else value
 
     @vertex_positions.setter
     def vertex_positions(self, value: Any) -> None:
         self._state.vertex_positions = _normalize_vector_tensor(value, "vertex_positions", 3, _torch.float32)
-        self._invalidate()
 
     @property
     def vertex_positions_world(self) -> _torch.Tensor:
@@ -134,30 +125,30 @@ class Mesh:
 
     @property
     def vertex_uv(self) -> _torch.Tensor:
-        return _torch_or_default(self._state.vertex_uv, _empty_vec2(_mesh_device(self._state)))
+        value = self._state.vertex_uv
+        return _empty_vec2(_mesh_device(self._state)) if value is None else value
 
     @vertex_uv.setter
     def vertex_uv(self, value: Any) -> None:
         self._state.vertex_uv = _normalize_vector_tensor(value, "vertex_uv", 2, _torch.float32)
-        self._invalidate()
 
     @property
     def face_indices(self) -> _torch.Tensor:
-        return _torch_or_default(self._state.face_indices, _empty_idx3(_mesh_device(self._state)))
+        value = self._state.face_indices
+        return _empty_idx3(_mesh_device(self._state)) if value is None else value
 
     @face_indices.setter
     def face_indices(self, value: Any) -> None:
         self._state.face_indices = _normalize_vector_tensor(value, "face_indices", 3, _torch.int32)
-        self._invalidate()
 
     @property
     def face_uv_indices(self) -> _torch.Tensor:
-        return _torch_or_default(self._state.face_uv_indices, _empty_idx3(_mesh_device(self._state)))
+        value = self._state.face_uv_indices
+        return _empty_idx3(_mesh_device(self._state)) if value is None else value
 
     @face_uv_indices.setter
     def face_uv_indices(self, value: Any) -> None:
         self._state.face_uv_indices = _normalize_vector_tensor(value, "face_uv_indices", 3, _torch.int32)
-        self._invalidate()
 
     @property
     def use_face_normals(self) -> bool:
@@ -166,7 +157,6 @@ class Mesh:
     @use_face_normals.setter
     def use_face_normals(self, value: bool) -> None:
         self._state.use_face_normals = bool(value)
-        self._invalidate()
 
     @property
     def edges_enabled(self) -> bool:
@@ -175,7 +165,6 @@ class Mesh:
     @edges_enabled.setter
     def edges_enabled(self, value: bool) -> None:
         self._state.edges_enabled = bool(value)
-        self._invalidate()
 
     def __repr__(self) -> str:
         return (

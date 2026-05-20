@@ -454,6 +454,9 @@ NB_MODULE(rayd, m) {
             .def_ro("max_bounces", &ReflectionAccumulationResultDetached::max_bounces)
             .def_ro("grid_cell_count", &ReflectionAccumulationResultDetached::grid_cell_count)
             .def_ro("reflection_power", &ReflectionAccumulationResultDetached::reflection_power)
+            .def_ro("reflection_field_x", &ReflectionAccumulationResultDetached::reflection_field_x)
+            .def_ro("reflection_field_y", &ReflectionAccumulationResultDetached::reflection_field_y)
+            .def_ro("reflection_field_z", &ReflectionAccumulationResultDetached::reflection_field_z)
             .def_ro("reflection_count", &ReflectionAccumulationResultDetached::reflection_count)
             .def_ro("wedge_events", &ReflectionAccumulationResultDetached::wedge_events);
 
@@ -462,6 +465,9 @@ NB_MODULE(rayd, m) {
             .def_ro("max_bounces", &ReflectionAccumulationResult::max_bounces)
             .def_ro("grid_cell_count", &ReflectionAccumulationResult::grid_cell_count)
             .def_ro("reflection_power", &ReflectionAccumulationResult::reflection_power)
+            .def_ro("reflection_field_x", &ReflectionAccumulationResult::reflection_field_x)
+            .def_ro("reflection_field_y", &ReflectionAccumulationResult::reflection_field_y)
+            .def_ro("reflection_field_z", &ReflectionAccumulationResult::reflection_field_z)
             .def_ro("reflection_count", &ReflectionAccumulationResult::reflection_count)
             .def_ro("wedge_events", &ReflectionAccumulationResult::wedge_events);
 
@@ -992,41 +998,49 @@ NB_MODULE(rayd, m) {
                  [](const Scene &scene,
                     nb::handle ray_obj,
                     nb::handle tx_position_obj,
-                    const ReflectionAccumulationGrid &grid,
-                    nb::handle material_obj,
-                    int max_bounces,
-                    const ReflectionAccumulationOptions &options,
-                    nb::handle active_obj) -> nb::object {
-                     if (nb::isinstance<RayDetached>(ray_obj)) {
-                         const RayDetached ray = nb::cast<RayDetached>(ray_obj);
-                         const Vector3fDetached tx_position =
-                             nb::cast<Vector3fDetached>(tx_position_obj);
-                         const PrimitiveMaterialPayloadDetached material =
-                             nb::cast<PrimitiveMaterialPayloadDetached>(material_obj);
-                         const rayd::MaskDetached active =
-                             nb::cast<rayd::MaskDetached>(active_obj);
-                         return nb::cast(scene.trace_reflections_accumulating<true>(
-                             ray, tx_position, grid, material, max_bounces, options, active));
-                     }
-                     if (nb::isinstance<Ray>(ray_obj)) {
-                         const Ray ray = nb::cast<Ray>(ray_obj);
-                         const Vector3f tx_position =
-                             nb::cast<Vector3f>(tx_position_obj);
-                         const PrimitiveMaterialPayload material =
-                             nb::cast<PrimitiveMaterialPayload>(material_obj);
-                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
-                         return nb::cast(scene.trace_reflections_accumulating<false>(
-                             ray, tx_position, grid, material, max_bounces, options, active));
-                     }
-                     throw nb::next_overload();
-                 },
+                     const ReflectionAccumulationGrid &grid,
+                     nb::handle material_obj,
+                     int max_bounces,
+                     const ReflectionAccumulationOptions &options,
+                     nb::handle active_obj,
+                     nb::handle tx_polarization_obj) -> nb::object {
+                      if (nb::isinstance<RayDetached>(ray_obj)) {
+                          const RayDetached ray = nb::cast<RayDetached>(ray_obj);
+                          const Vector3fDetached tx_position =
+                              nb::cast<Vector3fDetached>(tx_position_obj);
+                          const Vector3fDetached tx_polarization =
+                              nb::cast<Vector3fDetached>(tx_polarization_obj);
+                          const PrimitiveMaterialPayloadDetached material =
+                              nb::cast<PrimitiveMaterialPayloadDetached>(material_obj);
+                          const rayd::MaskDetached active =
+                              nb::cast<rayd::MaskDetached>(active_obj);
+                          return nb::cast(scene.trace_reflections_accumulating<true>(
+                              ray, tx_position, grid, material, max_bounces, options, active,
+                              tx_polarization));
+                      }
+                      if (nb::isinstance<Ray>(ray_obj)) {
+                          const Ray ray = nb::cast<Ray>(ray_obj);
+                          const Vector3f tx_position =
+                              nb::cast<Vector3f>(tx_position_obj);
+                          const Vector3f tx_polarization =
+                              nb::cast<Vector3f>(tx_polarization_obj);
+                          const PrimitiveMaterialPayload material =
+                              nb::cast<PrimitiveMaterialPayload>(material_obj);
+                          const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                          return nb::cast(scene.trace_reflections_accumulating<false>(
+                              ray, tx_position, grid, material, max_bounces, options, active,
+                              tx_polarization));
+                      }
+                      throw nb::next_overload();
+                  },
                  nb::arg("ray"),
                  nb::arg("tx_position"),
                  "grid"_a,
-                 "material"_a,
-                 "max_bounces"_a,
-                 "options"_a = ReflectionAccumulationOptions(),
-                 "active"_a = true)
+                  "material"_a,
+                  "max_bounces"_a,
+                  "options"_a = ReflectionAccumulationOptions(),
+                  "active"_a = true,
+                  "tx_polarization"_a = Vector3fDetached(1.f, 0.f, 0.f))
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

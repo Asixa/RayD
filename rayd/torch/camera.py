@@ -24,56 +24,13 @@ from .scene import Scene
 
 
 class Camera:
-    def __init__(self, *args: float, **kwargs: float):
-        # Support both positional (legacy) and keyword-arg styles.
-        # Prefer the classmethods Camera.perspective() / Camera.from_intrinsics().
-        if kwargs and not args:
-            # Pure keyword construction
-            if "fx" in kwargs:
-                self._state = _CameraState(
-                    mode="intrinsics",
-                    fx=float(kwargs["fx"]),
-                    fy=float(kwargs["fy"]),
-                    cx=float(kwargs["cx"]),
-                    cy=float(kwargs["cy"]),
-                    near_clip=float(kwargs.get("near_clip", 1e-4)),
-                    far_clip=float(kwargs.get("far_clip", 1e4)),
-                )
-            else:
-                self._state = _CameraState(
-                    mode="fov",
-                    fov_x=float(kwargs.get("fov_x", 45.0)),
-                    near_clip=float(kwargs.get("near_clip", 1e-4)),
-                    far_clip=float(kwargs.get("far_clip", 1e4)),
-                )
-        elif len(args) in (0, 3):
-            fov_x = 45.0 if len(args) == 0 else float(args[0])
-            near_clip = 1e-4 if len(args) == 0 else float(args[1])
-            far_clip = 1e4 if len(args) == 0 else float(args[2])
-            self._state = _CameraState(mode="fov", fov_x=fov_x, near_clip=near_clip, far_clip=far_clip)
-        elif len(args) in (4, 6):
-            fx = float(args[0])
-            fy = float(args[1])
-            cx = float(args[2])
-            cy = float(args[3])
-            near_clip = 1e-4 if len(args) == 4 else float(args[4])
-            far_clip = 1e4 if len(args) == 4 else float(args[5])
-            self._state = _CameraState(
-                mode="intrinsics",
-                fx=fx,
-                fy=fy,
-                cx=cx,
-                cy=cy,
-                near_clip=near_clip,
-                far_clip=far_clip,
-            )
-        else:
-            raise TypeError(
-                "Camera() expects keyword args, (fov_x, near_clip, far_clip), "
-                "or (fx, fy, cx, cy, near_clip, far_clip). "
-                "Prefer Camera.perspective() or Camera.from_intrinsics()."
-            )
-
+    def __init__(self, fov_x: float = 45.0, near_clip: float = 1e-4, far_clip: float = 1e4):
+        self._state = _CameraState(
+            mode="fov",
+            fov_x=float(fov_x),
+            near_clip=float(near_clip),
+            far_clip=float(far_clip),
+        )
         self._built = False
         self._version = 0
         self._prepared = False
@@ -82,13 +39,23 @@ class Camera:
         self._prepared_camera_version: int | None = None
 
     @classmethod
-    def perspective(cls, fov_x: float = 45.0, near_clip: float = 1e-4, far_clip: float = 1e4) -> "Camera":
-        return cls(fov_x=fov_x, near_clip=near_clip, far_clip=far_clip)
-
-    @classmethod
-    def from_intrinsics(cls, fx: float, fy: float, cx: float, cy: float,
-                        near_clip: float = 1e-4, far_clip: float = 1e4) -> "Camera":
-        return cls(fx=fx, fy=fy, cx=cx, cy=cy, near_clip=near_clip, far_clip=far_clip)
+    def from_intrinsics(
+        cls, fx: float, fy: float, cx: float, cy: float,
+        near_clip: float = 1e-4, far_clip: float = 1e4,
+    ) -> "Camera":
+        cam = cls.__new__(cls)
+        cam._state = _CameraState(
+            mode="intrinsics",
+            fx=float(fx), fy=float(fy), cx=float(cx), cy=float(cy),
+            near_clip=float(near_clip), far_clip=float(far_clip),
+        )
+        cam._built = False
+        cam._version = 0
+        cam._prepared = False
+        cam._prepared_scene_ref = None
+        cam._prepared_scene_version = None
+        cam._prepared_camera_version = None
+        return cam
 
     def _invalidate(self) -> None:
         self._built = False
@@ -123,19 +90,9 @@ class Camera:
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = scene._query_cache_inputs()
+        mesh_states, key, edge_mask = scene._query_cache_inputs()
         return _camera_render_impl(
-            self._state,
-            scene._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            float(background),
+            self._state, scene._query_cache_id, key, mesh_states, edge_mask, float(background),
         )
 
     def render_grad(self, scene: Scene, spp: int = 4, background: float = 0.0) -> _torch.Tensor:
@@ -143,20 +100,9 @@ class Camera:
         if not isinstance(scene, Scene):
             raise TypeError("Camera.render_grad() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = scene._query_cache_inputs()
+        mesh_states, key, edge_mask = scene._query_cache_inputs()
         return _camera_render_grad_impl(
-            self._state,
-            scene._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            int(spp),
-            float(background),
+            self._state, scene._query_cache_id, key, mesh_states, edge_mask, int(spp), float(background),
         )
 
     def prepare_edges(self, scene: Scene) -> None:
@@ -164,18 +110,8 @@ class Camera:
         if not isinstance(scene, Scene):
             raise TypeError("Camera.prepare_edges() expects a rayd.torch.Scene.")
         scene._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = scene._query_cache_inputs()
-        native_scene = _prepare_native_scene_cache(
-            scene._query_cache_id,
-            mesh_states,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            edge_mask,
-        )
+        mesh_states, key, edge_mask = scene._query_cache_inputs()
+        native_scene = _prepare_native_scene_cache(scene._query_cache_id, mesh_states, key, edge_mask)
         native_camera = self._native_detached()
         native_camera.prepare_edges(native_scene)
         self._prepared = True
@@ -198,16 +134,11 @@ class Camera:
             or self._prepared_scene_ref.has_pending_updates()
         ):
             raise RuntimeError("Camera.sample_edge(): camera is not prepared for the current scene state.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._prepared_scene_ref._query_cache_inputs()
+        mesh_states, key, edge_mask = self._prepared_scene_ref._query_cache_inputs()
         return _camera_sample_edge_impl(
             self._state,
             self._prepared_scene_ref._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
+            key,
             mesh_states,
             edge_mask,
             _normalize_scalar_tensor(sample1, "sample1", _torch.float32),

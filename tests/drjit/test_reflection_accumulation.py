@@ -92,6 +92,12 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.reflection_power,
+                    result.reflection_field_x.real,
+                    result.reflection_field_x.imag,
+                    result.reflection_field_y.real,
+                    result.reflection_field_y.imag,
+                    result.reflection_field_z.real,
+                    result.reflection_field_z.imag,
                     result.reflection_count,
                     result.wedge_events.count,
                     result.wedge_events.prim_id,
@@ -103,6 +109,12 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "max_bounces": result.max_bounces,
                 "grid_cell_count": result.grid_cell_count,
                 "power": float(result.reflection_power[0]),
+                "field_x_re": float(result.reflection_field_x.real[0]),
+                "field_x_im": float(result.reflection_field_x.imag[0]),
+                "field_y_re": float(result.reflection_field_y.real[0]),
+                "field_y_im": float(result.reflection_field_y.imag[0]),
+                "field_z_re": float(result.reflection_field_z.real[0]),
+                "field_z_im": float(result.reflection_field_z.imag[0]),
                 "reflection_count": int(result.reflection_count[0]),
                 "wedge_capacity": result.wedge_events.capacity,
                 "wedge_count": int(result.wedge_events.count[0]),
@@ -120,6 +132,9 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["max_bounces"], 1)
         self.assertEqual(data["grid_cell_count"], 1)
         self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["field_x_re"] ** 2 + data["field_x_im"] ** 2, 0.0)
+        self.assertLess(data["field_y_re"] ** 2 + data["field_y_im"] ** 2, 1e-8)
+        self.assertLess(data["field_z_re"] ** 2 + data["field_z_im"] ** 2, 1e-8)
         self.assertEqual(data["reflection_count"], 1)
         self.assertEqual(data["wedge_capacity"], 4)
         self.assertEqual(data["wedge_count"], 1)
@@ -161,6 +176,68 @@ class ReflectionAccumulationTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_trace_reflections_accumulating_accepts_tx_polarization(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [-1.0]),
+                                 cuda.Array3f([0.0], [0.0], [1.0]))
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+            tx_pol = cuda.Array3f([0.0], [1.0], [0.0])
+
+            grid = pj.ReflectionAccumulationGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.PrimitiveMaterialPayloadDetached()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.ReflectionAccumulationOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.cell_area = 1.0
+
+            result = scene.trace_reflections_accumulating(
+                ray, tx, grid, material, 1, options, True, tx_pol
+            )
+            dr.eval(result.reflection_field_x.real,
+                    result.reflection_field_x.imag,
+                    result.reflection_field_y.real,
+                    result.reflection_field_y.imag)
+
+            print(json.dumps({
+                "x2": float(result.reflection_field_x.real[0]) ** 2
+                      + float(result.reflection_field_x.imag[0]) ** 2,
+                "y2": float(result.reflection_field_y.real[0]) ** 2
+                      + float(result.reflection_field_y.imag[0]) ** 2,
+            }))
+            """
+        )
+
+        self.assertLess(data["x2"], 1e-8)
+        self.assertGreater(data["y2"], 0.0)
 
 
 if __name__ == "__main__":

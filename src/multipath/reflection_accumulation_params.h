@@ -45,6 +45,9 @@ struct ReflectionAccumulationParams {
     const float *tx_x;
     const float *tx_y;
     const float *tx_z;
+    const float *tx_pol_x;
+    const float *tx_pol_y;
+    const float *tx_pol_z;
 
     int max_bounces;
     float wavelength;
@@ -77,6 +80,12 @@ struct ReflectionAccumulationParams {
     int wedge_capacity;
 
     float *out_reflection_power;
+    float *out_field_x_re;
+    float *out_field_x_im;
+    float *out_field_y_re;
+    float *out_field_y_im;
+    float *out_field_z_re;
+    float *out_field_z_im;
     int *out_reflection_count;
     int *out_wedge_count;
     int *out_wedge_ray_index;

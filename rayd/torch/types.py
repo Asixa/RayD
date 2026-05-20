@@ -1,450 +1,226 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, fields
 from typing import Any
 
-from ._util import _normalize_public_ray_fields, _shape_tuple
+from ._util import _normalize_scalar_tensor, _normalize_vector_tensor, _expand_1d_tensor, _shape_tuple
 
 
-class _StructRepr:
-    DRJIT_STRUCT: dict[str, object] = {}
-
-    def __repr__(self) -> str:
-        parts = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.DRJIT_STRUCT)
-        return f"{type(self).__name__}({parts})"
+def _register_drjit_struct(cls):
+    cls.DRJIT_STRUCT = {f.name: object for f in fields(cls)}
+    return cls
 
 
-class Ray(_StructRepr):
-    DRJIT_STRUCT = {"o": object, "d": object, "tmax": object}
+@_register_drjit_struct
+@dataclass
+class Ray:
+    o: Any = None
+    d: Any = None
+    tmax: Any = None
 
-    def __init__(self, o: Any = None, d: Any = None, tmax: Any = None):
-        self.o, self.d, self.tmax = _normalize_public_ray_fields(o, d, tmax)
+    def __post_init__(self) -> None:
+        import torch
+        if not (isinstance(self.o, torch.Tensor) and isinstance(self.d, torch.Tensor)):
+            return
+        self.o = _normalize_vector_tensor(self.o, "o", 3, torch.float32)
+        self.d = _normalize_vector_tensor(self.d, "d", 3, torch.float32)
+        if self.o.shape[0] != self.d.shape[0]:
+            raise ValueError("o and d must have the same batch size.")
+        if self.tmax is not None:
+            limit = _normalize_scalar_tensor(self.tmax, "tmax", torch.float32)
+            self.tmax = _expand_1d_tensor(limit, self.o.shape[0], "tmax")
 
     def reversed(self) -> "Ray":
         return Ray(self.o, -self.d, self.tmax)
 
 
-class Intersection(_StructRepr):
-    DRJIT_STRUCT = {
-        "t": object,
-        "p": object,
-        "n": object,
-        "geo_n": object,
-        "uv": object,
-        "barycentric": object,
-        "shape_id": object,
-        "prim_id": object,
-        "local_prim_id": object,
-        "global_prim_id": object,
-    }
-
-    def __init__(
-        self,
-        t: Any = None,
-        p: Any = None,
-        n: Any = None,
-        geo_n: Any = None,
-        uv: Any = None,
-        barycentric: Any = None,
-        shape_id: Any = None,
-        prim_id: Any = None,
-        local_prim_id: Any = None,
-        global_prim_id: Any = None,
-    ):
-        self.t = t
-        self.p = p
-        self.n = n
-        self.geo_n = geo_n
-        self.uv = uv
-        self.barycentric = barycentric
-        self.shape_id = shape_id
-        self.prim_id = prim_id
-        self.local_prim_id = local_prim_id
-        self.global_prim_id = global_prim_id
+@_register_drjit_struct
+@dataclass
+class Intersection:
+    t: Any = None
+    p: Any = None
+    n: Any = None
+    geo_n: Any = None
+    uv: Any = None
+    barycentric: Any = None
+    shape_id: Any = None
+    prim_id: Any = None
+    local_prim_id: Any = None
+    global_prim_id: Any = None
 
     def is_valid(self) -> Any:
         return self.prim_id >= 0
 
 
-class ReflectionChain(_StructRepr):
-    DRJIT_STRUCT = {
-        "bounce_count": object,
-        "discovery_count": object,
-        "representative_ray_index": object,
-        "t": object,
-        "hit_points": object,
-        "geo_normals": object,
-        "image_sources": object,
-        "plane_points": object,
-        "plane_normals": object,
-        "shape_ids": object,
-        "prim_ids": object,
-        "local_prim_ids": object,
-        "global_prim_ids": object,
-        "trailing_t": object,
-        "trailing_prim": object,
-        "trailing_dir": object,
-        "trailing_origin": object,
-    }
-
-    def __init__(
-        self,
-        bounce_count: Any = None,
-        discovery_count: Any = None,
-        representative_ray_index: Any = None,
-        t: Any = None,
-        hit_points: Any = None,
-        geo_normals: Any = None,
-        image_sources: Any = None,
-        plane_points: Any = None,
-        plane_normals: Any = None,
-        shape_ids: Any = None,
-        prim_ids: Any = None,
-        local_prim_ids: Any = None,
-        global_prim_ids: Any = None,
-        trailing_t: Any = None,
-        trailing_prim: Any = None,
-        trailing_dir: Any = None,
-        trailing_origin: Any = None,
-        max_bounces: int = 0,
-        ray_count: int = 0,
-    ):
-        self.bounce_count = bounce_count
-        self.discovery_count = discovery_count
-        self.representative_ray_index = representative_ray_index
-        self.t = t
-        self.hit_points = hit_points
-        self.geo_normals = geo_normals
-        self.image_sources = image_sources
-        self.plane_points = plane_points
-        self.plane_normals = plane_normals
-        self.shape_ids = shape_ids
-        self.prim_ids = prim_ids
-        self.local_prim_ids = local_prim_ids
-        self.global_prim_ids = global_prim_ids
-        self.trailing_t = trailing_t
-        self.trailing_prim = trailing_prim
-        self.trailing_dir = trailing_dir
-        self.trailing_origin = trailing_origin
-        self._max_bounces_hint = int(max_bounces)
-        self._ray_count_hint = int(ray_count)
+@_register_drjit_struct
+@dataclass
+class ReflectionChain:
+    bounce_count: Any = None
+    discovery_count: Any = None
+    representative_ray_index: Any = None
+    t: Any = None
+    hit_points: Any = None
+    geo_normals: Any = None
+    image_sources: Any = None
+    plane_points: Any = None
+    plane_normals: Any = None
+    shape_ids: Any = None
+    prim_ids: Any = None
+    local_prim_ids: Any = None
+    global_prim_ids: Any = None
+    trailing_t: Any = None
+    trailing_prim: Any = None
+    trailing_dir: Any = None
+    trailing_origin: Any = None
 
     @property
     def max_bounces(self) -> int:
-        t_shape = _shape_tuple(self.t)
-        if len(t_shape) >= 2:
-            return int(t_shape[1])
-        return int(self._max_bounces_hint)
-
-    @max_bounces.setter
-    def max_bounces(self, value: int) -> None:
-        self._max_bounces_hint = int(value)
+        shape = _shape_tuple(self.t)
+        return int(shape[1]) if len(shape) >= 2 else 0
 
     @property
     def ray_count(self) -> int:
-        bounce_shape = _shape_tuple(self.bounce_count)
-        if len(bounce_shape) >= 1:
-            return int(bounce_shape[0])
-        return int(self._ray_count_hint)
-
-    @ray_count.setter
-    def ray_count(self, value: int) -> None:
-        self._ray_count_hint = int(value)
+        shape = _shape_tuple(self.bounce_count)
+        return int(shape[0]) if len(shape) >= 1 else 0
 
     def is_valid(self) -> Any:
         return self.prim_ids >= 0
 
 
-class NearestPointEdge(_StructRepr):
-    DRJIT_STRUCT = {
-        "distance": object,
-        "point": object,
-        "edge_t": object,
-        "edge_point": object,
-        "shape_id": object,
-        "edge_id": object,
-        "global_edge_id": object,
-        "is_boundary": object,
-    }
-
-    def __init__(
-        self,
-        distance: Any = None,
-        point: Any = None,
-        edge_t: Any = None,
-        edge_point: Any = None,
-        shape_id: Any = None,
-        edge_id: Any = None,
-        global_edge_id: Any = None,
-        is_boundary: Any = None,
-    ):
-        self.distance = distance
-        self.point = point
-        self.edge_t = edge_t
-        self.edge_point = edge_point
-        self.shape_id = shape_id
-        self.edge_id = edge_id
-        self.global_edge_id = global_edge_id
-        self.is_boundary = is_boundary
+@_register_drjit_struct
+@dataclass
+class NearestPointEdge:
+    distance: Any = None
+    point: Any = None
+    edge_t: Any = None
+    edge_point: Any = None
+    shape_id: Any = None
+    edge_id: Any = None
+    global_edge_id: Any = None
+    is_boundary: Any = None
 
     def is_valid(self) -> Any:
         return self.edge_id >= 0
 
 
-class NearestRayEdge(_StructRepr):
-    DRJIT_STRUCT = {
-        "distance": object,
-        "ray_t": object,
-        "point": object,
-        "edge_t": object,
-        "edge_point": object,
-        "shape_id": object,
-        "edge_id": object,
-        "global_edge_id": object,
-        "is_boundary": object,
-    }
-
-    def __init__(
-        self,
-        distance: Any = None,
-        ray_t: Any = None,
-        point: Any = None,
-        edge_t: Any = None,
-        edge_point: Any = None,
-        shape_id: Any = None,
-        edge_id: Any = None,
-        global_edge_id: Any = None,
-        is_boundary: Any = None,
-    ):
-        self.distance = distance
-        self.ray_t = ray_t
-        self.point = point
-        self.edge_t = edge_t
-        self.edge_point = edge_point
-        self.shape_id = shape_id
-        self.edge_id = edge_id
-        self.global_edge_id = global_edge_id
-        self.is_boundary = is_boundary
+@_register_drjit_struct
+@dataclass
+class NearestRayEdge:
+    distance: Any = None
+    ray_t: Any = None
+    point: Any = None
+    edge_t: Any = None
+    edge_point: Any = None
+    shape_id: Any = None
+    edge_id: Any = None
+    global_edge_id: Any = None
+    is_boundary: Any = None
 
     def is_valid(self) -> Any:
         return self.edge_id >= 0
 
 
-class PrimaryEdgeSample(_StructRepr):
-    DRJIT_STRUCT = {
-        "x_dot_n": object,
-        "idx": object,
-        "ray_n": object,
-        "ray_p": object,
-        "pdf": object,
-    }
-
-    def __init__(
-        self,
-        x_dot_n: Any = None,
-        idx: Any = None,
-        ray_n: Any = None,
-        ray_p: Any = None,
-        pdf: Any = None,
-    ):
-        self.x_dot_n = x_dot_n
-        self.idx = idx
-        self.ray_n = ray_n
-        self.ray_p = ray_p
-        self.pdf = pdf
+@_register_drjit_struct
+@dataclass
+class PrimaryEdgeSample:
+    x_dot_n: Any = None
+    idx: Any = None
+    ray_n: Any = None
+    ray_p: Any = None
+    pdf: Any = None
 
 
-class SecondaryEdgeInfo(_StructRepr):
-    DRJIT_STRUCT = {
-        "start": object,
-        "edge": object,
-        "normal0": object,
-        "normal1": object,
-        "opposite": object,
-        "is_boundary": object,
-    }
-
-    def __init__(
-        self,
-        start: Any = None,
-        edge: Any = None,
-        normal0: Any = None,
-        normal1: Any = None,
-        opposite: Any = None,
-        is_boundary: Any = None,
-    ):
-        self.start = start
-        self.edge = edge
-        self.normal0 = normal0
-        self.normal1 = normal1
-        self.opposite = opposite
-        self.is_boundary = is_boundary
+@_register_drjit_struct
+@dataclass
+class SecondaryEdgeInfo:
+    start: Any = None
+    edge: Any = None
+    normal0: Any = None
+    normal1: Any = None
+    opposite: Any = None
+    is_boundary: Any = None
 
     def size(self) -> int:
-        if self.is_boundary is None:
-            return 0
-        from ._util import _shape_tuple
-        return int(_shape_tuple(self.is_boundary)[0])
+        shape = _shape_tuple(self.is_boundary)
+        return int(shape[0]) if len(shape) >= 1 else 0
 
 
-class SceneEdgeInfo(_StructRepr):
-    DRJIT_STRUCT = {
-        "start": object,
-        "edge": object,
-        "end": object,
-        "length": object,
-        "normal0": object,
-        "normal1": object,
-        "is_boundary": object,
-        "shape_id": object,
-        "local_edge_id": object,
-        "global_edge_id": object,
-    }
-
-    def __init__(
-        self,
-        start: Any = None,
-        edge: Any = None,
-        end: Any = None,
-        length: Any = None,
-        normal0: Any = None,
-        normal1: Any = None,
-        is_boundary: Any = None,
-        shape_id: Any = None,
-        local_edge_id: Any = None,
-        global_edge_id: Any = None,
-    ):
-        self.start = start
-        self.edge = edge
-        self.end = end
-        self.length = length
-        self.normal0 = normal0
-        self.normal1 = normal1
-        self.is_boundary = is_boundary
-        self.shape_id = shape_id
-        self.local_edge_id = local_edge_id
-        self.global_edge_id = global_edge_id
+@_register_drjit_struct
+@dataclass
+class SceneEdgeInfo:
+    start: Any = None
+    edge: Any = None
+    end: Any = None
+    length: Any = None
+    normal0: Any = None
+    normal1: Any = None
+    is_boundary: Any = None
+    shape_id: Any = None
+    local_edge_id: Any = None
+    global_edge_id: Any = None
 
     def size(self) -> int:
-        if self.global_edge_id is None:
-            return 0
-        from ._util import _shape_tuple
-        return int(_shape_tuple(self.global_edge_id)[0])
+        shape = _shape_tuple(self.global_edge_id)
+        return int(shape[0]) if len(shape) >= 1 else 0
 
 
-class SceneEdgeTopology(_StructRepr):
-    DRJIT_STRUCT = {
-        "v0": object,
-        "v1": object,
-        "v0_global": object,
-        "v1_global": object,
-        "face0_local": object,
-        "face1_local": object,
-        "face0_global": object,
-        "face1_global": object,
-        "opposite_vertex0": object,
-        "opposite_vertex1": object,
-        "opposite_vertex0_global": object,
-        "opposite_vertex1_global": object,
-    }
-
-    def __init__(
-        self,
-        v0: Any = None,
-        v1: Any = None,
-        v0_global: Any = None,
-        v1_global: Any = None,
-        face0_local: Any = None,
-        face1_local: Any = None,
-        face0_global: Any = None,
-        face1_global: Any = None,
-        opposite_vertex0: Any = None,
-        opposite_vertex1: Any = None,
-        opposite_vertex0_global: Any = None,
-        opposite_vertex1_global: Any = None,
-    ):
-        self.v0 = v0
-        self.v1 = v1
-        self.v0_global = v0_global
-        self.v1_global = v1_global
-        self.face0_local = face0_local
-        self.face1_local = face1_local
-        self.face0_global = face0_global
-        self.face1_global = face1_global
-        self.opposite_vertex0 = opposite_vertex0
-        self.opposite_vertex1 = opposite_vertex1
-        self.opposite_vertex0_global = opposite_vertex0_global
-        self.opposite_vertex1_global = opposite_vertex1_global
+@_register_drjit_struct
+@dataclass
+class SceneEdgeTopology:
+    v0: Any = None
+    v1: Any = None
+    v0_global: Any = None
+    v1_global: Any = None
+    face0_local: Any = None
+    face1_local: Any = None
+    face0_global: Any = None
+    face1_global: Any = None
+    opposite_vertex0: Any = None
+    opposite_vertex1: Any = None
+    opposite_vertex0_global: Any = None
+    opposite_vertex1_global: Any = None
 
     def size(self) -> int:
-        if self.v0 is None:
-            return 0
-        from ._util import _shape_tuple
-        return int(_shape_tuple(self.v0)[0])
+        shape = _shape_tuple(self.v0)
+        return int(shape[0]) if len(shape) >= 1 else 0
 
 
-class SceneGlobalGeometry(_StructRepr):
-    DRJIT_STRUCT = {
-        "vertices": object,
-        "faces": object,
-        "face_normal": object,
-        "shape_id": object,
-        "local_prim_id": object,
-        "global_prim_id": object,
-    }
-
-    def __init__(
-        self,
-        vertices: Any = None,
-        faces: Any = None,
-        face_normal: Any = None,
-        shape_id: Any = None,
-        local_prim_id: Any = None,
-        global_prim_id: Any = None,
-    ):
-        self.vertices = vertices
-        self.faces = faces
-        self.face_normal = face_normal
-        self.shape_id = shape_id
-        self.local_prim_id = local_prim_id
-        self.global_prim_id = global_prim_id
+@_register_drjit_struct
+@dataclass
+class SceneGlobalGeometry:
+    vertices: Any = None
+    faces: Any = None
+    face_normal: Any = None
+    shape_id: Any = None
+    local_prim_id: Any = None
+    global_prim_id: Any = None
 
     def vertex_count(self) -> int:
-        if self.vertices is None:
-            return 0
-        from ._util import _shape_tuple
         shape = _shape_tuple(self.vertices)
         return int(shape[0]) if len(shape) >= 1 else 0
 
     def face_count(self) -> int:
-        if self.global_prim_id is None:
-            return 0
-        from ._util import _shape_tuple
         shape = _shape_tuple(self.global_prim_id)
         return int(shape[0]) if len(shape) >= 1 else 0
 
 
+@dataclass
 class SceneSyncProfile:
-    _FIELDS = (
-        "mesh_update_ms",
-        "triangle_scatter_ms",
-        "triangle_eval_ms",
-        "edge_scatter_ms",
-        "edge_refit_ms",
-        "optix_sync_ms",
-        "total_ms",
-        "optix_gas_update_ms",
-        "optix_ias_update_ms",
-        "updated_meshes",
-        "updated_vertex_meshes",
-        "updated_transform_meshes",
-        "updated_edge_meshes",
-        "updated_edges",
-    )
+    mesh_update_ms: float = 0.0
+    triangle_scatter_ms: float = 0.0
+    triangle_eval_ms: float = 0.0
+    edge_scatter_ms: float = 0.0
+    edge_refit_ms: float = 0.0
+    optix_sync_ms: float = 0.0
+    total_ms: float = 0.0
+    optix_gas_update_ms: float = 0.0
+    optix_ias_update_ms: float = 0.0
+    updated_meshes: int = 0
+    updated_vertex_meshes: int = 0
+    updated_transform_meshes: int = 0
+    updated_edge_meshes: int = 0
+    updated_edges: int = 0
 
-    def __init__(self, native_profile: Any | None = None):
-        for field in self._FIELDS:
-            setattr(self, field, getattr(native_profile, field, 0))
-
-    def __repr__(self) -> str:
-        parts = ", ".join(f"{field}={getattr(self, field)!r}" for field in self._FIELDS)
-        return f"SceneSyncProfile({parts})"
+    @classmethod
+    def from_native(cls, native: Any) -> "SceneSyncProfile":
+        return cls(**{f.name: getattr(native, f.name) for f in fields(cls)})

@@ -1145,8 +1145,8 @@ RayD-side prerequisite that makes the refactor clean.
 This is the dedicated RayD-side Tier 2 fast path for channel's MC
 reflection forward accumulation. Unlike `trace_reflections`, it is not a
 geometry-only chain recorder. It is a separate native OptiX launch that
-traces reflection bounces and accumulates scalar RF reflection power
-directly into a receiver grid.
+traces reflection bounces and coherently accumulates complex polarized
+RF field directly into a receiver grid.
 
 ### Public API
 
@@ -1155,14 +1155,18 @@ result = scene.trace_reflections_accumulating(
     rays,              # RayDetached, [N]
     tx_position,       # Array3fDetached, scalar or [N]
     grid,              # ReflectionAccumulationGrid
-    max_bounces,       # int
     material_payload,  # PrimitiveMaterialPayloadDetached, one entry per global primitive
-    active=True,       # BoolDetached scalar or [N]
+    max_bounces,       # int
     options=ReflectionAccumulationOptions(),
+    active=True,       # BoolDetached scalar or [N]
+    tx_polarization=(1, 0, 0), # Array3fDetached, scalar or [N]
 )
 
-result.reflection_power   # FloatDetached [grid.resolution0 * grid.resolution1]
-result.reflection_count   # IntDetached   [grid cell count]
+result.reflection_field_x # Complex<FloatDetached> [grid cell count]
+result.reflection_field_y # Complex<FloatDetached> [grid cell count]
+result.reflection_field_z # Complex<FloatDetached> [grid cell count]
+result.reflection_power   # FloatDetached [grid cell count], diagnostic / compatibility
+result.reflection_count   # IntDetached   [1], number of contributing ray-plane events
 result.wedge_events       # ReflectionWedgeEventBufferDetached
 ```
 
@@ -1170,15 +1174,19 @@ result.wedge_events       # ReflectionWedgeEventBufferDetached
 `axis`, `position`, `coord0_min/max`, `coord1_min/max`,
 `resolution0`, and `resolution1`. The implementation projects each
 post-bounce ray to that plane, filters out-of-bounds intersections, and
-uses device atomics for per-cell `reflection_power` and
-`reflection_count`.
+uses device atomics for per-cell complex vector field buffers and the
+compatibility `reflection_power` diagnostic.
 
 `PrimitiveMaterialPayloadDetached` is indexed in global primitive id
 space and currently carries `eta_r`, `sigma`, `mu_r`, `gain`, and
-`valid`. The kernel evaluates a scalar normal-incidence-style Fresnel
-power factor with conductivity support, multiplies by `gain`, applies
-Russian roulette if requested, and stops when the path throughput falls
-below `stop_threshold`.
+`valid`. The kernel projects transmitter polarization onto the ray
+transverse plane, transports a complex 3-vector field through reflection
+using TE/TM Fresnel coefficients, applies coherent propagation phase
+`exp(-i k d)` and free-space amplitude scaling at the grid plane, and
+atomically accumulates real/imag components for x/y/z. The retained
+`reflection_power` buffer stores the incoherent magnitude of the field
+contribution for callers that still need the previous scalar interface;
+it is no longer the primary result contract.
 
 ### Wedge event ABI
 
@@ -1237,7 +1245,7 @@ tests/drjit/test_reflection_accumulation.py
 
 ### Tier 3 boundary
 
-`trace_diffraction_chain_mc` is not implemented by reusing this scalar
+`trace_diffraction_chain_mc` is not implemented by reusing this
 reflection accumulator. A correct Tier 3 kernel needs a separate ABI for
 TX → edge... → RX/target chain visibility, per-edge UTD/MIS cache
 tables, field payload layout, and receiver accumulation semantics. Until
@@ -1279,7 +1287,7 @@ verified existing API:
 | `trace_segment_pair_visibility` | Two separate `trace_segment_visibility` calls |
 | `trace_axial_edge_visibility` | Python loop of `trace_segment_visibility` |
 | `nearest_edges_topk` | Brute-force scan over all edges via `nearest_edge` filter |
-| `trace_reflections_accumulating` | Existing detached reflection trace plus channel-side reference accumulation for scalar RF tests |
+| `trace_reflections_accumulating` | Existing detached reflection trace plus channel-side reference complex vector-field accumulation |
 
 ### 7.3 Test scene matrix
 

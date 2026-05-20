@@ -257,6 +257,12 @@ struct ReflectionAccumulationRaw {
     int grid_cell_count = 0;
     int wedge_capacity = 0;
     FloatDetached reflection_power;
+    FloatDetached field_x_re;
+    FloatDetached field_x_im;
+    FloatDetached field_y_re;
+    FloatDetached field_y_im;
+    FloatDetached field_z_re;
+    FloatDetached field_z_im;
     IntDetached reflection_count;
     IntDetached wedge_count;
     IntDetached wedge_ray_index;
@@ -434,6 +440,12 @@ ReflectionAccumulationRaw allocate_reflection_accumulation_raw(int ray_count,
     raw.grid_cell_count = grid_cell_count;
     raw.wedge_capacity = wedge_capacity;
     raw.reflection_power = empty<FloatDetached>(grid_cell_count);
+    raw.field_x_re = empty<FloatDetached>(grid_cell_count);
+    raw.field_x_im = empty<FloatDetached>(grid_cell_count);
+    raw.field_y_re = empty<FloatDetached>(grid_cell_count);
+    raw.field_y_im = empty<FloatDetached>(grid_cell_count);
+    raw.field_z_re = empty<FloatDetached>(grid_cell_count);
+    raw.field_z_im = empty<FloatDetached>(grid_cell_count);
     raw.reflection_count = empty<IntDetached>(1);
     raw.wedge_count = empty<IntDetached>(1);
     const int event_count = std::max(1, wedge_capacity);
@@ -460,6 +472,36 @@ void initialize_reflection_accumulation_raw(ReflectionAccumulationRaw &raw) {
 
     jit_memset_async(JitBackend::CUDA,
                      raw.reflection_power.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_x_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_x_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_y_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_y_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_z_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.field_z_im.data(),
                      raw.grid_cell_count,
                      sizeof(float),
                      &zero_f);
@@ -2650,7 +2692,8 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
     const PrimitiveMaterialPayloadT<Detached> &material,
     int max_bounces,
     const ReflectionAccumulationOptions &options,
-    MaskT<Detached> active) const {
+    MaskT<Detached> active,
+    const Vector3fT<Detached> &tx_polarization) const {
     ScopedNativeLaunchStage native_launch_stage(
         NativeLaunchStage::TraceReflectionsAccumulating);
     require(is_ready(), "Scene::trace_reflections_accumulating(): scene is not built.");
@@ -2691,6 +2734,15 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
         result.reflection_power = zeros<FloatDetached>(grid_cell_count);
+        result.reflection_field_x =
+            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
+                                          zeros<FloatDetached>(grid_cell_count));
+        result.reflection_field_y =
+            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
+                                          zeros<FloatDetached>(grid_cell_count));
+        result.reflection_field_z =
+            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
+                                          zeros<FloatDetached>(grid_cell_count));
         result.reflection_count = full<IntDetached>(0, 1);
         result.wedge_events.capacity = options.wedge_capacity;
         result.wedge_events.count = full<IntDetached>(0, 1);
@@ -2711,6 +2763,9 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
         const int tx_count = static_cast<int>(slices(tx_position));
         require(tx_count == 1 || tx_count == ray_count,
                 "Scene::trace_reflections_accumulating(): tx_position width must be 1 or match ray count.");
+        const int tx_pol_count = static_cast<int>(slices(tx_polarization));
+        require(tx_pol_count == 1 || tx_pol_count == ray_count,
+                "Scene::trace_reflections_accumulating(): tx_polarization width must be 1 or match ray count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,
@@ -2733,11 +2788,22 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
                 gather<FloatDetached>(tx_position.y(), zero_index),
                 gather<FloatDetached>(tx_position.z(), zero_index));
         }
+        Vector3fDetached tx_pol_detached = tx_polarization;
+        if (tx_pol_count == 1 && ray_count > 1) {
+            const IntDetached zero_index = full<IntDetached>(0, ray_count);
+            tx_pol_detached = Vector3fDetached(
+                gather<FloatDetached>(tx_polarization.x(), zero_index),
+                gather<FloatDetached>(tx_polarization.y(), zero_index),
+                gather<FloatDetached>(tx_polarization.z(), zero_index));
+        }
 
         MaskDetached active_detached = sanitize_reflection_active<true>(ray, active);
         active_detached &= drjit::isfinite(tx_detached.x()) &&
                            drjit::isfinite(tx_detached.y()) &&
-                           drjit::isfinite(tx_detached.z());
+                           drjit::isfinite(tx_detached.z()) &&
+                           drjit::isfinite(tx_pol_detached.x()) &&
+                           drjit::isfinite(tx_pol_detached.y()) &&
+                           drjit::isfinite(tx_pol_detached.z());
         if (drjit::none(active_detached)) {
             return result;
         }
@@ -2772,6 +2838,7 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
                     ray.d,
                     ray.tmax,
                     tx_detached,
+                    tx_pol_detached,
                     active_detached,
                     triangle_info_detached_.p0,
                     triangle_info_detached_.e1,
@@ -2820,6 +2887,9 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
         params.tx_x = tx_detached.x().data();
         params.tx_y = tx_detached.y().data();
         params.tx_z = tx_detached.z().data();
+        params.tx_pol_x = tx_pol_detached.x().data();
+        params.tx_pol_y = tx_pol_detached.y().data();
+        params.tx_pol_z = tx_pol_detached.z().data();
         params.max_bounces = max_bounces;
         params.wavelength = options.wavelength;
         params.k = options.k;
@@ -2847,6 +2917,12 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
         params.collect_wedge_prefixes = options.collect_wedge_prefixes ? 1 : 0;
         params.wedge_capacity = options.wedge_capacity;
         params.out_reflection_power = raw.reflection_power.data();
+        params.out_field_x_re = raw.field_x_re.data();
+        params.out_field_x_im = raw.field_x_im.data();
+        params.out_field_y_re = raw.field_y_re.data();
+        params.out_field_y_im = raw.field_y_im.data();
+        params.out_field_z_re = raw.field_z_re.data();
+        params.out_field_z_im = raw.field_z_im.data();
         params.out_reflection_count = raw.reflection_count.data();
         params.out_wedge_count = raw.wedge_count.data();
         params.out_wedge_ray_index = raw.wedge_ray_index.data();
@@ -2865,6 +2941,12 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
         reflection_accumulation_pipeline_->launch(params);
 
         result.reflection_power = raw.reflection_power;
+        result.reflection_field_x =
+            drjit::Complex<FloatDetached>(raw.field_x_re, raw.field_x_im);
+        result.reflection_field_y =
+            drjit::Complex<FloatDetached>(raw.field_y_re, raw.field_y_im);
+        result.reflection_field_z =
+            drjit::Complex<FloatDetached>(raw.field_z_re, raw.field_z_im);
         result.reflection_count = raw.reflection_count;
         result.wedge_events.capacity = options.wedge_capacity;
         result.wedge_events.count = raw.wedge_count;
@@ -3629,7 +3711,8 @@ template ReflectionAccumulationResultDetached Scene::trace_reflections_accumulat
     const PrimitiveMaterialPayloadDetached &material,
     int max_bounces,
     const ReflectionAccumulationOptions &options,
-    MaskDetached active) const;
+    MaskDetached active,
+    const Vector3fDetached &tx_polarization) const;
 template ReflectionAccumulationResult Scene::trace_reflections_accumulating<false>(
     const Ray &ray,
     const Vector3f &tx_position,
@@ -3637,7 +3720,8 @@ template ReflectionAccumulationResult Scene::trace_reflections_accumulating<fals
     const PrimitiveMaterialPayload &material,
     int max_bounces,
     const ReflectionAccumulationOptions &options,
-    Mask active) const;
+    Mask active,
+    const Vector3f &tx_polarization) const;
 template ReflectionTraceDetached Scene::trace_bounces<true>(
     const RayDetached &ray,
     int max_bounces,

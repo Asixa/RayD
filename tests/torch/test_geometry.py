@@ -880,9 +880,9 @@ class TorchGeometryTests(unittest.TestCase):
             prim_ids = torch.tensor([-1, 0, 1, 2, 9], device=device, dtype=torch.int32)
             edge_ids = torch.tensor([-1, 1, 6, 99], device=device, dtype=torch.int32)
             tri_edges_global = scene.triangle_edge_indices(prim_ids)
-            tri_edges_local = scene.triangle_edge_indices(prim_ids, **{"global": False})
+            tri_edges_local = scene.triangle_edge_indices(prim_ids, global_=False)
             adj_faces_global = scene.edge_adjacent_faces(edge_ids)
-            adj_faces_local = scene.edge_adjacent_faces(edge_ids, **{"global": False})
+            adj_faces_local = scene.edge_adjacent_faces(edge_ids, global_=False)
 
             print(json.dumps({
                 "tri_edges_global": [[int(tri_edges_global[i][j].item()) for j in range(5)] for i in range(3)],

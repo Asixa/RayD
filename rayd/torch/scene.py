@@ -25,12 +25,11 @@ from ._state import _MeshState
 from ._native import (
     _allocate_native_scene_cache_id,
     _build_native_mesh,
-    _scene_cache_refresh_policy,
+    _build_scene_cache_key,
     _mesh_to_world_tensor,
     _ray_batch_size,
     _release_native_scene_cache,
     _reset_native_scene_cache,
-    _scene_cache_tokens,
     _scene_edge_info_from_native,
     _scene_edge_topology_from_native,
     _scene_global_geometry_impl,
@@ -65,33 +64,9 @@ class Scene:
     def _mesh_states(self) -> list[_MeshState]:
         return [record.state for record in self._records]
 
-    def _query_cache_inputs(
-        self,
-    ) -> tuple[
-        list[_MeshState],
-        tuple[Any, ...],
-        tuple[Any, ...],
-        tuple[Any, ...],
-        tuple[Any, ...],
-        tuple[Any, ...],
-        tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
-        Any,
-    ]:
+    def _query_cache_inputs(self) -> tuple[list[_MeshState], Any, Any]:
         mesh_states = self._mesh_states()
-        topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens = _scene_cache_tokens(
-            mesh_states, self._edge_mask
-        )
-        refresh_policy = _scene_cache_refresh_policy(mesh_states)
-        return (
-            mesh_states,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            self._edge_mask,
-        )
+        return mesh_states, _build_scene_cache_key(mesh_states, self._edge_mask), self._edge_mask
 
     def _require_ready(self) -> None:
         if not self._ready:
@@ -176,9 +151,6 @@ class Scene:
 
     def set_edge_mask(self, mask: Any) -> None:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.set_edge_mask(): internal detached scene is unavailable.")
-
         mask_tensor = _normalize_scalar_tensor(mask, "mask", _torch.bool).clone()
         expected_size = 0 if self._edge_mask is None else int(self._edge_mask.shape[0])
         if int(mask_tensor.shape[0]) != expected_size:
@@ -192,10 +164,8 @@ class Scene:
 
     def sync(self) -> None:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.sync(): internal detached scene is unavailable.")
         self._native_scene.sync()
-        self._last_sync_profile = SceneSyncProfile(self._native_scene.last_sync_profile)
+        self._last_sync_profile = SceneSyncProfile.from_native(self._native_scene.last_sync_profile)
         edge_mask = _scalar_array_to_tensor(self._native_scene.edge_mask()).torch()
         if self._edge_mask is None or not _torch.equal(edge_mask, self._edge_mask):
             self._edge_mask = edge_mask
@@ -211,7 +181,7 @@ class Scene:
 
     @property
     def last_sync_profile(self) -> SceneSyncProfile:
-        return SceneSyncProfile(self._last_sync_profile)
+        return self._last_sync_profile
 
     @property
     def num_meshes(self) -> int:
@@ -231,14 +201,10 @@ class Scene:
 
     def edge_info(self) -> SceneEdgeInfo:
         self._require_query_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.edge_info(): internal detached scene is unavailable.")
         return _to_torch_struct(_scene_edge_info_from_native(self._native_scene.edge_info()))
 
     def edge_topology(self) -> SceneEdgeTopology:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.edge_topology(): internal detached scene is unavailable.")
         return _to_torch_struct(_scene_edge_topology_from_native(self._native_scene.edge_topology()))
 
     def edge_mask(self) -> _torch.Tensor:
@@ -249,52 +215,28 @@ class Scene:
 
     def mesh_face_offsets(self) -> _torch.Tensor:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.mesh_face_offsets(): internal detached scene is unavailable.")
         return _scalar_array_to_tensor(self._native_scene.mesh_face_offsets()).torch()
 
     def mesh_edge_offsets(self) -> _torch.Tensor:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.mesh_edge_offsets(): internal detached scene is unavailable.")
         return _scalar_array_to_tensor(self._native_scene.mesh_edge_offsets()).torch()
 
     def mesh_vertex_offsets(self) -> _torch.Tensor:
         self._require_ready()
-        if self._native_scene is None:
-            raise RuntimeError("Scene.mesh_vertex_offsets(): internal detached scene is unavailable.")
         return _scalar_array_to_tensor(self._native_scene.mesh_vertex_offsets()).torch()
 
     def global_geometry(self) -> SceneGlobalGeometry:
         self._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
-        return _scene_global_geometry_impl(
-            self._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-        )
+        mesh_states, key, edge_mask = self._query_cache_inputs()
+        return _scene_global_geometry_impl(self._query_cache_id, key, mesh_states, edge_mask)
 
-    def triangle_edge_indices(self, prim_id: Any, global_: bool = True, **kwargs: Any) -> tuple[_torch.Tensor, _torch.Tensor, _torch.Tensor]:
+    def triangle_edge_indices(self, prim_id: Any, global_: bool = True) -> tuple[_torch.Tensor, _torch.Tensor, _torch.Tensor]:
         self._require_ready()
-        if "global" in kwargs:
-            global_ = kwargs["global"]
-        if self._native_scene is None:
-            raise RuntimeError("Scene.triangle_edge_indices(): internal detached scene is unavailable.")
         edge_ids = self._native_scene.triangle_edge_indices(prim_id, bool(global_))
         return tuple(_scalar_array_to_tensor(value).torch() for value in edge_ids)
 
-    def edge_adjacent_faces(self, edge_id: Any, global_: bool = True, **kwargs: Any) -> tuple[_torch.Tensor, _torch.Tensor]:
+    def edge_adjacent_faces(self, edge_id: Any, global_: bool = True) -> tuple[_torch.Tensor, _torch.Tensor]:
         self._require_ready()
-        if "global" in kwargs:
-            global_ = kwargs["global"]
-        if self._native_scene is None:
-            raise RuntimeError("Scene.edge_adjacent_faces(): internal detached scene is unavailable.")
         face_ids = self._native_scene.edge_adjacent_faces(edge_id, bool(global_))
         return tuple(_scalar_array_to_tensor(value).torch() for value in face_ids)
 
@@ -302,19 +244,10 @@ class Scene:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.intersect() expects a rayd.torch.Ray.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
+        mesh_states, key, edge_mask = self._query_cache_inputs()
         return _scene_intersect_impl(
-            self._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            ray,
-            _normalize_active_tensor(active, _ray_batch_size(ray)),
+            self._query_cache_id, key, mesh_states, edge_mask,
+            ray, _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 
     def trace_reflections(
@@ -330,21 +263,10 @@ class Scene:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.trace_reflections() expects a rayd.torch.Ray.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
+        mesh_states, key, edge_mask = self._query_cache_inputs()
         return _scene_trace_reflections_impl(
-            self._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            ray,
-            int(max_bounces),
-            bool(deduplicate),
-            canonical_prim_table,
+            self._query_cache_id, key, mesh_states, edge_mask,
+            ray, int(max_bounces), bool(deduplicate), canonical_prim_table,
             float(image_source_tolerance),
             _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
@@ -353,51 +275,24 @@ class Scene:
         self._require_query_ready()
         if not isinstance(ray, Ray):
             raise TypeError("Scene.shadow_test() expects a rayd.torch.Ray.")
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
+        mesh_states, key, edge_mask = self._query_cache_inputs()
         return _scene_shadow_test_impl(
-            self._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            ray,
-            _normalize_active_tensor(active, _ray_batch_size(ray)),
+            self._query_cache_id, key, mesh_states, edge_mask,
+            ray, _normalize_active_tensor(active, _ray_batch_size(ray)),
         )
 
     def nearest_edge(self, query: Any, active: Any = True) -> Any:
         self._require_query_ready()
-        mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
+        mesh_states, key, edge_mask = self._query_cache_inputs()
         if isinstance(query, Ray):
             return _scene_nearest_ray_impl(
-                self._query_cache_id,
-                topology_token,
-                rebuild_token,
-                vertex_tokens,
-                left_tokens,
-                right_tokens,
-                refresh_policy,
-                mesh_states,
-                edge_mask,
-                query,
-                _normalize_active_tensor(active, _ray_batch_size(query)),
+                self._query_cache_id, key, mesh_states, edge_mask,
+                query, _normalize_active_tensor(active, _ray_batch_size(query)),
             )
         point = _normalize_vector_tensor(query, "point", 3, _torch.float32)
         return _scene_nearest_point_impl(
-            self._query_cache_id,
-            topology_token,
-            rebuild_token,
-            vertex_tokens,
-            left_tokens,
-            right_tokens,
-            refresh_policy,
-            mesh_states,
-            edge_mask,
-            point,
-            _normalize_active_tensor(active, point.shape[0]),
+            self._query_cache_id, key, mesh_states, edge_mask,
+            point, _normalize_active_tensor(active, point.shape[0]),
         )
 
     def __repr__(self) -> str:

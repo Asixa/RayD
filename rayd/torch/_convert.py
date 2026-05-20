@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from ._env import dr, _cuda, _cuda_ad
-from ._util import _is_torch_tensor, _shape_tuple, _infer_diff
+from ._env import _torch
+from ._util import _shape_tuple, _infer_diff
 
 
 def _as_drjit_value(value: Any) -> Any:
@@ -11,7 +12,7 @@ def _as_drjit_value(value: Any) -> Any:
         return None
     if dr.is_array_v(type(value)):
         return value
-    if _is_torch_tensor(value):
+    if isinstance(value, _torch.Tensor):
         return dr.detail.import_tensor(value, True)
     return value
 

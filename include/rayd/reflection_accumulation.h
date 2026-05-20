@@ -2,6 +2,8 @@
 
 #include <type_traits>
 
+#include <drjit/complex.h>
+
 #include <rayd/rayd.h>
 
 namespace rayd {
@@ -82,6 +84,7 @@ struct ReflectionAccumulationResultData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
 
     using FloatArray = Float_;
+    using ComplexArray = drjit::Complex<Float_>;
     using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
     using WedgeBuffer = ReflectionWedgeEventBufferData<Float_>;
 
@@ -89,11 +92,20 @@ struct ReflectionAccumulationResultData {
     int max_bounces = 0;
     int grid_cell_count = 0;
     FloatArray reflection_power = zeros<FloatArray>(1);
+    ComplexArray reflection_field_x =
+        ComplexArray(zeros<FloatArray>(1), zeros<FloatArray>(1));
+    ComplexArray reflection_field_y =
+        ComplexArray(zeros<FloatArray>(1), zeros<FloatArray>(1));
+    ComplexArray reflection_field_z =
+        ComplexArray(zeros<FloatArray>(1), zeros<FloatArray>(1));
     Int_ reflection_count = full<Int_>(0, 1);
     WedgeBuffer wedge_events;
 
     DRJIT_STRUCT(ReflectionAccumulationResultData,
                  reflection_power,
+                 reflection_field_x,
+                 reflection_field_y,
+                 reflection_field_z,
                  reflection_count,
                  wedge_events)
 };
