@@ -12,6 +12,7 @@ option(RAYD_OPTIX_PRODUCTION_CONFIG "Use OptiX production module settings (LEVEL
 option(RAYD_NANOBIND_NOMINSIZE "Disable nanobind's size-oriented optimization flags in optimized configs." ON)
 option(RAYD_ENABLE_LTO "Enable nanobind/C++ link-time optimization." OFF)
 option(RAYD_REGENERATE_REFLECTION_TRACE_PTX "Regenerate reflection_trace PTX during the build. Requires OptiX SDK headers." OFF)
+option(RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX "Regenerate reflection_accumulation PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX "Regenerate segment_visibility PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_EDGE_OPTIX_PTX "Regenerate edge OptiX custom-AABB PTX during the build. Requires OptiX SDK headers." OFF)
 
@@ -115,6 +116,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/ray.h
     ${RAYD_INCLUDE_DIR}/intersection.h
     ${RAYD_INCLUDE_DIR}/reflection.h
+    ${RAYD_INCLUDE_DIR}/reflection_accumulation.h
     ${RAYD_INCLUDE_DIR}/segment_visibility.h
     ${RAYD_INCLUDE_DIR}/transform.h
 
@@ -133,6 +135,9 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
+    ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.h
+    ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h
+    ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.cpp
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.h
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.cpp
@@ -322,6 +327,91 @@ else()
             "Restore it or enable RAYD_REGENERATE_REFLECTION_TRACE_PTX with OptiX SDK headers available.")
     endif()
     list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
+endif()
+
+set(RAYD_REFLECTION_ACCUMULATION_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation.cu")
+set(RAYD_REFLECTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation_ptx.h")
+set(RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_ptx.h")
+
+if(RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX)
+    find_path(OPTIX_INCLUDE_DIR optix.h
+        HINTS
+            ENV OPTIX_INCLUDE_DIR
+            ENV OPTIX_PATH
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
+            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+        PATH_SUFFIXES include
+    )
+    if(NOT OPTIX_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "Could not locate OptiX SDK headers needed to regenerate reflection_accumulation PTX. "
+            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX.")
+    endif()
+
+    set(RAYD_REFLECTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation.ptx")
+    if(WIN32)
+        set(RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_accumulation_ptx.bat")
+        file(GENERATE OUTPUT "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_ACCUMULATION_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_ACCUMULATION_PTX}\"\r\n\
+")
+        add_custom_command(
+            OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX}"
+            COMMAND "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
+            DEPENDS
+                "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
+                "${RAYD_REFLECTION_ACCUMULATION_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX}"
+            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
+                    "${RAYD_REFLECTION_ACCUMULATION_CU}"
+                    -I"${OPTIX_INCLUDE_DIR}"
+                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                    ${RAYD_CUDA_DEFINITIONS_LIST}
+                    -o "${RAYD_REFLECTION_ACCUMULATION_PTX}"
+            DEPENDS
+                "${RAYD_REFLECTION_ACCUMULATION_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h"
+            VERBATIM
+        )
+    endif()
+
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX_H}"
+        COMMAND ${CMAKE_COMMAND}
+            -DPTX_FILE=${RAYD_REFLECTION_ACCUMULATION_PTX}
+            -DOUTPUT_FILE=${RAYD_REFLECTION_ACCUMULATION_PTX_H}
+            -DVAR_NAME=reflection_accumulation_ptx
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        DEPENDS
+            "${RAYD_REFLECTION_ACCUMULATION_PTX}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        VERBATIM
+    )
+    set_source_files_properties("${RAYD_REFLECTION_ACCUMULATION_PTX_H}" PROPERTIES GENERATED TRUE)
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_ACCUMULATION_PTX_H}")
+else()
+    if(NOT EXISTS "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}")
+        message(FATAL_ERROR
+            "Missing committed reflection_accumulation PTX header at "
+            "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}. "
+            "Restore it or enable RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX with OptiX SDK headers available.")
+    endif()
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}")
 endif()
 
 set(RAYD_SEGMENT_VISIBILITY_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu")

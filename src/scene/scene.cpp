@@ -15,6 +15,7 @@
 #include <rayd/scene/scene_edge.h>
 
 #include "../multipath/reflection_dedup.h"
+#include "../multipath/reflection_accumulation_host.h"
 #include "../multipath/reflection_trace_host.h"
 #include "../multipath/segment_visibility_host.h"
 #include "../native_launch_audit.h"
@@ -250,6 +251,28 @@ struct ReflectionTraceRaw {
     FloatDetached trailing_origin_z;
 };
 
+struct ReflectionAccumulationRaw {
+    int ray_count = 0;
+    int max_bounces = 0;
+    int grid_cell_count = 0;
+    int wedge_capacity = 0;
+    FloatDetached reflection_power;
+    IntDetached reflection_count;
+    IntDetached wedge_count;
+    IntDetached wedge_ray_index;
+    FloatDetached wedge_hit_x;
+    FloatDetached wedge_hit_y;
+    FloatDetached wedge_hit_z;
+    FloatDetached wedge_normal_x;
+    FloatDetached wedge_normal_y;
+    FloatDetached wedge_normal_z;
+    IntDetached wedge_prim_id;
+    FloatDetached wedge_dir_x;
+    FloatDetached wedge_dir_y;
+    FloatDetached wedge_dir_z;
+    IntDetached wedge_bounce_depth;
+};
+
 IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
                                     const IntDetached &shape_ids,
                                     const IntDetached &face_offsets) {
@@ -399,6 +422,109 @@ void initialize_reflection_trace_raw(ReflectionTraceRaw &raw) {
     jit_memset_async(JitBackend::CUDA, raw.trailing_origin_x.data(), ray_count, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.trailing_origin_y.data(), ray_count, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.trailing_origin_z.data(), ray_count, sizeof(float), &zero_f);
+}
+
+ReflectionAccumulationRaw allocate_reflection_accumulation_raw(int ray_count,
+                                                               int max_bounces,
+                                                               int grid_cell_count,
+                                                               int wedge_capacity) {
+    ReflectionAccumulationRaw raw;
+    raw.ray_count = ray_count;
+    raw.max_bounces = max_bounces;
+    raw.grid_cell_count = grid_cell_count;
+    raw.wedge_capacity = wedge_capacity;
+    raw.reflection_power = empty<FloatDetached>(grid_cell_count);
+    raw.reflection_count = empty<IntDetached>(1);
+    raw.wedge_count = empty<IntDetached>(1);
+    const int event_count = std::max(1, wedge_capacity);
+    raw.wedge_ray_index = empty<IntDetached>(event_count);
+    raw.wedge_hit_x = empty<FloatDetached>(event_count);
+    raw.wedge_hit_y = empty<FloatDetached>(event_count);
+    raw.wedge_hit_z = empty<FloatDetached>(event_count);
+    raw.wedge_normal_x = empty<FloatDetached>(event_count);
+    raw.wedge_normal_y = empty<FloatDetached>(event_count);
+    raw.wedge_normal_z = empty<FloatDetached>(event_count);
+    raw.wedge_prim_id = empty<IntDetached>(event_count);
+    raw.wedge_dir_x = empty<FloatDetached>(event_count);
+    raw.wedge_dir_y = empty<FloatDetached>(event_count);
+    raw.wedge_dir_z = empty<FloatDetached>(event_count);
+    raw.wedge_bounce_depth = empty<IntDetached>(event_count);
+    return raw;
+}
+
+void initialize_reflection_accumulation_raw(ReflectionAccumulationRaw &raw) {
+    const int zero_i = 0;
+    const int minus_one_i = -1;
+    const float zero_f = 0.f;
+    const int event_count = std::max(1, raw.wedge_capacity);
+
+    jit_memset_async(JitBackend::CUDA,
+                     raw.reflection_power.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.reflection_count.data(), 1, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA, raw.wedge_count.data(), 1, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_ray_index.data(),
+                     event_count,
+                     sizeof(int),
+                     &minus_one_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_hit_x.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_hit_y.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_hit_z.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_normal_x.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_normal_y.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_normal_z.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_prim_id.data(),
+                     event_count,
+                     sizeof(int),
+                     &minus_one_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_dir_x.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_dir_y.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_dir_z.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_bounce_depth.data(),
+                     event_count,
+                     sizeof(int),
+                     &minus_one_i);
 }
 
 template <typename ArrayD>
@@ -2517,6 +2643,245 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
+ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
+    const RayT<Detached> &ray,
+    const Vector3fT<Detached> &tx_position,
+    const ReflectionAccumulationGrid &grid,
+    const PrimitiveMaterialPayloadT<Detached> &material,
+    int max_bounces,
+    const ReflectionAccumulationOptions &options,
+    MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(
+        NativeLaunchStage::TraceReflectionsAccumulating);
+    require(is_ready(), "Scene::trace_reflections_accumulating(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_reflections_accumulating(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0,
+            "Scene::trace_reflections_accumulating(): max_bounces must be positive.");
+    if constexpr (!Detached) {
+        throw std::runtime_error(
+            "Scene::trace_reflections_accumulating(): native accumulation is a non-AD native fast path. "
+            "Use detached inputs, or use the existing AD tape path explicitly.");
+    }
+    require(grid.axis >= 0 && grid.axis <= 2,
+            "Scene::trace_reflections_accumulating(): grid.axis must be 0, 1, or 2.");
+    require(grid.resolution0 > 0 && grid.resolution1 > 0,
+            "Scene::trace_reflections_accumulating(): grid resolution must be positive.");
+    require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
+            "Scene::trace_reflections_accumulating(): grid bounds must be ordered.");
+    require(options.wavelength > 0.f,
+            "Scene::trace_reflections_accumulating(): wavelength must be positive.");
+    require(options.cell_area > 0.f,
+            "Scene::trace_reflections_accumulating(): cell_area must be positive.");
+    require(options.solid_angle_per_ray >= 0.f,
+            "Scene::trace_reflections_accumulating(): solid_angle_per_ray must be non-negative.");
+    require(options.wedge_capacity >= 0,
+            "Scene::trace_reflections_accumulating(): wedge_capacity must be non-negative.");
+
+    ReflectionAccumulationResultT<Detached> result;
+    const int ray_count = static_cast<int>(slices(ray.o));
+    const int grid_cell_count = grid.resolution0 * grid.resolution1;
+    result.ray_count = ray_count;
+    result.max_bounces = max_bounces;
+    result.grid_cell_count = grid_cell_count;
+
+    if constexpr (!Detached) {
+        throw std::runtime_error(
+            "Scene::trace_reflections_accumulating(): native accumulation is a non-AD native fast path. "
+            "Use detached inputs, or use the existing AD tape path explicitly.");
+    } else {
+        result.reflection_power = zeros<FloatDetached>(grid_cell_count);
+        result.reflection_count = full<IntDetached>(0, 1);
+        result.wedge_events.capacity = options.wedge_capacity;
+        result.wedge_events.count = full<IntDetached>(0, 1);
+        const int event_count = std::max(1, options.wedge_capacity);
+        result.wedge_events.ray_index = full<IntDetached>(-1, event_count);
+        result.wedge_events.hit_points = zeros<Vector3fDetached>(event_count);
+        result.wedge_events.normals = zeros<Vector3fDetached>(event_count);
+        result.wedge_events.prim_id = full<IntDetached>(-1, event_count);
+        result.wedge_events.directions = zeros<Vector3fDetached>(event_count);
+        result.wedge_events.bounce_depth = full<IntDetached>(-1, event_count);
+        if (ray_count == 0) {
+            return result;
+        }
+
+        require(static_cast<int>(slices(ray.d)) == ray_count &&
+                    static_cast<int>(slices(ray.tmax)) == ray_count,
+                "Scene::trace_reflections_accumulating(): ray fields must have matching widths.");
+        const int tx_count = static_cast<int>(slices(tx_position));
+        require(tx_count == 1 || tx_count == ray_count,
+                "Scene::trace_reflections_accumulating(): tx_position width must be 1 or match ray count.");
+
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::trace_reflections_accumulating(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::trace_reflections_accumulating(): material payload fields must have matching widths.");
+
+        const int triangle_count = static_cast<int>(slices(triangle_info_detached_.p0));
+        require(material_count >= triangle_count,
+                "Scene::trace_reflections_accumulating(): material payload must provide one entry per global primitive.");
+
+        Vector3fDetached tx_detached = tx_position;
+        if (tx_count == 1 && ray_count > 1) {
+            const IntDetached zero_index = full<IntDetached>(0, ray_count);
+            tx_detached = Vector3fDetached(
+                gather<FloatDetached>(tx_position.x(), zero_index),
+                gather<FloatDetached>(tx_position.y(), zero_index),
+                gather<FloatDetached>(tx_position.z(), zero_index));
+        }
+
+        MaskDetached active_detached = sanitize_reflection_active<true>(ray, active);
+        active_detached &= drjit::isfinite(tx_detached.x()) &&
+                           drjit::isfinite(tx_detached.y()) &&
+                           drjit::isfinite(tx_detached.z());
+        if (drjit::none(active_detached)) {
+            return result;
+        }
+
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = mesh_count_;
+        if (optix_split_active_) {
+            primary_scene = optix_static_scene_.get();
+            secondary_scene = optix_dynamic_scene_.get();
+            split_mode = 1;
+            hitgroup_record_count = static_cast<int>(
+                std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
+        } else {
+            primary_scene = optix_scene_.get();
+        }
+
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::trace_reflections_accumulating(): OptiX scene is not ready.");
+        require(hitgroup_record_count > 0,
+                "Scene::trace_reflections_accumulating(): invalid hitgroup record count.");
+
+        if (!reflection_accumulation_pipeline_) {
+            reflection_accumulation_pipeline_ =
+                std::make_unique<ReflectionAccumulationPipeline>();
+            reflection_accumulation_pipeline_->build(primary_scene->context(),
+                                                     hitgroup_record_count);
+        }
+
+        drjit::eval(ray.o,
+                    ray.d,
+                    ray.tmax,
+                    tx_detached,
+                    active_detached,
+                    triangle_info_detached_.p0,
+                    triangle_info_detached_.e1,
+                    triangle_info_detached_.e2,
+                    triangle_info_detached_.face_normal,
+                    face_offsets_,
+                    material.eta_r,
+                    material.sigma,
+                    material.gain,
+                    material.mu_r,
+                    material.valid);
+
+        ReflectionAccumulationRaw raw = allocate_reflection_accumulation_raw(
+            ray_count, max_bounces, grid_cell_count, options.wedge_capacity);
+        initialize_reflection_accumulation_raw(raw);
+
+        ReflectionAccumulationParams params = {};
+        params.primary_handle = primary_scene->ias_handle();
+        params.secondary_handle =
+            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+        params.split_mode = split_mode;
+        params.tri_p0_x = triangle_info_detached_.p0.x().data();
+        params.tri_p0_y = triangle_info_detached_.p0.y().data();
+        params.tri_p0_z = triangle_info_detached_.p0.z().data();
+        params.tri_e1_x = triangle_info_detached_.e1.x().data();
+        params.tri_e1_y = triangle_info_detached_.e1.y().data();
+        params.tri_e1_z = triangle_info_detached_.e1.z().data();
+        params.tri_e2_x = triangle_info_detached_.e2.x().data();
+        params.tri_e2_y = triangle_info_detached_.e2.y().data();
+        params.tri_e2_z = triangle_info_detached_.e2.z().data();
+        params.tri_fn_x = triangle_info_detached_.face_normal.x().data();
+        params.tri_fn_y = triangle_info_detached_.face_normal.y().data();
+        params.tri_fn_z = triangle_info_detached_.face_normal.z().data();
+        params.face_offsets = face_offsets_.data();
+        params.n_meshes = mesh_count_;
+        params.n_triangles = triangle_count;
+        params.ray_ox = ray.o.x().data();
+        params.ray_oy = ray.o.y().data();
+        params.ray_oz = ray.o.z().data();
+        params.ray_dx = ray.d.x().data();
+        params.ray_dy = ray.d.y().data();
+        params.ray_dz = ray.d.z().data();
+        params.ray_tmax = ray.tmax.data();
+        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.n_rays = ray_count;
+        params.tx_x = tx_detached.x().data();
+        params.tx_y = tx_detached.y().data();
+        params.tx_z = tx_detached.z().data();
+        params.max_bounces = max_bounces;
+        params.wavelength = options.wavelength;
+        params.k = options.k;
+        params.solid_angle_per_ray = options.solid_angle_per_ray;
+        params.cell_area = options.cell_area;
+        params.seed = options.seed;
+        params.rr_depth = options.rr_depth;
+        params.rr_prob = options.rr_prob;
+        params.stop_threshold = options.stop_threshold;
+        params.grid_axis = grid.axis;
+        params.grid_position = grid.position;
+        params.grid_coord0_min = grid.coord0_min;
+        params.grid_coord0_max = grid.coord0_max;
+        params.grid_coord1_min = grid.coord1_min;
+        params.grid_coord1_max = grid.coord1_max;
+        params.grid_resolution0 = grid.resolution0;
+        params.grid_resolution1 = grid.resolution1;
+        params.material_eta_r = material.eta_r.data();
+        params.material_sigma = material.sigma.data();
+        params.material_gain = material.gain.data();
+        params.material_mu_r = material.mu_r.data();
+        params.material_valid = reinterpret_cast<const uint8_t *>(material.valid.data());
+        params.material_count = material_count;
+        params.collect_wedges = options.collect_wedges ? 1 : 0;
+        params.collect_wedge_prefixes = options.collect_wedge_prefixes ? 1 : 0;
+        params.wedge_capacity = options.wedge_capacity;
+        params.out_reflection_power = raw.reflection_power.data();
+        params.out_reflection_count = raw.reflection_count.data();
+        params.out_wedge_count = raw.wedge_count.data();
+        params.out_wedge_ray_index = raw.wedge_ray_index.data();
+        params.out_wedge_hit_x = raw.wedge_hit_x.data();
+        params.out_wedge_hit_y = raw.wedge_hit_y.data();
+        params.out_wedge_hit_z = raw.wedge_hit_z.data();
+        params.out_wedge_normal_x = raw.wedge_normal_x.data();
+        params.out_wedge_normal_y = raw.wedge_normal_y.data();
+        params.out_wedge_normal_z = raw.wedge_normal_z.data();
+        params.out_wedge_prim_id = raw.wedge_prim_id.data();
+        params.out_wedge_dir_x = raw.wedge_dir_x.data();
+        params.out_wedge_dir_y = raw.wedge_dir_y.data();
+        params.out_wedge_dir_z = raw.wedge_dir_z.data();
+        params.out_wedge_bounce_depth = raw.wedge_bounce_depth.data();
+
+        reflection_accumulation_pipeline_->launch(params);
+
+        result.reflection_power = raw.reflection_power;
+        result.reflection_count = raw.reflection_count;
+        result.wedge_events.capacity = options.wedge_capacity;
+        result.wedge_events.count = raw.wedge_count;
+        result.wedge_events.ray_index = raw.wedge_ray_index;
+        result.wedge_events.hit_points =
+            Vector3fDetached(raw.wedge_hit_x, raw.wedge_hit_y, raw.wedge_hit_z);
+        result.wedge_events.normals =
+            Vector3fDetached(raw.wedge_normal_x, raw.wedge_normal_y, raw.wedge_normal_z);
+        result.wedge_events.prim_id = raw.wedge_prim_id;
+        result.wedge_events.directions =
+            Vector3fDetached(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
+        result.wedge_events.bounce_depth = raw.wedge_bounce_depth;
+        return result;
+    }
+}
+
+template <bool Detached>
 MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> active) const {
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
@@ -2560,8 +2925,6 @@ SegmentVisibilityT<Detached> Scene::trace_segment_visibility(
         require(ignore_count % ray_count == 0,
                 "Scene::trace_segment_visibility(): ignore_prim_ids width must be a multiple of ray count.");
         ignore_k = ignore_count / ray_count;
-        require(ignore_k <= 8,
-                "Scene::trace_segment_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
     }
 
     const MaskDetached active_detached = sanitize_segment_active<Detached>(start, end, active);
@@ -2623,8 +2986,6 @@ SegmentPairVisibilityT<Detached> Scene::trace_segment_pair_visibility(
         require(ignore_count % ray_count == 0,
                 "Scene::trace_segment_pair_visibility(): ignore_prim_ids width must be a multiple of ray count.");
         ignore_k = ignore_count / ray_count;
-        require(ignore_k <= 8,
-                "Scene::trace_segment_pair_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
     }
 
     const MaskDetached active_detached =
@@ -2796,8 +3157,6 @@ SegmentChainVisibilityT<Detached> Scene::trace_segment_chain_visibility(
         require(ignore_count % ignore_slots == 0,
                 "Scene::trace_segment_chain_visibility(): ignore_prim_per_segment width must be a multiple of chain_count * max_segments.");
         ignore_k = ignore_count / ignore_slots;
-        require(ignore_k <= 8,
-                "Scene::trace_segment_chain_visibility(): ignore_prim_per_segment supports at most 8 entries per segment.");
     }
 
     MaskDetached active_detached;
@@ -3263,6 +3622,22 @@ template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetache
 template ReflectionChain Scene::trace_reflections<false>(const Ray &ray,
                                                          int max_bounces,
                                                          Mask active) const;
+template ReflectionAccumulationResultDetached Scene::trace_reflections_accumulating<true>(
+    const RayDetached &ray,
+    const Vector3fDetached &tx_position,
+    const ReflectionAccumulationGrid &grid,
+    const PrimitiveMaterialPayloadDetached &material,
+    int max_bounces,
+    const ReflectionAccumulationOptions &options,
+    MaskDetached active) const;
+template ReflectionAccumulationResult Scene::trace_reflections_accumulating<false>(
+    const Ray &ray,
+    const Vector3f &tx_position,
+    const ReflectionAccumulationGrid &grid,
+    const PrimitiveMaterialPayload &material,
+    int max_bounces,
+    const ReflectionAccumulationOptions &options,
+    Mask active) const;
 template ReflectionTraceDetached Scene::trace_bounces<true>(
     const RayDetached &ray,
     int max_bounces,

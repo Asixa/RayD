@@ -33,6 +33,19 @@ are obvious from the existing `reflection_trace.cu`.
 | 5 | `trace_segment_chain_visibility` | EPC / BDPT N-segment Python `for` loop of `segment_visible` | P0 | ✅ implemented (`src/multipath/segment_visibility.cu`) |
 | — | `trace_reflections` trailing fields | enables channel-side D3 / M1 flatten refactor | P1 | ✅ implemented (`src/multipath/reflection_trace.cu`) |
 
+### Phase 2 RF native accumulation (implemented)
+
+These items intentionally break the earlier geometry-only rule for a
+single channel RF fast path. They are kept separate from the default
+reflection trace API so callers choose the native RF path explicitly.
+
+| # | Name | Replaces in channel | Pri | Status |
+|---|---|---|---|---|
+| 6 | `trace_reflections_accumulating` | `montecarlo/trace/reflection.py` Dr.Jit scatter-reduce forward fast path | P0 | ✅ implemented (`include/rayd/reflection_accumulation.h`, `src/multipath/reflection_accumulation.cu`) |
+| 7 | reflection wedge event buffer | `diff_state_store` scatter of wedge/diffraction candidates | P0 | ✅ implemented as part of `trace_reflections_accumulating` |
+| 8 | native accumulating AD contract | prevents silent AD fallback | P0 | ✅ implemented: native accumulating rejects AD inputs |
+| 9 | wider primitive ignore tables | removes previous `K <= 8` host guard for visibility native path | P1 | ✅ implemented for primitive ignore tables |
+
 ### Explicitly out of scope
 
 - `trace_diffraction_chain` (channel doc D2) — honest re-assessment
@@ -51,6 +64,15 @@ are obvious from the existing `reflection_trace.cu`.
   recorded in channel doc 24 §3 — keep RayD's surface narrow and add
   first-class `trace_*` kernels for each RF / acoustic pattern,
   rather than exposing a generic shader extension point.
+- Structure-level visibility ignore mapping and arbitrary structure
+  ignore tables. Primitive ignore tables are now wide, but the native
+  visibility control surface is still primitive-id based. Callers that
+  need structure-level ignores must receive an explicit unsupported
+  error instead of falling back to an approximate path.
+- `trace_diffraction_chain_mc` and per-edge MIS / UTD cache evaluation.
+  These still need a fixed Channel ABI for field payload, UTD constants,
+  edge cache ownership, and target/RX accumulation semantics before RayD
+  can implement a real single-launch chain-field kernel.
 
 ---
 
@@ -67,10 +89,13 @@ what `reflection_trace.cu` already gets right.
    payload registers only (≤ 8 u32 for portability across SMs). No
    global memory scratch space for per-ray transient state.
 
-3. **Geometry only.** No RF / acoustic physics inside the kernel. UTD
-   coefficients, polarization projection, reflection coefficients, and
-   field accumulation stay in channel-side Dr.Jit kernels operating on
-   RayD output buffers. RayD stays a kernel library, not a renderer.
+3. **Geometry first, with explicit RF exceptions.** The default RayD
+   surface remains geometry-only: UTD coefficients, polarization
+   projection, reflection coefficients, and field accumulation stay in
+   channel-side Dr.Jit kernels operating on RayD output buffers. The
+   RF-native accumulating kernel below is the one explicit exception:
+   it is a named non-AD fast path, has separate types, and is not used
+   implicitly by `trace_reflections`.
 
 4. **Params struct in `src/<module>/<name>_params.h`**, same pattern as
    `reflection_trace_params.h`: flat scalar pointer fields (`float *x`,
@@ -124,38 +149,157 @@ what `reflection_trace.cu` already gets right.
     kernels (e.g. shadow-boundary smoothing baked in), it is added
     explicitly later, not retrofitted by removing detach boundaries.
 
-11. **Dr.Jit JIT discipline — never force materialization. Mandatory.**
+11a. **Lazy outside symbolic loops (mandatory).** All callers expect
+    `trace_*` to participate in Dr.Jit's deferred-evaluation graph when
+    invoked outside `dr.syntax(mode='symbolic')`. Concretely, this
+    means:
+
+    - inputs are accepted as Dr.Jit JIT arrays — no internal
+      `dr.eval(...)` / `.numpy()` / `.torch()` on inputs,
+    - output buffers are allocated inside the JIT closure at launch
+      time, so constructing the result object does not force
+      evaluation,
+    - auxiliary inputs (`ignore_prim_ids`, `active`, sample fractions,
+      counts) stay as JIT arrays / compile-time ints; no `dr.eval` to
+      inspect them on the host.
+
+    Both the **jit path** (inline `optixTrace` from within Dr.Jit's
+    emitted PTX) and the **native path** (standalone `optixLaunch`
+    with custom raygen / anyhit / closesthit) satisfy this requirement
+    outside symbolic loops. The native path registers as a Dr.Jit IR
+    node and is scheduled — same as `Scene.trace_reflections` —
+    inserting a kernel boundary at launch time but allowing Dr.Jit to
+    sequence it among other ops.
+
+12. **Inside symbolic loops (jit path required, native not supported).**
     Channel relies on `dr.syntax` symbolic loops for the MC reflection
     main path
     ([reflection.py:535](../../witwin-platform/channel/witwin/montecarlo/path/reflection.py#L535))
-    and uses Dr.Jit fusion aggressively everywhere else. Every call to
-    a new `trace_*` must:
+    and similar hot loops elsewhere. When recording such a loop,
+    Dr.Jit emits a single PTX kernel containing the loop body.
 
-    - accept inputs as JIT nodes — no internal `dr.eval(...)` /
-      `.numpy()` / `.torch()` on inputs,
-    - register the OptiX launch as a JIT node so it fuses into the
-      surrounding Dr.Jit IR — same lazy-launch mechanism used by the
-      existing `Scene.intersect` and `Scene.trace_reflections`,
-    - allocate output buffers at launch time inside the JIT closure,
-      not eagerly at API entry, so constructing the result object does
-      not force evaluation,
-    - keep auxiliary inputs (`ignore_prim_ids`, `active`, sample
-      fractions, ignore counts) as JIT arrays / compile-time ints; do
-      not slip a `dr.eval` in to inspect them on the host.
+    - The **jit path** uses Dr.Jit's `optixTrace` integration: the
+      OptiX call is emitted as inline assembly inside the recorded
+      PTX. Recordable. ✅
+    - The **native path** uses host-side `optixLaunch` with its own
+      raygen kernel. Not emittable from within a Dr.Jit symbolic
+      recording — would force the loop out of symbolic mode or raise.
+      ❌
 
-    This is the one hard cross-cutting requirement. Test it explicitly
-    — see §7.7.
+    Dispatch (see "Backend Dispatch" below) selects the jit path
+    automatically when no native-only feature (custom anyhit,
+    thin payload, in-kernel state accumulation) is required. Callers
+    do not have to think about symbolic-loop compatibility, **except
+    in the one corner case** of "in-symbolic-loop call that needs
+    anyhit-ignore" — see Backend Dispatch §"Edge case".
 
-    Current implementation status: no-ignore segment visibility
-    variants use the same lazy HitObject / `jit_optix_ray_trace` path
-    as `Scene.intersect`. Ignore-list visibility still falls back to
-    the custom anyhit `optixLaunch` path because the anyhit ignore table
-    has not yet been moved into a Dr.Jit-managed OptiX pipeline. The
-    non-symbolic optimized `trace_reflections` path is likewise still
-    an eager native raygen; the default symbolic path remains JIT.
-    `RAYD_TRACE_VISIBILITY_BACKEND=native` forces the old
-    `optixLaunch` path for visibility kernels, while `jit` enforces the
-    no-ignore lazy path and errors on ignore lists.
+    This is the cross-cutting compatibility requirement. Test it
+    explicitly — see §7.7.
+
+---
+
+## Backend Dispatch — `jit` vs `native` paths
+
+The visibility kernels ship two implementations and pick one at call
+time. This section documents the dispatch mechanism so callers and
+contributors share a single mental model.
+
+### Two implementations
+
+| Path | Implementation | Symbolic-loop recordable | Anyhit / thin payload | Kernel boundary |
+|---|---|---|---|---|
+| **jit** | inline `optixTrace` in Dr.Jit-emitted PTX (`OptixScene::segment_hit<true>(...)`) | ✅ recordable | ❌ no custom programs | none |
+| **native** | standalone `optixLaunch` with custom raygen / anyhit / closesthit pipeline (`launch_segment_visibility_detached(...)`) | ❌ not recordable | ✅ full custom-program control | one boundary at launch |
+
+### Dispatch rule
+
+Implemented in `use_jit_trace_visibility_path(ignore_k)` in
+[`src/scene/scene.cpp`](../src/scene/scene.cpp). Picks the path based
+on **what features the call actually needs**, with an environment-
+variable override for testing:
+
+```
+RAYD_TRACE_VISIBILITY_BACKEND ∈ {auto, jit, native}
+
+backend == native  → always native (forced; for benchmarking / debugging)
+backend == jit     → always jit (errors if ignore_k > 0)
+backend == auto    → jit when ignore_k == 0, else native        (default)
+```
+
+The rule is **feature-driven**, not context-driven. A caller's path
+choice does not change based on whether they happen to be inside a
+symbolic loop — it changes only with the presence of an ignore list.
+This makes call behaviour predictable: the same call site always
+takes the same path.
+
+### Four-quadrant truth table
+
+How dispatch behaves in each combination of (calling context) ×
+(feature need), under `backend = auto`:
+
+| Calling context | `ignore_k` | Selected path | Optimal? |
+|---|---|---|---|
+| Outside symbolic loop | 0 | **jit** | ✅ no kernel boundary, fuses with surrounding Dr.Jit IR |
+| Outside symbolic loop | > 0 | **native** | ✅ anyhit needed for ignore list |
+| Inside symbolic loop | 0 | **jit** | ✅ recordable, same PTX kernel as loop body |
+| Inside symbolic loop | > 0 | **native** | ⚠ see Edge case below |
+
+The jit path is not just a "compatibility fallback" — for the
+no-ignore case it is the **better** choice everywhere, because:
+
+- BVH traversal count is the same (1 traversal in both paths)
+- jit avoids the kernel boundary that native would insert
+- jit avoids native's full-Intersection write-back (although shadow_test
+  variants minimize this anyway)
+
+### Edge case: symbolic loop + ignore list
+
+This is the one combination the current implementation does not
+gracefully handle:
+
+- `backend = jit` + `ignore_k > 0`: `require(ignore_k == 0, ...)`
+  raises with a clear message.
+- `backend = auto` + `ignore_k > 0` inside a symbolic loop: dispatch
+  picks native, but recording into the symbolic loop will fail at the
+  Dr.Jit level (since the native path is a host-side `optixLaunch`).
+  The error surfaces as a Dr.Jit recording failure, not as a clean
+  application error.
+
+**Channel does not currently hit this combination.** All channel
+`segment_visible(..., ignore_prim_idx=...)` call sites operate at
+Dr.Jit evaluation boundaries (after `dr.compress` / `dr.scatter` /
+batch state-array materialization), not inside symbolic recordings.
+See §8.6 for the explicit reality check.
+
+**If a future caller needs this combination**, two extension paths:
+
+1. **Jit path adds ignore support via Dr.Jit re-fire.** Implement the
+   ignore loop in Dr.Jit by iteratively re-firing `optixTrace` and
+   advancing the origin past each ignored hit. N BVH traversals
+   instead of 1 traversal + N anyhit invocations — slower, but
+   symbolic-recordable. Pure Dr.Jit code; modest implementation cost.
+
+2. **Explicit error at dispatch.** Add `require(!dr_recording_active()
+   || ignore_k == 0, "trace_segment_visibility with ignore_prim_ids
+   cannot be called inside a dr.syntax symbolic loop; hoist the call
+   out of the loop or evaluate inputs first.")` so the failure mode
+   is a clear application-level error rather than a Dr.Jit-internal
+   trace.
+
+Recommended: option 2 immediately (zero-cost guard), and option 1
+only when a real call site needs it.
+
+### When to override the default
+
+| Override | Use case |
+|---|---|
+| `RAYD_TRACE_VISIBILITY_BACKEND=native` | Benchmark native vs jit; debug anyhit logic by forcing every call through the native pipeline |
+| `RAYD_TRACE_VISIBILITY_BACKEND=jit` | Verify symbolic-loop tests; catch accidental anyhit dependencies |
+| `RAYD_TRACE_VISIBILITY_BACKEND=auto` | Production / default |
+
+These environment variables are read once at scene-construction time
+(static `const` initializer). Changing them mid-process has no
+effect.
 
 ---
 
@@ -200,9 +344,9 @@ visibility.visible        # Bool [N]
 
 `ignore_prim_ids` is a `(N, K)` Int32 tensor (or None). `K` is the
 maximum number of ignored primitives per ray; `-1` entries are treated
-as "no ignore." `K` is fixed at launch time; channel currently passes
-up to 4 ignores (two adjacent faces per edge, two endpoints' worth
-when chaining), so a runtime cap of `K=8` covers the foreseeable use.
+as "no ignore." `K` is fixed at launch time. The native anyhit path now
+accepts arbitrary primitive ignore width subject to device memory and
+launch occupancy; the jit path still supports no-ignore only.
 
 ### PyTorch wrapper
 
@@ -996,6 +1140,112 @@ RayD-side prerequisite that makes the refactor clean.
 
 ---
 
+## 6A. `trace_reflections_accumulating` RF native path — ✅ implemented
+
+This is the dedicated RayD-side Tier 2 fast path for channel's MC
+reflection forward accumulation. Unlike `trace_reflections`, it is not a
+geometry-only chain recorder. It is a separate native OptiX launch that
+traces reflection bounces and accumulates scalar RF reflection power
+directly into a receiver grid.
+
+### Public API
+
+```python
+result = scene.trace_reflections_accumulating(
+    rays,              # RayDetached, [N]
+    tx_position,       # Array3fDetached, scalar or [N]
+    grid,              # ReflectionAccumulationGrid
+    max_bounces,       # int
+    material_payload,  # PrimitiveMaterialPayloadDetached, one entry per global primitive
+    active=True,       # BoolDetached scalar or [N]
+    options=ReflectionAccumulationOptions(),
+)
+
+result.reflection_power   # FloatDetached [grid.resolution0 * grid.resolution1]
+result.reflection_count   # IntDetached   [grid cell count]
+result.wedge_events       # ReflectionWedgeEventBufferDetached
+```
+
+`ReflectionAccumulationGrid` is an axis-aligned 2D descriptor:
+`axis`, `position`, `coord0_min/max`, `coord1_min/max`,
+`resolution0`, and `resolution1`. The implementation projects each
+post-bounce ray to that plane, filters out-of-bounds intersections, and
+uses device atomics for per-cell `reflection_power` and
+`reflection_count`.
+
+`PrimitiveMaterialPayloadDetached` is indexed in global primitive id
+space and currently carries `eta_r`, `sigma`, `mu_r`, `gain`, and
+`valid`. The kernel evaluates a scalar normal-incidence-style Fresnel
+power factor with conductivity support, multiplies by `gain`, applies
+Russian roulette if requested, and stops when the path throughput falls
+below `stop_threshold`.
+
+### Wedge event ABI
+
+When `options.collect_wedges` is true, the same reflection launch emits
+wedge/diffraction candidate events while tracing bounces:
+
+```cpp
+struct ReflectionWedgeEventBuffer {
+    int capacity;
+    Int count;              // total attempted events, may exceed capacity
+    Int ray_index;          // [capacity]
+    Vector3f hit_points;    // [capacity]
+    Vector3f normals;       // [capacity]
+    Int prim_id;            // [capacity], global primitive id
+    Vector3f directions;    // [capacity], outgoing reflected direction
+    Int bounce_depth;       // [capacity], zero-based reflection depth
+};
+```
+
+Only slots `0:min(count, capacity)` are valid. Overflow is observable
+because `count` is incremented even when the slot is outside capacity.
+`collect_wedge_prefixes=false` records only the first-bounce candidate;
+`true` records every bounce.
+
+### Native / JIT / AD contract
+
+This API is intentionally native-only. It lives beside, not inside, the
+default symbolic/JIT `trace_reflections` path:
+
+- Detached inputs run the standalone `optixLaunch` fast path.
+- AD inputs throw immediately with a message naming the non-AD native
+  fast path.
+- There is no silent fallback to channel's AD tape path. AD callers must
+  explicitly choose the existing Dr.Jit/Channel AD implementation, or a
+  future RayD VJP/JVP/topology-tape API.
+
+This keeps the two implementations clear in code and at the API level:
+`trace_reflections` remains the JIT/symbolic chain API, while
+`trace_reflections_accumulating` is the RF-native non-AD accumulation
+API.
+
+### Files
+
+```text
+include/rayd/reflection_accumulation.h
+src/multipath/reflection_accumulation_params.h
+src/multipath/reflection_accumulation_host.h
+src/multipath/reflection_accumulation_host.cpp
+src/multipath/reflection_accumulation.cu
+src/multipath/reflection_accumulation_ptx.h
+src/scene/scene.cpp
+src/rayd.cpp
+CMakeLists.txt
+tests/drjit/test_reflection_accumulation.py
+```
+
+### Tier 3 boundary
+
+`trace_diffraction_chain_mc` is not implemented by reusing this scalar
+reflection accumulator. A correct Tier 3 kernel needs a separate ABI for
+TX → edge... → RX/target chain visibility, per-edge UTD/MIS cache
+tables, field payload layout, and receiver accumulation semantics. Until
+that ABI is fixed, unsupported control modes should continue to error
+explicitly rather than falling back.
+
+---
+
 ## 7. Testing Methodology
 
 All tests follow the existing pattern in `tests/drjit/test_geometry.py`:
@@ -1029,6 +1279,7 @@ verified existing API:
 | `trace_segment_pair_visibility` | Two separate `trace_segment_visibility` calls |
 | `trace_axial_edge_visibility` | Python loop of `trace_segment_visibility` |
 | `nearest_edges_topk` | Brute-force scan over all edges via `nearest_edge` filter |
+| `trace_reflections_accumulating` | Existing detached reflection trace plus channel-side reference accumulation for scalar RF tests |
 
 ### 7.3 Test scene matrix
 
@@ -1225,7 +1476,10 @@ OptiX migration ([`edge_bvh_optix_migration_plan.md`](edge_bvh_optix_migration_p
 ✅ §4  nearest_edges_topk                     (src/scene/edge_optix.cu, K ≤ 16)
 ✅ §5  trace_segment_chain_visibility         (src/multipath/segment_visibility.cu)
 ✅ §6  trace_reflections trailing fields      (src/multipath/reflection_trace.cu)
-⏸ D2  trace_diffraction_chain                 (deferred; magnitude downgraded — see §8.3)
+✅ §6A trace_reflections_accumulating          (src/multipath/reflection_accumulation.cu)
+✅ §6A reflection wedge event buffer           (same module)
+✅     primitive ignore tables wider than 8    (src/multipath/segment_visibility.cu)
+⏸ D2  trace_diffraction_chain_mc              (deferred; field/cache ABI not fixed)
 ```
 
 ### 8.2 Phase 2 sequence
@@ -1289,6 +1543,38 @@ mode. Two changes to the deferral framing:
 Phase 2 items: 1–2 focused days each given the existing
 `segment_visibility.cu` + `reflection_trace.cu` templates. The CMake /
 PTX / nanobind glue from Phase 1 carries over directly.
+
+### 8.6 Channel symbolic-loop reality check
+
+The dual-backend dispatch (see "Backend Dispatch" earlier in this
+doc) raises a question: is the "symbolic loop + ignore_prim_ids" edge
+case ever hit by channel today, or is it purely hypothetical?
+
+Audit of every channel call site that goes through
+`Scene.segment_visible` / `Scene.trace_segment_*`:
+
+| Call site | Inside `dr.syntax` symbolic loop? | Uses `ignore_prim_idx`? | Dispatch | Edge case? |
+|---|---|---|---|---|
+| [`builders.py:244`](../../witwin-platform/channel/witwin/deterministic/path/diffraction_impl/builders.py#L244) | ❌ batch eval | ✅ adjacent faces | native | safe |
+| [`builders.py:484`](../../witwin-platform/channel/witwin/deterministic/path/diffraction_impl/builders.py#L484) | ❌ batch eval | ✅ 4 ignores | native | safe |
+| [`forward.py:261-268`](../../witwin-platform/channel/witwin/deterministic/path/diffraction_impl/forward.py#L261-L268) | ❌ | ✅ | native | safe |
+| [`postprocessing.py:269,317`](../../witwin-platform/channel/witwin/deterministic/path/diffraction_impl/postprocessing.py#L269) | ❌ | ✅ | native | safe |
+| [`epc.py:656-705`](../../witwin-platform/channel/witwin/deterministic/path/reflection_impl/epc.py#L656) | ❌ Python `for` | ✅ surface groups | native | safe (chain candidate for §5) |
+| [`bdpt_diffraction.py:679-681`](../../witwin-platform/channel/witwin/montecarlo/integrators/bdpt_diffraction.py#L679) | ❌ | (varies) | varies | safe |
+| [`bdpt_diffraction.py:1683-1689`](../../witwin-platform/channel/witwin/montecarlo/integrators/bdpt_diffraction.py#L1683) | ❌ | ✅ | native | safe |
+| [`reflection.py:535-552`](../../witwin-platform/channel/witwin/montecarlo/path/reflection.py#L535) MC reflection main loop | ✅ `mode='symbolic'` | uses `scene.ray_intersect` only (not `segment_visible`) | jit (via Dr.Jit-op `Scene.intersect`) | n/a |
+| [`montecarlo/path/los.py:91`](../../witwin-platform/channel/witwin/montecarlo/path/los.py#L91) | ❌ | ❌ | jit | safe |
+| [`montecarlo/path/postprocessing.py:159`](../../witwin-platform/channel/witwin/montecarlo/path/postprocessing.py#L159) | ❌ | ❌ | jit | safe |
+
+**Net status**: zero channel call sites hit the edge case ("inside
+symbolic loop + ignore_prim_ids"). The dispatch design is correct for
+all current usage; the edge case is reserved for a hypothetical future
+caller, with two extension paths documented in the Backend Dispatch
+section above.
+
+If channel ever adds a symbolic-loop call that needs ignores, this
+table will be the first place that needs updating, and option 1
+(Dr.Jit re-fire for ignores) becomes the natural action item.
 
 ---
 

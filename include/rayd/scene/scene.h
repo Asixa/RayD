@@ -9,6 +9,7 @@
 #include <rayd/edge.h>
 #include <rayd/intersection.h>
 #include <rayd/mesh.h>
+#include <rayd/reflection_accumulation.h>
 #include <rayd/reflection.h>
 #include <rayd/segment_visibility.h>
 #include <rayd/scene/scene_edge.h>
@@ -18,6 +19,7 @@
 namespace rayd {
 
 class ReflectionTracePipeline;
+class ReflectionAccumulationPipeline;
 class SegmentVisibilityPipeline;
 
 struct SceneSyncProfile {
@@ -88,6 +90,15 @@ public:
     ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
                                                  int max_bounces,
                                                  MaskT<Detached> active = true) const;
+    template <bool Detached>
+    ReflectionAccumulationResultT<Detached> trace_reflections_accumulating(
+        const RayT<Detached> &ray,
+        const Vector3fT<Detached> &tx_position,
+        const ReflectionAccumulationGrid &grid,
+        const PrimitiveMaterialPayloadT<Detached> &material,
+        int max_bounces,
+        const ReflectionAccumulationOptions &options,
+        MaskT<Detached> active = true) const;
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
         const RayT<Detached> &ray,
@@ -204,6 +215,7 @@ private:
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
     mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
+    mutable std::unique_ptr<ReflectionAccumulationPipeline> reflection_accumulation_pipeline_;
     mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;

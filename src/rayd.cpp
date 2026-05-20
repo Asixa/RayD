@@ -216,6 +216,8 @@ NB_MODULE(rayd, m) {
               result["build"] = native_stage_dict(snapshot.build);
               result["sync"] = native_stage_dict(snapshot.sync);
               result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
+              result["trace_reflections_accumulating"] =
+                  native_stage_dict(snapshot.trace_reflections_accumulating);
               return result;
           },
           "Return grouped native launch audit counters.");
@@ -385,6 +387,83 @@ NB_MODULE(rayd, m) {
             .def_ro("trailing_prim", &ReflectionChain::trailing_prim)
             .def_ro("trailing_dir", &ReflectionChain::trailing_dir)
             .def_ro("trailing_origin", &ReflectionChain::trailing_origin);
+
+        nb::class_<ReflectionAccumulationGrid>(m, "ReflectionAccumulationGrid")
+            .def(nb::init<>())
+            .def_rw("axis", &ReflectionAccumulationGrid::axis)
+            .def_rw("position", &ReflectionAccumulationGrid::position)
+            .def_rw("coord0_min", &ReflectionAccumulationGrid::coord0_min)
+            .def_rw("coord0_max", &ReflectionAccumulationGrid::coord0_max)
+            .def_rw("coord1_min", &ReflectionAccumulationGrid::coord1_min)
+            .def_rw("coord1_max", &ReflectionAccumulationGrid::coord1_max)
+            .def_rw("resolution0", &ReflectionAccumulationGrid::resolution0)
+            .def_rw("resolution1", &ReflectionAccumulationGrid::resolution1);
+
+        nb::class_<ReflectionAccumulationOptions>(m, "ReflectionAccumulationOptions")
+            .def(nb::init<>())
+            .def_rw("wavelength", &ReflectionAccumulationOptions::wavelength)
+            .def_rw("k", &ReflectionAccumulationOptions::k)
+            .def_rw("solid_angle_per_ray", &ReflectionAccumulationOptions::solid_angle_per_ray)
+            .def_rw("cell_area", &ReflectionAccumulationOptions::cell_area)
+            .def_rw("seed", &ReflectionAccumulationOptions::seed)
+            .def_rw("rr_depth", &ReflectionAccumulationOptions::rr_depth)
+            .def_rw("rr_prob", &ReflectionAccumulationOptions::rr_prob)
+            .def_rw("stop_threshold", &ReflectionAccumulationOptions::stop_threshold)
+            .def_rw("collect_wedges", &ReflectionAccumulationOptions::collect_wedges)
+            .def_rw("collect_wedge_prefixes", &ReflectionAccumulationOptions::collect_wedge_prefixes)
+            .def_rw("wedge_capacity", &ReflectionAccumulationOptions::wedge_capacity);
+
+        nb::class_<PrimitiveMaterialPayloadDetached>(m, "PrimitiveMaterialPayloadDetached")
+            .def(nb::init<>())
+            .def_rw("eta_r", &PrimitiveMaterialPayloadDetached::eta_r)
+            .def_rw("sigma", &PrimitiveMaterialPayloadDetached::sigma)
+            .def_rw("gain", &PrimitiveMaterialPayloadDetached::gain)
+            .def_rw("mu_r", &PrimitiveMaterialPayloadDetached::mu_r)
+            .def_rw("valid", &PrimitiveMaterialPayloadDetached::valid);
+
+        nb::class_<PrimitiveMaterialPayload>(m, "PrimitiveMaterialPayload")
+            .def(nb::init<>())
+            .def_rw("eta_r", &PrimitiveMaterialPayload::eta_r)
+            .def_rw("sigma", &PrimitiveMaterialPayload::sigma)
+            .def_rw("gain", &PrimitiveMaterialPayload::gain)
+            .def_rw("mu_r", &PrimitiveMaterialPayload::mu_r)
+            .def_rw("valid", &PrimitiveMaterialPayload::valid);
+
+        nb::class_<ReflectionWedgeEventBufferDetached>(m, "ReflectionWedgeEventBufferDetached")
+            .def_ro("capacity", &ReflectionWedgeEventBufferDetached::capacity)
+            .def_ro("count", &ReflectionWedgeEventBufferDetached::count)
+            .def_ro("ray_index", &ReflectionWedgeEventBufferDetached::ray_index)
+            .def_ro("hit_points", &ReflectionWedgeEventBufferDetached::hit_points)
+            .def_ro("normals", &ReflectionWedgeEventBufferDetached::normals)
+            .def_ro("prim_id", &ReflectionWedgeEventBufferDetached::prim_id)
+            .def_ro("directions", &ReflectionWedgeEventBufferDetached::directions)
+            .def_ro("bounce_depth", &ReflectionWedgeEventBufferDetached::bounce_depth);
+
+        nb::class_<ReflectionWedgeEventBuffer>(m, "ReflectionWedgeEventBuffer")
+            .def_ro("capacity", &ReflectionWedgeEventBuffer::capacity)
+            .def_ro("count", &ReflectionWedgeEventBuffer::count)
+            .def_ro("ray_index", &ReflectionWedgeEventBuffer::ray_index)
+            .def_ro("hit_points", &ReflectionWedgeEventBuffer::hit_points)
+            .def_ro("normals", &ReflectionWedgeEventBuffer::normals)
+            .def_ro("prim_id", &ReflectionWedgeEventBuffer::prim_id)
+            .def_ro("directions", &ReflectionWedgeEventBuffer::directions)
+            .def_ro("bounce_depth", &ReflectionWedgeEventBuffer::bounce_depth);
+
+        nb::class_<ReflectionAccumulationResultDetached>(m, "ReflectionAccumulationResultDetached")
+            .def_ro("ray_count", &ReflectionAccumulationResultDetached::ray_count)
+            .def_ro("max_bounces", &ReflectionAccumulationResultDetached::max_bounces)
+            .def_ro("grid_cell_count", &ReflectionAccumulationResultDetached::grid_cell_count)
+            .def_ro("reflection_power", &ReflectionAccumulationResultDetached::reflection_power)
+            .def_ro("reflection_count", &ReflectionAccumulationResultDetached::reflection_count)
+            .def_ro("wedge_events", &ReflectionAccumulationResultDetached::wedge_events);
+
+        nb::class_<ReflectionAccumulationResult>(m, "ReflectionAccumulationResult")
+            .def_ro("ray_count", &ReflectionAccumulationResult::ray_count)
+            .def_ro("max_bounces", &ReflectionAccumulationResult::max_bounces)
+            .def_ro("grid_cell_count", &ReflectionAccumulationResult::grid_cell_count)
+            .def_ro("reflection_power", &ReflectionAccumulationResult::reflection_power)
+            .def_ro("reflection_count", &ReflectionAccumulationResult::reflection_count)
+            .def_ro("wedge_events", &ReflectionAccumulationResult::wedge_events);
 
         nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
             .def("is_valid", &ReflectionBounceDetached::is_valid)
@@ -905,10 +984,49 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
-                 "canonical_prim_table"_a = IntDetached(),
-                 "image_source_tolerance"_a = 1e-5f,
-                 "active"_a = true,
-                 "symbolic"_a = true)
+                  "canonical_prim_table"_a = IntDetached(),
+                  "image_source_tolerance"_a = 1e-5f,
+                  "active"_a = true,
+                  "symbolic"_a = true)
+            .def("trace_reflections_accumulating",
+                 [](const Scene &scene,
+                    nb::handle ray_obj,
+                    nb::handle tx_position_obj,
+                    const ReflectionAccumulationGrid &grid,
+                    nb::handle material_obj,
+                    int max_bounces,
+                    const ReflectionAccumulationOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<RayDetached>(ray_obj)) {
+                         const RayDetached ray = nb::cast<RayDetached>(ray_obj);
+                         const Vector3fDetached tx_position =
+                             nb::cast<Vector3fDetached>(tx_position_obj);
+                         const PrimitiveMaterialPayloadDetached material =
+                             nb::cast<PrimitiveMaterialPayloadDetached>(material_obj);
+                         const rayd::MaskDetached active =
+                             nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.trace_reflections_accumulating<true>(
+                             ray, tx_position, grid, material, max_bounces, options, active));
+                     }
+                     if (nb::isinstance<Ray>(ray_obj)) {
+                         const Ray ray = nb::cast<Ray>(ray_obj);
+                         const Vector3f tx_position =
+                             nb::cast<Vector3f>(tx_position_obj);
+                         const PrimitiveMaterialPayload material =
+                             nb::cast<PrimitiveMaterialPayload>(material_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.trace_reflections_accumulating<false>(
+                             ray, tx_position, grid, material, max_bounces, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("ray"),
+                 nb::arg("tx_position"),
+                 "grid"_a,
+                 "material"_a,
+                 "max_bounces"_a,
+                 "options"_a = ReflectionAccumulationOptions(),
+                 "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
                      return scene.shadow_test<true>(ray, active);

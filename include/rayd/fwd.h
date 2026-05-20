@@ -34,6 +34,24 @@ using ReflectionTraceT = ReflectionTraceData<FloatT<Detached>>;
 using ReflectionTrace = ReflectionTraceT<false>;
 using ReflectionTraceDetached = ReflectionTraceT<true>;
 
+template <typename> struct PrimitiveMaterialPayloadData;
+template <bool Detached>
+using PrimitiveMaterialPayloadT = PrimitiveMaterialPayloadData<FloatT<Detached>>;
+using PrimitiveMaterialPayload = PrimitiveMaterialPayloadT<false>;
+using PrimitiveMaterialPayloadDetached = PrimitiveMaterialPayloadT<true>;
+
+template <typename> struct ReflectionWedgeEventBufferData;
+template <bool Detached>
+using ReflectionWedgeEventBufferT = ReflectionWedgeEventBufferData<FloatT<Detached>>;
+using ReflectionWedgeEventBuffer = ReflectionWedgeEventBufferT<false>;
+using ReflectionWedgeEventBufferDetached = ReflectionWedgeEventBufferT<true>;
+
+template <typename> struct ReflectionAccumulationResultData;
+template <bool Detached>
+using ReflectionAccumulationResultT = ReflectionAccumulationResultData<FloatT<Detached>>;
+using ReflectionAccumulationResult = ReflectionAccumulationResultT<false>;
+using ReflectionAccumulationResultDetached = ReflectionAccumulationResultT<true>;
+
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>
 using NearestPointEdgeT = NearestPointEdgeData<FloatT<Detached>>;

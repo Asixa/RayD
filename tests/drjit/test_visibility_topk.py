@@ -160,6 +160,49 @@ class VisibilityAndTopKTests(unittest.TestCase):
         self.assertEqual(data["consume_optix"], 0)
         self.assertGreaterEqual(data["native_optix_launches"], 1)
 
+    def test_visibility_ignore_tables_accept_more_than_eight_entries(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0], [0.0], [-1.0])
+            end = cuda.Array3f([0.0], [0.0], [1.0])
+            end_b = cuda.Array3f([0.5], [0.5], [1.0])
+            ignore9 = cuda.Int([-1, -1, -1, -1, -1, -1, -1, -1, 0])
+
+            pair = scene.trace_segment_pair_visibility(start, end, end_b, ignore9)
+            seg = scene.trace_segment_visibility(start, end, ignore9)
+
+            chain_points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
+            chain_length = cuda.Int([1])
+            chain = scene.trace_segment_chain_visibility(chain_points, chain_length, ignore9)
+
+            print(json.dumps({
+                "segment_visible": bool(seg.visible[0]),
+                "pair_a": bool(pair.visible_a[0]),
+                "pair_b": bool(pair.visible_b[0]),
+                "chain_visible": bool(chain.all_visible[0]),
+                "chain_blocker": int(chain.first_blocked_prim[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["segment_visible"])
+        self.assertTrue(data["pair_a"])
+        self.assertTrue(data["pair_b"])
+        self.assertTrue(data["chain_visible"])
+        self.assertEqual(data["chain_blocker"], -1)
+
     def test_no_ignore_segment_visibility_variants_are_lazy_jit_optix_queries(self):
         data = run_json_case(
             """
