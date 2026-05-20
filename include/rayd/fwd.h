@@ -70,6 +70,12 @@ using AxialEdgeVisibilityT = AxialEdgeVisibilityData<FloatT<Detached>>;
 using AxialEdgeVisibility = AxialEdgeVisibilityT<false>;
 using AxialEdgeVisibilityDetached = AxialEdgeVisibilityT<true>;
 
+template <typename> struct SegmentChainVisibilityData;
+template <bool Detached>
+using SegmentChainVisibilityT = SegmentChainVisibilityData<FloatT<Detached>>;
+using SegmentChainVisibility = SegmentChainVisibilityT<false>;
+using SegmentChainVisibilityDetached = SegmentChainVisibilityT<true>;
+
 struct PrimaryEdgeSample;
 struct OptixIntersection;
 

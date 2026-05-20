@@ -358,7 +358,11 @@ NB_MODULE(rayd, m) {
             .def_ro("shape_ids", &ReflectionChainDetached::shape_ids)
             .def_ro("prim_ids", &ReflectionChainDetached::prim_ids)
             .def_ro("local_prim_ids", &ReflectionChainDetached::local_prim_ids)
-            .def_ro("global_prim_ids", &ReflectionChainDetached::global_prim_ids);
+            .def_ro("global_prim_ids", &ReflectionChainDetached::global_prim_ids)
+            .def_ro("trailing_t", &ReflectionChainDetached::trailing_t)
+            .def_ro("trailing_prim", &ReflectionChainDetached::trailing_prim)
+            .def_ro("trailing_dir", &ReflectionChainDetached::trailing_dir)
+            .def_ro("trailing_origin", &ReflectionChainDetached::trailing_origin);
 
         nb::class_<ReflectionChain>(m, "ReflectionChain")
             .def("is_valid", &ReflectionChain::is_valid)
@@ -376,7 +380,11 @@ NB_MODULE(rayd, m) {
             .def_ro("shape_ids", &ReflectionChain::shape_ids)
             .def_ro("prim_ids", &ReflectionChain::prim_ids)
             .def_ro("local_prim_ids", &ReflectionChain::local_prim_ids)
-            .def_ro("global_prim_ids", &ReflectionChain::global_prim_ids);
+            .def_ro("global_prim_ids", &ReflectionChain::global_prim_ids)
+            .def_ro("trailing_t", &ReflectionChain::trailing_t)
+            .def_ro("trailing_prim", &ReflectionChain::trailing_prim)
+            .def_ro("trailing_dir", &ReflectionChain::trailing_dir)
+            .def_ro("trailing_origin", &ReflectionChain::trailing_origin);
 
         nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
             .def("is_valid", &ReflectionBounceDetached::is_valid)
@@ -541,6 +549,24 @@ NB_MODULE(rayd, m) {
         nb::class_<AxialEdgeVisibility>(m, "AxialEdgeVisibility")
             .def_ro("state_count", &AxialEdgeVisibility::state_count)
             .def_ro("any_visible", &AxialEdgeVisibility::any_visible);
+
+        nb::class_<SegmentChainVisibilityDetached>(m, "SegmentChainVisibilityDetached")
+            .def_ro("chain_count", &SegmentChainVisibilityDetached::chain_count)
+            .def_ro("max_segments", &SegmentChainVisibilityDetached::max_segments)
+            .def_ro("all_visible", &SegmentChainVisibilityDetached::all_visible)
+            .def_ro("first_blocked_segment",
+                    &SegmentChainVisibilityDetached::first_blocked_segment)
+            .def_ro("first_blocked_prim",
+                    &SegmentChainVisibilityDetached::first_blocked_prim);
+
+        nb::class_<SegmentChainVisibility>(m, "SegmentChainVisibility")
+            .def_ro("chain_count", &SegmentChainVisibility::chain_count)
+            .def_ro("max_segments", &SegmentChainVisibility::max_segments)
+            .def_ro("all_visible", &SegmentChainVisibility::all_visible)
+            .def_ro("first_blocked_segment",
+                    &SegmentChainVisibility::first_blocked_segment)
+            .def_ro("first_blocked_prim",
+                    &SegmentChainVisibility::first_blocked_prim);
 
         nb::class_<SceneSyncProfile>(m, "SceneSyncProfile")
             .def_ro("mesh_update_ms", &SceneSyncProfile::mesh_update_ms)
@@ -1022,6 +1048,37 @@ NB_MODULE(rayd, m) {
                  "edge_line_min"_a,
                  "edge_line_max"_a,
                  "sample_fractions"_a = std::vector<float>{ 0.f, 0.25f, 0.5f, 0.75f, 1.f },
+                 "active"_a = true)
+            .def("trace_segment_chain_visibility",
+                 [](const Scene &scene,
+                    nb::handle points_obj,
+                    const IntDetached &chain_length,
+                    const IntDetached &ignore_prim_per_segment,
+                    nb::handle active_obj) -> nb::object {
+                     const std::string module_name =
+                         nb::cast<std::string>(points_obj.type().attr("__module__"));
+                     const std::string type_name =
+                         nb::cast<std::string>(points_obj.type().attr("__name__"));
+
+                     if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
+                         Vector3f points = nb::cast<Vector3f>(points_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.trace_segment_chain_visibility<false>(
+                             points, chain_length, ignore_prim_per_segment, active));
+                     }
+
+                     if (module_name == "drjit.cuda" && type_name == "Array3f") {
+                         Vector3fDetached points = nb::cast<Vector3fDetached>(points_obj);
+                         rayd::MaskDetached active =
+                             nb::cast<rayd::MaskDetached>(active_obj);
+                         return nb::cast(scene.trace_segment_chain_visibility<true>(
+                             points, chain_length, ignore_prim_per_segment, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("points"),
+                 "chain_length"_a,
+                 "ignore_prim_per_segment"_a = IntDetached(),
                  "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, nb::handle point_obj, nb::handle active_obj) -> nb::object {

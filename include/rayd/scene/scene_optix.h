@@ -19,6 +19,12 @@ struct OptixIntersection {
     FloatDetached t;
 };
 
+struct OptixSegmentHit {
+    MaskDetached visible;
+    MaskDetached hit;
+    IntDetached global_prim_id;
+};
+
 struct OptixSceneMeshDesc {
     const Mesh *mesh = nullptr;
     bool dynamic = false;
@@ -59,6 +65,10 @@ public:
                                 MaskT<Detached> &active) const;
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray,
+                                MaskT<Detached> active) const;
+    template <bool Detached>
+    OptixSegmentHit segment_hit(const Vector3fT<Detached> &start,
+                                const Vector3fT<Detached> &end,
                                 MaskT<Detached> active) const;
 
 private:

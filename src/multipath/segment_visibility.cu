@@ -51,10 +51,23 @@ static __forceinline__ __device__ float3 load_end_b(unsigned int ray) {
     return make_vec3(params.end_b_x[ray], params.end_b_y[ray], params.end_b_z[ray]);
 }
 
+static __forceinline__ __device__ float3 load_chain_point(unsigned int chain,
+                                                          int point_index) {
+    const int slot = static_cast<int>(chain) * params.max_points + point_index;
+    return make_vec3(params.chain_point_x[slot],
+                     params.chain_point_y[slot],
+                     params.chain_point_z[slot]);
+}
+
 static __forceinline__ __device__ uint32_t trace_segment(float3 start,
                                                          float3 end,
-                                                         bool active) {
+                                                         bool active,
+                                                         unsigned int ignore_base,
+                                                         uint32_t *blocker_prim) {
     if (!active || params.handle == 0ull) {
+        if (blocker_prim != nullptr) {
+            *blocker_prim = 0xFFFFFFFFu;
+        }
         return 0u;
     }
 
@@ -62,6 +75,9 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
     const float length_sq = dot3(direction, direction);
     const float length = sqrtf(length_sq);
     if (length <= kMinSegmentLength) {
+        if (blocker_prim != nullptr) {
+            *blocker_prim = 0xFFFFFFFFu;
+        }
         return 1u;
     }
 
@@ -70,6 +86,7 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
     const float tmax = fmaxf(length - 2.0f * kRayBias, 0.0f);
 
     uint32_t visible = 1u;
+    uint32_t blocker = 0xFFFFFFFFu;
     optixTrace(static_cast<OptixTraversableHandle>(params.handle),
                origin,
                direction,
@@ -81,21 +98,31 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
                0,
                1,
                0,
-               visible);
+               visible,
+               blocker,
+               ignore_base);
+    if (blocker_prim != nullptr) {
+        *blocker_prim = blocker;
+    }
     return visible;
 }
 
 } // namespace
 
 extern "C" __global__ void __anyhit__segment_visibility() {
+    if (params.ignore_prim_ids == nullptr || params.ignore_k <= 0) {
+        return;
+    }
+
     const unsigned int ray = optixGetLaunchIndex().x;
     const int shape_id = static_cast<int>(optixGetInstanceId());
     const int face_offset =
         (shape_id >= 0 && shape_id < params.n_meshes) ? params.face_offsets[shape_id] : 0;
     const int global_prim = face_offset + static_cast<int>(optixGetPrimitiveIndex());
+    const unsigned int ignore_base = optixGetPayload_2();
 
     for (int slot = 0; slot < params.ignore_k; ++slot) {
-        const int ignored = params.ignore_prim_ids[ray * params.ignore_k + slot];
+        const int ignored = params.ignore_prim_ids[ignore_base + slot];
         if (ignored == global_prim) {
             optixIgnoreIntersection();
             return;
@@ -105,6 +132,11 @@ extern "C" __global__ void __anyhit__segment_visibility() {
 
 extern "C" __global__ void __closesthit__segment_visibility() {
     optixSetPayload_0(0u);
+    const int shape_id = static_cast<int>(optixGetInstanceId());
+    const int face_offset =
+        (shape_id >= 0 && shape_id < params.n_meshes) ? params.face_offsets[shape_id] : 0;
+    const int global_prim = face_offset + static_cast<int>(optixGetPrimitiveIndex());
+    optixSetPayload_1(static_cast<unsigned int>(global_prim));
 }
 
 extern "C" __global__ void __miss__segment_visibility() {
@@ -118,7 +150,11 @@ extern "C" __global__ void __raygen__segment_visibility() {
     }
 
     params.out_visible[ray] =
-        trace_segment(load_start(ray), load_end_a(ray), is_active(ray)) != 0u ? 1u : 0u;
+        trace_segment(load_start(ray),
+                      load_end_a(ray),
+                      is_active(ray),
+                      ray * params.ignore_k,
+                      nullptr) != 0u ? 1u : 0u;
 }
 
 extern "C" __global__ void __raygen__segment_pair_visibility() {
@@ -129,8 +165,11 @@ extern "C" __global__ void __raygen__segment_pair_visibility() {
 
     const bool active = is_active(ray);
     const float3 start = load_start(ray);
-    params.out_visible[ray] = trace_segment(start, load_end_a(ray), active) != 0u ? 1u : 0u;
-    params.out_visible_b[ray] = trace_segment(start, load_end_b(ray), active) != 0u ? 1u : 0u;
+    const unsigned int ignore_base = ray * params.ignore_k;
+    params.out_visible[ray] =
+        trace_segment(start, load_end_a(ray), active, ignore_base, nullptr) != 0u ? 1u : 0u;
+    params.out_visible_b[ray] =
+        trace_segment(start, load_end_b(ray), active, ignore_base, nullptr) != 0u ? 1u : 0u;
 }
 
 extern "C" __global__ void __raygen__axial_edge_visibility() {
@@ -155,11 +194,58 @@ extern "C" __global__ void __raygen__axial_edge_visibility() {
         if (i < params.sample_count) {
             const float t = line_min + params.sample_fractions[i] * span;
             const float3 sample = edge_pos + t * edge_dir;
-            any_visible |= trace_segment(source, sample, active);
+            any_visible |= trace_segment(source, sample, active, 0u, nullptr);
         }
     }
 
     params.out_visible[ray] = any_visible != 0u ? 1u : 0u;
+}
+
+extern "C" __global__ void __raygen__segment_chain_visibility() {
+    const unsigned int chain = optixGetLaunchIndex().x;
+    if (chain >= static_cast<unsigned int>(params.n_rays)) {
+        return;
+    }
+
+    if (!is_active(chain)) {
+        params.out_visible[chain] = 0u;
+        params.out_first_blocked_segment[chain] = -1;
+        params.out_first_blocked_prim[chain] = -1;
+        return;
+    }
+
+    int segment_count = params.chain_length != nullptr
+        ? params.chain_length[chain]
+        : params.max_segments;
+    segment_count = max(0, min(segment_count, params.max_segments));
+
+    uint32_t all_visible = 1u;
+    int first_blocked_segment = -1;
+    int first_blocked_prim = -1;
+
+    for (int segment = 0; segment < segment_count; ++segment) {
+        const float3 start = load_chain_point(chain, segment);
+        const float3 end = load_chain_point(chain, segment + 1);
+        const unsigned int ignore_base = params.ignore_k > 0
+            ? (static_cast<unsigned int>(chain) * params.max_segments +
+               static_cast<unsigned int>(segment)) *
+                  static_cast<unsigned int>(params.ignore_k)
+            : 0u;
+
+        uint32_t blocker_prim = 0xFFFFFFFFu;
+        const uint32_t visible =
+            trace_segment(start, end, true, ignore_base, &blocker_prim);
+        if (visible == 0u) {
+            all_visible = 0u;
+            first_blocked_segment = segment;
+            first_blocked_prim = static_cast<int>(blocker_prim);
+            break;
+        }
+    }
+
+    params.out_visible[chain] = all_visible != 0u ? 1u : 0u;
+    params.out_first_blocked_segment[chain] = first_blocked_segment;
+    params.out_first_blocked_prim[chain] = first_blocked_prim;
 }
 
 } // namespace rayd

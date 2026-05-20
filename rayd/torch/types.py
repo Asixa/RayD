@@ -80,6 +80,10 @@ class ReflectionChain(_StructRepr):
         "prim_ids": object,
         "local_prim_ids": object,
         "global_prim_ids": object,
+        "trailing_t": object,
+        "trailing_prim": object,
+        "trailing_dir": object,
+        "trailing_origin": object,
     }
 
     def __init__(
@@ -97,6 +101,10 @@ class ReflectionChain(_StructRepr):
         prim_ids: Any = None,
         local_prim_ids: Any = None,
         global_prim_ids: Any = None,
+        trailing_t: Any = None,
+        trailing_prim: Any = None,
+        trailing_dir: Any = None,
+        trailing_origin: Any = None,
         max_bounces: int = 0,
         ray_count: int = 0,
     ):
@@ -113,6 +121,10 @@ class ReflectionChain(_StructRepr):
         self.prim_ids = prim_ids
         self.local_prim_ids = local_prim_ids
         self.global_prim_ids = global_prim_ids
+        self.trailing_t = trailing_t
+        self.trailing_prim = trailing_prim
+        self.trailing_dir = trailing_dir
+        self.trailing_origin = trailing_origin
         self._max_bounces_hint = int(max_bounces)
         self._ray_count_hint = int(ray_count)
 

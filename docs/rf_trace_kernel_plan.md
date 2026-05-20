@@ -17,20 +17,30 @@ are obvious from the existing `reflection_trace.cu`.
 
 ## Scope
 
-In scope (new fused kernels):
+### Phase 1 (initial planning — all delivered)
 
-| # | Name | Replaces in channel | Pri |
-|---|---|---|---|
-| 1 | `trace_segment_visibility` | `Scene.segment_visible` with `ignore_prim_idx` Python re-fire loop | P0 |
-| 2 | `trace_segment_pair_visibility` | shadow-boundary smoothed pair (`a→b`, `a→b_offset`) | P1 |
-| 3 | `trace_axial_edge_visibility` | axial source-edge sampling loop in MC postprocessing | P1 |
-| 4 | `nearest_edges_topk` (edge-BVH primitive, not a `trace_*`) | 18-probe heuristic in higher-order diffraction BFS | P1 |
+| # | Name | Replaces in channel | Pri | Status |
+|---|---|---|---|---|
+| 1 | `trace_segment_visibility` | `Scene.segment_visible` with `ignore_prim_idx` Python re-fire loop | P0 | ✅ implemented (`src/multipath/segment_visibility.cu`) |
+| 2 | `trace_segment_pair_visibility` | shadow-boundary smoothed pair (`a→b`, `a→b_offset`) | P1 | ✅ implemented (same module) |
+| 3 | `trace_axial_edge_visibility` | axial source-edge sampling loop in MC postprocessing | P1 | ✅ implemented (same module) |
+| 4 | `nearest_edges_topk` (edge-BVH primitive, not a `trace_*`) | 18-probe heuristic in higher-order diffraction BFS | P1 | ✅ implemented as part of [`edge_bvh_optix_migration_plan.md`](edge_bvh_optix_migration_plan.md) (`src/scene/edge_optix.cu`) |
 
-Explicitly **out of scope**:
+### Phase 2 (implemented)
 
-- `trace_diffraction_chain` (channel doc D2) — most of its win comes
-  from Dr.Jit-symbolic loop fusion + (4) on the candidate side. Will
-  be re-evaluated after P0–P1 land.
+| # | Name | Replaces in channel | Pri | Status |
+|---|---|---|---|---|
+| 5 | `trace_segment_chain_visibility` | EPC / BDPT N-segment Python `for` loop of `segment_visible` | P0 | ✅ implemented (`src/multipath/segment_visibility.cu`) |
+| — | `trace_reflections` trailing fields | enables channel-side D3 / M1 flatten refactor | P1 | ✅ implemented (`src/multipath/reflection_trace.cu`) |
+
+### Explicitly out of scope
+
+- `trace_diffraction_chain` (channel doc D2) — honest re-assessment
+  (see channel doc 24 §7 plus the speedup audit in §8 below) puts BFS-mode
+  fusion at 5–20% gain, not the originally claimed 3–10×. State-array
+  materialization between BFS orders is the dominant cost, and fusion
+  cannot remove it. Re-evaluate only after Phase 2 lands and if BFS is
+  still the residual bottleneck.
 - `trace_reflection_chain_accumulating` (D3 / M1) — does **not** need a
   new RayD kernel. The existing `trace_reflections` output already
   contains the per-segment `t`, `hit_p`, `geo_n`, `prim_id` channel
@@ -134,12 +144,22 @@ what `reflection_trace.cu` already gets right.
       not slip a `dr.eval` in to inspect them on the host.
 
     This is the one hard cross-cutting requirement. Test it explicitly
-    — see §6.7. If JIT integration is incomplete, the kernel does not
-    ship.
+    — see §7.7.
+
+    Current implementation status: no-ignore segment visibility
+    variants use the same lazy HitObject / `jit_optix_ray_trace` path
+    as `Scene.intersect`. Ignore-list visibility still falls back to
+    the custom anyhit `optixLaunch` path because the anyhit ignore table
+    has not yet been moved into a Dr.Jit-managed OptiX pipeline. The
+    non-symbolic optimized `trace_reflections` path is likewise still
+    an eager native raygen; the default symbolic path remains JIT.
+    `RAYD_TRACE_VISIBILITY_BACKEND=native` forces the old
+    `optixLaunch` path for visibility kernels, while `jit` enforces the
+    no-ignore lazy path and errors on ignore lists.
 
 ---
 
-## 1. `trace_segment_visibility` (P0)
+## 1. `trace_segment_visibility` (P0) — ✅ implemented
 
 ### Why
 
@@ -291,6 +311,8 @@ unrelated gradient paths through `start` / `end`.
   IR.
 - Output buffers allocated lazily inside the launch closure.
 - No `dr.eval` on inputs.
+- Implemented now for `ignore_prim_ids` empty. Non-empty ignore lists
+  still use the custom anyhit native fallback.
 
 ### Channel call sites — drop-in points
 
@@ -312,7 +334,7 @@ available; all call sites below inherit it automatically.
 | `montecarlo/integrators/bdpt_diffraction.py` | 1683, 1689 | edge → reflection → target chain |
 
 After the swap, run the corresponding channel acceptance tests as
-regression — see §6.8.
+regression — see §7.8.
 
 ### Files
 
@@ -335,7 +357,7 @@ CMakeLists.txt                    MOD — PTX compilation rule
 
 ---
 
-## 2. `trace_segment_pair_visibility` (P1)
+## 2. `trace_segment_pair_visibility` (P1) — ✅ implemented
 
 ### Why
 
@@ -395,7 +417,9 @@ different end points.
 Same as kernel 1: AD-safe but not AD-required (channel calls this
 inside detached context for shadow-boundary smoothing — the smoothing
 is finite-difference on the inputs, not autodiff through visibility).
-JIT discipline is mandatory.
+JIT discipline is mandatory. Implemented now for `ignore_prim_ids`
+empty; non-empty ignore lists still use the custom anyhit native
+fallback.
 
 ### Channel call sites — drop-in points
 
@@ -422,7 +446,7 @@ include/rayd/segment_visibility.h          MOD — SegmentPairVisibility struct
 
 ---
 
-## 3. `trace_axial_edge_visibility` (P1)
+## 3. `trace_axial_edge_visibility` (P1) — ✅ implemented
 
 ### Why
 
@@ -556,7 +580,12 @@ CMakeLists.txt                                     MOD
 
 ---
 
-## 4. `nearest_edges_topk` (P1 — edge BVH primitive, not a `trace_*`)
+## 4. `nearest_edges_topk` (P1 — edge BVH primitive, not a `trace_*`) — ✅ implemented
+
+Implemented as part of the broader edge-BVH OptiX migration; see
+[`edge_bvh_optix_migration_plan.md`](edge_bvh_optix_migration_plan.md)
+for the full design and rollout. Files: `src/scene/edge_optix.cu`,
+`src/scene/scene_edge_optix.cpp`. Supports `K ≤ 16`.
 
 ### Why
 
@@ -659,7 +688,239 @@ rayd/torch/scene.py                MOD
 
 ---
 
-## 5. Why D3 / M1 do not need a new kernel
+## 5. `trace_segment_chain_visibility` (Phase 2, P0) — ✅ implemented
+
+### Why
+
+EPC reflection-path validation
+([`epc.py:642-708`](../../witwin-platform/channel/witwin/deterministic/path/reflection_impl/epc.py#L642))
+walks each candidate N-bounce path with a Python `for slot in
+range(chain_depth)` loop, issuing one `segment_visible` per segment.
+For a chain depth of 4, every path validation is **5 sequential OptiX
+launches** (TX→r₁, r₁→r₂, r₂→r₃, r₃→r₄, r₄→RX). Across thousands of
+candidate paths × many receivers, this is a real hot spot that survives
+Phase 1.
+
+The same chain-of-visibility pattern appears in BDPT diffraction MIS
+path validation
+([`bdpt_diffraction.py:1683-1694`](../../witwin-platform/channel/witwin/montecarlo/integrators/bdpt_diffraction.py#L1683)).
+
+Folding M-1 segment tests into one OptiX launch per chain removes
+(M-2) launch boundaries plus all the Python orchestration per path.
+
+### Result struct
+
+```cpp
+// include/rayd/segment_chain_visibility.h
+struct SegmentChainVisibility {
+    int            chain_count = 0;
+    int            max_segments = 0;        // M-1 segments per chain (compile-time bound)
+    BoolDetached   all_visible;             // [N] true iff every segment in chain is clear
+    IntDetached    first_blocked_segment;   // [N] -1 if all clear, else segment index in [0, M-2]
+    IntDetached    first_blocked_prim;      // [N] global prim id of the blocker; -1 if all clear
+};
+```
+
+`first_blocked_segment` / `first_blocked_prim` are diagnostic outputs.
+They are useful for BDPT MIS pruning ("which segment killed this MIS
+path") and for shadow-boundary smoothing decisions. Callers that only
+need `all_visible` pay two trivial output writes per chain.
+
+### Python API
+
+```python
+result = scene.trace_segment_chain_visibility(
+    points,                # Array3f [N, M]   chain points (TX, hits..., RX)
+    chain_length,          # Int32   [N]      number of segments per chain (≤ M-1)
+    ignore_prim_per_segment=None,  # Int32 [N, M-1, K] global prim ids to skip per segment
+    active=True,           # Bool [N] or scalar
+)
+result.all_visible              # Bool  [N]
+result.first_blocked_segment    # Int32 [N]
+result.first_blocked_prim       # Int32 [N]
+```
+
+`M` is the compile-time upper bound on chain length (default 8).
+`K` is the maximum ignored prims per segment (default 4 — covers the
+prev/next adjacent face pattern already used by channel).
+`chain_length` allows ragged chains in one launch: padding entries
+beyond `chain_length[n]` are ignored, so candidate paths of varying
+depth can share a launch.
+
+### PyTorch wrapper
+
+```python
+result = scene.trace_segment_chain_visibility(
+    points,                  # torch.Tensor float32 [N, M, 3] CUDA
+    chain_length,            # torch.Tensor int32   [N]       CUDA
+    ignore_prim_per_segment=None,  # int32 [N, M-1, K] or None
+    active=None,
+)
+# result.all_visible:           torch.Tensor bool   [N]
+# result.first_blocked_segment: torch.Tensor int32  [N]
+# result.first_blocked_prim:    torch.Tensor int32  [N]
+```
+
+### Payload layout
+
+Two u32 payload slots; raygen-local state is held in registers across
+the in-raygen segment loop.
+
+```
+trace #s: p0 = 0 (clear) → 1 (blocked); p1 = blocker global prim id (when blocked)
+```
+
+After each `optixTrace`, raygen reads `p0` and `p1`, updates the
+running outputs, and early-exits the chain once any segment is
+blocked.
+
+### Programs
+
+Reuses `__anyhit__segment_visibility` and `__miss__segment_visibility`
+from §1. Adds a chain-aware closesthit (records blocker prim) and a
+new raygen that loops over segments.
+
+```cuda
+extern "C" __global__ void __closesthit__segment_chain_visibility()
+{
+    optixSetPayload_0(1u);  // blocked
+
+    const unsigned int local_prim = optixGetPrimitiveIndex();
+    const int instance = (int)optixGetInstanceId();
+    const int face_offset = (instance >= 0 && instance < params.n_meshes)
+        ? params.face_offsets[instance] : 0;
+    optixSetPayload_1((unsigned int)(face_offset + (int)local_prim));
+}
+
+extern "C" __global__ void __raygen__segment_chain_visibility()
+{
+    const unsigned int chain = optixGetLaunchIndex().x;
+    if (chain >= (unsigned int)params.n_chains) return;
+    if (params.active_mask && !params.active_mask[chain]) {
+        params.out_all_visible[chain] = 0u;
+        params.out_first_blocked_segment[chain] = -1;
+        params.out_first_blocked_prim[chain] = -1;
+        return;
+    }
+
+    const int n_seg = params.chain_length[chain];
+    bool all_clear = true;
+    int first_blocked = -1;
+    int first_blocked_prim = -1;
+
+    for (int s = 0; s < n_seg; ++s) {
+        if (!all_clear) break;  // early exit once chain is blocked
+
+        float3 a, b;
+        load_chain_point(chain, s,     a);
+        load_chain_point(chain, s + 1, b);
+
+        float3 d = b - a;
+        const float len = sqrtf(dot3(d, d));
+        if (len < kMinSegLen) continue;  // degenerate, treat as clear
+        d = (1.0f / len) * d;
+        const float3 origin = a + kRayBias * d;
+        const float  tmax   = fmaxf(len - 2.0f * kRayBias, 0.0f);
+
+        // params.ignore_prim_per_segment indexing uses (chain, segment_slot, k);
+        // anyhit reads the slot via a per-segment offset injected as ray-payload-input.
+
+        unsigned int hit_flag = 0u;
+        unsigned int blocker_prim = 0xFFFFFFFFu;
+        optixTrace(params.handle, origin, d, kRayTMin, tmax, 0.0f,
+                   255u, OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+                   0, 1, 0,
+                   hit_flag, blocker_prim);
+
+        if (hit_flag != 0u) {
+            all_clear = false;
+            first_blocked = s;
+            first_blocked_prim = (int)blocker_prim;
+        }
+    }
+
+    params.out_all_visible[chain] = all_clear ? 1u : 0u;
+    params.out_first_blocked_segment[chain] = first_blocked;
+    params.out_first_blocked_prim[chain] = first_blocked_prim;
+}
+```
+
+Implementation note on per-segment ignore indexing: anyhit needs to
+know which segment slot it is in to look up the right ignore subset.
+Pass the segment slot index as a payload input register (one extra
+slot reserved for the segment index when calling `optixTrace`); anyhit
+uses it for indexing `params.ignore_prim_per_segment`.
+
+### AD / JIT
+
+Same as kernel 1: AD-safe but not AD-required (channel calls all
+visibility chains in detached contexts). JIT discipline is mandatory —
+must be callable inside `dr.syntax` symbolic loops without forcing
+materialization. Implemented now for `ignore_prim_per_segment` empty;
+non-empty ignore lists still use the custom anyhit native fallback.
+
+### Channel call sites — drop-in points
+
+| Channel file | Line | Current pattern |
+|---|---|---|
+| `deterministic/path/reflection_impl/epc.py` | 642-708 | Python `for slot in range(chain_depth)` loop, one `segment_visible` per segment, conjunction with `& valid` |
+| `montecarlo/integrators/bdpt_diffraction.py` | 1683-1694 | Two sequential `segment_visible` with shared ignore_prim — folds into chain of length 2 |
+| `montecarlo/integrators/bdpt_diffraction.py` (`_validate_reflection_chain` helper) | — | similar N-segment validation pattern |
+
+Drop-in rewrite for EPC:
+
+```python
+# Before — N+1 OptiX launches per path candidate
+prev_point = tx_pos
+for slot, hit_p in enumerate(hit_points):
+    ignore = [scene.triangle_group_id(prim_indices[slot]), ...]
+    valid = valid & scene.segment_visible(prev_point, hit_p,
+                                          ignore_surface_group_idx=tuple(ignore))
+    prev_point = hit_p
+valid = valid & scene.segment_visible(prev_point, target_pos, ...)
+
+# After — 1 OptiX launch per path candidate
+chain_points = stack_points(tx_pos, hit_points, target_pos)   # [N, M, 3]
+chain_length = ...                                            # [N]
+ignore_table = build_ignore_table(prim_indices, target_groups) # [N, M-1, K]
+result = scene.trace_segment_chain_visibility(
+    chain_points, chain_length,
+    ignore_prim_per_segment=ignore_table,
+)
+valid = valid & result.all_visible
+```
+
+For BDPT, replaces the explicit two-segment pattern with a chain of
+length 2 (or 3, when the source-side segment is folded in).
+
+### Expected speedup
+
+- Chain length M-1 → (M-2)× launch overhead saved per candidate path
+- Channel EPC typical depth 3-5 → **3-5×** on the path-validation phase
+- BDPT MIS shorter chains → **1.5-2×**
+
+Combined with D1 (already shipped), the entire EPC validation pipeline
+collapses from one Python-loop-per-path to one fused kernel call per
+launch.
+
+### Files
+
+```
+include/rayd/segment_visibility.h                      MOD — SegmentChainVisibility result struct
+src/multipath/segment_visibility.cu                    MOD — adds __raygen__segment_chain_visibility,
+                                                          blocker-reporting closesthit, per-segment ignores
+src/multipath/segment_visibility_host.cpp              MOD — fourth raygen entry in existing pipeline
+src/multipath/segment_visibility_host.h                MOD
+src/multipath/segment_visibility_params.h              MOD
+src/multipath/segment_visibility_ptx.h                 MOD (generated)
+src/rayd.cpp                                           MOD
+src/scene/scene.cpp                                    MOD — Scene::trace_segment_chain_visibility
+include/rayd/scene/scene.h                             MOD
+```
+
+---
+
+## 6. Why D3 / M1 do not need a new kernel
 
 For completeness — kernels listed under "out of scope" but commonly
 asked about.
@@ -713,8 +974,11 @@ so AD is not required for the trailing fields either — match the
 existing `t` / `hit_points` AD semantics if AD ever gets enabled, but
 do not block on it for v1.
 
-JIT-wise, `trace_reflections` is already a JIT node; adding outputs
-does not change the lazy-launch / fusion story.
+JIT-wise, the default symbolic `trace_reflections` / `trace_bounces`
+path remains lazy because it is built from `Scene.intersect`. The
+non-symbolic optimized chain path still uses the custom native raygen
+and forces its broad-phase inputs before `optixLaunch`; the trailing
+fields follow that path.
 
 ### Channel call sites — where the trailing fields unlock fusion
 
@@ -732,14 +996,14 @@ RayD-side prerequisite that makes the refactor clean.
 
 ---
 
-## 6. Testing Methodology
+## 7. Testing Methodology
 
 All tests follow the existing pattern in `tests/drjit/test_geometry.py`:
 subprocess-isolated Python scripts that print a single-line JSON
 result, asserted by `unittest`. Subprocess isolation avoids OptiX state
 leaking between tests.
 
-### 6.1 Correctness reference: brute-force
+### 7.1 Correctness reference: brute-force
 
 Every visibility kernel has a Python brute-force reference that
 operates on the same scene without invoking the new kernel:
@@ -754,7 +1018,7 @@ The test asserts bit-exact equality between the kernel output and the
 brute-force reference on a small batch (N ≤ 256). For sample-randomised
 tests, use a fixed seed.
 
-### 6.2 Correctness reference: existing API
+### 7.2 Correctness reference: existing API
 
 For each new kernel, a test compares against the slower but already-
 verified existing API:
@@ -766,7 +1030,7 @@ verified existing API:
 | `trace_axial_edge_visibility` | Python loop of `trace_segment_visibility` |
 | `nearest_edges_topk` | Brute-force scan over all edges via `nearest_edge` filter |
 
-### 6.3 Test scene matrix
+### 7.3 Test scene matrix
 
 Per kernel, the same three scene fixtures used in
 `tests/baseline_cases.py`:
@@ -776,7 +1040,7 @@ Per kernel, the same three scene fixtures used in
 - `cornell_box_decimated` — ≥100 triangles, multi-mesh, dense enough for
   meaningful traversal
 
-### 6.4 Per-kernel test list
+### 7.4 Per-kernel test list
 
 #### `trace_segment_visibility`
 
@@ -841,7 +1105,7 @@ Per kernel, the same three scene fixtures used in
    reuses Scene.intersect; we are buying recall guarantee, not speed).
 7. **Torch frontend round-trip.**
 
-### 6.5 Integration tests (downstream witwin)
+### 7.5 Integration tests (downstream witwin)
 
 After each kernel lands, do the channel-side drop-in and run the
 relevant channel acceptance tests from
@@ -861,7 +1125,7 @@ Pass criterion: numerical outputs match the pre-drop-in baseline within
 existing tolerances. For each kernel, capture the channel test run
 output as the canonical regression artifact.
 
-### 6.6 Microbenchmarks
+### 7.6 Microbenchmarks
 
 Add to `tests/benchmark_*.py`:
 
@@ -874,7 +1138,7 @@ Add to `tests/benchmark_*.py`:
 Output to `docs/performance_benchmark.json` so we can track regressions
 the same way the existing benchmark does.
 
-### 6.7 JIT discipline tests (mandatory per kernel)
+### 7.7 JIT discipline tests (mandatory per kernel)
 
 For every kernel, the JIT-friendliness requirement (principle 11) needs
 explicit, automated coverage. Without these the kernel may "work" at
@@ -920,7 +1184,7 @@ These four tests are mandatory acceptance criteria for any new
 `trace_*` kernel. A kernel that ships without them does not count as
 landed.
 
-### 6.8 AD-safety tests (per kernel — light)
+### 7.8 AD-safety tests (per kernel — light)
 
 Since AD math is not required (principle 10), AD tests are
 narrow-scope sanity checks, not correctness validation:
@@ -945,45 +1209,90 @@ gradient is zero by definition and that is correct behaviour.
 
 ---
 
-## 7. Implementation Order
+## 8. Implementation Order and Honest Speedup Calibration
 
-Recommended sequence, optimised for unblocking channel-side work as
-fast as possible:
+### 8.1 Status snapshot
 
-1. **Kernel 1 — `trace_segment_visibility`** alone. Lands the anyhit
-   pattern, the params/host/PTX module template, and the bindings
-   updates. Once merged, channel can refactor `segment_visible` to
-   call it and immediately retire the re-fire loop. Unblocks D4 / D5 /
-   M4 in the channel inventory.
+Phase 1 is shipped. The original implementation order (D1 → trace_reflections
+adjustment → kernel 2 → kernel 4 → kernel 3 → deferred D2) was followed
+roughly as planned, with kernel 4 absorbed into the broader edge-BVH
+OptiX migration ([`edge_bvh_optix_migration_plan.md`](edge_bvh_optix_migration_plan.md)).
 
-2. **Small `trace_reflections` adjustment (§5)** — `trailing_t`,
-   `trailing_prim`, `trailing_dir`, `trailing_origin` outputs. One
-   extra `optixTrace` inside the existing raygen. Unblocks the
-   channel-side D3 / M1 flatten-loop refactor.
+```
+✅ §1  trace_segment_visibility               (src/multipath/segment_visibility.cu)
+✅ §2  trace_segment_pair_visibility          (same module)
+✅ §3  trace_axial_edge_visibility            (same module)
+✅ §4  nearest_edges_topk                     (src/scene/edge_optix.cu, K ≤ 16)
+✅ §5  trace_segment_chain_visibility         (src/multipath/segment_visibility.cu)
+✅ §6  trace_reflections trailing fields      (src/multipath/reflection_trace.cu)
+⏸ D2  trace_diffraction_chain                 (deferred; magnitude downgraded — see §8.3)
+```
 
-3. **Kernel 2 — `trace_segment_pair_visibility`** sharing kernel 1's
-   anyhit/closesthit. Trivial after kernel 1.
+### 8.2 Phase 2 sequence
 
-4. **Kernel 4 — `nearest_edges_topk`**. Independent of kernels 1–3
-   (different module). Can be done in parallel.
+1. **§6 trailing fields** first. Smallest change (one extra `optixTrace`
+   inside the existing `trace_reflections` raygen), unblocks the
+   channel-side D3 / M1 flatten-loop refactors. No new module.
 
-5. **Kernel 3 — `trace_axial_edge_visibility`**. Smaller demand than
-   kernels 1–2; do once the others are stable.
+2. **§5 `trace_segment_chain_visibility`**. Reuses anyhit/miss from
+   the already-shipped segment_visibility module; only the new raygen,
+   the chain-aware closesthit, and the params struct are new code.
+   Lands the EPC and BDPT path-validation drop-ins.
 
-6. **(deferred)** Re-evaluate `trace_diffraction_chain` (D2). After
-   kernels 1–4 + channel refactor, measure the residual cost of
-   higher-order diffraction. If it is still dominated by Python
-   orchestration of edge-chain expansion, consider a fused chain
-   kernel. If it is dominated by Dr.Jit physics math on flattened
-   candidate sets, no new kernel needed.
+Both items are independent and could land in either order. Recommended
+order above optimises for channel-side refactor unblocking
+(D3 / M1 → EPC validation).
 
-Each kernel is one or two days of focused work given the
-`reflection_trace.cu` template. The CMake / PTX / nanobind glue is the
-slowest part and is shared across all four.
+### 8.3 Honest speedup calibration
+
+A retrospective on the per-kernel speedup estimates given when this
+plan was first written:
+
+| Kernel | Original estimate | Honest re-estimate | Why the gap |
+|---|---|---|---|
+| §1 `trace_segment_visibility` | 3–8× | **3–8× (confirmed)** | Replaces an unfused Python re-fire loop. Real win. |
+| §2 `trace_segment_pair_visibility` | ~2× | **1.5–2× (confirmed)** | Two ray casts per launch index — modest by construction. |
+| §3 `trace_axial_edge_visibility` | 3–5× | **2–4×** | Speedup capped by `n_samples` (5 in channel default). |
+| §4 `nearest_edges_topk` | 3–10× over 18-probe heuristic | **2–4×** plus recall gain | Most win is in **recall guarantee** (exact top-K vs heuristic), not raw speed. |
+| §5 `trace_segment_chain_visibility` | n/a (Phase 2) | **3–5×** on EPC, 1.5–2× on BDPT | Removes (M-2) launch boundaries per chain. |
+| §6 trailing fields (channel D3 / M1 refactor) | 2–5× | **2–3×** | The win is mostly already captured by Dr.Jit `mode='symbolic'`; this just removes the residual per-bounce Dr.Jit/OptiX boundary. |
+| D2 `trace_diffraction_chain` (BFS mode) | 3–10× | **5–20% (much smaller)** | BFS state-array materialization dominates the cost; fusion cannot remove it. |
+| D2 (sampled-path mode) | — | 2–4× over Dr.Jit-symbolic | But this is an *algorithm change*, not just fusion. |
+
+End-to-end channel speedup once all of Phase 1 + Phase 2 are deployed
+and the channel-side refactors land: **roughly 1.5× wall-clock per
+frame** for the typical deterministic + MC workload. Real but not
+transformative.
+
+Reaching tier-3 live digital twin (30-100 ms frame budget for moving
+endpoints) requires more than fusion — it requires algorithm-level
+work that is out of scope here: switching higher-order diffraction to
+sampled MC paths, tabulating UTD coefficients, compacting per-state
+memory footprint. See channel doc 24 §8.
+
+### 8.4 D2 deferral rationale
+
+Original §7 listed `trace_diffraction_chain` as a "(deferred)" item with
+the implication that magnitudes would justify it. Honest analysis (channel
+doc 24 §7 follow-up + the §8.3 calibration above) puts it at 5–20% in BFS
+mode. Two changes to the deferral framing:
+
+- Do **not** plan D2 as the natural successor to Phase 2. Its expected
+  magnitude is smaller than §5.
+- Re-evaluate only after Phase 2 + channel-side refactors land and a
+  profile run still shows BFS orchestration dominating. The most
+  likely correct answer at that point is "change the algorithm" not
+  "write another fused kernel."
+
+### 8.5 Effort
+
+Phase 2 items: 1–2 focused days each given the existing
+`segment_visibility.cu` + `reflection_trace.cu` templates. The CMake /
+PTX / nanobind glue from Phase 1 carries over directly.
 
 ---
 
-## 8. Open Questions
+## 9. Open Questions
 
 - **Payload register budget on older SMs.** Kernels 1–3 fit comfortably
   in ≤ 2 payload registers. If a future kernel needs > 8, check SM 6.x

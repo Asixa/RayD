@@ -70,6 +70,9 @@ SegmentVisibilityPipeline::~SegmentVisibilityPipeline() {
     if (pg_raygen_axial_ != nullptr && optixProgramGroupDestroy != nullptr) {
         optixProgramGroupDestroy(pg_raygen_axial_);
     }
+    if (pg_raygen_chain_ != nullptr && optixProgramGroupDestroy != nullptr) {
+        optixProgramGroupDestroy(pg_raygen_chain_);
+    }
     if (pg_raygen_pair_ != nullptr && optixProgramGroupDestroy != nullptr) {
         optixProgramGroupDestroy(pg_raygen_pair_);
     }
@@ -90,6 +93,9 @@ SegmentVisibilityPipeline::~SegmentVisibilityPipeline() {
     }
     if (sbt_raygen_axial_ != nullptr) {
         jit_free(sbt_raygen_axial_);
+    }
+    if (sbt_raygen_chain_ != nullptr) {
+        jit_free(sbt_raygen_chain_);
     }
     if (sbt_raygen_pair_ != nullptr) {
         jit_free(sbt_raygen_pair_);
@@ -115,7 +121,7 @@ void SegmentVisibilityPipeline::build(OptixDeviceContext context,
     pipeline_options.usesMotionBlur = 0;
     pipeline_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    pipeline_options.numPayloadValues = 1;
+    pipeline_options.numPayloadValues = 3;
     pipeline_options.numAttributeValues = 2;
     pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
@@ -144,6 +150,9 @@ void SegmentVisibilityPipeline::build(OptixDeviceContext context,
     pg_raygen_axial_ = make_raygen_group(context,
                                          module_,
                                          "__raygen__axial_edge_visibility");
+    pg_raygen_chain_ = make_raygen_group(context,
+                                         module_,
+                                         "__raygen__segment_chain_visibility");
 
     OptixProgramGroupOptions pg_options = {};
     OptixProgramGroupDesc miss_desc = {};
@@ -180,6 +189,7 @@ void SegmentVisibilityPipeline::build(OptixDeviceContext context,
         pg_raygen_segment_,
         pg_raygen_pair_,
         pg_raygen_axial_,
+        pg_raygen_chain_,
         pg_miss_,
         pg_hitgroup_
     };
@@ -195,7 +205,7 @@ void SegmentVisibilityPipeline::build(OptixDeviceContext context,
                                     &pipeline_options,
                                     &link_options,
                                     groups,
-                                    5,
+                                    6,
                                     log,
                                     &log_size,
                                     &pipeline_),
@@ -211,6 +221,7 @@ void SegmentVisibilityPipeline::build(OptixDeviceContext context,
     sbt_raygen_segment_ = make_sbt_record(pg_raygen_segment_);
     sbt_raygen_pair_ = make_sbt_record(pg_raygen_pair_);
     sbt_raygen_axial_ = make_sbt_record(pg_raygen_axial_);
+    sbt_raygen_chain_ = make_sbt_record(pg_raygen_chain_);
     sbt_miss_record_ = make_sbt_record(pg_miss_);
 
     std::vector<EmptySbtRecord> hitgroup_records(static_cast<size_t>(hitgroup_record_count));
@@ -240,6 +251,8 @@ void *SegmentVisibilityPipeline::raygen_record(SegmentVisibilityLaunchKind kind)
         return sbt_raygen_pair_;
     case SegmentVisibilityLaunchKind::AxialEdge:
         return sbt_raygen_axial_;
+    case SegmentVisibilityLaunchKind::SegmentChain:
+        return sbt_raygen_chain_;
     }
     return sbt_raygen_segment_;
 }

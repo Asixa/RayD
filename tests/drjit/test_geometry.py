@@ -627,6 +627,66 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["img1"][1], 0.0, places=4)
         self.assertAlmostEqual(data["img1"][2], 3.5, places=4)
 
+    def test_trace_reflections_reports_trailing_blocker_after_last_bounce(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            floor = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [0.0, 0.0, 0.0, 0.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            ceiling = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [1.0, 1.0, 1.0, 1.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            scene = pj.Scene()
+            scene.add_mesh(floor)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            ray = pj.RayDetached(
+                cuda.Array3f([0.0], [0.0], [0.5]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
+
+            print(json.dumps({
+                "bounce_count": int(chain.bounce_count[0]),
+                "trailing_t": float(chain.trailing_t[0]),
+                "trailing_prim": int(chain.trailing_prim[0]),
+                "trailing_dir": [
+                    float(chain.trailing_dir[0][0]),
+                    float(chain.trailing_dir[1][0]),
+                    float(chain.trailing_dir[2][0]),
+                ],
+                "trailing_origin": [
+                    float(chain.trailing_origin[0][0]),
+                    float(chain.trailing_origin[1][0]),
+                    float(chain.trailing_origin[2][0]),
+                ],
+            }))
+            """
+        )
+
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertGreater(data["trailing_t"], 0.99)
+        self.assertLess(data["trailing_t"], 1.01)
+        self.assertGreaterEqual(data["trailing_prim"], 2)
+        self.assertAlmostEqual(data["trailing_dir"][0], 0.0, places=5)
+        self.assertAlmostEqual(data["trailing_dir"][1], 0.0, places=5)
+        self.assertAlmostEqual(data["trailing_dir"][2], 1.0, places=5)
+        self.assertAlmostEqual(data["trailing_origin"][0], 0.0, places=5)
+        self.assertAlmostEqual(data["trailing_origin"][1], 0.0, places=5)
+        self.assertGreater(data["trailing_origin"][2], 0.0)
+        self.assertLess(data["trailing_origin"][2], 1e-3)
+
     def test_trace_reflections_preserves_gradients_for_ad_inputs(self):
         data = run_json_case(
             """

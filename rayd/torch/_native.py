@@ -342,6 +342,10 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     prim_ids = _scalar_array_to_tensor(chain.prim_ids)
     local_prim_ids = _scalar_array_to_tensor(chain.local_prim_ids)
     global_prim_ids = _scalar_array_to_tensor(chain.global_prim_ids)
+    trailing_t = _scalar_array_to_tensor(chain.trailing_t)
+    trailing_prim = _scalar_array_to_tensor(chain.trailing_prim)
+    trailing_dir = _vec3_to_tensor(chain.trailing_dir)
+    trailing_origin = _vec3_to_tensor(chain.trailing_origin)
 
     if ray_count <= 0 and hasattr(bounce_count, "numel"):
         ray_count = int(bounce_count.numel())
@@ -365,6 +369,10 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
     prim_ids = dr.reshape(type(prim_ids), prim_ids, shape=(ray_count, max_bounces))
     local_prim_ids = dr.reshape(type(local_prim_ids), local_prim_ids, shape=(ray_count, max_bounces))
     global_prim_ids = dr.reshape(type(global_prim_ids), global_prim_ids, shape=(ray_count, max_bounces))
+    trailing_t = dr.reshape(type(trailing_t), trailing_t, shape=(ray_count,))
+    trailing_prim = dr.reshape(type(trailing_prim), trailing_prim, shape=(ray_count,))
+    trailing_dir = dr.reshape(type(trailing_dir), trailing_dir, shape=(ray_count, 3))
+    trailing_origin = dr.reshape(type(trailing_origin), trailing_origin, shape=(ray_count, 3))
 
     return ReflectionChain(
         bounce_count=bounce_count,
@@ -380,6 +388,10 @@ def _reflection_chain_from_native(chain: Any) -> ReflectionChain:
         prim_ids=prim_ids,
         local_prim_ids=local_prim_ids,
         global_prim_ids=global_prim_ids,
+        trailing_t=trailing_t,
+        trailing_prim=trailing_prim,
+        trailing_dir=trailing_dir,
+        trailing_origin=trailing_origin,
         max_bounces=max_bounces,
         ray_count=ray_count,
     )
@@ -563,6 +575,32 @@ def _build_native_camera(state: _CameraState, *, preserve_gradients: bool) -> An
 # ---------------------------------------------------------------------------
 
 @dr.wrap(source="torch", target="drjit")
+def _scene_global_geometry_impl(
+    cache_id: int,
+    topology_token: tuple[Any, ...],
+    rebuild_token: tuple[Any, ...],
+    vertex_tokens: tuple[Any, ...],
+    left_tokens: tuple[Any, ...],
+    right_tokens: tuple[Any, ...],
+    refresh_policy: tuple[bool, tuple[bool, ...], tuple[bool, ...], tuple[bool, ...]],
+    mesh_states: list[_MeshState],
+    edge_mask: Any,
+) -> Any:
+    scene = _prepare_native_scene_cache(
+        cache_id,
+        mesh_states,
+        topology_token,
+        rebuild_token,
+        vertex_tokens,
+        left_tokens,
+        right_tokens,
+        refresh_policy,
+        edge_mask,
+    )
+    return _scene_global_geometry_from_native(scene.global_geometry())
+
+
+@dr.wrap(source="torch", target="drjit")
 def _scene_intersect_impl(
     cache_id: int,
     topology_token: tuple[Any, ...],
@@ -635,6 +673,7 @@ def _scene_trace_reflections_impl(
         int(max_bounces),
         options,
         _tensor_to_mask(active, diff=diff),
+        False,
     )
     return _reflection_chain_from_native(chain)
 

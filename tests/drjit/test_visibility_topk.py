@@ -160,6 +160,198 @@ class VisibilityAndTopKTests(unittest.TestCase):
         self.assertEqual(data["consume_optix"], 0)
         self.assertGreaterEqual(data["native_optix_launches"], 1)
 
+    def test_no_ignore_segment_visibility_variants_are_lazy_jit_optix_queries(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as rd
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, 0.1])
+            end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.1])
+            end_b = cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0])
+            active = cuda.Bool([True, True, False])
+
+            chain_points = cuda.Array3f(
+                [0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 2.0, 2.0],
+                [-1.0, 1.0, -1.0, 1.0],
+            )
+            chain_length = cuda.Int([1, 1])
+
+            rd.native_launch_audit_clear()
+            with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
+                vis = scene.trace_segment_visibility(start, end, active=active)
+                pair = scene.trace_segment_pair_visibility(start, end, end_b, active=active)
+                axial = scene.trace_axial_edge_visibility(
+                    cuda.Array3f([0.0], [0.0], [-1.0]),
+                    cuda.Array3f([-2.0], [0.0], [1.0]),
+                    cuda.Array3f([1.0], [0.0], [0.0]),
+                    cuda.Float([0.0]),
+                    cuda.Float([4.0]),
+                    [0.0, 0.5, 1.0],
+                    cuda.Bool([True]),
+                )
+                chain = scene.trace_segment_chain_visibility(chain_points, chain_length)
+                call_hist = dr.kernel_history()
+
+                values = {
+                    "visible": [bool(v) for v in list(vis.visible)],
+                    "pair_a": [bool(v) for v in list(pair.visible_a)],
+                    "pair_b": [bool(v) for v in list(pair.visible_b)],
+                    "axial_any": [bool(v) for v in list(axial.any_visible)],
+                    "chain_all": [bool(v) for v in list(chain.all_visible)],
+                    "chain_blocked_segment": [int(v) for v in list(chain.first_blocked_segment)],
+                    "chain_blocked_prim": [int(v) for v in list(chain.first_blocked_prim)],
+                }
+                consume_hist = dr.kernel_history()
+            native_audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                **values,
+                "call_jit": sum(1 for h in call_hist if str(h.get("type")) == "KernelType.JIT"),
+                "call_optix": sum(1 for h in call_hist if bool(h.get("uses_optix", False))),
+                "consume_jit": sum(1 for h in consume_hist if str(h.get("type")) == "KernelType.JIT"),
+                "consume_optix": sum(1 for h in consume_hist if bool(h.get("uses_optix", False))),
+                "native_optix_launches": int(native_audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["visible"], [False, True, False])
+        self.assertEqual(data["pair_a"], [False, True, False])
+        self.assertEqual(data["pair_b"], [True, True, False])
+        self.assertEqual(data["axial_any"], [True])
+        self.assertEqual(data["chain_all"], [False, True])
+        self.assertEqual(data["chain_blocked_segment"], [0, -1])
+        self.assertGreaterEqual(data["chain_blocked_prim"][0], 0)
+        self.assertEqual(data["chain_blocked_prim"][1], -1)
+        self.assertEqual(data["call_jit"], 0)
+        self.assertEqual(data["call_optix"], 0)
+        self.assertGreaterEqual(data["consume_jit"], 1)
+        self.assertGreaterEqual(data["consume_optix"], 1)
+        self.assertEqual(data["native_optix_launches"], 0)
+
+    def test_trace_visibility_native_backend_keeps_optixlaunch_path_available(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, 0.1])
+            end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.1])
+            end_b = cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0])
+            active = cuda.Bool([True, True, False])
+
+            chain_points = cuda.Array3f(
+                [0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 2.0, 2.0],
+                [-1.0, 1.0, -1.0, 1.0],
+            )
+            chain_length = cuda.Int([1, 1])
+
+            rd.native_launch_audit_clear()
+            vis = scene.trace_segment_visibility(start, end, active=active)
+            pair = scene.trace_segment_pair_visibility(start, end, end_b, active=active)
+            axial = scene.trace_axial_edge_visibility(
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                cuda.Array3f([-2.0], [0.0], [1.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Float([0.0]),
+                cuda.Float([4.0]),
+                [0.0, 0.5, 1.0],
+                cuda.Bool([True]),
+            )
+            chain = scene.trace_segment_chain_visibility(chain_points, chain_length)
+            native_audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": [bool(v) for v in list(vis.visible)],
+                "pair_a": [bool(v) for v in list(pair.visible_a)],
+                "pair_b": [bool(v) for v in list(pair.visible_b)],
+                "axial_any": [bool(v) for v in list(axial.any_visible)],
+                "chain_all": [bool(v) for v in list(chain.all_visible)],
+                "native_optix_launches": int(native_audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["visible"], [False, True, False])
+        self.assertEqual(data["pair_a"], [False, True, False])
+        self.assertEqual(data["pair_b"], [True, True, False])
+        self.assertEqual(data["axial_any"], [True])
+        self.assertEqual(data["chain_all"], [False, True])
+        self.assertGreaterEqual(data["native_optix_launches"], 4)
+
+    def test_segment_chain_visibility_reports_first_blocker_and_uses_segment_ignores(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            points = cuda.Array3f(
+                [0.0, 0.0, 2.0, -2.0, -1.0, 0.0],
+                [0.0, 0.0, 0.0,  0.0,  0.0, 0.0],
+                [-1.0, 1.0, 1.0, 1.0,  1.0, 1.0],
+            )
+            chain_length = cuda.Int([2, 2])
+
+            blocked = scene.trace_segment_chain_visibility(points, chain_length)
+            ignore = cuda.Int([0, -1, -1, -1])
+            ignored = scene.trace_segment_chain_visibility(points, chain_length, ignore)
+
+            print(json.dumps({
+                "chain_count": int(blocked.chain_count),
+                "max_segments": int(blocked.max_segments),
+                "visible": [bool(v) for v in list(blocked.all_visible)],
+                "first_segment": [int(v) for v in list(blocked.first_blocked_segment)],
+                "first_prim": [int(v) for v in list(blocked.first_blocked_prim)],
+                "ignored_visible": [bool(v) for v in list(ignored.all_visible)],
+                "ignored_first_segment": [int(v) for v in list(ignored.first_blocked_segment)],
+                "ignored_first_prim": [int(v) for v in list(ignored.first_blocked_prim)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["chain_count"], 2)
+        self.assertEqual(data["max_segments"], 2)
+        self.assertEqual(data["visible"], [False, True])
+        self.assertEqual(data["first_segment"], [0, -1])
+        self.assertEqual(data["first_prim"], [0, -1])
+        self.assertEqual(data["ignored_visible"], [True, True])
+        self.assertEqual(data["ignored_first_segment"], [-1, -1])
+        self.assertEqual(data["ignored_first_prim"], [-1, -1])
+
     def test_nearest_edges_topk_point_k2(self):
         data = run_json_case(
             """

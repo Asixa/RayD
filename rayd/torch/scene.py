@@ -25,7 +25,6 @@ from ._state import _MeshState
 from ._native import (
     _allocate_native_scene_cache_id,
     _build_native_mesh,
-    _prepare_native_scene_cache,
     _scene_cache_refresh_policy,
     _mesh_to_world_tensor,
     _ray_batch_size,
@@ -34,7 +33,7 @@ from ._native import (
     _scene_cache_tokens,
     _scene_edge_info_from_native,
     _scene_edge_topology_from_native,
-    _scene_global_geometry_from_native,
+    _scene_global_geometry_impl,
     _scene_intersect_impl,
     _scene_trace_reflections_impl,
     _scene_nearest_point_impl,
@@ -269,18 +268,17 @@ class Scene:
     def global_geometry(self) -> SceneGlobalGeometry:
         self._require_query_ready()
         mesh_states, topology_token, rebuild_token, vertex_tokens, left_tokens, right_tokens, refresh_policy, edge_mask = self._query_cache_inputs()
-        scene = _prepare_native_scene_cache(
+        return _scene_global_geometry_impl(
             self._query_cache_id,
-            mesh_states,
             topology_token,
             rebuild_token,
             vertex_tokens,
             left_tokens,
             right_tokens,
             refresh_policy,
+            mesh_states,
             edge_mask,
         )
-        return _to_torch_struct(_scene_global_geometry_from_native(scene.global_geometry()))
 
     def triangle_edge_indices(self, prim_id: Any, global_: bool = True, **kwargs: Any) -> tuple[_torch.Tensor, _torch.Tensor, _torch.Tensor]:
         self._require_ready()

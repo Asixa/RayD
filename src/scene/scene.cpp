@@ -29,6 +29,12 @@ enum class OptixSplitMode {
     On
 };
 
+enum class TraceVisibilityBackend {
+    Auto,
+    Jit,
+    Native
+};
+
 std::string normalize_optix_split_mode_value(const char *value) {
     std::string normalized = value != nullptr ? std::string(value) : std::string();
     std::transform(normalized.begin(),
@@ -57,6 +63,40 @@ OptixSplitMode active_optix_split_mode() {
             "Invalid RAYD_OPTIX_SPLIT_MODE. Expected one of: auto, off, on.");
     }();
     return value;
+}
+
+TraceVisibilityBackend active_trace_visibility_backend() {
+    static const TraceVisibilityBackend value = []() {
+        const char *raw = std::getenv("RAYD_TRACE_VISIBILITY_BACKEND");
+        const std::string normalized = normalize_optix_split_mode_value(raw);
+        if (normalized.empty() || normalized == "auto") {
+            return TraceVisibilityBackend::Auto;
+        }
+        if (normalized == "jit" || normalized == "drjit" ||
+            normalized == "hitobject" || normalized == "hit_object") {
+            return TraceVisibilityBackend::Jit;
+        }
+        if (normalized == "native" || normalized == "optixlaunch" ||
+            normalized == "optix_launch") {
+            return TraceVisibilityBackend::Native;
+        }
+        throw std::runtime_error(
+            "Invalid RAYD_TRACE_VISIBILITY_BACKEND. Expected one of: auto, jit, native.");
+    }();
+    return value;
+}
+
+bool use_jit_trace_visibility_path(int ignore_k) {
+    const TraceVisibilityBackend backend = active_trace_visibility_backend();
+    if (backend == TraceVisibilityBackend::Native) {
+        return false;
+    }
+    if (backend == TraceVisibilityBackend::Jit) {
+        require(ignore_k == 0,
+                "RAYD_TRACE_VISIBILITY_BACKEND=jit does not support ignore lists yet.");
+        return true;
+    }
+    return ignore_k == 0;
 }
 
 std::string normalize_edge_backend_value(const std::string &value) {
@@ -200,6 +240,14 @@ struct ReflectionTraceRaw {
     FloatDetached img_x;
     FloatDetached img_y;
     FloatDetached img_z;
+    FloatDetached trailing_t;
+    IntDetached trailing_prim;
+    FloatDetached trailing_dir_x;
+    FloatDetached trailing_dir_y;
+    FloatDetached trailing_dir_z;
+    FloatDetached trailing_origin_x;
+    FloatDetached trailing_origin_y;
+    FloatDetached trailing_origin_z;
 };
 
 IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
@@ -242,6 +290,10 @@ ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
     result.prim_ids = full<IntT<Detached>>(-1, slot_count);
     result.local_prim_ids = full<IntT<Detached>>(-1, slot_count);
     result.global_prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.trailing_t = full<FloatT<Detached>>(Infinity, ray_count);
+    result.trailing_prim = full<IntT<Detached>>(-1, ray_count);
+    result.trailing_dir = zeros<Vector3fT<Detached>>(ray_count);
+    result.trailing_origin = zeros<Vector3fT<Detached>>(ray_count);
     return result;
 }
 
@@ -299,6 +351,14 @@ ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces)
     raw.img_x = empty<FloatDetached>(slot_count);
     raw.img_y = empty<FloatDetached>(slot_count);
     raw.img_z = empty<FloatDetached>(slot_count);
+    raw.trailing_t = empty<FloatDetached>(ray_count);
+    raw.trailing_prim = empty<IntDetached>(ray_count);
+    raw.trailing_dir_x = empty<FloatDetached>(ray_count);
+    raw.trailing_dir_y = empty<FloatDetached>(ray_count);
+    raw.trailing_dir_z = empty<FloatDetached>(ray_count);
+    raw.trailing_origin_x = empty<FloatDetached>(ray_count);
+    raw.trailing_origin_y = empty<FloatDetached>(ray_count);
+    raw.trailing_origin_z = empty<FloatDetached>(ray_count);
     return raw;
 }
 
@@ -331,6 +391,14 @@ void initialize_reflection_trace_raw(ReflectionTraceRaw &raw) {
     jit_memset_async(JitBackend::CUDA, raw.img_x.data(), slot_count, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.img_y.data(), slot_count, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.img_z.data(), slot_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_t.data(), ray_count, sizeof(float), &inf_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_prim.data(), ray_count, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_x.data(), ray_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_y.data(), ray_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_z.data(), ray_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_x.data(), ray_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_y.data(), ray_count, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_z.data(), ray_count, sizeof(float), &zero_f);
 }
 
 template <typename ArrayD>
@@ -491,6 +559,336 @@ MaskDetached launch_segment_visibility_detached(
     params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
     pipeline.launch(SegmentVisibilityLaunchKind::Segment, params);
     return visible;
+}
+
+template <bool Detached>
+SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(
+    const OptixScene &optix_scene,
+    const Vector3fDetached &start,
+    const Vector3fDetached &end,
+    const MaskDetached &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    const OptixSegmentHit hit =
+        optix_scene.segment_hit<true>(start, end, active_detached);
+    if constexpr (!Detached) {
+        result.visible = Mask(hit.visible);
+    } else {
+        result.visible = hit.visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentVisibilityT<Detached> trace_segment_visibility_native(
+    const OptixScene &optix_scene,
+    const SegmentVisibilityPipeline &pipeline,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &start,
+    const Vector3fDetached &end,
+    const IntDetached &ignore_prim_ids,
+    int ignore_k,
+    const MaskDetached &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    const MaskDetached visible_detached =
+        launch_segment_visibility_detached(optix_scene,
+                                           pipeline,
+                                           face_offsets,
+                                           mesh_count,
+                                           start,
+                                           end,
+                                           ignore_prim_ids,
+                                           ignore_k,
+                                           active_detached);
+    if constexpr (!Detached) {
+        result.visible = Mask(visible_detached);
+    } else {
+        result.visible = visible_detached;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(
+    const OptixScene &optix_scene,
+    const Vector3fDetached &start,
+    const Vector3fDetached &end_a,
+    const Vector3fDetached &end_b,
+    const MaskDetached &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentPairVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    const OptixSegmentHit hit_a =
+        optix_scene.segment_hit<true>(start, end_a, active_detached);
+    const OptixSegmentHit hit_b =
+        optix_scene.segment_hit<true>(start, end_b, active_detached);
+    if constexpr (!Detached) {
+        result.visible_a = Mask(hit_a.visible);
+        result.visible_b = Mask(hit_b.visible);
+    } else {
+        result.visible_a = hit_a.visible;
+        result.visible_b = hit_b.visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
+    const OptixScene &optix_scene,
+    const SegmentVisibilityPipeline &pipeline,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &start,
+    const Vector3fDetached &end_a,
+    const Vector3fDetached &end_b,
+    const IntDetached &ignore_prim_ids,
+    int ignore_k,
+    const MaskDetached &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentPairVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    MaskDetached visible_a = empty<MaskDetached>(ray_count);
+    MaskDetached visible_b = empty<MaskDetached>(ray_count);
+    eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end_a, end_b);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(optix_scene,
+                                       face_offsets,
+                                       mesh_count,
+                                       start,
+                                       ignore_prim_ids,
+                                       ignore_k,
+                                       active_detached,
+                                       ray_count);
+    params.end_x = end_a.x().data();
+    params.end_y = end_a.y().data();
+    params.end_z = end_a.z().data();
+    params.end_b_x = end_b.x().data();
+    params.end_b_y = end_b.y().data();
+    params.end_b_z = end_b.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
+    params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
+    pipeline.launch(SegmentVisibilityLaunchKind::SegmentPair, params);
+
+    if constexpr (!Detached) {
+        result.visible_a = Mask(visible_a);
+        result.visible_b = Mask(visible_b);
+    } else {
+        result.visible_a = visible_a;
+        result.visible_b = visible_b;
+    }
+    return result;
+}
+
+template <bool Detached>
+AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(
+    const OptixScene &optix_scene,
+    const Vector3fDetached &source_pos,
+    const Vector3fDetached &edge_pos,
+    const Vector3fDetached &edge_dir,
+    const FloatDetached &edge_line_min,
+    const FloatDetached &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    const MaskDetached &active_detached) {
+    const int state_count = static_cast<int>(slices(source_pos));
+    AxialEdgeVisibilityT<Detached> result;
+    result.state_count = state_count;
+
+    MaskDetached any_visible = full<MaskDetached>(false, state_count);
+    const FloatDetached span =
+        maximum(edge_line_max - edge_line_min, FloatDetached(0.f));
+    for (float fraction : sample_fractions) {
+        const FloatDetached sample_t = edge_line_min + fraction * span;
+        const Vector3fDetached sample_pos = edge_pos + sample_t * edge_dir;
+        const OptixSegmentHit hit =
+            optix_scene.segment_hit<true>(source_pos, sample_pos, active_detached);
+        any_visible = any_visible || hit.visible;
+    }
+
+    if constexpr (!Detached) {
+        result.any_visible = Mask(any_visible);
+    } else {
+        result.any_visible = any_visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
+    const OptixScene &optix_scene,
+    const SegmentVisibilityPipeline &pipeline,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &source_pos,
+    const Vector3fDetached &edge_pos,
+    const Vector3fDetached &edge_dir,
+    const FloatDetached &edge_line_min,
+    const FloatDetached &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    const MaskDetached &active_detached) {
+    const int state_count = static_cast<int>(slices(source_pos));
+    AxialEdgeVisibilityT<Detached> result;
+    result.state_count = state_count;
+
+    MaskDetached any_visible = empty<MaskDetached>(state_count);
+    drjit::eval(source_pos,
+                edge_pos,
+                edge_dir,
+                edge_line_min,
+                edge_line_max,
+                face_offsets,
+                active_detached);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(optix_scene,
+                                       face_offsets,
+                                       mesh_count,
+                                       source_pos,
+                                       IntDetached(),
+                                       0,
+                                       active_detached,
+                                       state_count);
+    params.end_x = edge_pos.x().data();
+    params.end_y = edge_pos.y().data();
+    params.end_z = edge_pos.z().data();
+    params.edge_dir_x = edge_dir.x().data();
+    params.edge_dir_y = edge_dir.y().data();
+    params.edge_dir_z = edge_dir.z().data();
+    params.edge_line_min = edge_line_min.data();
+    params.edge_line_max = edge_line_max.data();
+    params.sample_count = static_cast<int>(sample_fractions.size());
+    for (size_t i = 0; i < sample_fractions.size(); ++i) {
+        params.sample_fractions[i] = sample_fractions[i];
+    }
+    params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
+    pipeline.launch(SegmentVisibilityLaunchKind::AxialEdge, params);
+
+    if constexpr (!Detached) {
+        result.any_visible = Mask(any_visible);
+    } else {
+        result.any_visible = any_visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(
+    const OptixScene &optix_scene,
+    const Vector3fDetached &points,
+    const IntDetached &chain_length,
+    int chain_count,
+    int max_points,
+    int max_segments,
+    const MaskDetached &active_detached) {
+    SegmentChainVisibilityT<Detached> result;
+    result.chain_count = chain_count;
+    result.max_segments = max_segments;
+
+    const IntDetached chain_index = arange<IntDetached>(chain_count);
+    const IntDetached chain_base = chain_index * max_points;
+    MaskDetached all_visible = active_detached;
+    IntDetached first_blocked_segment = full<IntDetached>(-1, chain_count);
+    IntDetached first_blocked_prim = full<IntDetached>(-1, chain_count);
+
+    for (int segment = 0; segment < max_segments; ++segment) {
+        const MaskDetached segment_active =
+            active_detached && all_visible && (chain_length > segment);
+        const IntDetached start_index = chain_base + segment;
+        const Vector3fDetached start_point =
+            gather<Vector3fDetached>(points, start_index, segment_active);
+        const Vector3fDetached end_point =
+            gather<Vector3fDetached>(points, start_index + 1, segment_active);
+        const OptixSegmentHit hit =
+            optix_scene.segment_hit<true>(start_point, end_point, segment_active);
+        const MaskDetached blocked = segment_active && !hit.visible;
+        all_visible &= !blocked;
+        first_blocked_segment =
+            select(blocked, IntDetached(segment), first_blocked_segment);
+        first_blocked_prim =
+            select(blocked, hit.global_prim_id, first_blocked_prim);
+    }
+
+    if constexpr (!Detached) {
+        result.all_visible = Mask(all_visible);
+        result.first_blocked_segment = Int(first_blocked_segment);
+        result.first_blocked_prim = Int(first_blocked_prim);
+    } else {
+        result.all_visible = all_visible;
+        result.first_blocked_segment = first_blocked_segment;
+        result.first_blocked_prim = first_blocked_prim;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
+    const OptixScene &optix_scene,
+    const SegmentVisibilityPipeline &pipeline,
+    const IntDetached &face_offsets,
+    int mesh_count,
+    const Vector3fDetached &points,
+    const IntDetached &chain_length,
+    const IntDetached &ignore_prim_per_segment,
+    int ignore_k,
+    int chain_count,
+    int max_points,
+    int max_segments,
+    const MaskDetached &active_detached) {
+    SegmentChainVisibilityT<Detached> result;
+    result.chain_count = chain_count;
+    result.max_segments = max_segments;
+
+    MaskDetached all_visible = empty<MaskDetached>(chain_count);
+    IntDetached first_blocked_segment = empty<IntDetached>(chain_count);
+    IntDetached first_blocked_prim = empty<IntDetached>(chain_count);
+    if (ignore_k > 0) {
+        drjit::eval(points,
+                    chain_length,
+                    ignore_prim_per_segment,
+                    face_offsets,
+                    active_detached);
+    } else {
+        drjit::eval(points, chain_length, face_offsets, active_detached);
+    }
+
+    SegmentVisibilityParams params = {};
+    params.handle = optix_scene.ias_handle();
+    params.face_offsets = face_offsets.data();
+    params.n_meshes = mesh_count;
+    params.chain_point_x = points.x().data();
+    params.chain_point_y = points.y().data();
+    params.chain_point_z = points.z().data();
+    params.chain_length = chain_length.data();
+    params.max_points = max_points;
+    params.max_segments = max_segments;
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_per_segment.data() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.n_rays = chain_count;
+    params.out_visible = reinterpret_cast<uint8_t *>(all_visible.data());
+    params.out_first_blocked_segment = first_blocked_segment.data();
+    params.out_first_blocked_prim = first_blocked_prim.data();
+    pipeline.launch(SegmentVisibilityLaunchKind::SegmentChain, params);
+
+    if constexpr (!Detached) {
+        result.all_visible = Mask(all_visible);
+        result.first_blocked_segment = Int(first_blocked_segment);
+        result.first_blocked_prim = Int(first_blocked_prim);
+    } else {
+        result.all_visible = all_visible;
+        result.first_blocked_segment = first_blocked_segment;
+        result.first_blocked_prim = first_blocked_prim;
+    }
+    return result;
 }
 
 template <bool Detached>
@@ -1705,6 +2103,37 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             result.prim_ids = bounce.prim_ids;
             result.local_prim_ids = bounce.local_prim_ids;
             result.global_prim_ids = bounce.global_prim_ids;
+
+            const MaskT<Detached> trailing_active = trace.bounce_count > 0;
+            const Vector3fT<Detached> reflected_direction =
+                ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
+            const Vector3fT<Detached> trailing_origin =
+                bounce.hit_points + Epsilon * reflected_direction;
+            RayT<Detached> trailing_ray(
+                trailing_origin,
+                reflected_direction,
+                full<FloatT<Detached>>(Infinity, ray_count));
+            const IntersectionT<Detached> trailing =
+                this->template intersect<Detached>(
+                    trailing_ray, trailing_active, RayFlags::Geometric);
+            const MaskT<Detached> trailing_hit =
+                trailing_active && trailing.is_valid();
+            result.trailing_t =
+                select(trailing_hit,
+                       trailing.t,
+                       full<FloatT<Detached>>(Infinity, ray_count));
+            result.trailing_prim =
+                select(trailing_hit,
+                       trailing.global_prim_id,
+                       full<IntT<Detached>>(-1, ray_count));
+            result.trailing_dir =
+                select(trailing_active,
+                       reflected_direction,
+                       zeros<Vector3fT<Detached>>(ray_count));
+            result.trailing_origin =
+                select(trailing_active,
+                       trailing_origin,
+                       zeros<Vector3fT<Detached>>(ray_count));
         }
         return result;
     }
@@ -1808,6 +2237,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.out_img_x = raw.img_x.data();
     params.out_img_y = raw.img_y.data();
     params.out_img_z = raw.img_z.data();
+    params.out_trailing_t = raw.trailing_t.data();
+    params.out_trailing_prim = raw.trailing_prim.data();
+    params.out_trailing_dir_x = raw.trailing_dir_x.data();
+    params.out_trailing_dir_y = raw.trailing_dir_y.data();
+    params.out_trailing_dir_z = raw.trailing_dir_z.data();
+    params.out_trailing_origin_x = raw.trailing_origin_x.data();
+    params.out_trailing_origin_y = raw.trailing_origin_y.data();
+    params.out_trailing_origin_z = raw.trailing_origin_z.data();
 
     reflection_pipeline_->launch(params);
 
@@ -1830,6 +2267,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     FloatDetached trace_img_x = raw.img_x;
     FloatDetached trace_img_y = raw.img_y;
     FloatDetached trace_img_z = raw.img_z;
+    FloatDetached trace_trailing_t = raw.trailing_t;
+    IntDetached trace_trailing_prim = raw.trailing_prim;
+    FloatDetached trace_trailing_dir_x = raw.trailing_dir_x;
+    FloatDetached trace_trailing_dir_y = raw.trailing_dir_y;
+    FloatDetached trace_trailing_dir_z = raw.trailing_dir_z;
+    FloatDetached trace_trailing_origin_x = raw.trailing_origin_x;
+    FloatDetached trace_trailing_origin_y = raw.trailing_origin_y;
+    FloatDetached trace_trailing_origin_z = raw.trailing_origin_z;
 
     if (options.deduplicate) {
         ReflectionTraceRaw compacted = allocate_reflection_trace_raw(ray_count, max_bounces);
@@ -1896,6 +2341,23 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         trace_img_x = prefix_array(compacted.img_x, unique_slot_count);
         trace_img_y = prefix_array(compacted.img_y, unique_slot_count);
         trace_img_z = prefix_array(compacted.img_z, unique_slot_count);
+        const MaskDetached unique_mask = full<MaskDetached>(true, trace_ray_count);
+        trace_trailing_t =
+            gather<FloatDetached>(raw.trailing_t, trace_representative_ray_index, unique_mask);
+        trace_trailing_prim =
+            gather<IntDetached>(raw.trailing_prim, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_x =
+            gather<FloatDetached>(raw.trailing_dir_x, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_y =
+            gather<FloatDetached>(raw.trailing_dir_y, trace_representative_ray_index, unique_mask);
+        trace_trailing_dir_z =
+            gather<FloatDetached>(raw.trailing_dir_z, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_x =
+            gather<FloatDetached>(raw.trailing_origin_x, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_y =
+            gather<FloatDetached>(raw.trailing_origin_y, trace_representative_ray_index, unique_mask);
+        trace_trailing_origin_z =
+            gather<FloatDetached>(raw.trailing_origin_z, trace_representative_ray_index, unique_mask);
         result.ray_count = trace_ray_count;
     }
 
@@ -1918,6 +2380,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.prim_ids = trace_prim_ids;
         result.local_prim_ids = trace_prim_ids;
         result.global_prim_ids = trace_global_prim_ids;
+        result.trailing_t = trace_trailing_t;
+        result.trailing_prim = trace_trailing_prim;
+        result.trailing_dir = Vector3fDetached(trace_trailing_dir_x,
+                                               trace_trailing_dir_y,
+                                               trace_trailing_dir_z);
+        result.trailing_origin = Vector3fDetached(trace_trailing_origin_x,
+                                                  trace_trailing_origin_y,
+                                                  trace_trailing_origin_z);
         return result;
     } else {
         result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
@@ -1928,6 +2398,14 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.prim_ids = Int(trace_prim_ids);
         result.local_prim_ids = Int(trace_prim_ids);
         result.global_prim_ids = Int(trace_global_prim_ids);
+        result.trailing_t = Float(trace_trailing_t);
+        result.trailing_prim = Int(trace_trailing_prim);
+        result.trailing_dir = Vector3f(Float(trace_trailing_dir_x),
+                                       Float(trace_trailing_dir_y),
+                                       Float(trace_trailing_dir_z));
+        result.trailing_origin = Vector3f(Float(trace_trailing_origin_x),
+                                          Float(trace_trailing_origin_y),
+                                          Float(trace_trailing_origin_z));
 
         if (trace_ray_count == 0) {
             return result;
@@ -2012,6 +2490,28 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             current_active_detached = detach<false>(bounce_hit);
         }
 
+        const Mask trailing_active = result.bounce_count > 0;
+        const Intersection trailing =
+            this->template intersect<false>(
+                current_ray, trailing_active, RayFlags::Geometric);
+        const Mask trailing_hit = trailing_active && trailing.is_valid();
+        result.trailing_t =
+            select(trailing_hit,
+                   trailing.t,
+                   full<Float>(Infinity, trace_ray_count));
+        result.trailing_prim =
+            select(trailing_hit,
+                   trailing.global_prim_id,
+                   full<Int>(-1, trace_ray_count));
+        result.trailing_dir =
+            select(trailing_active,
+                   current_ray.d,
+                   zeros<Vector3f>(trace_ray_count));
+        result.trailing_origin =
+            select(trailing_active,
+                   current_ray.o,
+                   zeros<Vector3f>(trace_ray_count));
+
         return result;
     }
 }
@@ -2064,8 +2564,6 @@ SegmentVisibilityT<Detached> Scene::trace_segment_visibility(
                 "Scene::trace_segment_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
-
     const MaskDetached active_detached = sanitize_segment_active<Detached>(start, end, active);
     Vector3fDetached start_detached;
     Vector3fDetached end_detached;
@@ -2077,22 +2575,22 @@ SegmentVisibilityT<Detached> Scene::trace_segment_visibility(
         end_detached = end;
     }
 
-    const MaskDetached visible_detached =
-        launch_segment_visibility_detached(*optix_scene_,
-                                           *segment_visibility_pipeline_,
-                                           face_offsets_,
-                                           mesh_count_,
-                                           start_detached,
-                                           end_detached,
-                                           ignore_prim_ids,
-                                           ignore_k,
-                                           active_detached);
-    if constexpr (!Detached) {
-        result.visible = Mask(visible_detached);
-    } else {
-        result.visible = visible_detached;
+    if (use_jit_trace_visibility_path(ignore_k)) {
+        return trace_segment_visibility_jit_no_ignore<Detached>(
+            *optix_scene_, start_detached, end_detached, active_detached);
     }
-    return result;
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    return trace_segment_visibility_native<Detached>(
+        *optix_scene_,
+        *segment_visibility_pipeline_,
+        face_offsets_,
+        mesh_count_,
+        start_detached,
+        end_detached,
+        ignore_prim_ids,
+        ignore_k,
+        active_detached);
 }
 
 template <bool Detached>
@@ -2129,8 +2627,6 @@ SegmentPairVisibilityT<Detached> Scene::trace_segment_pair_visibility(
                 "Scene::trace_segment_pair_visibility(): ignore_prim_ids supports at most 8 entries per ray.");
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
-
     const MaskDetached active_detached =
         sanitize_segment_active<Detached>(start, end_a, active) &&
         sanitize_segment_active<Detached>(start, end_b, active);
@@ -2147,42 +2643,27 @@ SegmentPairVisibilityT<Detached> Scene::trace_segment_pair_visibility(
         end_b_detached = end_b;
     }
 
-    MaskDetached visible_a = empty<MaskDetached>(ray_count);
-    MaskDetached visible_b = empty<MaskDetached>(ray_count);
-    eval_segment_visibility_common(start_detached,
-                                   face_offsets_,
-                                   ignore_prim_ids,
-                                   ignore_k,
-                                   active_detached);
-    drjit::eval(end_a_detached, end_b_detached);
-
-    SegmentVisibilityParams params =
-        make_segment_visibility_params(*optix_scene_,
-                                       face_offsets_,
-                                       mesh_count_,
-                                       start_detached,
-                                       ignore_prim_ids,
-                                       ignore_k,
-                                       active_detached,
-                                       ray_count);
-    params.end_x = end_a_detached.x().data();
-    params.end_y = end_a_detached.y().data();
-    params.end_z = end_a_detached.z().data();
-    params.end_b_x = end_b_detached.x().data();
-    params.end_b_y = end_b_detached.y().data();
-    params.end_b_z = end_b_detached.z().data();
-    params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
-    params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
-    segment_visibility_pipeline_->launch(SegmentVisibilityLaunchKind::SegmentPair, params);
-
-    if constexpr (!Detached) {
-        result.visible_a = Mask(visible_a);
-        result.visible_b = Mask(visible_b);
-    } else {
-        result.visible_a = visible_a;
-        result.visible_b = visible_b;
+    if (use_jit_trace_visibility_path(ignore_k)) {
+        return trace_segment_pair_visibility_jit_no_ignore<Detached>(
+            *optix_scene_,
+            start_detached,
+            end_a_detached,
+            end_b_detached,
+            active_detached);
     }
-    return result;
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    return trace_segment_pair_visibility_native<Detached>(
+        *optix_scene_,
+        *segment_visibility_pipeline_,
+        face_offsets_,
+        mesh_count_,
+        start_detached,
+        end_a_detached,
+        end_b_detached,
+        ignore_prim_ids,
+        ignore_k,
+        active_detached);
 }
 
 template <bool Detached>
@@ -2215,8 +2696,6 @@ AxialEdgeVisibilityT<Detached> Scene::trace_axial_edge_visibility(
     if (state_count == 0) {
         return result;
     }
-
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
 
     MaskDetached active_detached;
     Vector3fDetached source_detached;
@@ -2252,45 +2731,111 @@ AxialEdgeVisibilityT<Detached> Scene::trace_axial_edge_visibility(
                        drjit::isfinite(edge_line_min_detached) &&
                        drjit::isfinite(edge_line_max_detached);
 
-    MaskDetached any_visible = empty<MaskDetached>(state_count);
-    drjit::eval(source_detached,
-                edge_pos_detached,
-                edge_dir_detached,
-                edge_line_min_detached,
-                edge_line_max_detached,
-                face_offsets_,
-                active_detached);
-
-    SegmentVisibilityParams params =
-        make_segment_visibility_params(*optix_scene_,
-                                       face_offsets_,
-                                       mesh_count_,
-                                       source_detached,
-                                       IntDetached(),
-                                       0,
-                                       active_detached,
-                                       state_count);
-    params.end_x = edge_pos_detached.x().data();
-    params.end_y = edge_pos_detached.y().data();
-    params.end_z = edge_pos_detached.z().data();
-    params.edge_dir_x = edge_dir_detached.x().data();
-    params.edge_dir_y = edge_dir_detached.y().data();
-    params.edge_dir_z = edge_dir_detached.z().data();
-    params.edge_line_min = edge_line_min_detached.data();
-    params.edge_line_max = edge_line_max_detached.data();
-    params.sample_count = static_cast<int>(sample_fractions.size());
-    for (size_t i = 0; i < sample_fractions.size(); ++i) {
-        params.sample_fractions[i] = sample_fractions[i];
+    if (active_trace_visibility_backend() != TraceVisibilityBackend::Native) {
+        return trace_axial_edge_visibility_jit<Detached>(
+            *optix_scene_,
+            source_detached,
+            edge_pos_detached,
+            edge_dir_detached,
+            edge_line_min_detached,
+            edge_line_max_detached,
+            sample_fractions,
+            active_detached);
     }
-    params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
-    segment_visibility_pipeline_->launch(SegmentVisibilityLaunchKind::AxialEdge, params);
 
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    return trace_axial_edge_visibility_native<Detached>(
+        *optix_scene_,
+        *segment_visibility_pipeline_,
+        face_offsets_,
+        mesh_count_,
+        source_detached,
+        edge_pos_detached,
+        edge_dir_detached,
+        edge_line_min_detached,
+        edge_line_max_detached,
+        sample_fractions,
+        active_detached);
+}
+
+template <bool Detached>
+SegmentChainVisibilityT<Detached> Scene::trace_segment_chain_visibility(
+    const Vector3fT<Detached> &points,
+    const IntDetached &chain_length,
+    const IntDetached &ignore_prim_per_segment,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::trace_segment_chain_visibility(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_segment_chain_visibility(): scene has pending updates. Call Scene::sync() first.");
+
+    const int chain_count = static_cast<int>(slices(chain_length));
+    const int point_count = static_cast<int>(slices(points));
+
+    SegmentChainVisibilityT<Detached> result;
+    result.chain_count = chain_count;
+    result.max_segments = 0;
+    result.all_visible = full<MaskT<Detached>>(false, chain_count);
+    result.first_blocked_segment = full<IntT<Detached>>(-1, chain_count);
+    result.first_blocked_prim = full<IntT<Detached>>(-1, chain_count);
+    if (chain_count == 0) {
+        return result;
+    }
+
+    require(point_count % chain_count == 0,
+            "Scene::trace_segment_chain_visibility(): points width must be a multiple of chain count.");
+    const int max_points = point_count / chain_count;
+    require(max_points >= 2,
+            "Scene::trace_segment_chain_visibility(): each chain must contain at least two points.");
+    const int max_segments = max_points - 1;
+    result.max_segments = max_segments;
+
+    const int ignore_count = static_cast<int>(slices(ignore_prim_per_segment));
+    int ignore_k = 0;
+    if (ignore_count > 0) {
+        const int ignore_slots = chain_count * max_segments;
+        require(ignore_count % ignore_slots == 0,
+                "Scene::trace_segment_chain_visibility(): ignore_prim_per_segment width must be a multiple of chain_count * max_segments.");
+        ignore_k = ignore_count / ignore_slots;
+        require(ignore_k <= 8,
+                "Scene::trace_segment_chain_visibility(): ignore_prim_per_segment supports at most 8 entries per segment.");
+    }
+
+    MaskDetached active_detached;
+    Vector3fDetached points_detached;
     if constexpr (!Detached) {
-        result.any_visible = Mask(any_visible);
+        active_detached = detach<false>(active);
+        points_detached = detach<false>(points);
     } else {
-        result.any_visible = any_visible;
+        active_detached = active;
+        points_detached = points;
     }
-    return result;
+    active_detached &= chain_length >= 0;
+
+    if (use_jit_trace_visibility_path(ignore_k)) {
+        return trace_segment_chain_visibility_jit_no_ignore<Detached>(
+            *optix_scene_,
+            points_detached,
+            chain_length,
+            chain_count,
+            max_points,
+            max_segments,
+            active_detached);
+    }
+
+    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    return trace_segment_chain_visibility_native<Detached>(
+        *optix_scene_,
+        *segment_visibility_pipeline_,
+        face_offsets_,
+        mesh_count_,
+        points_detached,
+        chain_length,
+        ignore_prim_per_segment,
+        ignore_k,
+        chain_count,
+        max_points,
+        max_segments,
+        active_detached);
 }
 
 template <bool Detached>
@@ -2775,6 +3320,16 @@ template AxialEdgeVisibility Scene::trace_axial_edge_visibility<false>(
     const Float &edge_line_min,
     const Float &edge_line_max,
     const std::vector<float> &sample_fractions,
+    Mask active) const;
+template SegmentChainVisibilityDetached Scene::trace_segment_chain_visibility<true>(
+    const Vector3fDetached &points,
+    const IntDetached &chain_length,
+    const IntDetached &ignore_prim_per_segment,
+    MaskDetached active) const;
+template SegmentChainVisibility Scene::trace_segment_chain_visibility<false>(
+    const Vector3f &points,
+    const IntDetached &chain_length,
+    const IntDetached &ignore_prim_per_segment,
     Mask active) const;
 template NearestPointEdgeDetached Scene::nearest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
 template NearestPointEdge Scene::nearest_edge<false>(const Vector3f &point, Mask active) const;

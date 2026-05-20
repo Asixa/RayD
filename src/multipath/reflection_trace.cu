@@ -227,6 +227,34 @@ extern "C" __global__ void __raygen__reflection_trace() {
         bounce_count = bounce + 1;
     }
 
+    if (bounce_count > 0) {
+        params.out_trailing_dir_x[ray_index] = direction.x;
+        params.out_trailing_dir_y[ray_index] = direction.y;
+        params.out_trailing_dir_z[ray_index] = direction.z;
+        params.out_trailing_origin_x[ray_index] = origin.x;
+        params.out_trailing_origin_y[ray_index] = origin.y;
+        params.out_trailing_origin_z[ray_index] = origin.z;
+
+        HitPayload trailing_primary;
+        trace_handle(params.primary_handle, origin, direction, kTraceTMax, trailing_primary);
+
+        HitPayload trailing = trailing_primary;
+        if (params.split_mode != 0) {
+            HitPayload trailing_secondary;
+            trace_handle(params.secondary_handle, origin, direction, kTraceTMax, trailing_secondary);
+            trailing = choose_hit(trailing_primary, trailing_secondary);
+        }
+
+        if (trailing.hit != 0u) {
+            const int shape_id = static_cast<int>(trailing.instance);
+            const int local_prim = static_cast<int>(trailing.prim);
+            const int face_offset =
+                (shape_id >= 0 && shape_id < params.n_meshes) ? params.face_offsets[shape_id] : 0;
+            params.out_trailing_t[ray_index] = __uint_as_float(trailing.t);
+            params.out_trailing_prim[ray_index] = face_offset + local_prim;
+        }
+    }
+
     params.out_bounce_count[ray_index] = bounce_count;
 }
 

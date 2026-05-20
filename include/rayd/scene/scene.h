@@ -124,6 +124,12 @@ public:
         const std::vector<float> &sample_fractions,
         MaskT<Detached> active = true) const;
     template <bool Detached>
+    SegmentChainVisibilityT<Detached> trace_segment_chain_visibility(
+        const Vector3fT<Detached> &points,
+        const IntDetached &chain_length,
+        const IntDetached &ignore_prim_per_segment = IntDetached(),
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
     NearestPointEdgeT<Detached> nearest_edge(const Vector3fT<Detached> &point,
                                              MaskT<Detached> active = true) const;
     template <bool Detached>

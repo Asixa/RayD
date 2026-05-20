@@ -952,9 +952,106 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     return hit;
 }
 
+template <bool Detached>
+OptixSegmentHit OptixScene::segment_hit(const Vector3fT<Detached> &start,
+                                        const Vector3fT<Detached> &end,
+                                        MaskT<Detached> active) const {
+    const int ray_count = static_cast<int>(slices(start));
+
+    Vector3fDetached start_detached;
+    Vector3fDetached end_detached;
+    MaskDetached active_detached;
+    if constexpr (!Detached) {
+        start_detached = detach<false>(start);
+        end_detached = detach<false>(end);
+        active_detached = detach<false>(active);
+    } else {
+        start_detached = start;
+        end_detached = end;
+        active_detached = active;
+    }
+
+    active_detached &= drjit::isfinite(start_detached.x()) &&
+                       drjit::isfinite(start_detached.y()) &&
+                       drjit::isfinite(start_detached.z()) &&
+                       drjit::isfinite(end_detached.x()) &&
+                       drjit::isfinite(end_detached.y()) &&
+                       drjit::isfinite(end_detached.z());
+
+    const Vector3fDetached delta = end_detached - start_detached;
+    const FloatDetached length_sq = squared_norm(delta);
+    const MaskDetached valid_segment = length_sq > (2.f * Epsilon) * (2.f * Epsilon);
+    const FloatDetached safe_length =
+        sqrt(select(valid_segment, length_sq, FloatDetached(1.f)));
+    const Vector3fDetached direction = delta / safe_length;
+    const Vector3fDetached origin = start_detached + Epsilon * direction;
+    const FloatDetached t_min = Epsilon;
+    const FloatDetached t_max = maximum(safe_length - 2.f * Epsilon, FloatDetached(0.f));
+    const FloatDetached time = 0.f;
+    const UIntDetached ray_mask(255);
+    const UIntDetached ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                                 OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT |
+                                 OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT);
+    const UIntDetached sbt_offset(0);
+    const UIntDetached sbt_stride(1);
+    const UIntDetached miss_sbt_index(0);
+    const MaskDetached trace_active = active_detached && valid_segment;
+
+    m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
+    uint32_t trace_args[] {
+        m_accel->handle.index(),
+        origin.x().index(), origin.y().index(), origin.z().index(),
+        direction.x().index(), direction.y().index(), direction.z().index(),
+        t_min.index(), t_max.index(), time.index(),
+        ray_mask.index(), ray_flags.index(),
+        sbt_offset.index(), sbt_stride.index(),
+        miss_sbt_index.index(),
+    };
+
+    OptixHitObjectField fields[] {
+        OptixHitObjectField::IsHit,
+        OptixHitObjectField::PrimitiveIndex,
+        OptixHitObjectField::SBTDataPointer,
+    };
+    uint32_t hitobject_out[3];
+
+    jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t),
+                        trace_args,
+                        3,
+                        fields,
+                        hitobject_out,
+                        0, 0, 0,
+                        0,
+                        trace_active.index(),
+                        m_accel->pipeline_handle.index(),
+                        m_accel->sbt_handle.index());
+
+    const MaskDetached hit =
+        trace_active && (UIntDetached::steal(hitobject_out[0]) != 0u);
+    const UIntDetached raw_prim_index = UIntDetached::steal(hitobject_out[1]);
+    const UInt64Detached sbt_data_ptr = UInt64Detached::steal(hitobject_out[2]);
+    const IntDetached shape_offset = IntDetached(UIntDetached::steal(
+        jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 0, hit.index())));
+
+    OptixSegmentHit result;
+    result.visible = active_detached && (!valid_segment || !hit);
+    result.hit = hit;
+    result.global_prim_id =
+        select(hit, IntDetached(raw_prim_index) + shape_offset, full<IntDetached>(-1, ray_count));
+    return result;
+}
+
 template OptixIntersection OptixScene::intersect<true>(const RayDetached &ray, MaskDetached &active) const;
 template OptixIntersection OptixScene::intersect<false>(const Ray &ray, Mask &active) const;
 template MaskDetached OptixScene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
 template Mask OptixScene::shadow_test<false>(const Ray &ray, Mask active) const;
+template OptixSegmentHit OptixScene::segment_hit<true>(
+    const Vector3fDetached &start,
+    const Vector3fDetached &end,
+    MaskDetached active) const;
+template OptixSegmentHit OptixScene::segment_hit<false>(
+    const Vector3f &start,
+    const Vector3f &end,
+    Mask active) const;
 
 } // namespace rayd

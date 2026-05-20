@@ -58,6 +58,14 @@ struct ReflectionTraceParams {
     float *out_img_x;
     float *out_img_y;
     float *out_img_z;
+    float *out_trailing_t;
+    int *out_trailing_prim;
+    float *out_trailing_dir_x;
+    float *out_trailing_dir_y;
+    float *out_trailing_dir_z;
+    float *out_trailing_origin_x;
+    float *out_trailing_origin_y;
+    float *out_trailing_origin_z;
 };
 
 } // namespace rayd

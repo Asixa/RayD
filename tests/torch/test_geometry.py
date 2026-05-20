@@ -336,6 +336,60 @@ class TorchGeometryTests(unittest.TestCase):
         self.assertAlmostEqual(data["img1"][2], 3.5, places=4)
         self.assertTrue(data["grad_nonzero"])
 
+    def test_trace_reflections_returns_trailing_fields(self):
+        data = run_json_case(
+            """
+            import json
+            import torch
+            import rayd.torch as rt
+
+            device = "cuda"
+            floor = rt.Mesh(
+                torch.tensor([[-2.0, -2.0, 0.0],
+                              [ 2.0, -2.0, 0.0],
+                              [ 2.0,  2.0, 0.0],
+                              [-2.0,  2.0, 0.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            ceiling = rt.Mesh(
+                torch.tensor([[-2.0, -2.0, 1.0],
+                              [ 2.0, -2.0, 1.0],
+                              [ 2.0,  2.0, 1.0],
+                              [-2.0,  2.0, 1.0]], device=device),
+                torch.tensor([[0, 1, 2],
+                              [0, 2, 3]], device=device, dtype=torch.int32),
+            )
+            scene = rt.Scene()
+            scene.add_mesh(floor)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            ray = rt.Ray(
+                torch.tensor([[0.0, 0.0, 0.5]], device=device),
+                torch.tensor([[0.0, 0.0, -1.0]], device=device),
+            )
+            chain = scene.trace_reflections(ray, max_bounces=1)
+
+            print(json.dumps({
+                "trailing_t_shape": list(chain.trailing_t.shape),
+                "trailing_dir_shape": list(chain.trailing_dir.shape),
+                "trailing_origin_shape": list(chain.trailing_origin.shape),
+                "trailing_t": float(chain.trailing_t[0].item()),
+                "trailing_prim": int(chain.trailing_prim[0].item()),
+                "trailing_dir": [float(v) for v in chain.trailing_dir[0].tolist()],
+            }))
+            """
+        )
+
+        self.assertEqual(data["trailing_t_shape"], [1])
+        self.assertEqual(data["trailing_dir_shape"], [1, 3])
+        self.assertEqual(data["trailing_origin_shape"], [1, 3])
+        self.assertGreater(data["trailing_t"], 0.99)
+        self.assertLess(data["trailing_t"], 1.01)
+        self.assertGreaterEqual(data["trailing_prim"], 2)
+        self.assertAlmostEqual(data["trailing_dir"][2], 1.0, places=5)
+
     def test_trace_reflections_gpu_deduplicate_merges_duplicate_and_canonical_paths(self):
         data = run_json_case(
             """

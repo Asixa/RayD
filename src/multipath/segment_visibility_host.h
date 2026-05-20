@@ -12,7 +12,8 @@ namespace rayd {
 enum class SegmentVisibilityLaunchKind {
     Segment,
     SegmentPair,
-    AxialEdge
+    AxialEdge,
+    SegmentChain
 };
 
 class SegmentVisibilityPipeline {
@@ -40,12 +41,14 @@ private:
     OptixProgramGroup pg_raygen_segment_ = nullptr;
     OptixProgramGroup pg_raygen_pair_ = nullptr;
     OptixProgramGroup pg_raygen_axial_ = nullptr;
+    OptixProgramGroup pg_raygen_chain_ = nullptr;
     OptixProgramGroup pg_miss_ = nullptr;
     OptixProgramGroup pg_hitgroup_ = nullptr;
 
     void *sbt_raygen_segment_ = nullptr;
     void *sbt_raygen_pair_ = nullptr;
     void *sbt_raygen_axial_ = nullptr;
+    void *sbt_raygen_chain_ = nullptr;
     void *sbt_miss_record_ = nullptr;
     void *sbt_hitgroup_records_ = nullptr;
     void *params_buffer_ = nullptr;

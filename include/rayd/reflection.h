@@ -76,6 +76,10 @@ struct ReflectionChainData {
     Int_ prim_ids = full<Int_>(-1, 1);
     Int_ local_prim_ids = full<Int_>(-1, 1);
     Int_ global_prim_ids = full<Int_>(-1, 1);
+    Float_ trailing_t = full<Float_>(Infinity, 1);
+    Int_ trailing_prim = full<Int_>(-1, 1);
+    Vec3f trailing_dir = zeros<Vec3f>(1);
+    Vec3f trailing_origin = zeros<Vec3f>(1);
 
     DRJIT_STRUCT(ReflectionChainData,
                  bounce_count,
@@ -90,7 +94,11 @@ struct ReflectionChainData {
                  shape_ids,
                  prim_ids,
                  local_prim_ids,
-                 global_prim_ids)
+                 global_prim_ids,
+                 trailing_t,
+                 trailing_prim,
+                 trailing_dir,
+                 trailing_origin)
 };
 
 template <typename Float_>
