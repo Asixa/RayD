@@ -9,7 +9,7 @@
 #include "edge_bvh.h"
 #include "edge_bvh_config.h"
 
-#include <rayd/scene/scene_edge.h>
+#include <rayd/edge/scene_edge.h>
 #include <rayd/utils.h>
 
 namespace rayd {

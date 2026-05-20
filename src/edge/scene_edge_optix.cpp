@@ -1,4 +1,4 @@
-#include <rayd/scene/scene_edge_optix.h>
+#include <rayd/edge/scene_edge_optix.h>
 
 #include <algorithm>
 #include <cmath>

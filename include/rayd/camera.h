@@ -3,7 +3,7 @@
 #include <utility>
 
 #include <rayd/rayd.h>
-#include <rayd/edge.h>
+#include <rayd/edge/edge.h>
 #include <drjit/tensor.h>
 #include <drjit/math.h>
 #include <drjit/util.h>

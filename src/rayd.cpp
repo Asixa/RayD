@@ -9,8 +9,8 @@
 #include <rayd/intersection.h>
 #include <rayd/ray.h>
 #include <rayd/transform.h>
-#include <rayd/edge.h>
-#include <rayd/segment_visibility.h>
+#include <rayd/edge/edge.h>
+#include <rayd/multipath/segment_visibility.h>
 #include <rayd/mesh.h>
 #include <rayd/optix.h>
 #include <rayd/camera.h>

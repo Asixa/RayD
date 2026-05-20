@@ -12,7 +12,7 @@
 #include <rayd/camera.h>
 #include <rayd/ray.h>
 #include <rayd/scene/scene.h>
-#include <rayd/scene/scene_edge.h>
+#include <rayd/edge/scene_edge.h>
 
 #include "../multipath/reflection_dedup.h"
 #include "../multipath/reflection_accumulation_host.h"

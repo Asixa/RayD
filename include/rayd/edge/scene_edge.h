@@ -1,7 +1,7 @@
 #pragma once
 
 #include <rayd/rayd.h>
-#include <rayd/edge.h>
+#include <rayd/edge/edge.h>
 #include <rayd/ray.h>
 #include <vector>
 

@@ -3,7 +3,7 @@
 #include <memory>
 
 #include <rayd/rayd.h>
-#include <rayd/edge.h>
+#include <rayd/edge/edge.h>
 
 namespace rayd {
 

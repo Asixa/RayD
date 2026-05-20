@@ -6,14 +6,14 @@
 #include <vector>
 
 #include <rayd/rayd.h>
-#include <rayd/edge.h>
+#include <rayd/edge/edge.h>
 #include <rayd/intersection.h>
 #include <rayd/mesh.h>
-#include <rayd/reflection_accumulation.h>
-#include <rayd/reflection.h>
-#include <rayd/segment_visibility.h>
-#include <rayd/scene/scene_edge.h>
-#include <rayd/scene/scene_edge_optix.h>
+#include <rayd/multipath/reflection_accumulation.h>
+#include <rayd/multipath/reflection.h>
+#include <rayd/multipath/segment_visibility.h>
+#include <rayd/edge/scene_edge.h>
+#include <rayd/edge/scene_edge_optix.h>
 #include <rayd/scene/scene_optix.h>
 
 namespace rayd {

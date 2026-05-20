@@ -115,12 +115,12 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/ray.h
     ${RAYD_INCLUDE_DIR}/intersection.h
-    ${RAYD_INCLUDE_DIR}/reflection.h
-    ${RAYD_INCLUDE_DIR}/reflection_accumulation.h
-    ${RAYD_INCLUDE_DIR}/segment_visibility.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation.h
+    ${RAYD_INCLUDE_DIR}/multipath/segment_visibility.h
     ${RAYD_INCLUDE_DIR}/transform.h
 
-    ${RAYD_INCLUDE_DIR}/edge.h
+    ${RAYD_INCLUDE_DIR}/edge/edge.h
 
     ${RAYD_INCLUDE_DIR}/mesh.h
     ${RAYD_SOURCE_DIR}/mesh.cpp
@@ -142,12 +142,13 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.cpp
     ${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h
-    ${RAYD_INCLUDE_DIR}/scene/scene_edge.h
-    ${RAYD_INCLUDE_DIR}/scene/scene_edge_optix.h
-    ${RAYD_SOURCE_DIR}/scene/scene_edge.cpp
-    ${RAYD_SOURCE_DIR}/scene/scene_edge_optix.cpp
-    ${RAYD_SOURCE_DIR}/scene/edge_bvh.h
-    ${RAYD_SOURCE_DIR}/scene/edge_optix_params.h
+    ${RAYD_INCLUDE_DIR}/edge/scene_edge.h
+    ${RAYD_INCLUDE_DIR}/edge/scene_edge_optix.h
+    ${RAYD_SOURCE_DIR}/edge/scene_edge.cpp
+    ${RAYD_SOURCE_DIR}/edge/scene_edge_optix.cpp
+    ${RAYD_SOURCE_DIR}/edge/edge_bvh.h
+    ${RAYD_SOURCE_DIR}/edge/edge_bvh_config.h
+    ${RAYD_SOURCE_DIR}/edge/edge_optix_params.h
 
     ${RAYD_INCLUDE_DIR}/scene/scene.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
@@ -168,15 +169,15 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${RAYD_CUDA_BUILD_SCRIPT}"
         DEPENDS
             "${RAYD_CUDA_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
 else()
@@ -184,13 +185,13 @@ else()
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
                 ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
                 ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_CUDA_OBJECT}"
         DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_bvh.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
 endif()
@@ -489,10 +490,10 @@ else()
     list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
 endif()
 
-set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_optix.cu")
+set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu")
 set(RAYD_EDGE_OPTIX_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_ptx.h")
 set(RAYD_EDGE_OPTIX_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_optix_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_ptx.h")
 
 if(RAYD_REGENERATE_EDGE_OPTIX_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -531,7 +532,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
                 "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_params.h"
             VERBATIM
         )
     else()
@@ -545,7 +546,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_EDGE_OPTIX_PTX}"
             DEPENDS
                 "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/scene/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_params.h"
             VERBATIM
         )
     endif()
