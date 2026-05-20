@@ -23,3 +23,4 @@ unit_test/result/
 .rayd_slang_cache/
 tests/slang/test_interop_gen.cpp
 artifacts/
+docs/
