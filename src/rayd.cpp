@@ -227,7 +227,7 @@ NB_MODULE(rayd, m) {
           "initialize_optix"_a = true,
           "Set the current thread's active CUDA device for RayD.\n\n"
           "Call this before constructing RayD meshes, scenes, cameras, or "
-          "torch/Dr.Jit arrays that you intend to use with them. When "
+          "Dr.Jit arrays that you intend to use with them. When "
           "initialize_optix=True, RayD also initializes the OptiX device "
           "context for the selected device.");
     bind_section("core types", [&]() {
@@ -935,9 +935,6 @@ NB_MODULE(rayd, m) {
             .def_prop_ro("sample_to_camera", &Camera::sample_to_camera)
             .def_prop_ro("world_to_sample", &Camera::world_to_sample)
             .def_prop_ro("sample_to_world", &Camera::sample_to_world)
-            .def_prop_ro("slang_handle", [](Camera &c) -> uint64_t {
-                return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&c));
-            })
             .def("__repr__", &Camera::to_string);
     });
 
@@ -1437,9 +1434,6 @@ NB_MODULE(rayd, m) {
             .def_prop_ro("num_meshes", &Scene::num_meshes)
             .def_prop_ro("version", &Scene::version)
             .def_prop_ro("edge_version", &Scene::edge_version)
-            .def_prop_ro("slang_handle", [](Scene &s) -> uint64_t {
-                return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(&s));
-            })
             .def("__repr__", &Scene::to_string);
     });
 }
