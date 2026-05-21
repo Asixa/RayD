@@ -122,38 +122,6 @@ using NearestEdgesTopKT = NearestEdgesTopKData<FloatT<Detached>>;
 using NearestEdgesTopK = NearestEdgesTopKT<false>;
 using NearestEdgesTopKDetached = NearestEdgesTopKT<true>;
 
-/// Primary-edge sample returned by image-space edge sampling.
-struct PrimaryEdgeSample {
-    Float x_dot_n;
-    IntDetached idx;
-    RayDetached ray_n;
-    RayDetached ray_p;
-    FloatDetached pdf;
-};
-
-template <typename Float_>
-struct PrimaryEdgeInfoData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
-
-    using Vec2f = std::conditional_t<IsDetached, Vector2fDetached, Vector2f>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-
-#ifdef RAYD_PRIMARY_EDGE_VIS_CHECK
-    Vec3f p0;
-    Vec3f p1;
-#else
-    Vec2f p0;
-    Vec2f p1;
-#endif
-    Vec2f edge_normal;
-    Float_ edge_length;
-
-    DRJIT_STRUCT(PrimaryEdgeInfoData, p0, p1, edge_normal, edge_length)
-};
-
-using PrimaryEdgeInfo = PrimaryEdgeInfoData<Float>;
-using PrimaryEdgeInfoDetached = PrimaryEdgeInfoData<FloatDetached>;
-
 template <typename Float_>
 struct SecondaryEdgeInfoData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;

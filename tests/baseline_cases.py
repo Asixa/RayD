@@ -285,33 +285,7 @@ def collect_baseline_data():
     )
     edge_mesh.build()
 
-    front_mesh = pj.Mesh(
-        cuda.Array3f([-0.5, 0.5, 0.0], [-0.5, -0.5, 0.5], [3.0, 3.0, 3.0]),
-        cuda.Array3i([0], [1], [2]),
-    )
-    edge_scene = pj.Scene()
-    edge_scene.add_mesh(front_mesh)
-    edge_scene.build()
-
-    edge_camera = pj.Camera(45.0, 1e-4, 1e4)
-    edge_camera.width = 32
-    edge_camera.height = 32
-    edge_camera.build(cache=False)
-    edge_camera.prepare_edges(edge_scene)
-    edge_sample = edge_camera.sample_edge(cuda.Float([0.25]))
-
-    edges = {
-        "primary_edge_sampling": {
-            "idx": _int_lane(edge_sample.idx),
-            "pdf": _float_lane(edge_sample.pdf),
-            "x_dot_n": _float_lane(edge_sample.x_dot_n),
-            "ray_p": _ray_to_dict(edge_sample.ray_p),
-            "ray_n": _ray_to_dict(edge_sample.ray_n),
-        },
-    }
-
     total_hits = 0
-    total_samples = 0
     max_abs_grad = 0.0
     for _ in range(20):
         loop_mesh = pj.Mesh(
@@ -321,14 +295,6 @@ def collect_baseline_data():
         loop_scene = pj.Scene()
         loop_scene.add_mesh(loop_mesh)
         loop_scene.build()
-
-        loop_camera = pj.Camera(45.0, 1e-4, 1e4)
-        loop_camera.width = 32
-        loop_camera.height = 32
-        loop_camera.build()
-        loop_camera.prepare_edges(loop_scene)
-        sample = loop_camera.sample_edge(cuda.Float([0.25]))
-        total_samples += int(_int_lane(sample.idx) >= 0)
 
         xs = [0.1 + 0.02 * (i % 8) for i in range(64)]
         ys = [0.1 + 0.02 * (i // 8) for i in range(64)]
@@ -365,7 +331,6 @@ def collect_baseline_data():
     stress = {
         "repeated_run_summary": {
             "total_hits": total_hits,
-            "total_samples": total_samples,
             "max_abs_grad": max_abs_grad,
         }
     }
@@ -373,7 +338,6 @@ def collect_baseline_data():
     return {
         "geometry": geometry,
         "gradients": gradients,
-        "edges": edges,
         "stress": stress,
     }
 

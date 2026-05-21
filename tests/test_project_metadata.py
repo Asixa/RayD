@@ -27,6 +27,37 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("Slang", readme)
         self.assertNotIn("torch =", pyproject)
 
+    def test_core_camera_api_is_not_shipped(self):
+        removed_paths = [
+            ROOT / "include" / "rayd" / "camera.h",
+            ROOT / "src" / "camera.cpp",
+        ]
+
+        for path in removed_paths:
+            self.assertFalse(path.exists(), f"Unexpected Camera artifact remains: {path}")
+
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        bindings = (ROOT / "src" / "rayd.cpp").read_text(encoding="utf-8")
+        fwd = (ROOT / "include" / "rayd" / "fwd.h").read_text(encoding="utf-8")
+        scene_header = (ROOT / "include" / "rayd" / "scene" / "scene.h").read_text(encoding="utf-8")
+
+        self.assertNotIn("camera.h", cmake)
+        self.assertNotIn("camera.cpp", cmake)
+        self.assertNotIn("Camera", bindings)
+        self.assertNotIn("PrimaryEdgeSample", bindings)
+        self.assertNotIn("class Camera", fwd)
+        self.assertNotIn("Camera *", scene_header)
+
+    def test_cornell_renderer_uses_example_local_camera(self):
+        renderer_camera = ROOT / "examples" / "renderer" / "camera.py"
+        cornell_box = ROOT / "examples" / "renderer" / "cornell_box.py"
+
+        self.assertTrue(renderer_camera.is_file(), "Cornell renderer should carry its own example-local camera.")
+        renderer_source = cornell_box.read_text(encoding="utf-8")
+
+        self.assertIn("from camera import ExampleCamera", renderer_source)
+        self.assertNotIn("rd.Camera", renderer_source)
+
     def test_readme_matches_pinned_nanobind_version(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

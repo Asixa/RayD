@@ -210,10 +210,6 @@ private:
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
     void ensure_reflection_epc_geometry_ready() const;
-    void register_primary_edge_observer(Camera *camera);
-    void unregister_primary_edge_observer(Camera *camera);
-    void invalidate_primary_edge_observers();
-
     int mesh_count_ = 0;
     std::vector<SceneMeshRecord> mesh_records_;
 
@@ -246,7 +242,6 @@ private:
     std::vector<int> optix_static_mesh_indices_;
     std::vector<int> optix_dynamic_mesh_indices_;
     std::vector<int> optix_dynamic_mesh_local_index_;
-    std::vector<Camera *> primary_edge_observers_;
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
@@ -259,8 +254,6 @@ private:
     std::unique_ptr<SceneEdgeOptix> edge_optix_;
     EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::DrJit;
     SceneSyncProfile last_sync_profile_;
-
-    friend class Camera;
 };
 
 } // namespace rayd

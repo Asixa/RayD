@@ -107,11 +107,9 @@ using SegmentChainVisibilityT = SegmentChainVisibilityData<FloatT<Detached>>;
 using SegmentChainVisibility = SegmentChainVisibilityT<false>;
 using SegmentChainVisibilityDetached = SegmentChainVisibilityT<true>;
 
-struct PrimaryEdgeSample;
 struct OptixIntersection;
 
 class Mesh;
-class Camera;
 class OptixScene;
 class ReflectionEpcPipeline;
 class SceneEdge;

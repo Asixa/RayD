@@ -9,7 +9,6 @@
 #include <vector>
 
 #include <rayd/intersection.h>
-#include <rayd/camera.h>
 #include <rayd/ray.h>
 #include <rayd/scene/scene.h>
 #include <rayd/edge/scene_edge.h>
@@ -1364,13 +1363,7 @@ Scene::Scene(const std::string &edge_bvh_backend)
       edge_optix_(std::make_unique<SceneEdgeOptix>()),
       edge_bvh_backend_(parse_edge_backend(edge_bvh_backend)) {}
 
-Scene::~Scene() {
-    for (Camera *camera : primary_edge_observers_) {
-        if (camera != nullptr) {
-            camera->clear_primary_edge_scene_binding(this);
-        }
-    }
-}
+Scene::~Scene() = default;
 
 std::string Scene::to_string() const {
     std::stringstream stream;
@@ -1414,7 +1407,6 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     reflection_epc_pipeline_.reset();
     reflection_epc_geometry_ready_ = false;
     segment_visibility_pipeline_.reset();
-    invalidate_primary_edge_observers();
     return mesh_count_ - 1;
 }
 
@@ -1590,26 +1582,6 @@ void Scene::ensure_reflection_epc_geometry_ready() const {
                 triangle_info_detached_.face_normal,
                 face_offsets_);
     reflection_epc_geometry_ready_ = true;
-}
-
-void Scene::register_primary_edge_observer(Camera *camera) {
-    auto it = std::find(primary_edge_observers_.begin(), primary_edge_observers_.end(), camera);
-    if (it == primary_edge_observers_.end()) {
-        primary_edge_observers_.push_back(camera);
-    }
-}
-
-void Scene::unregister_primary_edge_observer(Camera *camera) {
-    auto it = std::remove(primary_edge_observers_.begin(), primary_edge_observers_.end(), camera);
-    primary_edge_observers_.erase(it, primary_edge_observers_.end());
-}
-
-void Scene::invalidate_primary_edge_observers() {
-    for (Camera *camera : primary_edge_observers_) {
-        if (camera != nullptr) {
-            camera->invalidate_primary_edges_from_scene(this);
-        }
-    }
 }
 
 void Scene::build() {
@@ -1913,7 +1885,6 @@ void Scene::build() {
     pending_updates_ = false;
     ++scene_version_;
     ++edge_version_;
-    invalidate_primary_edge_observers();
 }
 
 void Scene::update_mesh_vertices(int mesh_id, const Vector3f &positions) {
@@ -2110,9 +2081,6 @@ void Scene::sync() {
     }
     if (mask_dirty_before || last_sync_profile_.updated_edge_meshes > 0) {
         ++edge_version_;
-    }
-    if (!updates.empty()) {
-        invalidate_primary_edge_observers();
     }
     last_sync_profile_.total_ms = std::chrono::duration<double, std::milli>(
         Clock::now() - total_start).count();

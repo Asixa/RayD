@@ -1,5 +1,7 @@
 file(READ "${PTX_FILE}" PTX_CONTENT)
 string(LENGTH "${PTX_CONTENT}" PTX_SIZE)
+get_filename_component(OUTPUT_DIR "${OUTPUT_FILE}" DIRECTORY)
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 file(WRITE "${OUTPUT_FILE}"
     "// Auto-generated. Do not edit.\n"
     "#pragma once\n"

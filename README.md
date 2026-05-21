@@ -103,7 +103,7 @@ This is useful for:
 - visibility-boundary terms
 - geometric diffraction models
 
-`Scene.set_edge_mask(mask)` filters the secondary-edge BVH in scene-global edge index space. It does not modify `scene.edge_info()`, `scene.edge_topology()`, `scene.mesh_edge_offsets()`, or primary-edge camera sampling.
+`Scene.set_edge_mask(mask)` filters the secondary-edge BVH in scene-global edge index space. It does not modify `scene.edge_info()`, `scene.edge_topology()`, or `scene.mesh_edge_offsets()`.
 
 ## Multipath Queries
 
@@ -121,7 +121,6 @@ These APIs expose primitives, not a complete propagation simulator. Callers own 
 
 - [`examples/basics/ray_mesh_intersection.py`](examples/basics/ray_mesh_intersection.py): custom rays against a mesh
 - [`examples/basics/nearest_edge_query.py`](examples/basics/nearest_edge_query.py): nearest-edge queries
-- [`examples/basics/camera_edge_sampling_gradient.py`](examples/basics/camera_edge_sampling_gradient.py): camera-driven edge-sampling gradients
 - [`examples/renderer/cornell_box.py`](examples/renderer/cornell_box.py): a compact renderer built on RayD primitives
 
 ## Performance
