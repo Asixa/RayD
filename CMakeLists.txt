@@ -163,9 +163,6 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/native_launch_audit.h
     ${RAYD_SOURCE_DIR}/native_launch_audit.cpp
 
-    ${RAYD_INCLUDE_DIR}/slang/interop.h
-    ${RAYD_INCLUDE_DIR}/slang/interop_types.h
-    ${RAYD_SOURCE_DIR}/slang_interop.cpp
 )
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
@@ -767,10 +764,6 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd
     DESTINATION .
     FILES_MATCHING
         PATTERN "*.h"
-        PATTERN "*.slang"
-)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd_slang.slang
-    DESTINATION .
 )
 
 set_target_properties(rayd PROPERTIES
