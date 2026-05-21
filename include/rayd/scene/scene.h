@@ -106,6 +106,33 @@ public:
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
+        MaskT<Detached> active = true) const {
+        return trace_reflection_epc(ray,
+                                    receiver,
+                                    max_bounces,
+                                    ReflectionEpcOptions(),
+                                    active);
+    }
+    template <bool Detached>
+    ReflectionEpcResultT<Detached> trace_reflection_epc(
+        const RayT<Detached> &ray,
+        const Vector3fT<Detached> &receiver,
+        int max_bounces,
+        const ReflectionEpcOptions &options,
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
+    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
+        const RayT<Detached> &ray,
+        const Vector3fT<Detached> &receiver,
+        int max_bounces,
+        const ReflectionEpcFieldOptions &options,
+        MaskT<Detached> active = true) const;
+    template <bool Detached>
+    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field_direct(
+        const Vector3fT<Detached> &tx_position,
+        const Vector3fT<Detached> &receiver,
+        int max_bounces,
+        const ReflectionEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
@@ -182,6 +209,7 @@ private:
     void scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_static_ids);
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
+    void ensure_reflection_epc_geometry_ready() const;
     void register_primary_edge_observer(Camera *camera);
     void unregister_primary_edge_observer(Camera *camera);
     void invalidate_primary_edge_observers();
@@ -226,6 +254,7 @@ private:
     mutable std::unique_ptr<ReflectionAccumulationPipeline> reflection_accumulation_pipeline_;
     mutable std::unique_ptr<ReflectionEpcPipeline> reflection_epc_pipeline_;
     mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
+    mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;
     EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::DrJit;

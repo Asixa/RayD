@@ -139,6 +139,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
     ${RAYD_SOURCE_DIR}/multipath/reflection_epc_host.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_epc_params.h
+    ${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_epc_host.cpp
     ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h
@@ -239,6 +240,45 @@ else()
 endif()
 set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_DEDUP_OBJECT}")
+
+set(RAYD_REFLECTION_EPC_FIELD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.cu")
+if(WIN32)
+    set(RAYD_REFLECTION_EPC_FIELD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_field.obj")
+    set(RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_epc_field.bat")
+    file(GENERATE OUTPUT "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_EPC_FIELD_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_EPC_FIELD_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
+        COMMAND "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}"
+            "${RAYD_REFLECTION_EPC_FIELD_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/native_launch_audit.h"
+        VERBATIM
+    )
+else()
+    set(RAYD_REFLECTION_EPC_FIELD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_field.o")
+    add_custom_command(
+        OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_REFLECTION_EPC_FIELD_CU}"
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
+        DEPENDS
+            "${RAYD_REFLECTION_EPC_FIELD_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/native_launch_audit.h"
+        VERBATIM
+    )
+endif()
+set_source_files_properties("${RAYD_REFLECTION_EPC_FIELD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_FIELD_OBJECT}")
 
 set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
 set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_ptx.h")
