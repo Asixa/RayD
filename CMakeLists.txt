@@ -123,8 +123,6 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
     ${RAYD_INCLUDE_DIR}/multipath/pipelines.h
     ${RAYD_SOURCE_DIR}/multipath/pipelines.cpp
-    ${RAYD_SOURCE_DIR}/multipath/reflection_scene.cpp
-    ${RAYD_SOURCE_DIR}/multipath/visibility_scene.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h
@@ -135,13 +133,11 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/edge/scene_edge_optix.h
     ${RAYD_SOURCE_DIR}/edge/scene_edge.cpp
     ${RAYD_SOURCE_DIR}/edge/scene_edge_optix.cpp
-    ${RAYD_SOURCE_DIR}/edge/scene_edge_query.cpp
     ${RAYD_INCLUDE_DIR}/edge/edge_bvh.h
     ${RAYD_INCLUDE_DIR}/edge/edge_bvh_config.h
     ${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h
 
     ${RAYD_INCLUDE_DIR}/scene/scene.h
-    ${RAYD_SOURCE_DIR}/scene/scene_internal.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
