@@ -6,7 +6,6 @@
 #include <nanobind/stl/vector.h>
 #include <drjit/python.h>
 
-#include <rayd/intersection.h>
 #include <rayd/ray.h>
 #include <rayd/transform.h>
 #include <rayd/edge/edge.h>

@@ -1,4 +1,4 @@
-#include <rayd/multipath/reflection_accumulation_host.h>
+#include <rayd/multipath/pipelines.h>
 
 #include <cstring>
 #include <stdexcept>

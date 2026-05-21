@@ -7,7 +7,7 @@
 
 #include <rayd/rayd.h>
 #include <rayd/edge/edge.h>
-#include <rayd/intersection.h>
+#include <rayd/ray.h>
 #include <rayd/mesh.h>
 #include <rayd/multipath/reflection_accumulation.h>
 #include <rayd/multipath/reflection_epc.h>
