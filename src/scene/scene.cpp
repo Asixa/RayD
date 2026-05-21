@@ -16,6 +16,7 @@
 
 #include "../multipath/reflection_dedup.h"
 #include "../multipath/reflection_accumulation_host.h"
+#include "../multipath/reflection_epc_host.h"
 #include "../multipath/reflection_trace_host.h"
 #include "../multipath/segment_visibility_host.h"
 #include "../native_launch_audit.h"
@@ -251,6 +252,20 @@ struct ReflectionTraceRaw {
     FloatDetached trailing_origin_z;
 };
 
+struct ReflectionEpcRaw {
+    int ray_count = 0;
+    int max_bounces = 0;
+    MaskDetached valid;
+    IntDetached bounce_count;
+    FloatDetached path_length;
+    FloatDetached point_x;
+    FloatDetached point_y;
+    FloatDetached point_z;
+    IntDetached prim_ids;
+    IntDetached first_blocked_segment;
+    IntDetached first_blocked_prim;
+};
+
 struct ReflectionAccumulationRaw {
     int ray_count = 0;
     int max_bounces = 0;
@@ -296,6 +311,40 @@ IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
     return select(valid,
                   local_prim_ids + mesh_face_offsets,
                   full<IntDetached>(-1, ray_count));
+}
+
+template <bool Detached>
+ReflectionEpcResultT<Detached> initialize_reflection_epc_result(int ray_count,
+                                                                int max_bounces) {
+    ReflectionEpcResultT<Detached> result;
+    result.ray_count = ray_count;
+    result.max_bounces = max_bounces;
+    const int slot_count = ray_count * max_bounces;
+    result.valid = full<MaskT<Detached>>(false, ray_count);
+    result.bounce_count = full<IntT<Detached>>(0, ray_count);
+    result.path_length = full<FloatT<Detached>>(Infinity, ray_count);
+    result.reflection_points = zeros<Vector3fT<Detached>>(slot_count);
+    result.prim_ids = full<IntT<Detached>>(-1, slot_count);
+    result.first_blocked_segment = full<IntT<Detached>>(-1, ray_count);
+    result.first_blocked_prim = full<IntT<Detached>>(-1, ray_count);
+    return result;
+}
+
+ReflectionEpcRaw allocate_reflection_epc_raw(int ray_count, int max_bounces) {
+    const int slot_count = ray_count * max_bounces;
+    ReflectionEpcRaw raw;
+    raw.ray_count = ray_count;
+    raw.max_bounces = max_bounces;
+    raw.valid = empty<MaskDetached>(ray_count);
+    raw.bounce_count = empty<IntDetached>(ray_count);
+    raw.path_length = empty<FloatDetached>(ray_count);
+    raw.point_x = empty<FloatDetached>(slot_count);
+    raw.point_y = empty<FloatDetached>(slot_count);
+    raw.point_z = empty<FloatDetached>(slot_count);
+    raw.prim_ids = empty<IntDetached>(slot_count);
+    raw.first_blocked_segment = empty<IntDetached>(ray_count);
+    raw.first_blocked_prim = empty<IntDetached>(ray_count);
+    return raw;
 }
 
 template <bool Detached>
@@ -1232,6 +1281,7 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     optix_dynamic_mesh_indices_.clear();
     optix_dynamic_mesh_local_index_.clear();
     reflection_pipeline_.reset();
+    reflection_epc_pipeline_.reset();
     segment_visibility_pipeline_.reset();
     invalidate_primary_edge_observers();
     return mesh_count_ - 1;
@@ -1697,6 +1747,7 @@ void Scene::build() {
         optix_scene_->build(mesh_descs);
     }
     reflection_pipeline_.reset();
+    reflection_epc_pipeline_.reset();
     segment_visibility_pipeline_.reset();
     mask_dirty_ = false;
     edge_bvh_ = std::make_unique<SceneEdge>();
@@ -2680,6 +2731,141 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                    current_ray.o,
                    zeros<Vector3f>(trace_ray_count));
 
+        return result;
+    }
+}
+
+template <bool Detached>
+ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
+    const RayT<Detached> &ray,
+    const Vector3fT<Detached> &receiver,
+    int max_bounces,
+    MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
+    require(is_ready(), "Scene::trace_reflection_epc(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::trace_reflection_epc(): scene has pending updates. Call Scene::sync() first.");
+    require(max_bounces > 0,
+            "Scene::trace_reflection_epc(): max_bounces must be positive.");
+    require(max_bounces <= ReflectionEpcMaxBounces,
+            "Scene::trace_reflection_epc(): max_bounces exceeds the native EPC limit.");
+
+    const int ray_count = static_cast<int>(slices(ray.o));
+    ReflectionEpcResultT<Detached> result =
+        initialize_reflection_epc_result<Detached>(ray_count, max_bounces);
+    if (ray_count == 0) {
+        return result;
+    }
+
+    if constexpr (!Detached) {
+        require(false,
+                "Scene::trace_reflection_epc(): native EPC is a non-AD native fast path. "
+                "Pass RayDetached and detached receiver positions.");
+        return result;
+    } else {
+        const int receiver_count = static_cast<int>(slices(receiver));
+        require(receiver_count == 1 || receiver_count == ray_count,
+                "Scene::trace_reflection_epc(): receiver width must be 1 or match ray count.");
+
+        const MaskDetached active_detached =
+            sanitize_reflection_active<Detached>(ray, active);
+        if (drjit::none(active_detached)) {
+            return result;
+        }
+
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = mesh_count_;
+        if (optix_split_active_) {
+            primary_scene = optix_static_scene_.get();
+            secondary_scene = optix_dynamic_scene_.get();
+            split_mode = 1;
+            hitgroup_record_count = static_cast<int>(
+                std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
+        } else {
+            primary_scene = optix_scene_.get();
+        }
+
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::trace_reflection_epc(): OptiX scene is not ready.");
+        require(hitgroup_record_count > 0,
+                "Scene::trace_reflection_epc(): invalid hitgroup record count.");
+
+        if (!reflection_epc_pipeline_) {
+            reflection_epc_pipeline_ = std::make_unique<ReflectionEpcPipeline>();
+            reflection_epc_pipeline_->build(primary_scene->context(), hitgroup_record_count);
+        }
+
+        drjit::eval(ray.o,
+                    ray.d,
+                    ray.tmax,
+                    receiver,
+                    active_detached,
+                    triangle_info_detached_.p0,
+                    triangle_info_detached_.e1,
+                    triangle_info_detached_.e2,
+                    triangle_info_detached_.face_normal,
+                    face_offsets_);
+
+        ReflectionEpcRaw raw = allocate_reflection_epc_raw(ray_count, max_bounces);
+
+        ReflectionEpcParams params = {};
+        params.primary_handle = primary_scene->ias_handle();
+        params.secondary_handle =
+            secondary_scene != nullptr && secondary_scene->is_ready()
+                ? secondary_scene->ias_handle()
+                : 0ull;
+        params.split_mode = split_mode;
+        params.tri_p0_x = triangle_info_detached_.p0.x().data();
+        params.tri_p0_y = triangle_info_detached_.p0.y().data();
+        params.tri_p0_z = triangle_info_detached_.p0.z().data();
+        params.tri_e1_x = triangle_info_detached_.e1.x().data();
+        params.tri_e1_y = triangle_info_detached_.e1.y().data();
+        params.tri_e1_z = triangle_info_detached_.e1.z().data();
+        params.tri_e2_x = triangle_info_detached_.e2.x().data();
+        params.tri_e2_y = triangle_info_detached_.e2.y().data();
+        params.tri_e2_z = triangle_info_detached_.e2.z().data();
+        params.tri_fn_x = triangle_info_detached_.face_normal.x().data();
+        params.tri_fn_y = triangle_info_detached_.face_normal.y().data();
+        params.tri_fn_z = triangle_info_detached_.face_normal.z().data();
+        params.face_offsets = face_offsets_.data();
+        params.n_meshes = mesh_count_;
+        params.n_triangles = static_cast<int>(slices(triangle_info_detached_.p0));
+        params.ray_ox = ray.o.x().data();
+        params.ray_oy = ray.o.y().data();
+        params.ray_oz = ray.o.z().data();
+        params.ray_dx = ray.d.x().data();
+        params.ray_dy = ray.d.y().data();
+        params.ray_dz = ray.d.z().data();
+        params.ray_tmax = ray.tmax.data();
+        params.rx_x = receiver.x().data();
+        params.rx_y = receiver.y().data();
+        params.rx_z = receiver.z().data();
+        params.rx_count = receiver_count;
+        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.n_rays = ray_count;
+        params.max_bounces = max_bounces;
+        params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
+        params.out_bounce_count = raw.bounce_count.data();
+        params.out_path_length = raw.path_length.data();
+        params.out_point_x = raw.point_x.data();
+        params.out_point_y = raw.point_y.data();
+        params.out_point_z = raw.point_z.data();
+        params.out_prim_ids = raw.prim_ids.data();
+        params.out_first_blocked_segment = raw.first_blocked_segment.data();
+        params.out_first_blocked_prim = raw.first_blocked_prim.data();
+
+        reflection_epc_pipeline_->launch(params);
+
+        result.valid = raw.valid;
+        result.bounce_count = raw.bounce_count;
+        result.path_length = raw.path_length;
+        result.reflection_points =
+            Vector3fDetached(raw.point_x, raw.point_y, raw.point_z);
+        result.prim_ids = raw.prim_ids;
+        result.first_blocked_segment = raw.first_blocked_segment;
+        result.first_blocked_prim = raw.first_blocked_prim;
         return result;
     }
 }
@@ -3722,6 +3908,16 @@ template ReflectionAccumulationResult Scene::trace_reflections_accumulating<fals
     const ReflectionAccumulationOptions &options,
     Mask active,
     const Vector3f &tx_polarization) const;
+template ReflectionEpcResultDetached Scene::trace_reflection_epc<true>(
+    const RayDetached &ray,
+    const Vector3fDetached &receiver,
+    int max_bounces,
+    MaskDetached active) const;
+template ReflectionEpcResult Scene::trace_reflection_epc<false>(
+    const Ray &ray,
+    const Vector3f &receiver,
+    int max_bounces,
+    Mask active) const;
 template ReflectionTraceDetached Scene::trace_bounces<true>(
     const RayDetached &ray,
     int max_bounces,

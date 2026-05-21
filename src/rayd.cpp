@@ -471,6 +471,28 @@ NB_MODULE(rayd, m) {
             .def_ro("reflection_count", &ReflectionAccumulationResult::reflection_count)
             .def_ro("wedge_events", &ReflectionAccumulationResult::wedge_events);
 
+        nb::class_<ReflectionEpcResultDetached>(m, "ReflectionEpcResultDetached")
+            .def_ro("ray_count", &ReflectionEpcResultDetached::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcResultDetached::max_bounces)
+            .def_ro("valid", &ReflectionEpcResultDetached::valid)
+            .def_ro("bounce_count", &ReflectionEpcResultDetached::bounce_count)
+            .def_ro("path_length", &ReflectionEpcResultDetached::path_length)
+            .def_ro("reflection_points", &ReflectionEpcResultDetached::reflection_points)
+            .def_ro("prim_ids", &ReflectionEpcResultDetached::prim_ids)
+            .def_ro("first_blocked_segment", &ReflectionEpcResultDetached::first_blocked_segment)
+            .def_ro("first_blocked_prim", &ReflectionEpcResultDetached::first_blocked_prim);
+
+        nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
+            .def_ro("ray_count", &ReflectionEpcResult::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcResult::max_bounces)
+            .def_ro("valid", &ReflectionEpcResult::valid)
+            .def_ro("bounce_count", &ReflectionEpcResult::bounce_count)
+            .def_ro("path_length", &ReflectionEpcResult::path_length)
+            .def_ro("reflection_points", &ReflectionEpcResult::reflection_points)
+            .def_ro("prim_ids", &ReflectionEpcResult::prim_ids)
+            .def_ro("first_blocked_segment", &ReflectionEpcResult::first_blocked_segment)
+            .def_ro("first_blocked_prim", &ReflectionEpcResult::first_blocked_prim);
+
         nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
             .def("is_valid", &ReflectionBounceDetached::is_valid)
             .def_ro("t", &ReflectionBounceDetached::t)
@@ -990,10 +1012,23 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
-                  "canonical_prim_table"_a = IntDetached(),
+                 "canonical_prim_table"_a = IntDetached(),
                   "image_source_tolerance"_a = 1e-5f,
                   "active"_a = true,
                   "symbolic"_a = true)
+            .def("trace_reflection_epc",
+                 [](const Scene &scene,
+                    const RayDetached &ray,
+                    const Vector3fDetached &receiver,
+                    int max_bounces,
+                    rayd::MaskDetached active) {
+                     return scene.trace_reflection_epc<true>(
+                         ray, receiver, max_bounces, active);
+                 },
+                 nb::arg("ray").noconvert(),
+                 nb::arg("receiver"),
+                 "max_bounces"_a,
+                 "active"_a = true)
             .def("trace_reflections_accumulating",
                  [](const Scene &scene,
                     nb::handle ray_obj,

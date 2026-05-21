@@ -10,6 +10,7 @@
 #include <rayd/intersection.h>
 #include <rayd/mesh.h>
 #include <rayd/multipath/reflection_accumulation.h>
+#include <rayd/multipath/reflection_epc.h>
 #include <rayd/multipath/reflection.h>
 #include <rayd/multipath/segment_visibility.h>
 #include <rayd/edge/scene_edge.h>
@@ -100,6 +101,12 @@ public:
         const ReflectionAccumulationOptions &options,
         MaskT<Detached> active,
         const Vector3fT<Detached> &tx_polarization) const;
+    template <bool Detached>
+    ReflectionEpcResultT<Detached> trace_reflection_epc(
+        const RayT<Detached> &ray,
+        const Vector3fT<Detached> &receiver,
+        int max_bounces,
+        MaskT<Detached> active = true) const;
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
         const RayT<Detached> &ray,
@@ -217,6 +224,7 @@ private:
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
     mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
     mutable std::unique_ptr<ReflectionAccumulationPipeline> reflection_accumulation_pipeline_;
+    mutable std::unique_ptr<ReflectionEpcPipeline> reflection_epc_pipeline_;
     mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;

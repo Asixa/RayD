@@ -20,6 +20,12 @@ class ProjectMetadataTests(unittest.TestCase):
             "Expected committed reflection_trace PTX header for wheel builds.",
         )
 
+    def test_reflection_epc_ptx_header_is_committed(self):
+        self.assertTrue(
+            (ROOT / "src" / "multipath" / "reflection_epc_ptx.h").is_file(),
+            "Expected committed reflection_epc PTX header for wheel builds.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
