@@ -822,13 +822,13 @@ MaskDetached sanitize_segment_active(const Vector3fT<Detached> &start,
     return active_detached;
 }
 
-void ensure_segment_visibility_pipeline(
-    std::unique_ptr<SegmentVisibilityPipeline> &pipeline,
-    const OptixScene &optix_scene,
-    int mesh_count) {
+void ensure_pipeline(std::unique_ptr<OptixLaunchPipeline> &pipeline,
+                     OptixDeviceContext context,
+                     int hitgroup_record_count,
+                     const OptixPipelineConfig &config) {
     if (!pipeline) {
-        pipeline = std::make_unique<SegmentVisibilityPipeline>();
-        pipeline->build(optix_scene.context(), mesh_count);
+        pipeline = std::make_unique<OptixLaunchPipeline>();
+        pipeline->build(context, hitgroup_record_count, config);
     }
 }
 
@@ -869,7 +869,7 @@ SegmentVisibilityParams make_segment_visibility_params(
 
 MaskDetached launch_segment_visibility_detached(
     const OptixScene &optix_scene,
-    const SegmentVisibilityPipeline &pipeline,
+    const OptixLaunchPipeline &pipeline,
     const IntDetached &face_offsets,
     int mesh_count,
     const Vector3fDetached &start,
@@ -899,7 +899,7 @@ MaskDetached launch_segment_visibility_detached(
     params.end_y = end.y().data();
     params.end_z = end.z().data();
     params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
-    pipeline.launch(SegmentVisibilityLaunchKind::Segment, params);
+    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::Segment), params);
     return visible;
 }
 
@@ -926,7 +926,7 @@ SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(
 template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_native(
     const OptixScene &optix_scene,
-    const SegmentVisibilityPipeline &pipeline,
+    const OptixLaunchPipeline &pipeline,
     const IntDetached &face_offsets,
     int mesh_count,
     const Vector3fDetached &start,
@@ -984,7 +984,7 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(
 template <bool Detached>
 SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     const OptixScene &optix_scene,
-    const SegmentVisibilityPipeline &pipeline,
+    const OptixLaunchPipeline &pipeline,
     const IntDetached &face_offsets,
     int mesh_count,
     const Vector3fDetached &start,
@@ -1019,7 +1019,7 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     params.end_b_z = end_b.z().data();
     params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
     params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
-    pipeline.launch(SegmentVisibilityLaunchKind::SegmentPair, params);
+    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentPair), params);
 
     if constexpr (!Detached) {
         result.visible_a = Mask(visible_a);
@@ -1067,7 +1067,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(
 template <bool Detached>
 AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     const OptixScene &optix_scene,
-    const SegmentVisibilityPipeline &pipeline,
+    const OptixLaunchPipeline &pipeline,
     const IntDetached &face_offsets,
     int mesh_count,
     const Vector3fDetached &source_pos,
@@ -1112,7 +1112,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
         params.sample_fractions[i] = sample_fractions[i];
     }
     params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
-    pipeline.launch(SegmentVisibilityLaunchKind::AxialEdge, params);
+    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::AxialEdge), params);
 
     if constexpr (!Detached) {
         result.any_visible = Mask(any_visible);
@@ -1174,7 +1174,7 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(
 template <bool Detached>
 SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     const OptixScene &optix_scene,
-    const SegmentVisibilityPipeline &pipeline,
+    const OptixLaunchPipeline &pipeline,
     const IntDetached &face_offsets,
     int mesh_count,
     const Vector3fDetached &points,
@@ -1219,7 +1219,7 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     params.out_visible = reinterpret_cast<uint8_t *>(all_visible.data());
     params.out_first_blocked_segment = first_blocked_segment.data();
     params.out_first_blocked_prim = first_blocked_prim.data();
-    pipeline.launch(SegmentVisibilityLaunchKind::SegmentChain, params);
+    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentChain), params);
 
     if constexpr (!Detached) {
         result.all_visible = Mask(all_visible);
@@ -2360,6 +2360,21 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     return intersection;
 }
 
+Scene::OptixSceneSelection Scene::select_optix_scenes() const {
+    OptixSceneSelection selection;
+    selection.hitgroup_record_count = mesh_count_;
+    if (optix_split_active_) {
+        selection.primary = optix_static_scene_.get();
+        selection.secondary = optix_dynamic_scene_.get();
+        selection.split_mode = 1;
+        selection.hitgroup_record_count = static_cast<int>(
+            std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
+    } else {
+        selection.primary = optix_scene_.get();
+    }
+    return selection;
+}
+
 template <bool Detached>
 ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
                                                     int max_bounces,
@@ -2474,29 +2489,19 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         return result;
     }
 
-    const OptixScene *primary_scene = nullptr;
-    const OptixScene *secondary_scene = nullptr;
-    int split_mode = 0;
-    int hitgroup_record_count = mesh_count_;
-    if (optix_split_active_) {
-        primary_scene = optix_static_scene_.get();
-        secondary_scene = optix_dynamic_scene_.get();
-        split_mode = 1;
-        hitgroup_record_count = static_cast<int>(
-            std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
-    } else {
-        primary_scene = optix_scene_.get();
-    }
+    const OptixSceneSelection scenes = select_optix_scenes();
+    const OptixScene *primary_scene = scenes.primary;
+    const OptixScene *secondary_scene = scenes.secondary;
+    int split_mode = scenes.split_mode;
+    int hitgroup_record_count = scenes.hitgroup_record_count;
 
     require(primary_scene != nullptr && primary_scene->is_ready(),
             "Scene::trace_reflections(): OptiX scene is not ready.");
     require(hitgroup_record_count > 0,
             "Scene::trace_reflections(): invalid hitgroup record count.");
 
-    if (!reflection_pipeline_) {
-        reflection_pipeline_ = std::make_unique<ReflectionTracePipeline>();
-        reflection_pipeline_->build(primary_scene->context(), hitgroup_record_count);
-    }
+    ensure_pipeline(reflection_pipeline_, primary_scene->context(),
+                    hitgroup_record_count, reflection_trace_pipeline_config());
 
     RayDetached broadphase_ray;
     if constexpr (!Detached) {
@@ -2577,7 +2582,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.out_trailing_origin_y = raw.trailing_origin_y.data();
     params.out_trailing_origin_z = raw.trailing_origin_z.data();
 
-    reflection_pipeline_->launch(params);
+    reflection_pipeline_->launch(0, params);
 
     int trace_ray_count = ray_count;
     IntDetached trace_bounce_count = raw.bounce_count;
@@ -2926,29 +2931,19 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
             return result;
         }
 
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
-        int split_mode = 0;
-        int hitgroup_record_count = mesh_count_;
-        if (optix_split_active_) {
-            primary_scene = optix_static_scene_.get();
-            secondary_scene = optix_dynamic_scene_.get();
-            split_mode = 1;
-            hitgroup_record_count = static_cast<int>(
-                std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
-        } else {
-            primary_scene = optix_scene_.get();
-        }
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        int split_mode = scenes.split_mode;
+        int hitgroup_record_count = scenes.hitgroup_record_count;
 
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::trace_reflection_epc(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
                 "Scene::trace_reflection_epc(): invalid hitgroup record count.");
 
-        if (!reflection_epc_pipeline_) {
-            reflection_epc_pipeline_ = std::make_unique<ReflectionEpcPipeline>();
-            reflection_epc_pipeline_->build(primary_scene->context(), hitgroup_record_count);
-        }
+        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_epc_pipeline_config());
 
         ensure_reflection_epc_geometry_ready();
         drjit::eval(ray.o,
@@ -3041,7 +3036,7 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         params.out_first_blocked_prim = raw.first_blocked_prim.data();
         params.out_first_blocked_group = raw.first_blocked_group.data();
 
-        reflection_epc_pipeline_->launch(params);
+        reflection_epc_pipeline_->launch(0, params);
 
         result.valid = raw.valid;
         result.bounce_count = raw.bounce_count;
@@ -3321,28 +3316,18 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field_direct(
             return result;
         }
 
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
-        int split_mode = 0;
-        int hitgroup_record_count = mesh_count_;
-        if (optix_split_active_) {
-            primary_scene = optix_static_scene_.get();
-            secondary_scene = optix_dynamic_scene_.get();
-            split_mode = 1;
-            hitgroup_record_count = static_cast<int>(
-                std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
-        } else {
-            primary_scene = optix_scene_.get();
-        }
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        int split_mode = scenes.split_mode;
+        int hitgroup_record_count = scenes.hitgroup_record_count;
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::trace_reflection_epc_field_direct(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
                 "Scene::trace_reflection_epc_field_direct(): invalid hitgroup record count.");
 
-        if (!reflection_epc_pipeline_) {
-            reflection_epc_pipeline_ = std::make_unique<ReflectionEpcPipeline>();
-            reflection_epc_pipeline_->build(primary_scene->context(), hitgroup_record_count);
-        }
+        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_epc_pipeline_config());
 
         ensure_reflection_epc_geometry_ready();
         drjit::eval(tx_position,
@@ -3441,7 +3426,7 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field_direct(
         epc_params.out_first_blocked_segment = raw.first_blocked_segment.data();
         epc_params.out_first_blocked_prim = raw.first_blocked_prim.data();
         epc_params.out_first_blocked_group = raw.first_blocked_group.data();
-        reflection_epc_pipeline_->launch(epc_params);
+        reflection_epc_pipeline_->launch(0, epc_params);
 
         ReflectionEpcFieldParams field_params = {};
         field_params.n_rays = ray_count;
@@ -3650,31 +3635,19 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
             return result;
         }
 
-        const OptixScene *primary_scene = nullptr;
-        const OptixScene *secondary_scene = nullptr;
-        int split_mode = 0;
-        int hitgroup_record_count = mesh_count_;
-        if (optix_split_active_) {
-            primary_scene = optix_static_scene_.get();
-            secondary_scene = optix_dynamic_scene_.get();
-            split_mode = 1;
-            hitgroup_record_count = static_cast<int>(
-                std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
-        } else {
-            primary_scene = optix_scene_.get();
-        }
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        int split_mode = scenes.split_mode;
+        int hitgroup_record_count = scenes.hitgroup_record_count;
 
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::trace_reflections_accumulating(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
                 "Scene::trace_reflections_accumulating(): invalid hitgroup record count.");
 
-        if (!reflection_accumulation_pipeline_) {
-            reflection_accumulation_pipeline_ =
-                std::make_unique<ReflectionAccumulationPipeline>();
-            reflection_accumulation_pipeline_->build(primary_scene->context(),
-                                                     hitgroup_record_count);
-        }
+        ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_accumulation_pipeline_config());
 
         drjit::eval(ray.o,
                     ray.d,
@@ -3780,7 +3753,7 @@ ReflectionAccumulationResultT<Detached> Scene::trace_reflections_accumulating(
         params.out_wedge_dir_z = raw.wedge_dir_z.data();
         params.out_wedge_bounce_depth = raw.wedge_bounce_depth.data();
 
-        reflection_accumulation_pipeline_->launch(params);
+        reflection_accumulation_pipeline_->launch(0, params);
 
         result.reflection_power = raw.reflection_power;
         result.reflection_field_x =
@@ -3867,7 +3840,8 @@ SegmentVisibilityT<Detached> Scene::trace_segment_visibility(
             *optix_scene_, start_detached, end_detached, active_detached);
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_visibility_pipeline_config());
     return trace_segment_visibility_native<Detached>(
         *optix_scene_,
         *segment_visibility_pipeline_,
@@ -3937,7 +3911,8 @@ SegmentPairVisibilityT<Detached> Scene::trace_segment_pair_visibility(
             active_detached);
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_visibility_pipeline_config());
     return trace_segment_pair_visibility_native<Detached>(
         *optix_scene_,
         *segment_visibility_pipeline_,
@@ -4028,7 +4003,8 @@ AxialEdgeVisibilityT<Detached> Scene::trace_axial_edge_visibility(
             active_detached);
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_visibility_pipeline_config());
     return trace_axial_edge_visibility_native<Detached>(
         *optix_scene_,
         *segment_visibility_pipeline_,
@@ -4105,7 +4081,8 @@ SegmentChainVisibilityT<Detached> Scene::trace_segment_chain_visibility(
             active_detached);
     }
 
-    ensure_segment_visibility_pipeline(segment_visibility_pipeline_, *optix_scene_, mesh_count_);
+    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_visibility_pipeline_config());
     return trace_segment_chain_visibility_native<Detached>(
         *optix_scene_,
         *segment_visibility_pipeline_,

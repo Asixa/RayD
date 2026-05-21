@@ -19,9 +19,7 @@
 
 namespace rayd {
 
-class ReflectionTracePipeline;
-class ReflectionAccumulationPipeline;
-class SegmentVisibilityPipeline;
+class OptixLaunchPipeline;
 
 struct SceneSyncProfile {
     double mesh_update_ms = 0.0;
@@ -203,6 +201,14 @@ private:
         int edge_offset = 0;
     };
 
+    struct OptixSceneSelection {
+        const OptixScene *primary = nullptr;
+        const OptixScene *secondary = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = 0;
+    };
+
+    OptixSceneSelection select_optix_scenes() const;
     SceneMeshRecord &mesh_record(int mesh_id);
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);
@@ -245,10 +251,10 @@ private:
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
-    mutable std::unique_ptr<ReflectionTracePipeline> reflection_pipeline_;
-    mutable std::unique_ptr<ReflectionAccumulationPipeline> reflection_accumulation_pipeline_;
-    mutable std::unique_ptr<ReflectionEpcPipeline> reflection_epc_pipeline_;
-    mutable std::unique_ptr<SegmentVisibilityPipeline> segment_visibility_pipeline_;
+    mutable std::unique_ptr<OptixLaunchPipeline> reflection_pipeline_;
+    mutable std::unique_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
+    mutable std::unique_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
+    mutable std::unique_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
     mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;

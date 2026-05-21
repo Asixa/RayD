@@ -1,147 +1,80 @@
 #pragma once
 
+#include <cstddef>
+#include <vector>
+
 #include <rayd/optix.h>
 #include <rayd/rayd.h>
-#include <rayd/multipath/reflection_accumulation_params.h>
-#include <rayd/multipath/reflection_epc_params.h>
 #include <rayd/multipath/reflection_trace_params.h>
+#include <rayd/multipath/reflection_epc_params.h>
+#include <rayd/multipath/reflection_accumulation_params.h>
 #include <rayd/multipath/segment_visibility_params.h>
 
 namespace rayd {
 
-struct ReflectionTraceBuffers {
-    IntDetached bounce_count;
-    IntDetached shape_ids;
-    IntDetached prim_ids;
-    FloatDetached t;
-    FloatDetached bary_u;
-    FloatDetached bary_v;
-    FloatDetached hit_x;
-    FloatDetached hit_y;
-    FloatDetached hit_z;
-    FloatDetached norm_x;
-    FloatDetached norm_y;
-    FloatDetached norm_z;
-    FloatDetached img_x;
-    FloatDetached img_y;
-    FloatDetached img_z;
+/// Declarative description of a single-module OptiX launch pipeline. All four
+/// multipath pipelines share the exact same build sequence and differ only in
+/// the PTX blob, entry-point names, payload count, and launch-params size.
+struct OptixPipelineConfig {
+    const char *ptx = nullptr;
+    size_t ptx_size = 0;
+    std::vector<const char *> raygen_entries;
+    const char *miss_entry = nullptr;
+    const char *closesthit_entry = nullptr;
+    const char *anyhit_entry = nullptr;  // optional
+    int num_payload_values = 0;
+    size_t params_size = 0;
 };
 
-class ReflectionTracePipeline {
+/// Owns the OptiX module, program groups, shader binding table, and launch
+/// params buffer for one multipath pipeline. A pipeline may expose several
+/// raygen entry points (e.g. segment visibility); `launch()` selects one by
+/// index.
+class OptixLaunchPipeline {
 public:
-    ReflectionTracePipeline() = default;
-    ~ReflectionTracePipeline();
+    OptixLaunchPipeline() = default;
+    ~OptixLaunchPipeline();
 
-    void build(OptixDeviceContext context, int hitgroup_record_count);
+    OptixLaunchPipeline(const OptixLaunchPipeline &) = delete;
+    OptixLaunchPipeline &operator=(const OptixLaunchPipeline &) = delete;
+
+    void build(OptixDeviceContext context,
+               int hitgroup_record_count,
+               const OptixPipelineConfig &config);
     bool is_ready() const { return ready_; }
 
-    void launch(const ReflectionTraceParams &params) const;
+    template <typename Params>
+    void launch(int raygen_index, const Params &params) const {
+        launch_impl(raygen_index, &params, static_cast<unsigned int>(params.n_rays));
+    }
 
 private:
+    void launch_impl(int raygen_index, const void *params, unsigned int n_rays) const;
+
     bool ready_ = false;
     int hitgroup_record_count_ = 0;
+    size_t params_size_ = 0;
     OptixModule module_ = nullptr;
-    OptixProgramGroup pg_raygen_ = nullptr;
+    OptixPipeline pipeline_ = nullptr;
+    std::vector<OptixProgramGroup> pg_raygens_;
     OptixProgramGroup pg_miss_ = nullptr;
     OptixProgramGroup pg_hitgroup_ = nullptr;
-    OptixPipeline pipeline_ = nullptr;
-    void *sbt_raygen_record_ = nullptr;
-    void *sbt_miss_record_ = nullptr;
-    void *sbt_hitgroup_records_ = nullptr;
-    void *params_buffer_ = nullptr;
-};
-
-class ReflectionEpcPipeline {
-public:
-    ReflectionEpcPipeline() = default;
-    ~ReflectionEpcPipeline();
-
-    void build(OptixDeviceContext context, int hitgroup_record_count);
-    bool is_ready() const { return ready_; }
-
-    void launch(const ReflectionEpcParams &params) const;
-
-private:
-    bool ready_ = false;
-    int hitgroup_record_count_ = 0;
-    OptixModule module_ = nullptr;
-    OptixProgramGroup pg_raygen_ = nullptr;
-    OptixProgramGroup pg_miss_ = nullptr;
-    OptixProgramGroup pg_hitgroup_ = nullptr;
-    OptixPipeline pipeline_ = nullptr;
-    void *sbt_raygen_record_ = nullptr;
-    void *sbt_miss_record_ = nullptr;
-    void *sbt_hitgroup_records_ = nullptr;
-    void *params_buffer_ = nullptr;
-};
-
-class ReflectionAccumulationPipeline {
-public:
-    ReflectionAccumulationPipeline() = default;
-    ~ReflectionAccumulationPipeline();
-
-    void build(OptixDeviceContext context, int hitgroup_record_count);
-    bool is_ready() const { return ready_; }
-
-    void launch(const ReflectionAccumulationParams &params) const;
-
-private:
-    bool ready_ = false;
-    int hitgroup_record_count_ = 0;
-    OptixModule module_ = nullptr;
-    OptixProgramGroup pg_raygen_ = nullptr;
-    OptixProgramGroup pg_miss_ = nullptr;
-    OptixProgramGroup pg_hitgroup_ = nullptr;
-    OptixPipeline pipeline_ = nullptr;
-    void *sbt_raygen_record_ = nullptr;
+    std::vector<void *> sbt_raygen_records_;
     void *sbt_miss_record_ = nullptr;
     void *sbt_hitgroup_records_ = nullptr;
     void *params_buffer_ = nullptr;
 };
 
 enum class SegmentVisibilityLaunchKind {
-    Segment,
-    SegmentPair,
-    AxialEdge,
-    SegmentChain
+    Segment = 0,
+    SegmentPair = 1,
+    AxialEdge = 2,
+    SegmentChain = 3
 };
 
-class SegmentVisibilityPipeline {
-public:
-    SegmentVisibilityPipeline() = default;
-    ~SegmentVisibilityPipeline();
-
-    SegmentVisibilityPipeline(const SegmentVisibilityPipeline &) = delete;
-    SegmentVisibilityPipeline &operator=(const SegmentVisibilityPipeline &) = delete;
-
-    void build(OptixDeviceContext context, int hitgroup_record_count);
-    bool is_ready() const { return ready_; }
-
-    void launch(SegmentVisibilityLaunchKind kind,
-                const SegmentVisibilityParams &params) const;
-
-private:
-    void *raygen_record(SegmentVisibilityLaunchKind kind) const;
-
-    bool ready_ = false;
-    int hitgroup_record_count_ = 0;
-
-    OptixModule module_ = nullptr;
-    OptixPipeline pipeline_ = nullptr;
-    OptixProgramGroup pg_raygen_segment_ = nullptr;
-    OptixProgramGroup pg_raygen_pair_ = nullptr;
-    OptixProgramGroup pg_raygen_axial_ = nullptr;
-    OptixProgramGroup pg_raygen_chain_ = nullptr;
-    OptixProgramGroup pg_miss_ = nullptr;
-    OptixProgramGroup pg_hitgroup_ = nullptr;
-
-    void *sbt_raygen_segment_ = nullptr;
-    void *sbt_raygen_pair_ = nullptr;
-    void *sbt_raygen_axial_ = nullptr;
-    void *sbt_raygen_chain_ = nullptr;
-    void *sbt_miss_record_ = nullptr;
-    void *sbt_hitgroup_records_ = nullptr;
-    void *params_buffer_ = nullptr;
-};
+OptixPipelineConfig reflection_trace_pipeline_config();
+OptixPipelineConfig reflection_epc_pipeline_config();
+OptixPipelineConfig reflection_accumulation_pipeline_config();
+OptixPipelineConfig segment_visibility_pipeline_config();
 
 } // namespace rayd

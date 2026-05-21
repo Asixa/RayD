@@ -200,7 +200,7 @@ def source_audit() -> dict[str, Any]:
                 "src/scene/scene.cpp:1422",
             ],
             "native_launch_notes": [
-                "trace_reflections() performs one native optixLaunch() per call in src/multipath/reflection_trace_host.cpp:218.",
+                "trace_reflections() performs one native optixLaunch() per call in OptixLaunchPipeline::launch_impl() in src/multipath/pipelines.cpp.",
                 "With deduplicate=true, reflection_dedup_gpu() adds native CUDA work in src/multipath/reflection_dedup.cu.",
             ],
         },
