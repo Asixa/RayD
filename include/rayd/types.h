@@ -12,6 +12,12 @@ namespace rayd {
 
 using namespace drjit;
 
+// Core Dr.Jit type aliases. Every array type comes in two flavors: an
+// autodiff-enabled CUDADiffArray and its detached counterpart (suffix
+// "Detached"). Width-batched templates take a `bool Detached_` parameter and
+// resolve to the matching flavor via the FloatT / IntT / MaskT selectors.
+
+/// Detached (non-AD) counterpart of a Dr.Jit type.
 template <typename T>
 using Detached = drjit::detached_t<T>;
 
@@ -90,6 +96,7 @@ using ScalarVector3f = drjit::Array<float, 3>;
 using ScalarVector4f = drjit::Array<float, 4>;
 using ScalarMatrix4f = drjit::Matrix<float, 4>;
 
+/// Per-triangle cached geometry: edge-vector form of each face plus its normals.
 template <typename Float_>
 struct TriangleInfoData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
@@ -98,15 +105,15 @@ struct TriangleInfoData {
     using Vec3f = drjit::Array<Float_, 3>;
     using Vec3i = drjit::Array<std::conditional_t<IsDetached, IntDetached, Int>, 3>;
 
-    Vec3f p0;
-    Vec3f e1;
-    Vec3f e2;
-    Vec3f n0;
-    Vec3f n1;
-    Vec3f n2;
-    Vec3f face_normal;
-    Vec3i face_indices;
-    Float_ face_area;
+    Vec3f p0;            ///< First vertex; the triangle is parameterized as p0 + s*e1 + t*e2.
+    Vec3f e1;            ///< Edge vector from vertex 0 to vertex 1.
+    Vec3f e2;            ///< Edge vector from vertex 0 to vertex 2.
+    Vec3f n0;            ///< Shading normal at vertex 0.
+    Vec3f n1;            ///< Shading normal at vertex 1.
+    Vec3f n2;            ///< Shading normal at vertex 2.
+    Vec3f face_normal;   ///< Unit geometric face normal (cross(e1, e2) normalized).
+    Vec3i face_indices;  ///< Vertex indices of the three corners.
+    Float_ face_area;    ///< Triangle area in world units.
 
     DRJIT_STRUCT(TriangleInfoData, p0, e1, e2,
                                 n0, n1, n2,
@@ -121,6 +128,7 @@ using TriangleInfoDetached = TriangleInfoData<FloatDetached>;
 template <bool Detached_>
 using TriangleInfoT = std::conditional_t<Detached_, TriangleInfoDetached, TriangleInfo>;
 
+/// Per-triangle UV coordinates: one 2D coordinate at each of the three corners.
 template <typename Float_>
 using TriangleUvData = drjit::Array<drjit::Array<Float_, 2>, 3>;
 
@@ -130,13 +138,14 @@ using TriangleUVDetached = TriangleUvData<FloatDetached>;
 template <bool Detached_>
 using TriangleUVT = std::conditional_t<Detached_, TriangleUVDetached, TriangleUV>;
 
+/// Scene-global geometry: all meshes' vertices and faces flattened into one indexing space.
 struct SceneGeometry {
-    Vector3f vertices;
-    Vector3iDetached faces;
-    Vector3f face_normal;
-    IntDetached shape_id;
-    IntDetached local_prim_id;
-    IntDetached global_prim_id;
+    Vector3f vertices;          ///< World-space vertex positions, concatenated across meshes.
+    Vector3iDetached faces;     ///< Face vertex indices into the scene-global vertex buffer.
+    Vector3f face_normal;       ///< Unit geometric normal per face.
+    IntDetached shape_id;       ///< Owning mesh id per face.
+    IntDetached local_prim_id;  ///< Face index within its owning mesh.
+    IntDetached global_prim_id; ///< Face index within the scene-global face buffer.
 
     int vertex_count() const { return vertices.x().size(); }
     int face_count() const { return global_prim_id.size(); }

@@ -21,18 +21,21 @@ namespace rayd {
 
 namespace {
 
+/// Whether to split static and dynamic meshes into separate OptiX scenes (env RAYD_OPTIX_SPLIT_MODE).
 enum class OptixSplitMode {
     Auto,
     Off,
     On
 };
 
+/// Backend for segment-visibility traces (env RAYD_TRACE_VISIBILITY_BACKEND): Dr.Jit HitObject vs. native optixLaunch.
 enum class TraceVisibilityBackend {
     Auto,
     Jit,
     Native
 };
 
+/// How EPC visibility decides which primitives to ignore: exact primitive ids vs. surface groups.
 enum class ReflectionEpcVisibilityIgnoreMode {
     Primitive,
     SurfaceGroup
@@ -129,6 +132,7 @@ std::string normalize_edge_backend_value(const std::string &value) {
     return normalized;
 }
 
+/// Map a backend name ("drjit"/"optix"/"hybrid" and aliases) to EdgeBVHBackend; throws on unknown.
 EdgeBVHBackend parse_edge_backend(const std::string &value) {
     const std::string normalized = normalize_edge_backend_value(value);
     if (normalized.empty() || normalized == "drjit" ||
@@ -317,6 +321,8 @@ struct AccumRaw {
     IntDetached wedge_bounce_depth;
 };
 
+/// Convert per-mesh (shape_id, local primitive id) pairs into scene-global primitive ids;
+/// invalid or out-of-range inputs map to -1.
 IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
                                     const IntDetached &shape_ids,
                                     const IntDetached &face_offsets) {

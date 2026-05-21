@@ -12,6 +12,10 @@
 
 namespace rayd {
 
+/// \brief Compute cached triangle geometry and area-weighted vertex normals for a mesh.
+///
+/// \return Pair of (per-triangle info in edge-vector form, per-vertex shading normals).
+///         Degenerate (zero-area) triangles fall back to a +Z normal.
 template <bool Detached>
 static std::pair<TriangleInfoT<Detached>, Vector3fT<Detached>> process_mesh(const Vector3fT<Detached> &vertex_positions,
                                                                              const Vector3iT<Detached> &face_indices) {
@@ -58,6 +62,7 @@ static std::pair<TriangleInfoT<Detached>, Vector3fT<Detached>> process_mesh(cons
     return { triangles, vertex_normals };
 }
 
+/// Normalize \p value, returning +Z for near-zero-length inputs instead of NaN.
 template <bool Detached>
 static Vector3fT<Detached> safe_normalize(const Vector3fT<Detached> &value) {
     const FloatT<Detached> length_sq = squared_norm(value);
@@ -68,6 +73,8 @@ static Vector3fT<Detached> safe_normalize(const Vector3fT<Detached> &value) {
                   Vector3fT<Detached>(0.f, 0.f, 1.f));
 }
 
+/// Transform object-space triangle info to world space; normals use the inverse-transpose
+/// of \p to_world_matrix, and face normals/areas are recomputed from the transformed edges.
 static TriangleInfo transform_triangle_info(const TriangleInfo &triangle_info_object,
                                             const Matrix4f &to_world_matrix) {
     TriangleInfo triangles_world;

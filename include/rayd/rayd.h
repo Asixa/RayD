@@ -5,18 +5,22 @@
 #include <string>
 #include <string_view>
 
+/// Number of field channels carried per ray (e.g. RGB or three polarization components).
 constexpr int RAYD_NUM_CHANNELS = 3;
 
 #include <rayd/types.h>
 
 namespace rayd {
 
-constexpr float Epsilon = 1e-5f;
-constexpr float RayEpsilon = 1e-3f;
-constexpr float ShadowEpsilon = 1e-3f;
+constexpr float Epsilon = 1e-5f;       // General-purpose geometric tolerance.
+constexpr float RayEpsilon = 1e-3f;    // Ray t_min offset to avoid self-intersection.
+constexpr float ShadowEpsilon = 1e-3f; // Shadow/visibility ray offset.
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 
+// Forward declarations and the canonical alias pattern for RayD's value types.
+// Each type X is defined as a template XData<Float_>; XT<Detached> selects the
+// AD or detached Float, and X / XDetached are the two concrete instantiations.
 template <typename> struct RayData;
 template <bool Detached>
 using RayT = RayData<FloatT<Detached>>;
@@ -128,6 +132,7 @@ class OptixLaunchPipeline;
 class SceneEdge;
 class Scene;
 
+/// Throw std::runtime_error with \p message when \p condition is false (host-side precondition check).
 inline void require(bool condition, std::string_view message) {
     if (!condition) {
         throw std::runtime_error(std::string(message));

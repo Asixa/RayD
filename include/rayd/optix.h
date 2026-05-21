@@ -245,17 +245,20 @@ struct OptixShaderBindingTable {
     unsigned int callablesRecordCount;
 };
 
+/// Per-mesh hit-group payload stored in the SBT and read back on a hit.
 struct OptixHitGroupData {
-    int shape_offset;
-    int shape_id;
+    int shape_offset;  ///< Face-offset added to the local primitive index to globalize it.
+    int shape_id;      ///< Owning mesh id.
 };
 
+/// Shader binding table record: the OptiX header followed by user payload \p T.
 template <typename T>
 struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) SbtRecord {
     char header[OPTIX_SBT_RECORD_HEADER_SIZE];
     T data;
 };
 
+/// Shader binding table record carrying only the OptiX header (no payload).
 struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) EmptySbtRecord {
     char header[OPTIX_SBT_RECORD_HEADER_SIZE];
 };
@@ -302,38 +305,48 @@ D(optixAccelCompact, OptixDeviceContext, CUstream, OptixTraversableHandle,
 
 #undef D
 
+/// Resolve the OptiX host entry points (the D(...) function pointers above) from the driver.
 extern void init_optix_api();
 
 namespace rayd {
 
+/// Snapshot of the loaded OptiX runtime: which entry points resolved, the ABI/RTcore
+/// versions probed, and the on-disk driver module that backs them.
 struct OptixRuntimeInfo {
-    int target_version = RAYD_OPTIX_TARGET_VERSION;
-    int target_abi = RAYD_OPTIX_TARGET_ABI;
-    bool module_create_available = false;
-    bool device_context_get_property_available = false;
-    bool query_function_table_available = false;
-    bool target_abi_supported = false;
-    int abi_probe_result = 0;
-    int rtcore_version = -1;
-    std::string module_path;
-    std::string module_version;
+    int target_version = RAYD_OPTIX_TARGET_VERSION; ///< OptiX version RayD was built against.
+    int target_abi = RAYD_OPTIX_TARGET_ABI;         ///< OptiX ABI RayD requests from the driver.
+    bool module_create_available = false;            ///< optixModuleCreate resolved.
+    bool device_context_get_property_available = false; ///< optixDeviceContextGetProperty resolved.
+    bool query_function_table_available = false;     ///< Driver exposes optixQueryFunctionTable.
+    bool target_abi_supported = false;               ///< Driver accepts the target ABI.
+    int abi_probe_result = 0;                         ///< Raw result code from the ABI probe.
+    int rtcore_version = -1;                           ///< RT core version, or -1 if unavailable.
+    std::string module_path;                          ///< Path to the resolved OptiX driver module.
+    std::string module_version;                        ///< Version string of that module.
 };
 
+/// Probe the active OptiX driver and report what resolved; initializes the OptiX API as a side effect.
 OptixRuntimeInfo query_optix_runtime_info();
 
 // Shared OptiX host helpers used by the multipath and edge pipelines.
+
+/// Throw std::runtime_error tagged with \p message when \p result is not OPTIX_SUCCESS.
 void check_optix(OptixResult result, const char *message);
+/// Create a ray-generation program group for \p entry_name in \p module.
 OptixProgramGroup make_raygen_group(OptixDeviceContext context,
                                     OptixModule module,
                                     const char *entry_name);
+/// Create a miss program group for \p entry_name in \p module.
 OptixProgramGroup make_miss_group(OptixDeviceContext context,
                                   OptixModule module,
                                   const char *entry_name);
+/// Create a hit-group program group; any of the entry-point names may be null to omit that stage.
 OptixProgramGroup make_hitgroup(OptixDeviceContext context,
                                 OptixModule module,
                                 const char *closesthit,
                                 const char *anyhit,
                                 const char *intersection);
+/// Allocate and upload a header-only SBT record for \p group; returns the owning device pointer.
 void *make_sbt_record(OptixProgramGroup group);
 
 } // namespace rayd

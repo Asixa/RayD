@@ -21,74 +21,118 @@ namespace rayd {
 
 class OptixLaunchPipeline;
 
+/// Timing and counts for the most recent Scene::sync(); all times are milliseconds.
 struct SceneSyncProfile {
-    double mesh_update_ms = 0.0;
-    double triangle_scatter_ms = 0.0;
-    double triangle_eval_ms = 0.0;
-    double edge_scatter_ms = 0.0;
-    double edge_refit_ms = 0.0;
-    double optix_sync_ms = 0.0;
-    double total_ms = 0.0;
-    double optix_gas_update_ms = 0.0;
-    double optix_ias_update_ms = 0.0;
-    int updated_meshes = 0;
-    int updated_vertex_meshes = 0;
-    int updated_transform_meshes = 0;
-    int updated_edge_meshes = 0;
-    int updated_edges = 0;
+    double mesh_update_ms = 0.0;        ///< Uploading updated mesh vertices.
+    double triangle_scatter_ms = 0.0;  ///< Scattering triangles into scene-global buffers.
+    double triangle_eval_ms = 0.0;     ///< Evaluating the scattered triangle arrays.
+    double edge_scatter_ms = 0.0;      ///< Scattering edge data into scene-global buffers.
+    double edge_refit_ms = 0.0;        ///< Refitting the edge BVH.
+    double optix_sync_ms = 0.0;        ///< Total OptiX GAS/IAS update time.
+    double total_ms = 0.0;             ///< Wall-clock time for the whole sync().
+    double optix_gas_update_ms = 0.0;  ///< OptiX per-mesh GAS refit time.
+    double optix_ias_update_ms = 0.0;  ///< OptiX top-level IAS rebuild time.
+    int updated_meshes = 0;            ///< Meshes touched by this sync().
+    int updated_vertex_meshes = 0;     ///< Meshes whose vertices changed.
+    int updated_transform_meshes = 0;  ///< Meshes whose transform changed.
+    int updated_edge_meshes = 0;       ///< Meshes whose edge data was re-scattered.
+    int updated_edges = 0;             ///< Total edges re-scattered.
 };
 
+/// Acceleration backend used for nearest-edge queries.
 enum class EdgeBVHBackend {
-    DrJit,
-    Optix,
-    Hybrid
+    DrJit,   ///< Custom Dr.Jit/CUDA BVH (default).
+    Optix,   ///< OptiX custom-AABB backend.
+    Hybrid   ///< Dr.Jit point queries with OptiX ray queries.
 };
 
 /// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
 public:
+    /// Construct an empty scene; \p edge_bvh_backend selects the nearest-edge backend
+    /// ("drjit", "optix", or "hybrid"). See EdgeBVHBackend.
     explicit Scene(const std::string &edge_bvh_backend = "drjit");
     ~Scene();
 
+    /// \brief Add a copy of \p mesh to the scene and return its mesh id.
+    ///
+    /// Invalidates any prior build(); call build() again before querying. Mark a mesh
+    /// \p dynamic to allow later vertex/transform edits via sync() without a full rebuild.
     int add_mesh(const Mesh &mesh, bool dynamic = false);
+    /// Build all acceleration structures (OptiX GAS/IAS and the edge BVH); call before any query.
     void build();
+    /// True once the scene is built and no acceleration structure needs a rebuild.
     bool is_ready() const;
+    /// True when dynamic edits have been queued but sync() has not yet been called.
     bool has_pending_updates() const { return pending_updates_; }
 
+    /// Queue new object-space \p positions for a dynamic mesh; applied on the next sync().
     void update_mesh_vertices(int mesh_id, const Vector3f &positions);
+    /// Queue a transform for a dynamic mesh; \p set_left chooses the left vs. right factor. See Mesh::set_transform.
     void set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_left = true);
+    /// Queue a transform composed onto a dynamic mesh's existing transform; applied on the next sync().
     void append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left = true);
+    /// Set the per-edge active mask used by edge queries; size must equal the scene edge count.
     void set_edge_mask(const MaskDetached &mask);
     void set_edge_mask(const Mask &mask) { set_edge_mask(detach<false>(mask)); }
+    /// Apply all queued dynamic edits, refitting acceleration structures in place.
     void sync();
     const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
+    /// Summary of the scene-global edge set (counts and buffer handles).
     SceneEdgeInfo edge_info() const;
+    /// Name of the active edge backend ("drjit", "optix", or "hybrid").
     std::string edge_bvh_backend() const;
+    /// Build/traversal statistics for the edge BVH.
     SceneEdgeBVHStats edge_bvh_stats() const;
+    /// Scene-global edge connectivity tables.
     const SceneEdgeTopology &edge_topology() const;
+    /// Current per-edge active mask. See set_edge_mask.
     const MaskDetached &edge_mask() const;
+    /// Prefix-sum of per-mesh face counts; mesh m owns faces [offset[m], offset[m+1]).
     const IntDetached &mesh_face_offsets() const { return face_offsets_; }
+    /// Prefix-sum of per-mesh edge counts.
     const IntDetached &mesh_edge_offsets() const { return edge_offsets_; }
+    /// Prefix-sum of per-mesh vertex counts.
     const IntDetached &mesh_vertex_offsets() const { return vertex_offsets_; }
+    /// Flattened scene-global geometry (vertices, faces, normals, ids).
     const SceneGeometry &global_geometry() const;
+    /// Monotonic version counter bumped whenever geometry changes; for cache invalidation.
     uint64_t version() const { return scene_version_; }
+    /// Monotonic version counter bumped whenever the edge set changes.
     uint64_t edge_version() const { return edge_version_; }
+    /// The three edge ids of each queried triangle; \p global selects scene-global vs. per-mesh ids.
     VectoriT<3, true> triangle_edge_indices(const IntDetached &prim_id, bool global = true) const;
+    /// The two faces adjacent to each queried edge (second is -1 on a boundary); \p global selects the id space.
     VectoriT<2, true> edge_adjacent_faces(const IntDetached &edge_id, bool global = true) const;
 
+    /// \brief Closest-hit ray-triangle intersection against the built scene.
+    ///
+    /// In the AD path (Detached == false) the broad phase runs detached through OptiX,
+    /// then vertex data is re-gathered and the intersection recomputed so gradients flow
+    /// through the result.
+    ///
+    /// \tparam Detached  When true, operate on detached (non-AD) arrays; when false,
+    ///                   gradients flow through the recomputed hit fields.
+    /// \param ray     Ray batch (origin, direction, tmax).
+    /// \param active  Per-lane mask; inactive lanes are skipped and returned invalid.
+    /// \param flags   Selects which intersection fields are computed (see RayFlags).
+    /// \return Per-ray intersection; check is_valid() before reading other fields.
     template <bool Detached>
     IntersectionT<Detached> intersect(const RayT<Detached> &ray,
                                        MaskT<Detached> active = true,
                                        RayFlags flags = RayFlags::All) const;
+    /// Trace specular reflection paths with explicit options (see multipath/reflection.h).
     template <bool Detached>
     ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
                                                  int max_bounces,
                                                  const ReflectionTraceOptions &options,
                                                  MaskT<Detached> active) const;
+    /// Trace specular reflection paths with default options.
     template <bool Detached>
     ReflectionChainT<Detached> trace_reflections(const RayT<Detached> &ray,
                                                  int max_bounces,
                                                  MaskT<Detached> active = true) const;
+    /// Native accumulation of reflected field/power onto a grid (non-AD fast path; see multipath/reflection_accumulation.h).
     template <bool Detached>
     AccumResultT<Detached> accumulate_reflections(
         const RayT<Detached> &ray,
@@ -99,6 +143,7 @@ public:
         const AccumOptions &options,
         MaskT<Detached> active,
         const Vector3fT<Detached> &tx_polarization) const;
+    /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
     ReflectionEpcResultT<Detached> trace_reflection_epc(
         const RayT<Detached> &ray,
@@ -111,6 +156,7 @@ public:
                                     ReflectionEpcOptions(),
                                     active);
     }
+    /// Equivalent-path-correction reflection trace toward \p receiver (see multipath/reflection_epc.h).
     template <bool Detached>
     ReflectionEpcResultT<Detached> trace_reflection_epc(
         const RayT<Detached> &ray,
@@ -118,6 +164,7 @@ public:
         int max_bounces,
         const ReflectionEpcOptions &options,
         MaskT<Detached> active = true) const;
+    /// EPC reflection trace returning accumulated field, seeded from a ray (see multipath/reflection_epc_field.h).
     template <bool Detached>
     ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
         const RayT<Detached> &ray,
@@ -125,6 +172,7 @@ public:
         int max_bounces,
         const ReflectionEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
+    /// EPC reflection field trace seeded from a transmitter position rather than a ray.
     template <bool Detached>
     ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
         const Vector3fT<Detached> &tx_position,
@@ -132,25 +180,32 @@ public:
         int max_bounces,
         const ReflectionEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
+    /// Trace per-bounce reflection records with explicit options (see multipath/reflection.h).
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
         const RayT<Detached> &ray,
         int max_bounces,
         const ReflectionTraceOptions &options,
         MaskT<Detached> active) const;
+    /// Trace per-bounce reflection records with default options.
     template <bool Detached>
     ReflectionTraceT<Detached> trace_bounces(
         const RayT<Detached> &ray,
         int max_bounces,
         MaskT<Detached> active = true) const;
+    /// Any-hit occlusion test: per-lane mask, true where the ray hits any surface within tmax.
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
+    /// \brief Mutual visibility of segment endpoints [start, end].
+    /// \param ignore_prim_ids Optional per-ray list of primitive ids to treat as non-occluding.
+    /// \param active          Per-lane mask; inactive lanes return invalid.
     template <bool Detached>
     SegmentVisibilityT<Detached> visible(
         const Vector3fT<Detached> &start,
         const Vector3fT<Detached> &end,
         const IntDetached &ignore_prim_ids = IntDetached(),
         MaskT<Detached> active = true) const;
+    /// Visibility from \p start to two endpoints in one pass (shared origin, see visible()).
     template <bool Detached>
     SegmentPairVisibilityT<Detached> visible_pair(
         const Vector3fT<Detached> &start,
@@ -158,6 +213,10 @@ public:
         const Vector3fT<Detached> &end_b,
         const IntDetached &ignore_prim_ids = IntDetached(),
         MaskT<Detached> active = true) const;
+    /// \brief Whether \p source_pos sees any sample point along an edge segment.
+    ///
+    /// Samples the edge at \p sample_fractions of [edge_line_min, edge_line_max] along
+    /// \p edge_dir from \p edge_pos and reports whether any sample is visible.
     template <bool Detached>
     AxialEdgeVisibilityT<Detached> visible_axial_edge(
         const Vector3fT<Detached> &source_pos,
@@ -167,24 +226,32 @@ public:
         const FloatT<Detached> &edge_line_max,
         const std::vector<float> &sample_fractions,
         MaskT<Detached> active = true) const;
+    /// \brief Per-segment visibility along polyline chains.
+    /// \param points       Flattened chain vertices, concatenated across all chains.
+    /// \param chain_length Number of points in each chain (parallel to the batch).
+    /// \param ignore_prim_per_segment Optional per-segment primitive ids to treat as non-occluding.
     template <bool Detached>
     SegmentChainVisibilityT<Detached> visible_chain(
         const Vector3fT<Detached> &points,
         const IntDetached &chain_length,
         const IntDetached &ignore_prim_per_segment = IntDetached(),
         MaskT<Detached> active = true) const;
+    /// Nearest scene edge to each query point (see edge BVH; multipath/edge headers).
     template <bool Detached>
     NearestPointEdgeT<Detached> nearest_edge(const Vector3fT<Detached> &point,
                                              MaskT<Detached> active = true) const;
+    /// Nearest scene edge to each query ray; uses segment semantics on [0, tmax] when tmax is finite.
     template <bool Detached>
     NearestRayEdgeT<Detached> nearest_edge(const RayT<Detached> &ray,
                                            MaskT<Detached> active = true) const;
+    /// The \p k nearest scene edges to each query point (k <= 16).
     template <bool Detached>
     NearestEdgesTopKT<Detached> nearest_edges_topk(const Vector3fT<Detached> &point,
                                                    int k,
                                                    MaskT<Detached> active = true) const;
 
     int num_meshes() const { return mesh_count_; }
+    /// Non-owning pointers to the scene's meshes, indexed by mesh id.
     std::vector<const Mesh *> meshes() const;
 
     std::string to_string() const;
