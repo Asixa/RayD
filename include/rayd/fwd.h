@@ -34,6 +34,12 @@ using ReflectionTraceT = ReflectionTraceData<FloatT<Detached>>;
 using ReflectionTrace = ReflectionTraceT<false>;
 using ReflectionTraceDetached = ReflectionTraceT<true>;
 
+template <typename> struct ReflectionEpcResultData;
+template <bool Detached>
+using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
+using ReflectionEpcResult = ReflectionEpcResultT<false>;
+using ReflectionEpcResultDetached = ReflectionEpcResultT<true>;
+
 template <typename> struct PrimitiveMaterialPayloadData;
 template <bool Detached>
 using PrimitiveMaterialPayloadT = PrimitiveMaterialPayloadData<FloatT<Detached>>;
@@ -100,6 +106,7 @@ struct OptixIntersection;
 class Mesh;
 class Camera;
 class OptixScene;
+class ReflectionEpcPipeline;
 class SceneEdge;
 class SegmentVisibilityPipeline;
 class Scene;
