@@ -1,7 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include "segment_visibility_params.h"
+#include <rayd/multipath/segment_visibility_params.h>
 
 namespace rayd {
 

@@ -77,13 +77,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-include_directories(
-    include/
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_BINARY_DIR}
-    ${CUDA_INCLUDE_DIRS}
-)
-
 set(RAYD_CUDA_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -134,33 +127,33 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
-    ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.h
-    ${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_host.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
-    ${RAYD_SOURCE_DIR}/multipath/reflection_epc_host.h
-    ${RAYD_SOURCE_DIR}/multipath/reflection_epc_params.h
-    ${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_host.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_epc_host.cpp
-    ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.h
-    ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_host.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.cpp
-    ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.h
-    ${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h
+    ${RAYD_INCLUDE_DIR}/multipath/segment_visibility_host.h
+    ${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.cpp
-    ${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h
+    ${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h
     ${RAYD_INCLUDE_DIR}/edge/scene_edge.h
     ${RAYD_INCLUDE_DIR}/edge/scene_edge_optix.h
     ${RAYD_SOURCE_DIR}/edge/scene_edge.cpp
     ${RAYD_SOURCE_DIR}/edge/scene_edge_optix.cpp
-    ${RAYD_SOURCE_DIR}/edge/edge_bvh.h
-    ${RAYD_SOURCE_DIR}/edge/edge_bvh_config.h
-    ${RAYD_SOURCE_DIR}/edge/edge_optix_params.h
+    ${RAYD_INCLUDE_DIR}/edge/edge_bvh.h
+    ${RAYD_INCLUDE_DIR}/edge/edge_bvh_config.h
+    ${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h
 
     ${RAYD_INCLUDE_DIR}/scene/scene.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
-    ${RAYD_SOURCE_DIR}/native_launch_audit.h
+    ${RAYD_INCLUDE_DIR}/native_launch_audit.h
     ${RAYD_SOURCE_DIR}/native_launch_audit.cpp
 
 )
@@ -180,7 +173,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
         DEPENDS
             "${RAYD_CUDA_BUILD_SCRIPT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
 else()
@@ -194,7 +187,7 @@ else()
                 -o "${RAYD_CUDA_OBJECT}"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
 endif()
@@ -217,7 +210,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
         DEPENDS
             "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}"
             "${RAYD_REFLECTION_DEDUP_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
         VERBATIM
     )
 else()
@@ -231,7 +224,7 @@ else()
                 -o "${RAYD_REFLECTION_DEDUP_OBJECT}"
         DEPENDS
             "${RAYD_REFLECTION_DEDUP_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
         VERBATIM
     )
 endif()
@@ -254,8 +247,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
         DEPENDS
             "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}"
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
         VERBATIM
     )
 else()
@@ -269,8 +262,8 @@ else()
                 -o "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
         DEPENDS
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
         VERBATIM
     )
 endif()
@@ -280,7 +273,7 @@ list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_FIELD_OBJECT}")
 set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
 set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_ptx.h")
 set(RAYD_REFLECTION_TRACE_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_ptx.h")
 
 if(RAYD_REGENERATE_REFLECTION_TRACE_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -319,7 +312,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
             VERBATIM
         )
     else()
@@ -333,7 +326,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_REFLECTION_TRACE_PTX}"
             DEPENDS
                 "${RAYD_REFLECTION_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
             VERBATIM
         )
     endif()
@@ -365,7 +358,7 @@ endif()
 set(RAYD_REFLECTION_EPC_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc.cu")
 set(RAYD_REFLECTION_EPC_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_ptx.h")
 set(RAYD_REFLECTION_EPC_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_ptx.h")
 
 if(RAYD_REGENERATE_REFLECTION_EPC_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -404,7 +397,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_EPC_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
             VERBATIM
         )
     else()
@@ -418,7 +411,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_REFLECTION_EPC_PTX}"
             DEPENDS
                 "${RAYD_REFLECTION_EPC_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
             VERBATIM
         )
     endif()
@@ -450,7 +443,7 @@ endif()
 set(RAYD_REFLECTION_ACCUMULATION_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation.cu")
 set(RAYD_REFLECTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation_ptx.h")
 set(RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_ptx.h")
 
 if(RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -489,7 +482,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
             VERBATIM
         )
     else()
@@ -503,7 +496,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_REFLECTION_ACCUMULATION_PTX}"
             DEPENDS
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
             VERBATIM
         )
     endif()
@@ -535,7 +528,7 @@ endif()
 set(RAYD_SEGMENT_VISIBILITY_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu")
 set(RAYD_SEGMENT_VISIBILITY_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_ptx.h")
 set(RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_ptx.h")
 
 if(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -574,7 +567,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
             VERBATIM
         )
     else()
@@ -588,7 +581,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_SEGMENT_VISIBILITY_PTX}"
             DEPENDS
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
             VERBATIM
         )
     endif()
@@ -620,7 +613,7 @@ endif()
 set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu")
 set(RAYD_EDGE_OPTIX_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_ptx.h")
 set(RAYD_EDGE_OPTIX_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_ptx.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_ptx.h")
 
 if(RAYD_REGENERATE_EDGE_OPTIX_PTX)
     find_path(OPTIX_INCLUDE_DIR optix.h
@@ -659,7 +652,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
                 "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
             VERBATIM
         )
     else()
@@ -673,7 +666,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                     -o "${RAYD_EDGE_OPTIX_PTX}"
             DEPENDS
                 "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
             VERBATIM
         )
     endif()
@@ -711,8 +704,10 @@ if(RAYD_ENABLE_LTO)
 endif()
 
 add_library(rayd_core STATIC ${RAYD_CORE_SOURCE_FILES})
-target_include_directories(rayd_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_include_directories(rayd_core
+    PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CUDA_INCLUDE_DIRS}

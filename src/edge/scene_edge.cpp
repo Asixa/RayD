@@ -6,8 +6,8 @@
 
 #include <drjit/while_loop.h>
 
-#include "edge_bvh.h"
-#include "edge_bvh_config.h"
+#include <rayd/edge/edge_bvh.h>
+#include <rayd/edge/edge_bvh_config.h>
 
 #include <rayd/edge/scene_edge.h>
 #include <rayd/utils.h>

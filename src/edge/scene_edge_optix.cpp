@@ -10,10 +10,10 @@
 
 #include <rayd/optix.h>
 
-#include "edge_bvh.h"
-#include "edge_optix_params.h"
-#include "edge_optix_ptx.h"
-#include "../native_launch_audit.h"
+#include <rayd/edge/edge_bvh.h>
+#include <rayd/edge/edge_optix_params.h>
+#include <rayd/edge/edge_optix_ptx.h>
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

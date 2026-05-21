@@ -1,7 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include "edge_optix_params.h"
+#include <rayd/edge/edge_optix_params.h>
 
 namespace rayd {
 

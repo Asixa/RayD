@@ -1,4 +1,4 @@
-#include "reflection_trace_host.h"
+#include <rayd/multipath/reflection_trace_host.h>
 
 #include <algorithm>
 #include <cstring>
@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "reflection_trace_ptx.h"
-#include "../native_launch_audit.h"
+#include <rayd/multipath/reflection_trace_ptx.h>
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

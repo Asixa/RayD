@@ -1,4 +1,4 @@
-#include "reflection_epc_field.h"
+#include <rayd/multipath/reflection_epc_field.h>
 
 #include <cuda_runtime.h>
 
@@ -7,7 +7,7 @@
 
 #include <rayd/rayd.h>
 
-#include "../native_launch_audit.h"
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 
