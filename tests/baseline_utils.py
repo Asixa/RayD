@@ -26,7 +26,6 @@ SECTION_FILES = {
     "geometry/uv.json": ("geometry", "uv"),
     "geometry/batched_hits.json": ("geometry", "batched_hits"),
     "gradients/vertex_gradients.json": ("gradients", "vertex_gradients"),
-    "edges/primary_edge_sampling.json": ("edges", "primary_edge_sampling"),
     "stress/repeated_run_summary.json": ("stress", "repeated_run_summary"),
 }
 
@@ -100,7 +99,7 @@ def load_manifest(base_dir=BASELINE_DIR):
 def tolerance_for(path: str, policy):
     if path.startswith("gradients."):
         return policy["gradient_abs"], policy["gradient_rel"]
-    if path.startswith("transforms.") or path.startswith("camera."):
+    if path.startswith("transforms."):
         return policy["matrix_abs"], policy["matrix_rel"]
     return policy["default_abs"], policy["default_rel"]
 

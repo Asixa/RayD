@@ -122,9 +122,6 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/optix.h
 
-    ${RAYD_INCLUDE_DIR}/camera.h
-    ${RAYD_SOURCE_DIR}/camera.cpp
-
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_host.h
@@ -271,7 +268,7 @@ set_source_files_properties("${RAYD_REFLECTION_EPC_FIELD_OBJECT}" PROPERTIES EXT
 list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_FIELD_OBJECT}")
 
 set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
-set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_ptx.h")
+set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_trace_ptx.h")
 set(RAYD_REFLECTION_TRACE_PTX_H_COMMITTED
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_ptx.h")
 
@@ -356,7 +353,7 @@ else()
 endif()
 
 set(RAYD_REFLECTION_EPC_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc.cu")
-set(RAYD_REFLECTION_EPC_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_ptx.h")
+set(RAYD_REFLECTION_EPC_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_epc_ptx.h")
 set(RAYD_REFLECTION_EPC_PTX_H_COMMITTED
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_ptx.h")
 
@@ -441,7 +438,7 @@ else()
 endif()
 
 set(RAYD_REFLECTION_ACCUMULATION_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation.cu")
-set(RAYD_REFLECTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation_ptx.h")
+set(RAYD_REFLECTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_accumulation_ptx.h")
 set(RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_ptx.h")
 
@@ -526,7 +523,7 @@ else()
 endif()
 
 set(RAYD_SEGMENT_VISIBILITY_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu")
-set(RAYD_SEGMENT_VISIBILITY_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_ptx.h")
+set(RAYD_SEGMENT_VISIBILITY_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/segment_visibility_ptx.h")
 set(RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_ptx.h")
 
@@ -611,7 +608,7 @@ else()
 endif()
 
 set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu")
-set(RAYD_EDGE_OPTIX_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_ptx.h")
+set(RAYD_EDGE_OPTIX_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/edge/edge_optix_ptx.h")
 set(RAYD_EDGE_OPTIX_PTX_H_COMMITTED
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_ptx.h")
 

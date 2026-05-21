@@ -5,6 +5,7 @@ from pathlib import Path
 import drjit as dr
 import matplotlib.pyplot as plt, numpy as np
 import rayd as rd
+from camera import ExampleCamera
 
 PI = 3.14159265358979323846
 LIGHT_P0, LIGHT_U, LIGHT_V = np.float32([-0.25, 0.99, 2.65]), np.float32([0.50, 0, 0]), np.float32([0, 0, 0.60])
@@ -143,8 +144,8 @@ def main():
     t0 = time.perf_counter()
     tx = dr.cuda.ad.Float([0.0]); dr.enable_grad(tx)
     scene, alb, emi, lid = build_scene(tx)
-    camera = rd.Camera(55.0, 1e-4, 1e4); camera.width, camera.height = w, h
-    camera.build(); camera.prepare_edges(scene); dr.sync_thread()
+    camera = ExampleCamera(55.0, 1e-4, 1e4, width=w, height=h)
+    camera.prepare_edges(scene); dr.sync_thread()
     t1 = time.perf_counter()
 
     # render (detached, display only)

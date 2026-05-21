@@ -1387,11 +1387,10 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["grad_tz"], 1.0, places=5)
         self.assertAlmostEqual(data["t"], 1.0, places=5)
 
-    def test_edge_queries_and_primary_edge_sampling_work(self):
+    def test_mesh_secondary_edge_data_is_available(self):
         data = run_json_case(
             """
             import json
-            import math
             import rayd as pj
             import drjit.cuda as cuda
 
@@ -1403,37 +1402,15 @@ class GeometryCoreTests(unittest.TestCase):
             edge_indices = mesh.edge_indices()
             secondary_edges = mesh.secondary_edges()
 
-            front_mesh = pj.Mesh(cuda.Array3f([-0.5, 0.5, 0.0],
-                                             [-0.5, -0.5, 0.5],
-                                             [3.0, 3.0, 3.0]),
-                                cuda.Array3i([0], [1], [2]))
-            scene = pj.Scene()
-            scene.add_mesh(front_mesh)
-            scene.build()
-
-            camera = pj.Camera(45.0, 1e-4, 1e4)
-            camera.width = 32
-            camera.height = 32
-            camera.build()
-            camera.prepare_edges(scene)
-            sample = camera.sample_edge(cuda.Float([0.25]))
-
             print(json.dumps({
                 "edge_count": len(list(edge_indices[0])),
-                "boundary_count": sum(bool(v) for v in list(secondary_edges.is_boundary)),
-                "sample_idx": int(sample.idx[0]),
-                "sample_pdf": float(sample.pdf[0]),
-                "sample_x_dot_n": float(sample.x_dot_n[0]),
-                "sample_x_dot_n_finite": math.isfinite(float(sample.x_dot_n[0]))
+                "boundary_count": sum(bool(v) for v in list(secondary_edges.is_boundary))
             }))
             """
         )
 
         self.assertEqual(data["edge_count"], 5)
         self.assertEqual(data["boundary_count"], 4)
-        self.assertGreaterEqual(data["sample_idx"], 0)
-        self.assertGreater(data["sample_pdf"], 0.0)
-        self.assertTrue(data["sample_x_dot_n_finite"])
 
     def test_scene_nearest_edge_point_queries_return_expected_fields_and_batches(self):
         data = run_json_case(
@@ -2718,14 +2695,6 @@ class GeometryCoreTests(unittest.TestCase):
             except Exception as e:
                 result["unbuilt_scene_intersect"] = "not built" in str(e)
 
-            camera = pj.Camera(45.0, 1e-4, 1e4)
-            camera.width = 0
-            camera.height = 32
-            try:
-                camera.build()
-            except Exception as e:
-                result["camera_resolution"] = "width and height must be positive" in str(e)
-
             mesh = pj.Mesh(cuda.Array3f([0.0], [0.0], [0.0]),
                           cuda.Array3i([], [], []))
             zero_face_scene = pj.Scene()
@@ -2741,7 +2710,6 @@ class GeometryCoreTests(unittest.TestCase):
 
         self.assertTrue(data["empty_scene_build"])
         self.assertTrue(data["unbuilt_scene_intersect"])
-        self.assertTrue(data["camera_resolution"])
         self.assertTrue(data["zero_face_scene"])
 
     def test_invalid_mesh_inputs_raise_clean_exceptions(self):
@@ -2962,7 +2930,6 @@ class GeometryCoreTests(unittest.TestCase):
             import drjit.cuda.ad as ad
 
             total_hits = 0
-            total_samples = 0
             max_abs_grad = 0.0
 
             for it in range(20):
@@ -2974,14 +2941,6 @@ class GeometryCoreTests(unittest.TestCase):
                 scene = pj.Scene()
                 scene.add_mesh(mesh)
                 scene.build()
-
-                camera = pj.Camera(45.0, 1e-4, 1e4)
-                camera.width = 32
-                camera.height = 32
-                camera.build()
-                camera.prepare_edges(scene)
-                sample = camera.sample_edge(cuda.Float([0.25]))
-                total_samples += int(sample.idx[0] >= 0)
 
                 xs = [0.1 + 0.02 * (i % 8) for i in range(64)]
                 ys = [0.1 + 0.02 * (i // 8) for i in range(64)]
@@ -3013,7 +2972,6 @@ class GeometryCoreTests(unittest.TestCase):
 
             print(json.dumps({
                 "total_hits": total_hits,
-                "total_samples": total_samples,
                 "max_abs_grad": max_abs_grad
             }))
             """,
@@ -3021,7 +2979,6 @@ class GeometryCoreTests(unittest.TestCase):
         )
 
         self.assertGreater(data["total_hits"], 0)
-        self.assertGreater(data["total_samples"], 0)
         self.assertGreater(data["max_abs_grad"], 0.0)
 
     def test_dynamic_mesh_vertex_updates_require_commit_and_refresh_hits(self):
@@ -3300,57 +3257,6 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertGreater(data["grad_z_sum"], 0.0)
 
-    def test_dynamic_commit_invalidates_primary_edge_cache_until_reprepared(self):
-        data = run_json_case(
-            """
-            import json
-            import rayd as pj
-            import drjit.cuda as cuda
-
-            mesh = pj.Mesh(cuda.Array3f([-0.5, 0.5, 0.0],
-                                       [-0.5, -0.5, 0.5],
-                                       [3.0, 3.0, 3.0]),
-                          cuda.Array3i([0], [1], [2]))
-
-            scene = pj.Scene()
-            mesh_id = scene.add_mesh(mesh, dynamic=True)
-            scene.build()
-
-            camera = pj.Camera(45.0, 1e-4, 1e4)
-            camera.width = 32
-            camera.height = 32
-            camera.build()
-            camera.prepare_edges(scene)
-
-            scene.update_mesh_vertices(
-                mesh_id,
-                cuda.Array3f([-0.25, 0.75, 0.25],
-                             [-0.5, -0.5, 0.5],
-                             [3.0, 3.0, 3.0])
-            )
-            scene.sync()
-
-            invalidated = False
-            try:
-                camera.sample_edge(cuda.Float([0.25]))
-            except Exception as e:
-                invalidated = "not prepared" in str(e)
-
-            camera.prepare_edges(scene)
-            sample = camera.sample_edge(cuda.Float([0.25]))
-
-            print(json.dumps({
-                "invalidated": invalidated,
-                "sample_idx": int(sample.idx[0]),
-                "sample_pdf": float(sample.pdf[0]),
-            }))
-            """
-        )
-
-        self.assertTrue(data["invalidated"])
-        self.assertGreaterEqual(data["sample_idx"], 0)
-        self.assertGreater(data["sample_pdf"], 0.0)
-
     def test_gradient_benchmark_repeats_without_rebuilding_optix_state(self):
         data = run_json_case(
             """
@@ -3414,114 +3320,6 @@ class GeometryCoreTests(unittest.TestCase):
                 self.assertGreater(data[bucket][mode]["min_ms"], 0.0, msg=f"{bucket}:{mode}")
                 self.assertGreater(data[bucket][mode]["avg_ms"], 0.0, msg=f"{bucket}:{mode}")
                 self.assertGreater(data[bucket][mode]["qps_m"], 0.0, msg=f"{bucket}:{mode}")
-
-    def test_primary_edge_helper_produces_nonzero_visibility_gradient(self):
-        data = run_json_case(
-            """
-            import json
-            import rayd as pj
-            import drjit as dr
-            import drjit.cuda as cuda
-            import drjit.cuda.ad as ad
-
-            width = 64
-            height = 64
-
-            verts_x = [-0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5]
-            verts_y = [-0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5]
-            verts_z = [3.5, 3.5, 3.5, 3.5, 4.5, 4.5, 4.5, 4.5]
-
-            faces = cuda.Array3i(
-                [0, 0, 4, 4, 0, 0, 1, 1, 0, 0, 3, 3],
-                [2, 3, 5, 6, 7, 4, 2, 6, 1, 5, 7, 6],
-                [1, 2, 6, 7, 3, 7, 6, 5, 5, 4, 6, 2],
-            )
-
-            tx = ad.Float([0.0])
-            dr.enable_grad(tx)
-
-            mesh = pj.Mesh(cuda.Array3f(verts_x, verts_y, verts_z), faces)
-            mesh.to_world_left = ad.Matrix4f([
-                [1.0, 0.0, 0.0, tx],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ])
-
-            scene = pj.Scene()
-            scene.add_mesh(mesh)
-            scene.build()
-
-            camera = pj.Camera(45.0, 1e-4, 1e4)
-            camera.width = width
-            camera.height = height
-            camera.build()
-
-            image = camera.render_grad(scene, spp=4)
-            dr.set_grad(tx, 1.0)
-            dr.forward_to(image)
-            grad = dr.grad(image)
-            grad_values = [float(v) for v in list(grad.array)]
-
-            print(json.dumps({
-                "type": type(image).__name__,
-                "shape": list(image.shape),
-                "abs_max": max(abs(v) for v in grad_values),
-                "nonzero": sum(1 for v in grad_values if abs(v) > 1e-8),
-            }))
-            """,
-            timeout=180,
-        )
-
-        self.assertEqual(data["type"], "TensorXf")
-        self.assertEqual(data["shape"], [64, 64])
-        self.assertGreater(data["abs_max"], 0.0)
-        self.assertGreater(data["nonzero"], 0)
-
-    def test_camera_render_returns_tensor_depth_image(self):
-        data = run_json_case(
-            """
-            import json
-            import rayd as pj
-            import drjit as dr
-            import drjit.cuda as cuda
-
-            mesh = pj.Mesh(
-                cuda.Array3f(
-                    [-1.0, 1.0, 1.0, -1.0],
-                    [-1.0, -1.0, 1.0, 1.0],
-                    [3.0, 3.0, 3.0, 3.0],
-                ),
-                cuda.Array3i([0, 0], [1, 2], [2, 3]),
-            )
-
-            scene = pj.Scene()
-            scene.add_mesh(mesh)
-            scene.build()
-
-            camera = pj.Camera(45.0, 1e-4, 1e4)
-            camera.width = 16
-            camera.height = 12
-            camera.build()
-
-            image = camera.render(scene)
-            values = [float(v) for v in list(dr.detach(image.array))]
-
-            print(json.dumps({
-                "type": type(image).__name__,
-                "shape": list(image.shape),
-                "hits": sum(1 for v in values if v > 0.0),
-                "min_positive": min(v for v in values if v > 0.0),
-            }))
-            """,
-            timeout=180,
-        )
-
-        self.assertEqual(data["type"], "TensorXf")
-        self.assertEqual(data["shape"], [12, 16])
-        self.assertGreater(data["hits"], 0)
-        self.assertGreater(data["min_positive"], 0.0)
-
 
 if __name__ == "__main__":
     unittest.main()

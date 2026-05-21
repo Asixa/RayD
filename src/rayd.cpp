@@ -13,7 +13,6 @@
 #include <rayd/multipath/segment_visibility.h>
 #include <rayd/mesh.h>
 #include <rayd/optix.h>
-#include <rayd/camera.h>
 #include <rayd/scene/scene.h>
 
 #include <rayd/native_launch_audit.h>
@@ -246,13 +245,6 @@ NB_MODULE(rayd, m) {
             .def_rw("o", &Ray::o)
             .def_rw("d", &Ray::d)
             .def_rw("tmax", &Ray::tmax);
-
-        nb::class_<PrimaryEdgeSample>(m, "PrimaryEdgeSample")
-            .def_ro("x_dot_n", &PrimaryEdgeSample::x_dot_n)
-            .def_ro("idx", &PrimaryEdgeSample::idx)
-            .def_ro("ray_n", &PrimaryEdgeSample::ray_n)
-            .def_ro("ray_p", &PrimaryEdgeSample::ray_p)
-            .def_ro("pdf", &PrimaryEdgeSample::pdf);
 
         nb::class_<SecondaryEdgeInfo>(m, "SecondaryEdgeInfo")
             .def(nb::init<>())
@@ -896,46 +888,6 @@ NB_MODULE(rayd, m) {
             .def_prop_rw("use_face_normals", &Mesh::use_face_normals, &Mesh::set_use_face_normals)
             .def_prop_rw("edges_enabled", &Mesh::edges_enabled, &Mesh::set_edges_enabled)
             .def("__repr__", &Mesh::to_string);
-    });
-
-    bind_section("camera", [&]() {
-        nb::class_<Camera>(m, "Camera")
-            .def(nb::init<float, float, float>(), "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def(nb::init<float, float, float, float, float, float>(),
-                 "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def_static("perspective",
-                 [](float fov_x, float near_clip, float far_clip) {
-                     return Camera(fov_x, near_clip, far_clip);
-                 },
-                 "fov_x"_a = 45.f, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def_static("from_intrinsics",
-                 [](float fx, float fy, float cx, float cy, float near_clip, float far_clip) {
-                     return Camera(fx, fy, cx, cy, near_clip, far_clip);
-                 },
-                 "fx"_a, "fy"_a, "cx"_a, "cy"_a, "near_clip"_a = 1e-4f, "far_clip"_a = 1e4f)
-            .def("build", &Camera::build, "cache"_a = true)
-            .def("render", &Camera::render, "scene"_a, "background"_a = 0.f)
-            .def("render_grad", &Camera::render_grad, "scene"_a, "spp"_a = 4, "background"_a = 0.f)
-            .def("prepare_edges", &Camera::prepare_primary_edges, "scene"_a)
-            .def("sample_ray",
-                 nb::overload_cast<const Vector2fDetached &>(&Camera::sample_primary_ray, nb::const_),
-                 "sample"_a)
-            .def("sample_ray",
-                 nb::overload_cast<const Vector2f &>(&Camera::sample_primary_ray, nb::const_),
-                 "sample"_a)
-            .def("sample_edge", &Camera::sample_primary_edge, "sample1"_a)
-            .def("set_transform", &Camera::set_transform, "mat"_a, "set_left"_a = true)
-            .def("append_transform", &Camera::append_transform, "mat"_a, "append_left"_a = true)
-            .def_prop_rw("width", &Camera::width, &Camera::set_width)
-            .def_prop_rw("height", &Camera::height, &Camera::set_height)
-            .def_prop_rw("to_world", &Camera::to_world, &Camera::set_to_world)
-            .def_prop_rw("to_world_left", &Camera::to_world_left, &Camera::set_to_world_left)
-            .def_prop_rw("to_world_right", &Camera::to_world_right, &Camera::set_to_world_right)
-            .def_prop_ro("camera_to_sample", &Camera::camera_to_sample)
-            .def_prop_ro("sample_to_camera", &Camera::sample_to_camera)
-            .def_prop_ro("world_to_sample", &Camera::world_to_sample)
-            .def_prop_ro("sample_to_world", &Camera::sample_to_world)
-            .def("__repr__", &Camera::to_string);
     });
 
     bind_section("scene", [&]() {
