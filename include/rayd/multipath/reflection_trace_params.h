@@ -10,11 +10,14 @@
 
 namespace rayd {
 
+/// Launch parameters for the native reflection-trace pipeline. All array fields are
+/// flat device pointers (structure-of-arrays); the host fills inputs and pre-sizes outputs.
 struct ReflectionTraceParams {
-    OptixTraversableHandle primary_handle;
-    OptixTraversableHandle secondary_handle;
-    int split_mode;
+    OptixTraversableHandle primary_handle;   ///< Primary scene IAS handle.
+    OptixTraversableHandle secondary_handle; ///< Secondary IAS handle (split static/dynamic scene).
+    int split_mode;                          ///< 0 = single scene, nonzero = traverse both handles.
 
+    // Scene-global triangles in edge-vector form: p0 + s*e1 + t*e2, with face normal fn.
     const float *tri_p0_x;
     const float *tri_p0_y;
     const float *tri_p0_z;
@@ -28,10 +31,11 @@ struct ReflectionTraceParams {
     const float *tri_fn_y;
     const float *tri_fn_z;
 
-    const int *face_offsets;
+    const int *face_offsets;  ///< Per-mesh face prefix-sum for globalizing primitive ids.
     int n_meshes;
     int n_triangles;
 
+    // Input rays (SoA) and per-ray active mask.
     const float *ray_ox;
     const float *ray_oy;
     const float *ray_oz;
@@ -43,6 +47,8 @@ struct ReflectionTraceParams {
     int n_rays;
     int max_bounces;
 
+    // Outputs: per-ray bounce_count plus ray-major (n_rays * max_bounces) per-slot
+    // arrays, and the trailing-segment state past the last reflection.
     int *out_bounce_count;
     int *out_shape_ids;
     int *out_prim_ids;

@@ -4,6 +4,14 @@
 
 namespace rayd {
 
+// GPU entry points for the edge BVH (implemented in src/edge/edge_bvh.cu). Inputs
+// and outputs are flat device pointers in structure-of-arrays layout; the caller
+// owns and pre-sizes every buffer. Edges are passed as p0 + e1 (start and edge vector).
+
+/// \brief Build the edge BVH (LBVH via Morton codes) and emit per-primitive and per-node bounds.
+///
+/// Writes the node hierarchy (children, leaf assignment, leaf flag) and both
+/// primitive- and node-level AABBs into the caller-owned output buffers.
 void build_edge_bvh_gpu(
     int primitive_count,
     const float *edge_p0_x,
@@ -30,6 +38,7 @@ void build_edge_bvh_gpu(
     int *is_leaf,
     int *primitive_leaf_node);
 
+/// Compute per-edge AABBs inflated by \p inflation, packed for an OptiX custom-primitive build.
 void compute_edge_optix_aabbs_gpu(
     int primitive_count,
     const float *edge_p0_x,
@@ -41,6 +50,7 @@ void compute_edge_optix_aabbs_gpu(
     float inflation,
     float *out_aabbs);
 
+/// Collapse the raw LBVH into wider leaves, producing a compacted node topology.
 void collapse_edge_bvh_gpu(
     int primitive_count,
     int raw_node_count,
@@ -52,6 +62,7 @@ void collapse_edge_bvh_gpu(
     int *out_leaf_primitives,
     int *out_primitive_leaf_node);
 
+/// Re-emit the collapsed BVH into a dense, compacted node array with remapped indices and bounds.
 void compact_edge_bvh_gpu(
     int primitive_count,
     int raw_node_count,
@@ -81,6 +92,7 @@ void compact_edge_bvh_gpu(
     int *out_leaf_primitives,
     int *out_primitive_leaf_node);
 
+/// Mark every ancestor of the given dirty leaf nodes for refit; \p clear_marks resets first.
 void mark_edge_bvh_dirty_ancestors_gpu(
     int node_count,
     int leaf_count,
@@ -89,6 +101,7 @@ void mark_edge_bvh_dirty_ancestors_gpu(
     int *out_dirty_marks,
     bool clear_marks);
 
+/// Refit one BVH level: gather the dirty nodes, recompute their bounds from children, and repack.
 void compact_and_refit_edge_bvh_level_gpu(
     int level_count,
     const int *level_nodes,

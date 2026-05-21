@@ -4,10 +4,14 @@
 
 namespace rayd {
 
+/// Launch parameters for the EPC field-evaluation kernel. It consumes the geometry
+/// produced by an EPC trace (epc_* and per-slot hit/normal arrays) and emits the
+/// complex field per ray. All array fields are flat SoA device pointers.
 struct ReflectionEpcFieldParams {
     int n_rays = 0;
     int max_bounces = 0;
 
+    // Path validity/length from the EPC trace this field pass builds on.
     const uint8_t *epc_valid = nullptr;
     const int *epc_bounce_count = nullptr;
     const float *epc_path_length = nullptr;
@@ -44,6 +48,8 @@ struct ReflectionEpcFieldParams {
     float omega = 0.f;
     float wavelength = 0.f;
 
+    // Outputs: per-ray validity/length, the complex (x, y, z) field, optional endpoints,
+    // and optional per-slot geometry mirroring ReflectionEpcFieldResultData.
     uint8_t *out_valid = nullptr;
     int *out_bounce_count = nullptr;
     float *out_path_length = nullptr;
@@ -74,6 +80,7 @@ struct ReflectionEpcFieldParams {
     int *out_surface_group_ids = nullptr;
 };
 
+/// Evaluate the complex reflected field for each ray from precomputed EPC geometry.
 void reflection_epc_field_gpu(const ReflectionEpcFieldParams &params);
 
 } // namespace rayd

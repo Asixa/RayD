@@ -109,6 +109,11 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
 
 } // namespace
 
+// OptiX programs for the native segment-visibility pipeline. The four raygen entries
+// (one per SegmentVisibilityLaunchKind) share the anyhit/closesthit/miss programs;
+// each raygen launch handles one query (or chain).
+
+/// Anyhit: skip occluders whose global primitive id is on this query's ignore list.
 extern "C" __global__ void __anyhit__segment_visibility() {
     if (params.ignore_prim_ids == nullptr || params.ignore_k <= 0) {
         return;
@@ -130,6 +135,7 @@ extern "C" __global__ void __anyhit__segment_visibility() {
     }
 }
 
+/// Closest-hit: mark the segment occluded and record the blocking primitive's global id.
 extern "C" __global__ void __closesthit__segment_visibility() {
     optixSetPayload_0(0u);
     const int shape_id = static_cast<int>(optixGetInstanceId());
@@ -143,6 +149,7 @@ extern "C" __global__ void __miss__segment_visibility() {
     // Payload 0 is initialized to 1 by raygen and remains clear on miss.
 }
 
+/// Raygen (Segment kind): test one segment [start, end] and write its visibility.
 extern "C" __global__ void __raygen__segment_visibility() {
     const unsigned int ray = optixGetLaunchIndex().x;
     if (ray >= static_cast<unsigned int>(params.n_rays)) {
@@ -157,6 +164,7 @@ extern "C" __global__ void __raygen__segment_visibility() {
                       nullptr) != 0u ? 1u : 0u;
 }
 
+/// Raygen (SegmentPair kind): test two segments sharing the start point in one launch.
 extern "C" __global__ void __raygen__segment_pair_visibility() {
     const unsigned int ray = optixGetLaunchIndex().x;
     if (ray >= static_cast<unsigned int>(params.n_rays)) {
@@ -172,6 +180,8 @@ extern "C" __global__ void __raygen__segment_pair_visibility() {
         trace_segment(start, load_end_b(ray), active, ignore_base, nullptr) != 0u ? 1u : 0u;
 }
 
+/// Raygen (AxialEdge kind): test the source against sampled points along the edge line;
+/// reports visible if any sample is unoccluded.
 extern "C" __global__ void __raygen__axial_edge_visibility() {
     const unsigned int ray = optixGetLaunchIndex().x;
     if (ray >= static_cast<unsigned int>(params.n_rays)) {
@@ -201,6 +211,8 @@ extern "C" __global__ void __raygen__axial_edge_visibility() {
     params.out_visible[ray] = any_visible != 0u ? 1u : 0u;
 }
 
+/// Raygen (SegmentChain kind): test every segment of one polyline, reporting overall
+/// visibility and the first occluded segment/primitive.
 extern "C" __global__ void __raygen__segment_chain_visibility() {
     const unsigned int chain = optixGetLaunchIndex().x;
     if (chain >= static_cast<unsigned int>(params.n_rays)) {

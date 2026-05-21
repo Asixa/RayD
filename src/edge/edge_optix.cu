@@ -310,6 +310,11 @@ static __forceinline__ __device__ void insert_topk_payload_candidate(int edge_id
 
 } // namespace
 
+// OptiX programs for the custom-AABB edge backend. Each raygen launch handles one
+// query (launch index x); intersection programs report the point/segment-to-edge
+// distance, and the anyhit/closesthit programs keep the running nearest edge.
+
+/// Intersection for point queries: report the point-to-edge distance if within the search radius.
 extern "C" __global__ void __intersection__edge_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -329,6 +334,7 @@ extern "C" __global__ void __intersection__edge_point() {
     }
 }
 
+/// Intersection for ray queries: report the ray-to-edge closest approach within the search radius.
 extern "C" __global__ void __intersection__edge_ray() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -359,6 +365,7 @@ extern "C" __global__ void __intersection__edge_ray() {
     (void) query;
 }
 
+/// Intersection for top-k point queries: report every edge within the search radius for ranking.
 extern "C" __global__ void __intersection__edge_topk_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -381,6 +388,7 @@ extern "C" __global__ void __intersection__edge_topk_point() {
     }
 }
 
+/// Closest-hit for point queries: publish the winning edge id, distance, and edge parameter to payload.
 extern "C" __global__ void __closesthit__edge_point() {
     const float distance = optixGetRayTmax();
     optixSetPayload_0(optixGetPrimitiveIndex());
@@ -389,6 +397,7 @@ extern "C" __global__ void __closesthit__edge_point() {
     optixSetPayload_3(1u);
 }
 
+/// Anyhit for ray queries: keep the nearest edge so far in payload, then ignore the hit to continue.
 extern "C" __global__ void __anyhit__edge_ray() {
     const float candidate_distance_sq = __uint_as_float(optixGetAttribute_0());
     const float best_distance_sq = __uint_as_float(optixGetPayload_1());
@@ -402,6 +411,8 @@ extern "C" __global__ void __anyhit__edge_ray() {
     optixIgnoreIntersection();
 }
 
+/// Anyhit for top-k point queries: insert the candidate into the per-query top-k (payload for k<=8,
+/// global buffer otherwise), then ignore the hit to keep traversing.
 extern "C" __global__ void __anyhit__edge_topk_point() {
     if (params.k <= 8) {
         insert_topk_payload_candidate(static_cast<int>(optixGetPrimitiveIndex()),
@@ -415,9 +426,11 @@ extern "C" __global__ void __anyhit__edge_topk_point() {
     optixIgnoreIntersection();
 }
 
+/// Miss program: no edge within range; outputs are left at their invalid defaults.
 extern "C" __global__ void __miss__edge_query() {
 }
 
+/// Raygen for point queries: trace a degenerate ray from each query point and write the nearest edge.
 extern "C" __global__ void __raygen__edge_point() {
     const unsigned int query = optixGetLaunchIndex().x;
     if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
@@ -462,6 +475,7 @@ extern "C" __global__ void __raygen__edge_point() {
     }
 }
 
+/// Raygen for ray queries: trace each query ray (anyhit-enforced) and write the nearest edge.
 extern "C" __global__ void __raygen__edge_ray() {
     const unsigned int query = optixGetLaunchIndex().x;
     if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
@@ -511,6 +525,7 @@ extern "C" __global__ void __raygen__edge_ray() {
     }
 }
 
+/// Raygen for top-k point queries: initialize the per-query top-k slots, trace, and emit the sorted neighbors.
 extern "C" __global__ void __raygen__edge_topk_point() {
     const unsigned int query = optixGetLaunchIndex().x;
     const int k = params.k;

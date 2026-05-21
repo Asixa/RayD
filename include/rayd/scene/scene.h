@@ -318,10 +318,10 @@ private:
     std::unique_ptr<OptixScene> optix_scene_;
     std::unique_ptr<OptixScene> optix_static_scene_;
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
-    mutable std::unique_ptr<OptixLaunchPipeline> reflection_pipeline_;
-    mutable std::unique_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
-    mutable std::unique_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
-    mutable std::unique_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> reflection_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
     mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;

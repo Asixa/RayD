@@ -26,6 +26,8 @@ constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
 constexpr int EdgeBVHSAHBins = 12;
 using TraversalStack = IntDetached;
 
+/// Per-query running top-k during BVH traversal, kept as 16 unrolled (distance, primitive)
+/// slots so Dr.Jit can hold the candidate heap in registers rather than indexed memory.
 struct TopKTraversalState {
     FloatDetached distance0, distance1, distance2, distance3;
     FloatDetached distance4, distance5, distance6, distance7;
@@ -47,12 +49,14 @@ struct TopKTraversalState {
                  primitive12, primitive13, primitive14, primitive15)
 };
 
+/// Strategy for refitting after edits: refit every node, or only ancestors of dirty leaves.
 enum class EdgeBVHRefitStrategy {
     Auto,
     Full,
     DirtyAncestors
 };
 
+/// Refit strategy from RAYD_EDGE_BVH_REFIT_STRATEGY (auto/full/dirty_ancestors), cached once.
 EdgeBVHRefitStrategy active_edge_bvh_refit_strategy() {
     static const EdgeBVHRefitStrategy value = []() {
         const char *raw = std::getenv("RAYD_EDGE_BVH_REFIT_STRATEGY");
@@ -72,6 +76,7 @@ EdgeBVHRefitStrategy active_edge_bvh_refit_strategy() {
     return value;
 }
 
+/// In Auto mode, choose the dirty-ancestor refit only for large trees with a small dirty fraction.
 bool should_use_dirty_ancestor_refit(EdgeBVHRefitStrategy strategy,
                                      size_t primitive_count,
                                      size_t dirty_primitive_count) {
@@ -86,6 +91,7 @@ bool should_use_dirty_ancestor_refit(EdgeBVHRefitStrategy strategy,
            dirty_primitive_count * 64u <= primitive_count;
 }
 
+/// One LBVH cluster fed into the experimental top-level SAH rebuild.
 struct TopLevelBuildRecord {
     int node_index = -1;
     ScalarVector3f bbox_min;
@@ -93,6 +99,7 @@ struct TopLevelBuildRecord {
     ScalarVector3f centroid;
 };
 
+/// One SAH binning bucket: accumulated bounds and primitive count.
 struct SAHBin {
     ScalarVector3f bbox_min;
     ScalarVector3f bbox_max;
@@ -672,6 +679,7 @@ void collect_subtree_primitives(int node_index,
                                primitives);
 }
 
+/// Host-side dense BVH after compaction: topology, leaf primitives, and per-node bounds.
 struct CompactedEdgeBVH {
     std::vector<int> left_child;
     std::vector<int> right_child;
@@ -682,6 +690,7 @@ struct CompactedEdgeBVH {
     std::vector<ScalarVector3f> node_bbox_max;
 };
 
+/// Compaction plan (topology + old->new node remap and leaf ranges) built before emitting bounds.
 struct CompactedEdgeBVHPlan {
     std::vector<int> left_child;
     std::vector<int> right_child;
@@ -924,6 +933,8 @@ int first_set_bit_u32(uint32_t value) {
     return index;
 }
 
+/// Result of building one treelet branch over a subset of leaves: the new root node,
+/// its bounds, and its SAH cost (used to compare against the original arrangement).
 struct TreeletBuildResult {
     int node_index = -1;
     ScalarVector3f bbox_min;
@@ -931,6 +942,7 @@ struct TreeletBuildResult {
     float cost = 0.f;
 };
 
+/// Recursively rebuild the optimal sub-tree for a leaf subset (bitmask) during treelet optimization.
 TreeletBuildResult rebuild_treelet_branch(
     uint32_t subset,
     const std::array<int, EdgeBVHTreeletMaxLeaves> &frontier_nodes,
@@ -1019,6 +1031,7 @@ TreeletBuildResult rebuild_treelet_branch(
     };
 }
 
+/// Reorganize the treelet rooted at \p node_index if a cheaper arrangement exists; returns whether it changed.
 bool optimize_treelet_at_node(int node_index,
                               std::vector<int> &left_child,
                               std::vector<int> &right_child,
@@ -1202,6 +1215,7 @@ bool optimize_treelet_at_node(int node_index,
     return true;
 }
 
+/// Bottom-up host treelet optimization over the whole tree; returns the (possibly improved) subtree cost.
 float optimize_treelets_recursive(int node_index,
                                   std::vector<int> &left_child,
                                   std::vector<int> &right_child,
@@ -1269,6 +1283,10 @@ float optimize_treelets_recursive(int node_index,
     return subtree_costs[static_cast<size_t>(node_index)];
 }
 
+// Per-lane explicit traversal stack: one fixed-size stack per query, packed into a
+// single Dr.Jit array. The push/pop helpers operate on all lanes at once, gated by a mask.
+
+/// Allocate a per-query traversal stack (query_count * EdgeBVHTraversalStackSize entries).
 TraversalStack make_empty_stack(int query_count) {
     if (query_count <= 0) {
         return IntDetached();
@@ -1276,6 +1294,7 @@ TraversalStack make_empty_stack(int query_count) {
     return full<IntDetached>(-1, query_count * static_cast<int>(EdgeBVHTraversalStackSize));
 }
 
+/// Push \p value onto each active lane's stack and advance its size.
 void stack_push(TraversalStack &stack,
                 const IntDetached &stack_base,
                 IntDetached &stack_size,
@@ -1291,6 +1310,7 @@ void stack_push(TraversalStack &stack,
                         zeros<IntDetached>(query_count));
 }
 
+/// Pop one entry from each active non-empty lane's stack; lanes that cannot pop return -1.
 IntDetached stack_pop(TraversalStack &stack,
                       const IntDetached &stack_base,
                       IntDetached &stack_size,
@@ -1310,6 +1330,7 @@ IntDetached stack_pop(TraversalStack &stack,
     return select(can_pop, value, full<IntDetached>(-1, query_count));
 }
 
+/// Initialize all top-k slots to (distance = Infinity, primitive = -1) for every query.
 TopKTraversalState make_empty_topk_state(int query_count) {
     const FloatDetached inf = full<FloatDetached>(Infinity, query_count);
     const IntDetached none = full<IntDetached>(-1, query_count);
@@ -1339,6 +1360,7 @@ std::array<IntDetached *, 16> topk_primitive_slots(TopKTraversalState &state) {
              &state.primitive12, &state.primitive13, &state.primitive14, &state.primitive15 };
 }
 
+/// Insertion-sort a candidate into each lane's top-k slots, keeping them ordered nearest-first.
 void topk_insert_candidate(TopKTraversalState &state,
                            int k,
                            const IntDetached &primitive_index,

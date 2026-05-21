@@ -828,13 +828,12 @@ MaskDetached sanitize_segment_active(const Vector3fT<Detached> &start,
     return active_detached;
 }
 
-void ensure_pipeline(std::unique_ptr<OptixLaunchPipeline> &pipeline,
+void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline> &pipeline,
                      OptixDeviceContext context,
                      int hitgroup_record_count,
                      const OptixPipelineConfig &config) {
     if (!pipeline) {
-        pipeline = std::make_unique<OptixLaunchPipeline>();
-        pipeline->build(context, hitgroup_record_count, config);
+        pipeline = shared_optix_launch_pipeline(context, hitgroup_record_count, config);
     }
 }
 
@@ -2948,10 +2947,6 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         require(hitgroup_record_count > 0,
                 "Scene::trace_reflection_epc(): invalid hitgroup record count.");
 
-        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
-                        hitgroup_record_count, reflection_epc_pipeline_config());
-
-        ensure_reflection_epc_geometry_ready();
         drjit::eval(ray.o,
                     ray.d,
                     ray.tmax,
@@ -2968,6 +2963,11 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         if (final_ignore_group_count > 0) {
             drjit::eval(options.final_ignore_group_ids);
         }
+
+        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_epc_pipeline_config());
+
+        ensure_reflection_epc_geometry_ready();
 
         ReflectionEpcRaw raw = allocate_reflection_epc_raw(ray_count, max_bounces);
 
@@ -3332,10 +3332,6 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         require(hitgroup_record_count > 0,
                 "Scene::trace_reflection_epc_field(): invalid hitgroup record count.");
 
-        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
-                        hitgroup_record_count, reflection_epc_pipeline_config());
-
-        ensure_reflection_epc_geometry_ready();
         drjit::eval(tx_position,
                     receiver,
                     active_detached,
@@ -3355,6 +3351,11 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         if (final_ignore_group_count > 0) {
             drjit::eval(options.final_ignore_group_ids);
         }
+
+        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_epc_pipeline_config());
+
+        ensure_reflection_epc_geometry_ready();
 
         ReflectionEpcRaw raw = allocate_reflection_epc_raw(ray_count, max_bounces);
         ReflectionEpcParams epc_params = {};
@@ -3846,6 +3847,10 @@ SegmentVisibilityT<Detached> Scene::visible(
             *optix_scene_, start_detached, end_detached, active_detached);
     }
 
+    eval_segment_visibility_common(
+        start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end_detached);
+
     ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
                     mesh_count_, segment_visibility_pipeline_config());
     return trace_segment_visibility_native<Detached>(
@@ -3916,6 +3921,10 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
             end_b_detached,
             active_detached);
     }
+
+    eval_segment_visibility_common(
+        start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end_a_detached, end_b_detached);
 
     ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
                     mesh_count_, segment_visibility_pipeline_config());
@@ -4086,6 +4095,10 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
             max_segments,
             active_detached);
     }
+
+    eval_segment_visibility_common(
+        points_detached, face_offsets_, ignore_prim_per_segment, ignore_k, active_detached);
+    drjit::eval(chain_length);
 
     ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
                     mesh_count_, segment_visibility_pipeline_config());

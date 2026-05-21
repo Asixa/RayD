@@ -509,6 +509,10 @@ __device__ inline void treelet_optimize_node(int root_index,
     }
 }
 
+// All kernels below map one thread to one element (leaf, node, edge, or level
+// entry) via blockIdx.x * blockDim.x + threadIdx.x and early-out past the count.
+
+/// One leaf per thread; sets each leaf node's SAH cost from its inflated bounds.
 __global__ void initialize_leaf_costs_kernel(int primitive_count,
                                              float *node_bbox_min_x,
                                              float *node_bbox_min_y,
@@ -535,6 +539,8 @@ __global__ void initialize_leaf_costs_kernel(int primitive_count,
                            inflation);
 }
 
+/// One leaf per thread; walks to the root accumulating each internal node's SAH cost
+/// (the last child to arrive at a node continues upward).
 __global__ void initialize_internal_costs_kernel(int primitive_count,
                                                  const int *left_child,
                                                  const int *right_child,
@@ -574,6 +580,7 @@ __global__ void initialize_internal_costs_kernel(int primitive_count,
     }
 }
 
+/// One node per thread; recomputes the listed internal nodes' bounds and cost from their children.
 __global__ void update_internal_nodes_kernel(int node_count,
                                              const int *node_indices,
                                              const int *left_child,
@@ -604,6 +611,7 @@ __global__ void update_internal_nodes_kernel(int node_count,
                          inflation);
 }
 
+/// One node per thread; runs treelet reorganization rooted at each selected node.
 __global__ void optimize_selected_treelets_kernel(int node_count,
                                                   const int *node_indices,
                                                   const int *is_leaf,
@@ -640,6 +648,7 @@ __global__ void optimize_selected_treelets_kernel(int node_count,
                           inflation);
 }
 
+/// One node per thread; bottom-up accumulates subtree leaf counts and node heights.
 __global__ void finalize_treelet_metrics_kernel(int node_count,
                                                 const int *leaf_primitive,
                                                 const int *left_child,
@@ -674,6 +683,7 @@ __global__ void finalize_treelet_metrics_kernel(int node_count,
     }
 }
 
+/// One node per thread; per height level, tallies nodes needing recompute vs. treelet optimization.
 __global__ void count_treelet_level_nodes_kernel(int internal_count,
                                                  const int *subtree_leaf_count,
                                                  const int *node_height,
@@ -696,6 +706,7 @@ __global__ void count_treelet_level_nodes_kernel(int internal_count,
     }
 }
 
+/// One node per thread; scatters node ids into the per-level recompute/optimize work lists.
 __global__ void scatter_treelet_level_nodes_kernel(int internal_count,
                                                    const int *subtree_leaf_count,
                                                    const int *node_height,
@@ -722,6 +733,7 @@ __global__ void scatter_treelet_level_nodes_kernel(int internal_count,
     }
 }
 
+/// One selected node per thread; refits one flat-schedule level's internal-node bounds and cost.
 __global__ void update_flat_treelet_level_kernel(int max_selected_count,
                                                  const int *selected_offset,
                                                  const int *selected_count,
@@ -756,6 +768,7 @@ __global__ void update_flat_treelet_level_kernel(int max_selected_count,
                          inflation);
 }
 
+/// One selected node per thread; treelet-optimizes one flat-schedule level.
 __global__ void optimize_flat_treelet_level_kernel(int max_selected_count,
                                                    const int *selected_offset,
                                                    const int *selected_count,
@@ -796,6 +809,7 @@ __global__ void optimize_flat_treelet_level_kernel(int max_selected_count,
                           inflation);
 }
 
+/// One edge per thread; computes its AABB (scalar arrays and Bounds3) from the two endpoints.
 __global__ void compute_primitive_bounds_kernel(
     int primitive_count,
     const float *edge_p0_x,
@@ -832,6 +846,7 @@ __global__ void compute_primitive_bounds_kernel(
     primitive_bounds[primitive] = Bounds3{ bbox_min, bbox_max };
 }
 
+/// One edge per thread; writes its AABB inflated by `inflation` into the packed OptiX buffer (6 floats/edge).
 __global__ void compute_edge_optix_aabbs_kernel(
     int primitive_count,
     const float *edge_p0_x,
@@ -863,6 +878,7 @@ __global__ void compute_edge_optix_aabbs_kernel(
     out_aabbs[base + 5] = bbox_max.z + radius;
 }
 
+/// One element per thread; fills values[i] = i (identity permutation).
 __global__ void init_sequence_kernel(int count, int *values) {
     const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (index >= count) {
@@ -871,6 +887,7 @@ __global__ void init_sequence_kernel(int count, int *values) {
     values[index] = index;
 }
 
+/// One edge per thread; computes the 3D Morton code of its centroid within the scene bounds.
 __global__ void compute_morton_codes_kernel(
     int primitive_count,
     Bounds3 scene_bounds,
@@ -902,6 +919,8 @@ __device__ inline float bbox_surface_area_bounds(const Bounds3 &bounds) {
     return 2.f * (dx * dy + dx * dz + dy * dz);
 }
 
+/// Karras LCP metric: shared high-bit count of two Morton codes, with primitive
+/// indices appended as a tiebreaker so equal codes still order deterministically.
 __device__ inline int longest_common_prefix(const uint32_t *morton_codes,
                                             const int *sorted_primitives,
                                             int primitive_count,
@@ -922,6 +941,7 @@ __device__ inline int longest_common_prefix(const uint32_t *morton_codes,
     return 32 + clz_u32(primitive_first ^ primitive_second);
 }
 
+/// One internal node per thread; builds the Karras radix-tree topology (child and parent links).
 __global__ void build_radix_tree_kernel(
     int primitive_count,
     const uint32_t *morton_codes,
@@ -1003,6 +1023,7 @@ __global__ void build_radix_tree_kernel(
     parent[right_index] = node_index;
 }
 
+/// One sorted leaf per thread; writes leaf bounds, the leaf primitive, and the primitive->leaf map.
 __global__ void finalize_leaf_nodes_kernel(
     int primitive_count,
     const int *sorted_primitives,
@@ -1040,6 +1061,7 @@ __global__ void finalize_leaf_nodes_kernel(
     primitive_leaf_node[primitive] = node_index;
 }
 
+/// One node per thread; sets each internal node's bounds to the union of its children's.
 __global__ void merge_internal_bounds_kernel(int node_count,
                                              const int *node_indices,
                                              const int *left_child,
@@ -1066,6 +1088,8 @@ __global__ void merge_internal_bounds_kernel(int node_count,
     node_bbox_max_z[node_index] = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
 }
 
+/// One sorted leaf per thread; writes its leaf, then walks to the root merging bounds
+/// (the last child to arrive at each node continues upward).
 __global__ void finalize_leaves_and_bounds_kernel(
     int primitive_count,
     const int *sorted_primitives,
@@ -1124,6 +1148,7 @@ __global__ void finalize_leaves_and_bounds_kernel(
     }
 }
 
+/// One dirty leaf per thread; marks it and all ancestors dirty, stopping where already marked.
 __global__ void mark_dirty_ancestors_kernel(int leaf_count,
                                             const int *leaf_nodes,
                                             const int *node_parent,
@@ -1151,6 +1176,7 @@ __global__ void mark_dirty_ancestors_kernel(int leaf_count,
     }
 }
 
+/// One level node per thread; appends the dirty nodes of this level to the selected list.
 __global__ void compact_dirty_level_kernel(int level_count,
                                            const int *level_nodes,
                                            const int *dirty_marks,
@@ -1170,6 +1196,7 @@ __global__ void compact_dirty_level_kernel(int level_count,
     selected_nodes[output_index] = node_index;
 }
 
+/// One selected node per thread; refits its bounds from children and writes the packed node bounds.
 __global__ void refit_selected_internal_nodes_kernel(
     int max_selected_count,
     const int *selected_count,
@@ -2214,6 +2241,7 @@ void build_edge_bvh_gpu(
     }
 }
 
+/// One raw node per thread; writes parent links for each of its children.
 __global__ void build_raw_parent_links_kernel(int node_count,
                                               const int *raw_left_child,
                                               const int *raw_right_child,
@@ -2233,6 +2261,7 @@ __global__ void build_raw_parent_links_kernel(int node_count,
     }
 }
 
+/// One raw leaf per thread; bottom-up accumulates each node's subtree leaf count.
 __global__ void finalize_raw_subtree_leaf_counts_kernel(int node_count,
                                                         const int *raw_leaf_primitive,
                                                         const int *parent,
@@ -2256,6 +2285,7 @@ __global__ void finalize_raw_subtree_leaf_counts_kernel(int node_count,
     }
 }
 
+/// One raw node per thread; flags nodes whose subtree fits within a single leaf (<= EdgeBVHLeafSize).
 __global__ void mark_collapsible_raw_nodes_kernel(int node_count,
                                                   const int *subtree_leaf_count,
                                                   const int *raw_leaf_primitive,
@@ -2269,6 +2299,8 @@ __global__ void mark_collapsible_raw_nodes_kernel(int node_count,
         (raw_leaf_primitive[node_index] >= 0 || subtree_leaf_count[node_index] <= EdgeBVHLeafSize) ? 1 : 0;
 }
 
+/// One raw node per thread; marks nodes that survive collapsing (no collapsed ancestor)
+/// and the leaf count each collapsed node will emit.
 __global__ void mark_live_collapsed_raw_nodes_kernel(int node_count,
                                                      const int *parent,
                                                      const int *collapse_flag,
@@ -2300,6 +2332,7 @@ __global__ void mark_live_collapsed_raw_nodes_kernel(int node_count,
         (live && collapse_flag[node_index] != 0) ? subtree_leaf_count[node_index] : 0;
 }
 
+/// One raw node per thread; emits collapsed child links, encoding a leaf range for collapsed nodes.
 __global__ void emit_collapsed_raw_nodes_kernel(int node_count,
                                                 const int *raw_left_child,
                                                 const int *raw_right_child,
@@ -2330,6 +2363,7 @@ __global__ void emit_collapsed_raw_nodes_kernel(int node_count,
     out_right_child[node_index] = raw_right_child[node_index];
 }
 
+/// One collapsed node per thread; gathers its subtree's primitives into the leaf primitive array.
 __global__ void emit_collapsed_raw_leaf_primitives_kernel(int node_count,
                                                           const int *collapse_flag,
                                                           const int *live_flag,
@@ -2536,6 +2570,7 @@ void collapse_edge_bvh_gpu(
     }
 }
 
+/// One compacted node per thread; copies remapped bounds and child links into the dense node arrays.
 __global__ void emit_compacted_nodes_kernel(int node_count,
                                             const int *new_to_old,
                                             const int *compacted_left_child,
@@ -2570,6 +2605,7 @@ __global__ void emit_compacted_nodes_kernel(int node_count,
     out_right_child[node_index] = compacted_right_child[node_index];
 }
 
+/// One compacted node per thread; gathers its subtree primitives into the compacted leaf array.
 __global__ void emit_compacted_leaf_primitives_kernel(int node_count,
                                                       const int *new_to_old,
                                                       const int *compacted_leaf_count,

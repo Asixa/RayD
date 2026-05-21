@@ -109,6 +109,9 @@ extern "C" {
 __constant__ ReflectionTraceParams params;
 }
 
+// OptiX programs for the native reflection-trace pipeline; one raygen launch per ray.
+
+/// Closest-hit: pack the hit (t, barycentrics, primitive, instance) into the ray payload.
 extern "C" __global__ void __closesthit__reflection() {
     HitPayload payload;
     payload.hit = 1u;
@@ -121,10 +124,13 @@ extern "C" __global__ void __closesthit__reflection() {
     set_payload(payload);
 }
 
+/// Miss: mark the payload as "no hit".
 extern "C" __global__ void __miss__reflection() {
     optixSetPayload_0(0u);
 }
 
+/// Raygen: trace one ray through up to max_bounces specular reflections, writing each
+/// bounce's hit, normal, and image source into the ray-major output slots.
 extern "C" __global__ void __raygen__reflection_trace() {
     const unsigned int ray_index = optixGetLaunchIndex().x;
     if (ray_index >= static_cast<unsigned int>(params.n_rays)) {

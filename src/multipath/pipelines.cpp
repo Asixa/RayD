@@ -1,5 +1,8 @@
 #include <rayd/multipath/pipelines.h>
 
+#include <map>
+#include <mutex>
+#include <tuple>
 #include <vector>
 
 #include <rayd/native_launch_audit.h>
@@ -14,6 +17,32 @@
 #include <rayd/multipath/segment_visibility_params.h>
 
 namespace rayd {
+
+namespace {
+
+using PipelineCacheKey = std::tuple<OptixDeviceContext, const char *, int, int, size_t>;
+
+std::mutex &pipeline_cache_mutex() {
+    static std::mutex *mutex = new std::mutex();
+    return *mutex;
+}
+
+std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> &pipeline_cache() {
+    static std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> *cache =
+        new std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>();
+    return *cache;
+}
+
+int hitgroup_record_capacity(int hitgroup_record_count) {
+    constexpr int kMinHitgroupRecordCapacity = 64;
+    int capacity = kMinHitgroupRecordCapacity;
+    while (capacity < hitgroup_record_count) {
+        capacity *= 2;
+    }
+    return capacity;
+}
+
+} // namespace
 
 OptixLaunchPipeline::~OptixLaunchPipeline() {
     if (pipeline_ != nullptr && optixPipelineDestroy != nullptr) {
@@ -49,6 +78,8 @@ OptixLaunchPipeline::~OptixLaunchPipeline() {
     }
 }
 
+/// Compile the module, create program groups, link the pipeline, and build the SBT and
+/// params buffer from \p config. The shared build sequence for all four multipath pipelines.
 void OptixLaunchPipeline::build(OptixDeviceContext context,
                                 int hitgroup_record_count,
                                 const OptixPipelineConfig &config) {
@@ -144,6 +175,33 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     ready_ = true;
 }
 
+std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
+    OptixDeviceContext context,
+    int hitgroup_record_count,
+    const OptixPipelineConfig &config) {
+    int hitgroup_capacity = hitgroup_record_capacity(hitgroup_record_count);
+    PipelineCacheKey key{
+        context,
+        config.ptx,
+        hitgroup_capacity,
+        config.num_payload_values,
+        config.params_size,
+    };
+
+    std::lock_guard<std::mutex> guard(pipeline_cache_mutex());
+    auto &cache = pipeline_cache();
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        return it->second;
+    }
+
+    auto pipeline = std::make_shared<OptixLaunchPipeline>();
+    pipeline->build(context, hitgroup_capacity, config);
+    cache[key] = pipeline;
+    return pipeline;
+}
+
+/// Upload \p params and launch the pipeline with the \p raygen_index'th raygen entry over n_rays threads.
 void OptixLaunchPipeline::launch_impl(int raygen_index,
                                       const void *params,
                                       unsigned int n_rays) const {

@@ -2,6 +2,13 @@
 
 namespace rayd {
 
+/// \brief Deduplicate reflection paths that share the same reflector sequence and image source.
+///
+/// Reads the ray-major (n_rays * max_bounces) trace arrays, collapses duplicate paths,
+/// and writes the kept paths plus a per-kept discovery_count and representative ray index
+/// into the caller-owned out_* buffers. All pointers are flat device arrays.
+///
+/// \return Number of unique paths kept.
 int reflection_dedup_gpu(
     int n_rays,
     int max_bounces,
