@@ -1,4 +1,4 @@
-#include <rayd/multipath/segment_visibility_host.h>
+#include <rayd/multipath/pipelines.h>
 
 #include <cstring>
 #include <stdexcept>

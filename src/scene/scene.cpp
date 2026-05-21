@@ -8,17 +8,13 @@
 #include <string>
 #include <vector>
 
-#include <rayd/intersection.h>
 #include <rayd/ray.h>
 #include <rayd/scene/scene.h>
 #include <rayd/edge/scene_edge.h>
 
 #include <rayd/multipath/reflection_dedup.h>
-#include <rayd/multipath/reflection_accumulation_host.h>
 #include <rayd/multipath/reflection_epc_field.h>
-#include <rayd/multipath/reflection_epc_host.h>
-#include <rayd/multipath/reflection_trace_host.h>
-#include <rayd/multipath/segment_visibility_host.h>
+#include <rayd/multipath/pipelines.h>
 #include <rayd/native_launch_audit.h>
 
 namespace rayd {

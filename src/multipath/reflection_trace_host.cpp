@@ -1,4 +1,4 @@
-#include <rayd/multipath/reflection_trace_host.h>
+#include <rayd/multipath/pipelines.h>
 
 #include <algorithm>
 #include <cstring>

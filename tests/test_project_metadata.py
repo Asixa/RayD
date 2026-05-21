@@ -38,7 +38,7 @@ class ProjectMetadataTests(unittest.TestCase):
 
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         bindings = (ROOT / "src" / "rayd.cpp").read_text(encoding="utf-8")
-        fwd = (ROOT / "include" / "rayd" / "fwd.h").read_text(encoding="utf-8")
+        fwd = (ROOT / "include" / "rayd" / "rayd.h").read_text(encoding="utf-8")
         scene_header = (ROOT / "include" / "rayd" / "scene" / "scene.h").read_text(encoding="utf-8")
 
         self.assertNotIn("camera.h", cmake)

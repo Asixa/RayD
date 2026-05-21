@@ -102,13 +102,10 @@ set(RAYD_INCLUDE_DIR include/rayd)
 set(RAYD_SOURCE_DIR src)
 set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/rayd.h
-    ${RAYD_INCLUDE_DIR}/constants.h
-    ${RAYD_INCLUDE_DIR}/fwd.h
     ${RAYD_INCLUDE_DIR}/types.h
     ${RAYD_INCLUDE_DIR}/utils.h
 
     ${RAYD_INCLUDE_DIR}/ray.h
-    ${RAYD_INCLUDE_DIR}/intersection.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation.h
@@ -124,17 +121,14 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
-    ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_host.h
+    ${RAYD_INCLUDE_DIR}/multipath/pipelines.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_trace_host.cpp
-    ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_host.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_epc_host.cpp
-    ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_host.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h
     ${RAYD_SOURCE_DIR}/multipath/reflection_accumulation_host.cpp
-    ${RAYD_INCLUDE_DIR}/multipath/segment_visibility_host.h
     ${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h
     ${RAYD_SOURCE_DIR}/multipath/segment_visibility_host.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h
