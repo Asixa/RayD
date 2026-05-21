@@ -25,78 +25,6 @@ enum class EdgeOptixLaunchKind {
     PointTopK
 };
 
-void check_optix_edge(OptixResult result, const char *message) {
-    if (result != 0) {
-        throw std::runtime_error(std::string("OptiX error in ") + message);
-    }
-}
-
-OptixProgramGroup make_raygen_group(OptixDeviceContext context,
-                                    OptixModule module,
-                                    const char *entry_name) {
-    OptixProgramGroupOptions pg_options = {};
-    OptixProgramGroupDesc desc = {};
-    desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    desc.raygen.module = module;
-    desc.raygen.entryFunctionName = entry_name;
-
-    char log[2048];
-    size_t log_size = sizeof(log);
-    OptixProgramGroup group = nullptr;
-    check_optix_edge(optixProgramGroupCreate(context,
-                                             &desc,
-                                             1,
-                                             &pg_options,
-                                             log,
-                                             &log_size,
-                                             &group),
-                     "optixProgramGroupCreate(edge raygen)");
-    return group;
-}
-
-OptixProgramGroup make_hitgroup(OptixDeviceContext context,
-                                OptixModule module,
-                                const char *closesthit,
-                                const char *anyhit,
-                                const char *intersection) {
-    OptixProgramGroupOptions pg_options = {};
-    OptixProgramGroupDesc desc = {};
-    desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    desc.hitgroup.moduleCH = closesthit != nullptr ? module : nullptr;
-    desc.hitgroup.entryFunctionNameCH = closesthit;
-    desc.hitgroup.moduleAH = anyhit != nullptr ? module : nullptr;
-    desc.hitgroup.entryFunctionNameAH = anyhit;
-    desc.hitgroup.moduleIS = module;
-    desc.hitgroup.entryFunctionNameIS = intersection;
-
-    char log[2048];
-    size_t log_size = sizeof(log);
-    OptixProgramGroup group = nullptr;
-    check_optix_edge(optixProgramGroupCreate(context,
-                                             &desc,
-                                             1,
-                                             &pg_options,
-                                             log,
-                                             &log_size,
-                                             &group),
-                     "optixProgramGroupCreate(edge hitgroup)");
-    return group;
-}
-
-void *make_empty_sbt_record(OptixProgramGroup group) {
-    EmptySbtRecord record = {};
-    check_optix_edge(optixSbtRecordPackHeader(group, &record),
-                     "optixSbtRecordPackHeader(edge)");
-
-    void *device_record = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
-    audit_jit_memcpy();
-    jit_memcpy(JitBackend::CUDA,
-               device_record,
-               &record,
-               sizeof(EmptySbtRecord));
-    return device_record;
-}
-
 void ensure_device_buffer(void *&buffer, size_t &buffer_size, size_t required_size) {
     if (required_size == 0) {
         return;
@@ -176,7 +104,7 @@ struct EdgeOptixState {
         sbt.hitgroupRecordCount = 3;
 
         audit_optix_launch();
-        check_optix_edge(optixLaunch(pipeline,
+        check_optix(optixLaunch(pipeline,
                                      jit_cuda_stream(),
                                      reinterpret_cast<CUdeviceptr>(params_buffer),
                                      sizeof(EdgeOptixQueryParams),
@@ -283,7 +211,7 @@ void SceneEdgeOptix::ensure_pipeline() {
 
     char log[2048];
     size_t log_size = sizeof(log);
-    check_optix_edge(optixModuleCreate(state_->context,
+    check_optix(optixModuleCreate(state_->context,
                                        &module_options,
                                        &pipeline_options,
                                        edge_optix_ptx,
@@ -297,20 +225,7 @@ void SceneEdgeOptix::ensure_pipeline() {
     state_->pg_raygen_ray = make_raygen_group(state_->context, state_->module, "__raygen__edge_ray");
     state_->pg_raygen_topk = make_raygen_group(state_->context, state_->module, "__raygen__edge_topk_point");
 
-    OptixProgramGroupOptions pg_options = {};
-    OptixProgramGroupDesc miss_desc = {};
-    miss_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-    miss_desc.miss.module = state_->module;
-    miss_desc.miss.entryFunctionName = "__miss__edge_query";
-    log_size = sizeof(log);
-    check_optix_edge(optixProgramGroupCreate(state_->context,
-                                             &miss_desc,
-                                             1,
-                                             &pg_options,
-                                             log,
-                                             &log_size,
-                                             &state_->pg_miss),
-                     "optixProgramGroupCreate(edge miss)");
+    state_->pg_miss = make_miss_group(state_->context, state_->module, "__miss__edge_query");
 
     state_->pg_hit_point = make_hitgroup(state_->context,
                                          state_->module,
@@ -345,7 +260,7 @@ void SceneEdgeOptix::ensure_pipeline() {
     link_options.maxTraversableGraphDepth = 1;
 
     log_size = sizeof(log);
-    check_optix_edge(optixPipelineCreate(state_->context,
+    check_optix(optixPipelineCreate(state_->context,
                                          &pipeline_options,
                                          &link_options,
                                          groups,
@@ -354,24 +269,24 @@ void SceneEdgeOptix::ensure_pipeline() {
                                          &log_size,
                                          &state_->pipeline),
                      "optixPipelineCreate(edge)");
-    check_optix_edge(optixPipelineSetStackSize(state_->pipeline,
+    check_optix(optixPipelineSetStackSize(state_->pipeline,
                                                0,
                                                0,
                                                4096,
                                                1),
                      "optixPipelineSetStackSize(edge)");
 
-    state_->sbt_raygen_point = make_empty_sbt_record(state_->pg_raygen_point);
-    state_->sbt_raygen_ray = make_empty_sbt_record(state_->pg_raygen_ray);
-    state_->sbt_raygen_topk = make_empty_sbt_record(state_->pg_raygen_topk);
-    state_->sbt_miss = make_empty_sbt_record(state_->pg_miss);
+    state_->sbt_raygen_point = make_sbt_record(state_->pg_raygen_point);
+    state_->sbt_raygen_ray = make_sbt_record(state_->pg_raygen_ray);
+    state_->sbt_raygen_topk = make_sbt_record(state_->pg_raygen_topk);
+    state_->sbt_miss = make_sbt_record(state_->pg_miss);
 
     std::vector<EmptySbtRecord> hitgroups(3);
-    check_optix_edge(optixSbtRecordPackHeader(state_->pg_hit_point, &hitgroups[0]),
+    check_optix(optixSbtRecordPackHeader(state_->pg_hit_point, &hitgroups[0]),
                      "optixSbtRecordPackHeader(edge point hitgroup)");
-    check_optix_edge(optixSbtRecordPackHeader(state_->pg_hit_ray, &hitgroups[1]),
+    check_optix(optixSbtRecordPackHeader(state_->pg_hit_ray, &hitgroups[1]),
                      "optixSbtRecordPackHeader(edge ray hitgroup)");
-    check_optix_edge(optixSbtRecordPackHeader(state_->pg_hit_topk, &hitgroups[2]),
+    check_optix(optixSbtRecordPackHeader(state_->pg_hit_topk, &hitgroups[2]),
                      "optixSbtRecordPackHeader(edge topk hitgroup)");
 
     state_->sbt_hitgroups = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord) * hitgroups.size());

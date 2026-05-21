@@ -2,7 +2,11 @@
 #define OPTIX_STUBS_IMPL
 #include <rayd/optix.h>
 
+#include <rayd/native_launch_audit.h>
+
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 #if defined(_WIN32)
 #  define NOMINMAX
@@ -210,6 +214,79 @@ OptixRuntimeInfo query_optix_runtime_info() {
 #endif
 
     return info;
+}
+
+void check_optix(OptixResult result, const char *message) {
+    if (result != 0) {
+        throw std::runtime_error(std::string("OptiX error in ") + message);
+    }
+}
+
+OptixProgramGroup make_raygen_group(OptixDeviceContext context,
+                                    OptixModule module,
+                                    const char *entry_name) {
+    OptixProgramGroupOptions pg_options = {};
+    OptixProgramGroupDesc desc = {};
+    desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    desc.raygen.module = module;
+    desc.raygen.entryFunctionName = entry_name;
+
+    char log[2048];
+    size_t log_size = sizeof(log);
+    OptixProgramGroup group = nullptr;
+    check_optix(optixProgramGroupCreate(context, &desc, 1, &pg_options, log, &log_size, &group),
+                "optixProgramGroupCreate(raygen)");
+    return group;
+}
+
+OptixProgramGroup make_miss_group(OptixDeviceContext context,
+                                  OptixModule module,
+                                  const char *entry_name) {
+    OptixProgramGroupOptions pg_options = {};
+    OptixProgramGroupDesc desc = {};
+    desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    desc.miss.module = module;
+    desc.miss.entryFunctionName = entry_name;
+
+    char log[2048];
+    size_t log_size = sizeof(log);
+    OptixProgramGroup group = nullptr;
+    check_optix(optixProgramGroupCreate(context, &desc, 1, &pg_options, log, &log_size, &group),
+                "optixProgramGroupCreate(miss)");
+    return group;
+}
+
+OptixProgramGroup make_hitgroup(OptixDeviceContext context,
+                                OptixModule module,
+                                const char *closesthit,
+                                const char *anyhit,
+                                const char *intersection) {
+    OptixProgramGroupOptions pg_options = {};
+    OptixProgramGroupDesc desc = {};
+    desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    desc.hitgroup.moduleCH = closesthit != nullptr ? module : nullptr;
+    desc.hitgroup.entryFunctionNameCH = closesthit;
+    desc.hitgroup.moduleAH = anyhit != nullptr ? module : nullptr;
+    desc.hitgroup.entryFunctionNameAH = anyhit;
+    desc.hitgroup.moduleIS = intersection != nullptr ? module : nullptr;
+    desc.hitgroup.entryFunctionNameIS = intersection;
+
+    char log[2048];
+    size_t log_size = sizeof(log);
+    OptixProgramGroup group = nullptr;
+    check_optix(optixProgramGroupCreate(context, &desc, 1, &pg_options, log, &log_size, &group),
+                "optixProgramGroupCreate(hitgroup)");
+    return group;
+}
+
+void *make_sbt_record(OptixProgramGroup group) {
+    EmptySbtRecord record = {};
+    check_optix(optixSbtRecordPackHeader(group, &record), "optixSbtRecordPackHeader");
+
+    void *device_record = jit_malloc(AllocType::Device, sizeof(EmptySbtRecord));
+    audit_jit_memcpy();
+    jit_memcpy(JitBackend::CUDA, device_record, &record, sizeof(EmptySbtRecord));
+    return device_record;
 }
 
 } // namespace rayd

@@ -321,4 +321,19 @@ struct OptixRuntimeInfo {
 
 OptixRuntimeInfo query_optix_runtime_info();
 
+// Shared OptiX host helpers used by the multipath and edge pipelines.
+void check_optix(OptixResult result, const char *message);
+OptixProgramGroup make_raygen_group(OptixDeviceContext context,
+                                    OptixModule module,
+                                    const char *entry_name);
+OptixProgramGroup make_miss_group(OptixDeviceContext context,
+                                  OptixModule module,
+                                  const char *entry_name);
+OptixProgramGroup make_hitgroup(OptixDeviceContext context,
+                                OptixModule module,
+                                const char *closesthit,
+                                const char *anyhit,
+                                const char *intersection);
+void *make_sbt_record(OptixProgramGroup group);
+
 } // namespace rayd

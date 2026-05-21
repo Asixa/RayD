@@ -124,9 +124,8 @@ struct OptixIntersection;
 
 class Mesh;
 class OptixScene;
-class ReflectionEpcPipeline;
+class OptixLaunchPipeline;
 class SceneEdge;
-class SegmentVisibilityPipeline;
 class Scene;
 
 inline void require(bool condition, std::string_view message) {
