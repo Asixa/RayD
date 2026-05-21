@@ -30,6 +30,7 @@ namespace dr = drjit;
 
 namespace {
 
+/// Build-quality bias for an OptiX acceleration structure: optimize traversal vs. build time.
 enum class OptixAccelPreference {
     FastTrace,
     FastBuild
@@ -46,6 +47,8 @@ std::string normalize_optix_mode_value(const char *value) {
     return normalized;
 }
 
+/// Read an accel-preference override from environment variable \p env_name; "auto"
+/// (or unset) falls back to \p auto_value. Accepts fast_trace/trace, fast_build/build/relaxed/none.
 OptixAccelPreference parse_optix_preference(const char *env_name,
                                            OptixAccelPreference auto_value) {
     const char *raw = std::getenv(env_name);
@@ -89,6 +92,7 @@ unsigned optix_preference_build_flag(OptixAccelPreference preference) {
     return OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
 }
 
+/// Flatten the upper 3x4 of \p matrix into the row-major float[12] an OptixInstance expects.
 void fill_optix_transform(float out[12], const Matrix4f &matrix) {
     Matrix4fDetached detached = detach<false>(matrix);
     drjit::eval(detached);
@@ -101,6 +105,7 @@ void fill_optix_transform(float out[12], const Matrix4f &matrix) {
     }
 }
 
+/// Per-mesh device buffers and bottom-level acceleration structure (GAS) handle.
 struct OptixMeshState {
     bool dynamic = false;
     int face_offset = 0;
@@ -146,6 +151,7 @@ std::vector<RetiredOptixJitResources> &retired_optix_resources() {
 
 } // namespace
 
+/// All OptiX device state backing one OptixScene: context, pipeline/SBT, per-mesh GAS, and the IAS.
 struct OptixState {
     OptixDeviceContext context = 0;
     bool has_dynamic_meshes = false;
@@ -306,6 +312,7 @@ static void upload_instance_span(OptixState *state, size_t begin, size_t count) 
                byte_count);
 }
 
+/// Build a mesh's GAS from scratch; dynamic meshes allow update, static meshes are compacted.
 static void build_gas(OptixState *state, OptixMeshState &mesh_state, const OptixSceneMeshDesc &mesh_desc) {
     const Mesh &mesh = *mesh_desc.mesh;
 
@@ -419,6 +426,7 @@ static void build_gas(OptixState *state, OptixMeshState &mesh_state, const Optix
     mesh_state.gas_buffer = gas_output;
 }
 
+/// Refit an existing dynamic-mesh GAS in place after its vertices moved (no realloc).
 static void update_gas(OptixState *state, OptixMeshState &mesh_state, const Mesh &mesh) {
     audit_jit_memcpy();
     jit_memcpy(JitBackend::CUDA,
@@ -484,6 +492,7 @@ static void initialize_instances(OptixState *state, const std::vector<OptixScene
     upload_instance_span(state, 0, state->instances.size());
 }
 
+/// Rewrite the IAS instance records for the dirty meshes and upload them in contiguous spans.
 static void update_dirty_instances(OptixState *state,
                                    const std::vector<OptixSceneMeshDesc> &meshes,
                                    const std::vector<int> &dirty_instance_indices) {
@@ -524,6 +533,7 @@ static void update_dirty_instances(OptixState *state,
     upload_instance_span(state, span_begin, span_end - span_begin);
 }
 
+/// Build (or, when \p update, refit) the top-level instance acceleration structure over all meshes.
 static void build_ias(OptixState *state, bool update) {
     require(!state->instances.empty(), "OptixScene: missing instances for IAS build.");
 

@@ -28,11 +28,19 @@ public:
 
     /// Build derived geometry caches and GPU buffers from the current mesh state.
     void build();
+    /// Allocate and fill the OptiX vertex/index buffers; requires build() first.
     void prepare_optix_buffers();
+    /// Refresh cached world-space geometry after a vertex or transform edit, skipping a full build().
     void update_runtime_data(bool vertices_dirty, bool transform_dirty);
 
+    // The world transform is the product full = left * object_to_world * right.
+    // set_*/append_* mark derived caches dirty; full_transform() returns the product.
+
+    /// Replace the left (\p set_left true) or right transform factor.
     void set_transform(const Matrix4f &matrix, bool set_left = true);
+    /// Compose \p matrix onto the left (pre-multiply) or right (post-multiply) transform factor.
     void append_transform(const Matrix4f &matrix, bool append_left = true);
+    /// Full object-to-world transform: left * object_to_world * right.
     Matrix4f full_transform() const { return left_transform_ * object_to_world_ * right_transform_; }
 
     int mesh_id() const { return mesh_id_; }
@@ -89,7 +97,9 @@ public:
         is_ready_ = false;
     }
 
+    /// World-space vertex positions; recomputed lazily from the object positions and full transform.
     const Vector3f &vertex_positions_world() const;
+    /// Object-space per-vertex shading normals (area-weighted), populated by build().
     const Vector3f &vertex_normals() const { return vertex_normals_object_; }
 
     const Vector2f &vertex_uv() const { return vertex_uv_; }
@@ -113,12 +123,19 @@ public:
         is_ready_ = false;
     }
 
+    /// Per-edge connectivity, packed as (vertex0, vertex1, face0, face1, opposite_vertex);
+    /// face1 is -1 for boundary edges.
     const VectoriT<5, true> &edge_indices() const { return edge_indices_; }
+    /// World-space per-edge data used by edge queries; computed lazily.
     const SecondaryEdgeInfo *secondary_edge_info() const;
+    /// World-space cached triangle geometry; null until build().
     const TriangleInfo *triangle_info() const { return triangle_info_.get(); }
+    /// Per-triangle UV coordinates; null when the mesh has no UVs.
     const TriangleUV *triangle_uv() const { return triangle_uv_.get(); }
 
+    /// Flat [x,y,z,...] vertex buffer in the layout OptiX GAS builds expect.
     const FloatDetached &vertex_buffer() const { return optix_vertex_buffer_; }
+    /// Flat [i,j,k,...] triangle index buffer in the layout OptiX GAS builds expect.
     const IntDetached &face_buffer() const { return optix_face_buffer_; }
 
     std::string to_string() const;

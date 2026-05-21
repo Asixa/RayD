@@ -8,12 +8,14 @@
 
 namespace rayd {
 
+/// Keep only the lanes where \p active is true, packed contiguously.
 template <typename ArrayD, typename Mask_>
 DRJIT_INLINE ArrayD compressD(const ArrayD &array, const Mask_ &active) {
     auto idx = compress(active);
     return gather<ArrayD>(array, idx);
 }
 
+/// Number of lanes (the batch width) of a scalar or vector Dr.Jit array.
 template <typename ArrayD>
 DRJIT_INLINE size_t slices(const ArrayD &cuda_array) {
     if constexpr (depth_v<ArrayD> == 1) {
@@ -23,6 +25,7 @@ DRJIT_INLINE size_t slices(const ArrayD &cuda_array) {
     }
 }
 
+/// Copy each component of an n-wide device array into the matching host vector.
 template <typename T, size_t n, bool async = false>
 DRJIT_INLINE void copy_cuda_array(const Array<CUDAArray<T>, n> &cuda_array,
                                   std::array<std::vector<T>, n> &cpu_array) {
@@ -33,6 +36,7 @@ DRJIT_INLINE void copy_cuda_array(const Array<CUDAArray<T>, n> &cuda_array,
     }
 }
 
+/// Interpolate a 3D attribute over a triangle in edge-vector form: p0 + s*e1 + t*e2.
 template <bool Detached>
 DRJIT_INLINE Vector3fT<Detached> bilinear(const Vector3fT<Detached> &p0,
                                           const Vector3fT<Detached> &e1,
@@ -41,6 +45,7 @@ DRJIT_INLINE Vector3fT<Detached> bilinear(const Vector3fT<Detached> &p0,
     return fmadd(e1, st.x(), fmadd(e2, st.y(), p0));
 }
 
+/// Interpolate a 2D attribute over a triangle in edge-vector form: p0 + s*e1 + t*e2.
 template <bool Detached>
 DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached> &p0,
                                            const Vector2fT<Detached> &e1,
@@ -49,6 +54,14 @@ DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached> &p0,
     return fmadd(e1, st.x(), fmadd(e2, st.y(), p0));
 }
 
+/// \brief Möller-Trumbore ray-triangle intersection for a triangle in edge-vector form.
+///
+/// \tparam Detached  When true, operate on detached (non-AD) arrays.
+/// \param p0   First triangle vertex.
+/// \param e1   Edge vector to the second vertex.
+/// \param e2   Edge vector to the third vertex.
+/// \param ray  Ray batch to test.
+/// \return Pair of (barycentric (u, v), hit distance t); t is Infinity on degenerate triangles.
 template <bool Detached>
 DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached> &p0,
                                          const Vector3fT<Detached> &e1,
@@ -70,11 +83,15 @@ DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached> &p0,
     return std::make_pair(Vector2fT<Detached>(u, v), t);
 }
 
+/// Clamp a value to the unit interval [0, 1].
 template <typename Float_>
 DRJIT_INLINE Float_ clamp01(const Float_ &value) {
     return maximum(minimum(value, Float_(1.f)), Float_(0.f));
 }
 
+/// \brief Closest point on the segment [p0, p0 + e1] to \p point.
+///
+/// \return Tuple of (segment parameter in [0, 1], closest point, squared distance).
 template <bool Detached>
 DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached> &point,
                                            const Vector3fT<Detached> &p0,
@@ -89,6 +106,16 @@ DRJIT_INLINE auto closest_point_on_segment(const Vector3fT<Detached> &point,
     return std::make_tuple(edge_t, edge_point, distance_sq);
 }
 
+/// \brief Closest pair of points between two finite segments.
+///
+/// Both segments are given in origin + vector form: the query segment spans
+/// [query_origin, query_origin + query_edge] and the target spans
+/// [edge_origin, edge_origin + edge_vector]. Endpoint and interior cases are all
+/// evaluated and the nearest is returned, so the result is robust to parallel
+/// and degenerate inputs.
+///
+/// \return Tuple of (query_t, query_point, edge_t, edge_point, squared distance),
+///         where the parameters lie in [0, 1] along their respective segments.
 template <bool Detached>
 DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origin,
                                           const Vector3fT<Detached> &query_edge,
@@ -176,6 +203,12 @@ DRJIT_INLINE auto closest_segment_segment(const Vector3fT<Detached> &query_origi
     return std::make_tuple(best_query_t, best_query_point, best_edge_t, best_edge_point, best_distance_sq);
 }
 
+/// \brief Closest pair of points between a ray and a finite segment.
+///
+/// The ray spans [ray_origin, ray_origin + t * ray_direction] for t >= 0; the
+/// segment spans [edge_origin, edge_origin + edge_vector].
+///
+/// \return Tuple of (ray_t >= 0, ray_point, edge_t in [0, 1], edge_point, squared distance).
 template <bool Detached>
 DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
                                       const Vector3fT<Detached> &ray_direction,
@@ -242,6 +275,7 @@ DRJIT_INLINE auto closest_ray_segment(const Vector3fT<Detached> &ray_origin,
     return std::make_tuple(best_query_t, best_query_point, best_edge_t, best_edge_point, best_distance_sq);
 }
 
+/// Squared distance from \p point to an axis-aligned box; zero when inside.
 template <typename Float_>
 DRJIT_INLINE auto point_aabb_distance_sq(const Array<Float_, 3> &point,
                                          const Array<Float_, 3> &bbox_min,
@@ -250,12 +284,15 @@ DRJIT_INLINE auto point_aabb_distance_sq(const Array<Float_, 3> &point,
     return squared_norm(point - clamped);
 }
 
+/// Conservative lower bound on the squared distance from a ray to an AABB (BVH pruning).
 template <typename Float_>
 DRJIT_INLINE auto ray_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
                                           const Array<Float_, 3> &direction,
                                           const Array<Float_, 3> &bbox_min,
                                           const Array<Float_, 3> &bbox_max);
 
+/// Lower bound on the squared distance from an infinite line to an AABB, via the
+/// box's bounding sphere; conservative and cheap, used to prune BVH branches.
 template <typename Float_>
 DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3> &origin,
                                                   const Array<Float_, 3> &direction,
@@ -276,6 +313,7 @@ DRJIT_INLINE auto line_aabb_sphere_lower_bound_sq(const Array<Float_, 3> &origin
     return select(valid_direction, separation * separation, Float_(0.f));
 }
 
+/// Conservative lower bound on the squared distance from a finite segment to an AABB.
 template <typename Float_>
 DRJIT_INLINE auto segment_aabb_lower_bound_sq(const Array<Float_, 3> &origin,
                                               const Array<Float_, 3> &segment,

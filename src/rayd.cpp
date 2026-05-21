@@ -22,6 +22,7 @@ using namespace rayd;
 
 namespace {
 
+/// Number of Dr.Jit-compatible CUDA devices; throws if none are available.
 int checked_cuda_device_count() {
     const int count = jit_cuda_device_count();
     if (count <= 0)
@@ -29,6 +30,7 @@ int checked_cuda_device_count() {
     return count;
 }
 
+/// Make \p device the active Dr.Jit CUDA device, optionally initializing OptiX on it.
 int set_rayd_device(int device, bool initialize_optix) {
     const int count = checked_cuda_device_count();
     if (device < 0 || device >= count) {
@@ -52,6 +54,7 @@ int set_rayd_device(int device, bool initialize_optix) {
     return jit_cuda_device();
 }
 
+/// The Python type object for Dr.Jit array type \p T, bound once and cached.
 template <typename T>
 nb::object drjit_python_type() {
     static nb::object type = []() {
@@ -61,6 +64,7 @@ nb::object drjit_python_type() {
     return type;
 }
 
+/// Load a Dr.Jit array \p T from a Python handle, optionally coercing other types; returns success.
 template <typename T>
 bool drjit_try_load(nb::handle src, T &value, bool convert) {
     if (!src.is_valid())
@@ -95,6 +99,7 @@ bool drjit_try_load(nb::handle src, T &value, bool convert) {
     }
 }
 
+/// Wrap a C++ Dr.Jit array \p value in a new Python object of the matching type.
 template <typename T>
 nb::handle drjit_from_cpp(const T &value) {
     nb::object obj = nb::steal<nb::object>(PyObject_CallNoArgs(drjit_python_type<T>().ptr()));
@@ -108,6 +113,7 @@ nb::handle drjit_from_cpp(const T &value) {
 
 namespace nanobind::detail {
 
+/// nanobind type caster bridging any Dr.Jit array type to/from its Python counterpart.
 template <typename T>
 struct type_caster<T, std::enable_if_t<drjit::is_array_v<T>, int>> {
     using Value = T;
