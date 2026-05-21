@@ -25,7 +25,7 @@ struct EdgeOptixQueryParams {
     const float *query_x = nullptr; ///< Query point / ray origin x (one per query).
     const float *query_y = nullptr;
     const float *query_z = nullptr;
-    const float *ray_dx = nullptr;  ///< Ray direction x (ray queries only).
+    const float *ray_dx = nullptr;  ///< RayAD direction x (ray queries only).
     const float *ray_dy = nullptr;
     const float *ray_dz = nullptr;
     const float *ray_tmax = nullptr; ///< Per-ray max parameter (ray queries only).
@@ -35,7 +35,7 @@ struct EdgeOptixQueryParams {
 
     int *out_edge_ids = nullptr;   ///< Winning edge id(s).
     float *out_distance_sq = nullptr; ///< Squared distance to the winner(s).
-    float *out_ray_t = nullptr;    ///< Ray parameter at closest approach (ray queries).
+    float *out_ray_t = nullptr;    ///< RayAD parameter at closest approach (ray queries).
     float *out_edge_t = nullptr;   ///< Closest-point parameter along the edge.
     uint8_t *out_valid = nullptr;  ///< Whether each output slot holds a hit.
 };

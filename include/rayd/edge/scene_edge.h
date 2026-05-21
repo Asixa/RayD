@@ -15,17 +15,17 @@ struct EdgeDirtyRange {
 
 /// Broad-phase winner of a nearest-edge query (detached; squared distance, scene-global id).
 struct ClosestEdgeCandidate {
-    IntDetached global_edge_id;
-    FloatDetached distance_sq;
+    Int global_edge_id;
+    Float distance_sq;
 };
 
 /// Broad-phase winners of a k-nearest-edges query, laid out as query_count * k slots.
 struct ClosestEdgeTopKCandidate {
     int query_count = 0;
     int k = 0;
-    MaskDetached is_valid;        ///< Whether each slot holds a valid edge.
-    IntDetached global_edge_ids;  ///< Scene-global edge id per slot.
-    FloatDetached distance_sq;    ///< Squared distance per slot.
+    Mask is_valid;        ///< Whether each slot holds a valid edge.
+    Int global_edge_ids;  ///< Scene-global edge id per slot.
+    Float distance_sq;    ///< Squared distance per slot.
 };
 
 /// Structural and quality metrics of a built edge BVH (for diagnostics/tuning).
@@ -54,23 +54,23 @@ public:
     ~SceneEdge() = default;
 
     /// Build the BVH over all edges in \p edge_info (all edges active).
-    void build(const SecondaryEdgeInfo &edge_info);
+    void build(const SecondaryEdgeInfoAD &edge_info);
     /// Build the BVH, restricting queries to edges where \p mask is true.
-    void build(const SecondaryEdgeInfo &edge_info,
-               const MaskDetached &mask);
+    void build(const SecondaryEdgeInfoAD &edge_info,
+               const Mask &mask);
     /// Update the per-edge active mask without rebuilding the tree.
-    void set_mask(const MaskDetached &mask);
+    void set_mask(const Mask &mask);
     /// Refit node bounds after the edges in \p dirty_ranges moved (topology unchanged).
-    void refit(const SecondaryEdgeInfo &edge_info,
+    void refit(const SecondaryEdgeInfoAD &edge_info,
                const std::vector<EdgeDirtyRange> &dirty_ranges);
     /// Refit node bounds after the edges at \p primitive_indices moved.
-    void refit(const SecondaryEdgeInfo &edge_info,
-               const IntDetached &primitive_indices);
+    void refit(const SecondaryEdgeInfoAD &edge_info,
+               const Int &primitive_indices);
     /// Force evaluation of the lazily built BVH device buffers.
     void materialize() const;
     /// Translate internal BVH primitive ids to scene-global edge ids; \p valid gates the gather.
-    IntDetached map_to_global(const IntDetached &bvh_ids,
-                              const MaskDetached &valid) const;
+    Int map_to_global(const Int &bvh_ids,
+                              const Mask &valid) const;
     bool is_ready() const { return ready_; }
     bool has_edges() const { return primitive_count_ > 0; }
     SceneEdgeBVHStats stats() const;
@@ -92,38 +92,38 @@ public:
                                       MaskT<Detached> &active) const;
 
 private:
-    void build_bvh(const SecondaryEdgeInfo &edge_info);
+    void build_bvh(const SecondaryEdgeInfoAD &edge_info);
     void set_all_active_state();
-    void update_active_counts_from_mask(const MaskDetached &mask);
-    IntDetached refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfo &edge_info,
-                                                        const IntDetached &primitive_indices);
+    void update_active_counts_from_mask(const Mask &mask);
+    Int refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfoAD &edge_info,
+                                                        const Int &primitive_indices);
     void refit_internal_nodes_full();
-    void refit_internal_nodes_dirty(const std::vector<IntDetached> &dirty_leaf_chunks);
-    ClosestEdgeCandidate nearest_edge_point_detached(const Vector3fDetached &point,
-                                                     const MaskDetached &active) const;
-    ClosestEdgeTopKCandidate nearest_edges_topk_point_detached(const Vector3fDetached &point,
+    void refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_chunks);
+    ClosestEdgeCandidate nearest_edge_point_detached(const Vector3f &point,
+                                                     const Mask &active) const;
+    ClosestEdgeTopKCandidate nearest_edges_topk_point_detached(const Vector3f &point,
                                                                int k,
-                                                               const MaskDetached &active) const;
-    ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3fDetached &origin,
-                                                          const Vector3fDetached &segment,
-                                                          const MaskDetached &active) const;
-    ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3fDetached &origin,
-                                                            const Vector3fDetached &direction,
-                                                            const MaskDetached &active) const;
+                                                               const Mask &active) const;
+    ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3f &origin,
+                                                          const Vector3f &segment,
+                                                          const Mask &active) const;
+    ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3f &origin,
+                                                            const Vector3f &direction,
+                                                            const Mask &active) const;
     void rebuild_packed_node_layout();
-    void scatter_node_bounds(const IntDetached &node_indices,
-                             const Vector3fDetached &bbox_min,
-                             const Vector3fDetached &bbox_max);
-    IntDetached gather_node_left_child(const IntDetached &node_indices,
-                                       const MaskDetached &active) const;
-    IntDetached gather_node_right_child(const IntDetached &node_indices,
-                                        const MaskDetached &active) const;
-    IntDetached gather_node_active_count(const IntDetached &node_indices,
-                                         const MaskDetached &active) const;
-    Vector3fDetached gather_node_bbox_min(const IntDetached &node_indices,
-                                          const MaskDetached &active) const;
-    Vector3fDetached gather_node_bbox_max(const IntDetached &node_indices,
-                                          const MaskDetached &active) const;
+    void scatter_node_bounds(const Int &node_indices,
+                             const Vector3f &bbox_min,
+                             const Vector3f &bbox_max);
+    Int gather_node_left_child(const Int &node_indices,
+                                       const Mask &active) const;
+    Int gather_node_right_child(const Int &node_indices,
+                                        const Mask &active) const;
+    Int gather_node_active_count(const Int &node_indices,
+                                         const Mask &active) const;
+    Vector3f gather_node_bbox_min(const Int &node_indices,
+                                          const Mask &active) const;
+    Vector3f gather_node_bbox_max(const Int &node_indices,
+                                          const Mask &active) const;
 
     int primitive_count_ = 0;
     int node_count_ = 0;
@@ -131,31 +131,31 @@ private:
     bool all_active_ = true;
     bool packed_node_layout_enabled_ = false;
 
-    Vector3fDetached edge_p0_;
-    Vector3fDetached edge_e1_;
-    Vector3fDetached primitive_bbox_min_;
-    Vector3fDetached primitive_bbox_max_;
-    Vector3fDetached node_bbox_min_;
-    Vector3fDetached node_bbox_max_;
-    FloatDetached packed_node_bounds_;
+    Vector3f edge_p0_;
+    Vector3f edge_e1_;
+    Vector3f primitive_bbox_min_;
+    Vector3f primitive_bbox_max_;
+    Vector3f node_bbox_min_;
+    Vector3f node_bbox_max_;
+    Float packed_node_bounds_;
 
-    IntDetached left_child_;
-    IntDetached right_child_;
-    IntDetached packed_node_children_;
-    IntDetached leaf_primitives_;
-    IntDetached primitive_leaf_node_;
-    IntDetached leaf_nodes_;
-    IntDetached primitive_active_flags_;
-    IntDetached node_active_count_;
-    IntDetached node_subtree_primitive_count_;
-    IntDetached node_parent_;
-    IntDetached dirty_node_marks_;
-    IntDetached dirty_level_nodes_;
-    IntDetached dirty_level_count_;
+    Int left_child_;
+    Int right_child_;
+    Int packed_node_children_;
+    Int leaf_primitives_;
+    Int primitive_leaf_node_;
+    Int leaf_nodes_;
+    Int primitive_active_flags_;
+    Int node_active_count_;
+    Int node_subtree_primitive_count_;
+    Int node_parent_;
+    Int dirty_node_marks_;
+    Int dirty_level_nodes_;
+    Int dirty_level_count_;
 
     int active_primitive_count_ = 0;
     int full_refit_node_count_ = 0;
-    std::vector<IntDetached> refit_levels_;
+    std::vector<Int> refit_levels_;
 };
 
 } // namespace rayd

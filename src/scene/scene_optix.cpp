@@ -93,8 +93,8 @@ unsigned optix_preference_build_flag(OptixAccelPreference preference) {
 }
 
 /// Flatten the upper 3x4 of \p matrix into the row-major float[12] an OptixInstance expects.
-void fill_optix_transform(float out[12], const Matrix4f &matrix) {
-    Matrix4fDetached detached = detach<false>(matrix);
+void fill_optix_transform(float out[12], const Matrix4fAD &matrix) {
+    Matrix4f detached = detach<false>(matrix);
     drjit::eval(detached);
     drjit::sync_thread();
 
@@ -134,8 +134,8 @@ void write_optix_instance(OptixInstance &instance,
 }
 
 struct RetiredOptixJitResources {
-    UIntDetached pipeline_handle;
-    UIntDetached sbt_handle;
+    UInt pipeline_handle;
+    UInt sbt_handle;
 };
 
 std::mutex &retired_optix_resources_mutex() {
@@ -158,9 +158,9 @@ struct OptixState {
     bool has_static_meshes = false;
     bool owns_trace_handles = true;
 
-    UInt64Detached handle;
-    UIntDetached pipeline_handle;
-    UIntDetached sbt_handle;
+    UInt64 handle;
+    UInt pipeline_handle;
+    UInt sbt_handle;
 
     OptixPipelineCompileOptions pipeline_compile_options = {};
     OptixProgramGroupOptions pgo = {};
@@ -199,8 +199,8 @@ static void retire_optix_jit_resources(OptixState *state) {
     std::vector<RetiredOptixJitResources> &resources = retired_optix_resources();
     resources.push_back({ state->pipeline_handle, state->sbt_handle });
 
-    state->pipeline_handle = UIntDetached();
-    state->sbt_handle = UIntDetached();
+    state->pipeline_handle = UInt();
+    state->sbt_handle = UInt();
 
     constexpr size_t MaxRetiredOptixResourceSets = 32;
     if (resources.size() >= MaxRetiredOptixResourceSets) {
@@ -213,10 +213,10 @@ void OptixIntersection::reserve(int64_t size) {
     require(size >= 0, "OptixIntersection::reserve(): size must be non-negative.");
     if (size != m_size) {
         m_size = size;
-        shape_id = empty<IntDetached>(size);
-        global_prim_id = empty<IntDetached>(size);
-        barycentric = empty<Vector2fDetached>(size);
-        t = empty<FloatDetached>(size);
+        shape_id = empty<Int>(size);
+        global_prim_id = empty<Int>(size);
+        barycentric = empty<Vector2f>(size);
+        t = empty<Float>(size);
     }
 }
 
@@ -248,8 +248,8 @@ static void destroy_optix_state(OptixState *state) {
     if (state->owns_trace_handles) {
         retire_optix_jit_resources(state);
     } else {
-        state->pipeline_handle = UIntDetached();
-        state->sbt_handle = UIntDetached();
+        state->pipeline_handle = UInt();
+        state->sbt_handle = UInt();
     }
 
     for (OptixMeshState &mesh_state : state->mesh_states) {
@@ -666,11 +666,11 @@ void OptixScene::build(const std::vector<OptixSceneMeshDesc> &meshes,
     m_accel->sbt.hitgroupRecordBase = reinterpret_cast<CUdeviceptr>(
         jit_malloc_migrate(reinterpret_cast<void *>(m_accel->sbt.hitgroupRecordBase), AllocType::Device, 1));
 
-        m_accel->pipeline_handle = UIntDetached::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options,
+        m_accel->pipeline_handle = UInt::steal(jit_optix_configure_pipeline(&m_accel->pipeline_compile_options,
                                                                                     nullptr,
                                                                                     m_accel->pg,
                                                                                     2));
-        m_accel->sbt_handle = UIntDetached::steal(
+        m_accel->sbt_handle = UInt::steal(
             jit_optix_configure_sbt(&m_accel->sbt, m_accel->pipeline_handle.index()));
     } else {
         m_accel->pipeline_handle = trace_source->m_accel->pipeline_handle;
@@ -779,13 +779,13 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
     OptixIntersection intersection;
     intersection.reserve(ray_count);
 
-    FloatDetached ox;
-    FloatDetached oy;
-    FloatDetached oz;
-    FloatDetached dx;
-    FloatDetached dy;
-    FloatDetached dz;
-    FloatDetached t_max_input;
+    Float ox;
+    Float oy;
+    Float oz;
+    Float dx;
+    Float dy;
+    Float dz;
+    Float t_max_input;
     if constexpr (!Detached) {
         ox = detach<false>(ray.o.x());
         oy = detach<false>(ray.o.y());
@@ -804,21 +804,21 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
         t_max_input = ray.tmax;
     }
 
-    MaskDetached active_detached = detach<false>(active);
+    Mask active_detached = detach<false>(active);
 
-    FloatDetached t_min = RayEpsilon;
-    FloatDetached t_max = select(drjit::isfinite(t_max_input),
+    Float t_min = RayEpsilon;
+    Float t_max = select(drjit::isfinite(t_max_input),
                                  t_max_input,
-                                 full<FloatDetached>(1e8f, ray_count));
-    FloatDetached time = 0.f;
-    UIntDetached ray_mask(255);
-    UIntDetached ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                                 full<Float>(1e8f, ray_count));
+    Float time = 0.f;
+    UInt ray_mask(255);
+    UInt ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                            OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
-    UIntDetached sbt_offset(0);
-    UIntDetached sbt_stride(1);
-    UIntDetached miss_sbt_index(0);
+    UInt sbt_offset(0);
+    UInt sbt_stride(1);
+    UInt miss_sbt_index(0);
 
-    m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
+    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
     uint32_t trace_args[] {
         m_accel->handle.index(),
         ox.index(), oy.index(), oz.index(),
@@ -850,25 +850,25 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
                         m_accel->pipeline_handle.index(),
                         m_accel->sbt_handle.index());
 
-    MaskDetached is_hit = UIntDetached::steal(hitobject_out[0]) != 0u;
+    Mask is_hit = UInt::steal(hitobject_out[0]) != 0u;
     active_detached &= is_hit;
 
-    using Single = drjit::float32_array_t<FloatDetached>;
+    using Single = drjit::float32_array_t<Float>;
     intersection.t =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[1]));
+        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[1]));
     intersection.barycentric[0] =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[2]));
+        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[2]));
     intersection.barycentric[1] =
-        drjit::reinterpret_array<Single, UIntDetached>(UIntDetached::steal(hitobject_out[3]));
-    UIntDetached raw_prim_index = UIntDetached::steal(hitobject_out[4]);
+        drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[3]));
+    UInt raw_prim_index = UInt::steal(hitobject_out[4]);
 
     // Extract shape_offset and shape_id from the hit-group SBT data.
-    UInt64Detached sbt_data_ptr = UInt64Detached::steal(hitobject_out[5]);
-    IntDetached shape_offset = IntDetached(UIntDetached::steal(
+    UInt64 sbt_data_ptr = UInt64::steal(hitobject_out[5]);
+    Int shape_offset = Int(UInt::steal(
         jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 0, active_detached.index())));
-    intersection.shape_id = IntDetached(UIntDetached::steal(
+    intersection.shape_id = Int(UInt::steal(
         jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 4, active_detached.index())));
-    intersection.global_prim_id = IntDetached(raw_prim_index) + shape_offset;
+    intersection.global_prim_id = Int(raw_prim_index) + shape_offset;
 
     // Clear invalid lanes.
     intersection.t[!active_detached] = Infinity;
@@ -876,7 +876,7 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
     intersection.global_prim_id[!active_detached] = -1;
 
     if constexpr (!Detached) {
-        active &= Mask(active_detached);
+        active &= MaskAD(active_detached);
     } else {
         active = active_detached;
     }
@@ -888,13 +888,13 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
     const int ray_count = static_cast<int>(slices(ray.o));
     MaskT<Detached> hit = full<MaskT<Detached>>(false, ray_count);
 
-    FloatDetached ox;
-    FloatDetached oy;
-    FloatDetached oz;
-    FloatDetached dx;
-    FloatDetached dy;
-    FloatDetached dz;
-    FloatDetached t_max_input;
+    Float ox;
+    Float oy;
+    Float oz;
+    Float dx;
+    Float dy;
+    Float dz;
+    Float t_max_input;
     if constexpr (!Detached) {
         ox = detach<false>(ray.o.x());
         oy = detach<false>(ray.o.y());
@@ -913,22 +913,22 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
         t_max_input = ray.tmax;
     }
 
-    MaskDetached active_detached = detach<false>(active);
+    Mask active_detached = detach<false>(active);
 
-    FloatDetached t_min = RayEpsilon;
-    FloatDetached t_max = select(drjit::isfinite(t_max_input),
+    Float t_min = RayEpsilon;
+    Float t_max = select(drjit::isfinite(t_max_input),
                                  t_max_input,
-                                 full<FloatDetached>(1e8f, ray_count));
-    FloatDetached time = 0.f;
-    UIntDetached ray_mask(255);
-    UIntDetached ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                                 full<Float>(1e8f, ray_count));
+    Float time = 0.f;
+    UInt ray_mask(255);
+    UInt ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                            OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT |
                            OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT);
-    UIntDetached sbt_offset(0);
-    UIntDetached sbt_stride(1);
-    UIntDetached miss_sbt_index(0);
+    UInt sbt_offset(0);
+    UInt sbt_stride(1);
+    UInt miss_sbt_index(0);
 
-    m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
+    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
     uint32_t trace_args[] {
         m_accel->handle.index(),
         ox.index(), oy.index(), oz.index(),
@@ -953,9 +953,9 @@ MaskT<Detached> OptixScene::shadow_test(const RayT<Detached> &ray, MaskT<Detache
                         m_accel->pipeline_handle.index(),
                         m_accel->sbt_handle.index());
 
-    const MaskDetached hit_detached = active_detached && (UIntDetached::steal(hitobject_out[0]) != 0u);
+    const Mask hit_detached = active_detached && (UInt::steal(hitobject_out[0]) != 0u);
     if constexpr (!Detached) {
-        hit = Mask(hit_detached);
+        hit = MaskAD(hit_detached);
     } else {
         hit = hit_detached;
     }
@@ -968,9 +968,9 @@ OptixSegmentHit OptixScene::segment_hit(const Vector3fT<Detached> &start,
                                         MaskT<Detached> active) const {
     const int ray_count = static_cast<int>(slices(start));
 
-    Vector3fDetached start_detached;
-    Vector3fDetached end_detached;
-    MaskDetached active_detached;
+    Vector3f start_detached;
+    Vector3f end_detached;
+    Mask active_detached;
     if constexpr (!Detached) {
         start_detached = detach<false>(start);
         end_detached = detach<false>(end);
@@ -988,26 +988,26 @@ OptixSegmentHit OptixScene::segment_hit(const Vector3fT<Detached> &start,
                        drjit::isfinite(end_detached.y()) &&
                        drjit::isfinite(end_detached.z());
 
-    const Vector3fDetached delta = end_detached - start_detached;
-    const FloatDetached length_sq = squared_norm(delta);
-    const MaskDetached valid_segment = length_sq > (2.f * Epsilon) * (2.f * Epsilon);
-    const FloatDetached safe_length =
-        sqrt(select(valid_segment, length_sq, FloatDetached(1.f)));
-    const Vector3fDetached direction = delta / safe_length;
-    const Vector3fDetached origin = start_detached + Epsilon * direction;
-    const FloatDetached t_min = Epsilon;
-    const FloatDetached t_max = maximum(safe_length - 2.f * Epsilon, FloatDetached(0.f));
-    const FloatDetached time = 0.f;
-    const UIntDetached ray_mask(255);
-    const UIntDetached ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+    const Vector3f delta = end_detached - start_detached;
+    const Float length_sq = squared_norm(delta);
+    const Mask valid_segment = length_sq > (2.f * Epsilon) * (2.f * Epsilon);
+    const Float safe_length =
+        sqrt(select(valid_segment, length_sq, Float(1.f)));
+    const Vector3f direction = delta / safe_length;
+    const Vector3f origin = start_detached + Epsilon * direction;
+    const Float t_min = Epsilon;
+    const Float t_max = maximum(safe_length - 2.f * Epsilon, Float(0.f));
+    const Float time = 0.f;
+    const UInt ray_mask(255);
+    const UInt ray_flags(OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                                  OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT |
                                  OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT);
-    const UIntDetached sbt_offset(0);
-    const UIntDetached sbt_stride(1);
-    const UIntDetached miss_sbt_index(0);
-    const MaskDetached trace_active = active_detached && valid_segment;
+    const UInt sbt_offset(0);
+    const UInt sbt_stride(1);
+    const UInt miss_sbt_index(0);
+    const Mask trace_active = active_detached && valid_segment;
 
-    m_accel->handle = dr::opaque<UInt64Detached>(m_accel->ias_handle);
+    m_accel->handle = dr::opaque<UInt64>(m_accel->ias_handle);
     uint32_t trace_args[] {
         m_accel->handle.index(),
         origin.x().index(), origin.y().index(), origin.z().index(),
@@ -1036,32 +1036,32 @@ OptixSegmentHit OptixScene::segment_hit(const Vector3fT<Detached> &start,
                         m_accel->pipeline_handle.index(),
                         m_accel->sbt_handle.index());
 
-    const MaskDetached hit =
-        trace_active && (UIntDetached::steal(hitobject_out[0]) != 0u);
-    const UIntDetached raw_prim_index = UIntDetached::steal(hitobject_out[1]);
-    const UInt64Detached sbt_data_ptr = UInt64Detached::steal(hitobject_out[2]);
-    const IntDetached shape_offset = IntDetached(UIntDetached::steal(
+    const Mask hit =
+        trace_active && (UInt::steal(hitobject_out[0]) != 0u);
+    const UInt raw_prim_index = UInt::steal(hitobject_out[1]);
+    const UInt64 sbt_data_ptr = UInt64::steal(hitobject_out[2]);
+    const Int shape_offset = Int(UInt::steal(
         jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 0, hit.index())));
 
     OptixSegmentHit result;
     result.visible = active_detached && (!valid_segment || !hit);
     result.hit = hit;
     result.global_prim_id =
-        select(hit, IntDetached(raw_prim_index) + shape_offset, full<IntDetached>(-1, ray_count));
+        select(hit, Int(raw_prim_index) + shape_offset, full<Int>(-1, ray_count));
     return result;
 }
 
-template OptixIntersection OptixScene::intersect<true>(const RayDetached &ray, MaskDetached &active) const;
-template OptixIntersection OptixScene::intersect<false>(const Ray &ray, Mask &active) const;
-template MaskDetached OptixScene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
-template Mask OptixScene::shadow_test<false>(const Ray &ray, Mask active) const;
+template OptixIntersection OptixScene::intersect<true>(const Ray &ray, Mask &active) const;
+template OptixIntersection OptixScene::intersect<false>(const RayAD &ray, MaskAD &active) const;
+template Mask OptixScene::shadow_test<true>(const Ray &ray, Mask active) const;
+template MaskAD OptixScene::shadow_test<false>(const RayAD &ray, MaskAD active) const;
 template OptixSegmentHit OptixScene::segment_hit<true>(
-    const Vector3fDetached &start,
-    const Vector3fDetached &end,
-    MaskDetached active) const;
-template OptixSegmentHit OptixScene::segment_hit<false>(
     const Vector3f &start,
     const Vector3f &end,
     Mask active) const;
+template OptixSegmentHit OptixScene::segment_hit<false>(
+    const Vector3fAD &start,
+    const Vector3fAD &end,
+    MaskAD active) const;
 
 } // namespace rayd

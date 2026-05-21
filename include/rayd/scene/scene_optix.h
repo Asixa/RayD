@@ -15,17 +15,17 @@ struct OptixIntersection {
     void reserve(int64_t size);
 
     int64_t m_size = 0;             ///< Allocated lane count.
-    IntDetached shape_id;          ///< Owning mesh id per ray; -1 when no hit.
-    IntDetached global_prim_id;    ///< Scene-global face index per ray; -1 when no hit.
-    Vector2fDetached barycentric;  ///< Barycentric (u, v) of the hit.
-    FloatDetached t;               ///< Hit distance; Infinity when no hit.
+    Int shape_id;          ///< Owning mesh id per ray; -1 when no hit.
+    Int global_prim_id;    ///< Scene-global face index per ray; -1 when no hit.
+    Vector2f barycentric;  ///< Barycentric (u, v) of the hit.
+    Float t;               ///< Hit distance; Infinity when no hit.
 };
 
 /// Result of a single segment occlusion test.
 struct OptixSegmentHit {
-    MaskDetached visible;          ///< True when the segment endpoints are mutually unoccluded.
-    MaskDetached hit;              ///< True when an occluder was found along the segment.
-    IntDetached global_prim_id;    ///< Scene-global face index of the occluder; -1 when none.
+    Mask visible;          ///< True when the segment endpoints are mutually unoccluded.
+    Mask hit;              ///< True when an occluder was found along the segment.
+    Int global_prim_id;    ///< Scene-global face index of the occluder; -1 when none.
 };
 
 /// Describes one mesh as input to an OptiX GAS/IAS build.

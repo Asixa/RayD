@@ -75,25 +75,25 @@ static Vector3fT<Detached> safe_normalize(const Vector3fT<Detached> &value) {
 
 /// Transform object-space triangle info to world space; normals use the inverse-transpose
 /// of \p to_world_matrix, and face normals/areas are recomputed from the transformed edges.
-static TriangleInfo transform_triangle_info(const TriangleInfo &triangle_info_object,
-                                            const Matrix4f &to_world_matrix) {
-    TriangleInfo triangles_world;
+static TriangleInfoAD transform_triangle_info(const TriangleInfoAD &triangle_info_object,
+                                            const Matrix4fAD &to_world_matrix) {
+    TriangleInfoAD triangles_world;
     triangles_world.face_indices = triangle_info_object.face_indices;
     triangles_world.p0 = transform_pos(to_world_matrix, triangle_info_object.p0);
     triangles_world.e1 = transform_dir(to_world_matrix, triangle_info_object.e1);
     triangles_world.e2 = transform_dir(to_world_matrix, triangle_info_object.e2);
 
-    const Matrix4f normal_to_world = transpose(inverse(to_world_matrix));
+    const Matrix4fAD normal_to_world = transpose(inverse(to_world_matrix));
     triangles_world.n0 = safe_normalize<false>(transform_dir(normal_to_world, triangle_info_object.n0));
     triangles_world.n1 = safe_normalize<false>(transform_dir(normal_to_world, triangle_info_object.n1));
     triangles_world.n2 = safe_normalize<false>(transform_dir(normal_to_world, triangle_info_object.n2));
 
-    const Vector3f raw_face_normals = cross(triangles_world.e1, triangles_world.e2);
-    const Float raw_face_areas = norm(raw_face_normals);
-    const Mask valid_faces = raw_face_areas > Epsilon;
+    const Vector3fAD raw_face_normals = cross(triangles_world.e1, triangles_world.e2);
+    const FloatAD raw_face_areas = norm(raw_face_normals);
+    const MaskAD valid_faces = raw_face_areas > Epsilon;
     triangles_world.face_normal = select(valid_faces,
                                          raw_face_normals / raw_face_areas,
-                                         Vector3f(0.f, 0.f, 1.f));
+                                         Vector3fAD(0.f, 0.f, 1.f));
     triangles_world.face_area = raw_face_areas * 0.5f;
     return triangles_world;
 }
@@ -122,40 +122,40 @@ Mesh::Mesh(const Mesh &other)
       optix_vertex_buffer_(other.optix_vertex_buffer_),
       optix_face_buffer_(other.optix_face_buffer_) {
     if (other.triangle_info_object_) {
-        triangle_info_object_ = std::make_unique<TriangleInfo>(*other.triangle_info_object_);
+        triangle_info_object_ = std::make_unique<TriangleInfoAD>(*other.triangle_info_object_);
     }
     if (other.triangle_info_) {
-        triangle_info_ = std::make_unique<TriangleInfo>(*other.triangle_info_);
+        triangle_info_ = std::make_unique<TriangleInfoAD>(*other.triangle_info_);
     }
     if (other.triangle_uv_) {
-        triangle_uv_ = std::make_unique<TriangleUV>(*other.triangle_uv_);
+        triangle_uv_ = std::make_unique<TriangleUVAD>(*other.triangle_uv_);
     }
     if (other.secondary_edge_info_) {
-        secondary_edge_info_ = std::make_unique<SecondaryEdgeInfo>(*other.secondary_edge_info_);
+        secondary_edge_info_ = std::make_unique<SecondaryEdgeInfoAD>(*other.secondary_edge_info_);
     }
 }
 
-Mesh::Mesh(const Vector3fDetached &vertex_positions,
-           const Vector3iDetached &face_indices,
-           const Vector2fDetached &vertex_uv,
-           const Vector3iDetached &face_uv_indices,
+Mesh::Mesh(const Vector3f &vertex_positions,
+           const Vector3i &face_indices,
+           const Vector2f &vertex_uv,
+           const Vector3i &face_uv_indices,
            bool verbose) {
     init(vertex_positions, face_indices, vertex_uv, face_uv_indices, verbose);
 }
 
 Mesh::~Mesh() = default;
 
-const Vector3f &Mesh::vertex_positions_world() const {
+const Vector3fAD &Mesh::vertex_positions_world() const {
     ensure_world_positions_ready();
     return vertex_positions_world_;
 }
 
-const SecondaryEdgeInfo *Mesh::secondary_edge_info() const {
+const SecondaryEdgeInfoAD *Mesh::secondary_edge_info() const {
     ensure_secondary_edge_info_ready();
     return secondary_edge_info_.get();
 }
 
-void Mesh::set_transform(const Matrix4f &matrix, bool set_left) {
+void Mesh::set_transform(const Matrix4fAD &matrix, bool set_left) {
     if (set_left) {
         left_transform_ = matrix;
     } else {
@@ -166,7 +166,7 @@ void Mesh::set_transform(const Matrix4f &matrix, bool set_left) {
     is_ready_ = false;
 }
 
-void Mesh::append_transform(const Matrix4f &matrix, bool append_left) {
+void Mesh::append_transform(const Matrix4fAD &matrix, bool append_left) {
     if (append_left) {
         left_transform_ = matrix * left_transform_;
     } else {
@@ -177,33 +177,33 @@ void Mesh::append_transform(const Matrix4f &matrix, bool append_left) {
     is_ready_ = false;
 }
 
-void Mesh::init(const Vector3fDetached &vertex_positions,
-                const Vector3iDetached &face_indices,
-                const Vector2fDetached &vertex_uv,
-                const Vector3iDetached &face_uv_indices,
+void Mesh::init(const Vector3f &vertex_positions,
+                const Vector3i &face_indices,
+                const Vector2f &vertex_uv,
+                const Vector3i &face_uv_indices,
                 bool verbose) {
     using namespace std::chrono;
 
     vertex_count_ = static_cast<int>(slices(vertex_positions));
     face_count_ = static_cast<int>(slices(face_indices));
-    vertex_positions_object_ = Vector3f(vertex_positions);
-    face_vertex_indices_ = Vector3i(face_indices);
+    vertex_positions_object_ = Vector3fAD(vertex_positions);
+    face_vertex_indices_ = Vector3iAD(face_indices);
     has_uv_ = slices(vertex_uv) > 0;
     if (has_uv_) {
-        vertex_uv_ = Vector2f(vertex_uv);
+        vertex_uv_ = Vector2fAD(vertex_uv);
         const size_t face_uv_count = slices(face_uv_indices);
         if (face_uv_count == 0) {
             require(slices(vertex_uv) == static_cast<size_t>(vertex_count_),
                     "Mesh::init(): UV count must match vertex count when face_uv_indices are omitted.");
-            face_uv_indices_ = Vector3i(face_indices);
+            face_uv_indices_ = Vector3iAD(face_indices);
         } else {
             require(face_uv_count == static_cast<size_t>(face_count_),
                     "Mesh::init(): face_uv_indices must match the number of faces.");
-            face_uv_indices_ = Vector3i(face_uv_indices);
+            face_uv_indices_ = Vector3iAD(face_uv_indices);
         }
     } else {
-        vertex_uv_ = Vector2f();
-        face_uv_indices_ = Vector3i();
+        vertex_uv_ = Vector2fAD();
+        face_uv_indices_ = Vector3iAD();
     }
 
     std::array<std::vector<int>, 3> face_indices_cpu;
@@ -256,13 +256,13 @@ void Mesh::init(const Vector3fDetached &vertex_positions,
             ++edge_count;
         }
 
-        edge_indices_ = VectoriT<5, true>(drjit::load<IntDetached>(edge_records[0].data(), edge_count),
-                                          drjit::load<IntDetached>(edge_records[1].data(), edge_count),
-                                          drjit::load<IntDetached>(edge_records[2].data(), edge_count),
-                                          drjit::load<IntDetached>(edge_records[3].data(), edge_count),
-                                          drjit::load<IntDetached>(edge_records[4].data(), edge_count));
+        edge_indices_ = VectoriT<5, true>(drjit::load<Int>(edge_records[0].data(), edge_count),
+                                          drjit::load<Int>(edge_records[1].data(), edge_count),
+                                          drjit::load<Int>(edge_records[2].data(), edge_count),
+                                          drjit::load<Int>(edge_records[3].data(), edge_count),
+                                          drjit::load<Int>(edge_records[4].data(), edge_count));
     } else {
-        edge_indices_ = VectoriT<5, true>(IntDetached(), IntDetached(), IntDetached(), IntDetached(), IntDetached());
+        edge_indices_ = VectoriT<5, true>(Int(), Int(), Int(), Int(), Int());
     }
 
     const auto end_time = high_resolution_clock::now();
@@ -282,21 +282,21 @@ void Mesh::build() {
     require(face_count_ > 0, "Mesh::build(): mesh has no faces.");
 
     if (!triangle_info_object_) {
-        triangle_info_object_ = std::make_unique<TriangleInfo>();
+        triangle_info_object_ = std::make_unique<TriangleInfoAD>();
     }
     std::tie(*triangle_info_object_, vertex_normals_object_) =
         process_mesh<false>(vertex_positions_object_, face_vertex_indices_);
 
     if (!triangle_info_) {
-        triangle_info_ = std::make_unique<TriangleInfo>();
+        triangle_info_ = std::make_unique<TriangleInfoAD>();
     }
     update_world_triangle_info();
 
     triangle_uv_.reset();
     if (has_uv_) {
-        triangle_uv_ = std::make_unique<TriangleUV>();
+        triangle_uv_ = std::make_unique<TriangleUVAD>();
         for (int corner = 0; corner < 3; ++corner) {
-            (*triangle_uv_)[corner] = gather<Vector2f>(vertex_uv_, face_uv_indices_[corner]);
+            (*triangle_uv_)[corner] = gather<Vector2fAD>(vertex_uv_, face_uv_indices_[corner]);
         }
     }
 
@@ -344,7 +344,7 @@ void Mesh::update_world_triangle_info() {
     require(triangle_info_ != nullptr,
             "Mesh::update_world_triangle_info(): world-space triangle cache must be allocated first.");
 
-    const Matrix4f to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
+    const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
     *triangle_info_ = transform_triangle_info(*triangle_info_object_, to_world_matrix);
 }
 
@@ -358,23 +358,23 @@ void Mesh::update_secondary_edge_info() {
     }
 
     if (!secondary_edge_info_) {
-        secondary_edge_info_ = std::make_unique<SecondaryEdgeInfo>();
+        secondary_edge_info_ = std::make_unique<SecondaryEdgeInfoAD>();
     }
 
-    SecondaryEdgeInfo secondary_edges;
-    const Int edge_vertex_0 = Int(edge_indices_[0]);
-    const Int edge_vertex_1 = Int(edge_indices_[1]);
-    const Int face_index_0 = Int(edge_indices_[2]);
-    const Int face_index_1 = Int(edge_indices_[3]);
-    const Int opposite_vertex = Int(edge_indices_[4]);
-    const Mask is_boundary = face_index_1 < 0;
+    SecondaryEdgeInfoAD secondary_edges;
+    const IntAD edge_vertex_0 = IntAD(edge_indices_[0]);
+    const IntAD edge_vertex_1 = IntAD(edge_indices_[1]);
+    const IntAD face_index_0 = IntAD(edge_indices_[2]);
+    const IntAD face_index_1 = IntAD(edge_indices_[3]);
+    const IntAD opposite_vertex = IntAD(edge_indices_[4]);
+    const MaskAD is_boundary = face_index_1 < 0;
 
     secondary_edges.is_boundary = is_boundary;
-    secondary_edges.start = gather<Vector3f>(vertex_positions_world_, edge_vertex_0);
-    secondary_edges.edge = gather<Vector3f>(vertex_positions_world_, edge_vertex_1) - secondary_edges.start;
-    secondary_edges.normal0 = gather<Vector3f>(triangle_info_->face_normal, face_index_0);
-    secondary_edges.normal1 = gather<Vector3f>(triangle_info_->face_normal, face_index_1, ~is_boundary);
-    secondary_edges.opposite = gather<Vector3f>(vertex_positions_world_, opposite_vertex);
+    secondary_edges.start = gather<Vector3fAD>(vertex_positions_world_, edge_vertex_0);
+    secondary_edges.edge = gather<Vector3fAD>(vertex_positions_world_, edge_vertex_1) - secondary_edges.start;
+    secondary_edges.normal0 = gather<Vector3fAD>(triangle_info_->face_normal, face_index_0);
+    secondary_edges.normal1 = gather<Vector3fAD>(triangle_info_->face_normal, face_index_1, ~is_boundary);
+    secondary_edges.opposite = gather<Vector3fAD>(vertex_positions_world_, opposite_vertex);
     *secondary_edge_info_ = secondary_edges;
     secondary_edge_info_dirty_ = false;
 }
@@ -384,7 +384,7 @@ void Mesh::ensure_world_positions_ready() const {
         return;
     }
 
-    const Matrix4f to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
+    const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
     vertex_positions_world_ = transform_pos(to_world_matrix, vertex_positions_object_);
     world_positions_dirty_ = false;
 }
@@ -407,10 +407,10 @@ void Mesh::prepare_optix_buffers() {
 void Mesh::update_optix_vertex_buffer() {
     const int scalar_count = vertex_count_ * 3;
     if (slices(optix_vertex_buffer_) != static_cast<size_t>(scalar_count)) {
-        optix_vertex_buffer_ = empty<FloatDetached>(scalar_count);
+        optix_vertex_buffer_ = empty<Float>(scalar_count);
     }
 
-    const IntDetached indices = arange<IntDetached>(vertex_count_) * 3;
+    const Int indices = arange<Int>(vertex_count_) * 3;
     for (int axis = 0; axis < 3; ++axis) {
         scatter(optix_vertex_buffer_, detach<false>(vertex_positions_object_[axis]), indices + axis);
     }
@@ -423,10 +423,10 @@ void Mesh::ensure_optix_face_buffer_ready() {
     }
 
     if (slices(optix_face_buffer_) != static_cast<size_t>(scalar_count)) {
-        optix_face_buffer_ = empty<IntDetached>(scalar_count);
+        optix_face_buffer_ = empty<Int>(scalar_count);
     }
 
-    const IntDetached indices = arange<IntDetached>(face_count_) * 3;
+    const Int indices = arange<Int>(face_count_) * 3;
     for (int axis = 0; axis < 3; ++axis) {
         scatter(optix_face_buffer_, detach<false>(face_vertex_indices_[axis]), indices + axis);
     }

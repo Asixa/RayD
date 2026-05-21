@@ -246,51 +246,51 @@ NearestRayEdgeT<Detached> initialize_nearest_ray_edge_result(int query_count) {
 struct ReflectionTraceRaw {
     int max_bounces = 0;
     int ray_count = 0;
-    IntDetached bounce_count;
-    IntDetached discovery_count;
-    IntDetached representative_ray_index;
-    IntDetached shape_ids;
-    IntDetached prim_ids;
-    FloatDetached t;
-    FloatDetached bary_u;
-    FloatDetached bary_v;
-    FloatDetached hit_x;
-    FloatDetached hit_y;
-    FloatDetached hit_z;
-    FloatDetached norm_x;
-    FloatDetached norm_y;
-    FloatDetached norm_z;
-    FloatDetached img_x;
-    FloatDetached img_y;
-    FloatDetached img_z;
-    FloatDetached trailing_t;
-    IntDetached trailing_prim;
-    FloatDetached trailing_dir_x;
-    FloatDetached trailing_dir_y;
-    FloatDetached trailing_dir_z;
-    FloatDetached trailing_origin_x;
-    FloatDetached trailing_origin_y;
-    FloatDetached trailing_origin_z;
+    Int bounce_count;
+    Int discovery_count;
+    Int representative_ray_index;
+    Int shape_ids;
+    Int prim_ids;
+    Float t;
+    Float bary_u;
+    Float bary_v;
+    Float hit_x;
+    Float hit_y;
+    Float hit_z;
+    Float norm_x;
+    Float norm_y;
+    Float norm_z;
+    Float img_x;
+    Float img_y;
+    Float img_z;
+    Float trailing_t;
+    Int trailing_prim;
+    Float trailing_dir_x;
+    Float trailing_dir_y;
+    Float trailing_dir_z;
+    Float trailing_origin_x;
+    Float trailing_origin_y;
+    Float trailing_origin_z;
 };
 
 struct ReflectionEpcRaw {
     int ray_count = 0;
     int max_bounces = 0;
-    MaskDetached valid;
-    IntDetached bounce_count;
-    FloatDetached path_length;
-    FloatDetached point_x;
-    FloatDetached point_y;
-    FloatDetached point_z;
-    IntDetached trace_prim_ids;
-    IntDetached resolved_prim_ids;
-    IntDetached surface_group_ids;
-    FloatDetached plane_normal_x;
-    FloatDetached plane_normal_y;
-    FloatDetached plane_normal_z;
-    IntDetached first_blocked_segment;
-    IntDetached first_blocked_prim;
-    IntDetached first_blocked_group;
+    Mask valid;
+    Int bounce_count;
+    Float path_length;
+    Float point_x;
+    Float point_y;
+    Float point_z;
+    Int trace_prim_ids;
+    Int resolved_prim_ids;
+    Int surface_group_ids;
+    Float plane_normal_x;
+    Float plane_normal_y;
+    Float plane_normal_z;
+    Int first_blocked_segment;
+    Int first_blocked_prim;
+    Int first_blocked_group;
 };
 
 struct AccumRaw {
@@ -298,48 +298,48 @@ struct AccumRaw {
     int max_bounces = 0;
     int grid_cell_count = 0;
     int wedge_capacity = 0;
-    FloatDetached reflection_power;
-    FloatDetached field_x_re;
-    FloatDetached field_x_im;
-    FloatDetached field_y_re;
-    FloatDetached field_y_im;
-    FloatDetached field_z_re;
-    FloatDetached field_z_im;
-    IntDetached reflection_count;
-    IntDetached wedge_count;
-    IntDetached wedge_ray_index;
-    FloatDetached wedge_hit_x;
-    FloatDetached wedge_hit_y;
-    FloatDetached wedge_hit_z;
-    FloatDetached wedge_normal_x;
-    FloatDetached wedge_normal_y;
-    FloatDetached wedge_normal_z;
-    IntDetached wedge_prim_id;
-    FloatDetached wedge_dir_x;
-    FloatDetached wedge_dir_y;
-    FloatDetached wedge_dir_z;
-    IntDetached wedge_bounce_depth;
+    Float reflection_power;
+    Float field_x_re;
+    Float field_x_im;
+    Float field_y_re;
+    Float field_y_im;
+    Float field_z_re;
+    Float field_z_im;
+    Int reflection_count;
+    Int wedge_count;
+    Int wedge_ray_index;
+    Float wedge_hit_x;
+    Float wedge_hit_y;
+    Float wedge_hit_z;
+    Float wedge_normal_x;
+    Float wedge_normal_y;
+    Float wedge_normal_z;
+    Int wedge_prim_id;
+    Float wedge_dir_x;
+    Float wedge_dir_y;
+    Float wedge_dir_z;
+    Int wedge_bounce_depth;
 };
 
 /// Convert per-mesh (shape_id, local primitive id) pairs into scene-global primitive ids;
 /// invalid or out-of-range inputs map to -1.
-IntDetached globalize_primitive_ids(const IntDetached &local_prim_ids,
-                                    const IntDetached &shape_ids,
-                                    const IntDetached &face_offsets) {
+Int globalize_primitive_ids(const Int &local_prim_ids,
+                                    const Int &shape_ids,
+                                    const Int &face_offsets) {
     const int ray_count = static_cast<int>(slices(local_prim_ids));
     if (ray_count == 0) {
-        return IntDetached();
+        return Int();
     }
 
     const int mesh_count = std::max(0, static_cast<int>(slices(face_offsets)) - 1);
-    const MaskDetached valid =
+    const Mask valid =
         (local_prim_ids >= 0) && (shape_ids >= 0) && (shape_ids < mesh_count);
-    const IntDetached safe_shape_ids = select(valid, shape_ids, zeros<IntDetached>(ray_count));
-    const IntDetached mesh_face_offsets =
-        gather<IntDetached>(face_offsets, safe_shape_ids, valid);
+    const Int safe_shape_ids = select(valid, shape_ids, zeros<Int>(ray_count));
+    const Int mesh_face_offsets =
+        gather<Int>(face_offsets, safe_shape_ids, valid);
     return select(valid,
                   local_prim_ids + mesh_face_offsets,
-                  full<IntDetached>(-1, ray_count));
+                  full<Int>(-1, ray_count));
 }
 
 template <bool Detached>
@@ -369,21 +369,21 @@ ReflectionEpcRaw allocate_reflection_epc_raw(int ray_count, int max_bounces) {
     ReflectionEpcRaw raw;
     raw.ray_count = ray_count;
     raw.max_bounces = max_bounces;
-    raw.valid = empty<MaskDetached>(ray_count);
-    raw.bounce_count = empty<IntDetached>(ray_count);
-    raw.path_length = empty<FloatDetached>(ray_count);
-    raw.point_x = empty<FloatDetached>(slot_count);
-    raw.point_y = empty<FloatDetached>(slot_count);
-    raw.point_z = empty<FloatDetached>(slot_count);
-    raw.trace_prim_ids = empty<IntDetached>(slot_count);
-    raw.resolved_prim_ids = empty<IntDetached>(slot_count);
-    raw.surface_group_ids = empty<IntDetached>(slot_count);
-    raw.plane_normal_x = empty<FloatDetached>(slot_count);
-    raw.plane_normal_y = empty<FloatDetached>(slot_count);
-    raw.plane_normal_z = empty<FloatDetached>(slot_count);
-    raw.first_blocked_segment = empty<IntDetached>(ray_count);
-    raw.first_blocked_prim = empty<IntDetached>(ray_count);
-    raw.first_blocked_group = empty<IntDetached>(ray_count);
+    raw.valid = empty<Mask>(ray_count);
+    raw.bounce_count = empty<Int>(ray_count);
+    raw.path_length = empty<Float>(ray_count);
+    raw.point_x = empty<Float>(slot_count);
+    raw.point_y = empty<Float>(slot_count);
+    raw.point_z = empty<Float>(slot_count);
+    raw.trace_prim_ids = empty<Int>(slot_count);
+    raw.resolved_prim_ids = empty<Int>(slot_count);
+    raw.surface_group_ids = empty<Int>(slot_count);
+    raw.plane_normal_x = empty<Float>(slot_count);
+    raw.plane_normal_y = empty<Float>(slot_count);
+    raw.plane_normal_z = empty<Float>(slot_count);
+    raw.first_blocked_segment = empty<Int>(ray_count);
+    raw.first_blocked_prim = empty<Int>(ray_count);
+    raw.first_blocked_group = empty<Int>(ray_count);
     return raw;
 }
 
@@ -543,31 +543,31 @@ ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces)
     ReflectionTraceRaw raw;
     raw.max_bounces = max_bounces;
     raw.ray_count = ray_count;
-    raw.bounce_count = empty<IntDetached>(ray_count);
-    raw.discovery_count = empty<IntDetached>(ray_count);
-    raw.representative_ray_index = empty<IntDetached>(ray_count);
-    raw.shape_ids = empty<IntDetached>(slot_count);
-    raw.prim_ids = empty<IntDetached>(slot_count);
-    raw.t = empty<FloatDetached>(slot_count);
-    raw.bary_u = empty<FloatDetached>(slot_count);
-    raw.bary_v = empty<FloatDetached>(slot_count);
-    raw.hit_x = empty<FloatDetached>(slot_count);
-    raw.hit_y = empty<FloatDetached>(slot_count);
-    raw.hit_z = empty<FloatDetached>(slot_count);
-    raw.norm_x = empty<FloatDetached>(slot_count);
-    raw.norm_y = empty<FloatDetached>(slot_count);
-    raw.norm_z = empty<FloatDetached>(slot_count);
-    raw.img_x = empty<FloatDetached>(slot_count);
-    raw.img_y = empty<FloatDetached>(slot_count);
-    raw.img_z = empty<FloatDetached>(slot_count);
-    raw.trailing_t = empty<FloatDetached>(ray_count);
-    raw.trailing_prim = empty<IntDetached>(ray_count);
-    raw.trailing_dir_x = empty<FloatDetached>(ray_count);
-    raw.trailing_dir_y = empty<FloatDetached>(ray_count);
-    raw.trailing_dir_z = empty<FloatDetached>(ray_count);
-    raw.trailing_origin_x = empty<FloatDetached>(ray_count);
-    raw.trailing_origin_y = empty<FloatDetached>(ray_count);
-    raw.trailing_origin_z = empty<FloatDetached>(ray_count);
+    raw.bounce_count = empty<Int>(ray_count);
+    raw.discovery_count = empty<Int>(ray_count);
+    raw.representative_ray_index = empty<Int>(ray_count);
+    raw.shape_ids = empty<Int>(slot_count);
+    raw.prim_ids = empty<Int>(slot_count);
+    raw.t = empty<Float>(slot_count);
+    raw.bary_u = empty<Float>(slot_count);
+    raw.bary_v = empty<Float>(slot_count);
+    raw.hit_x = empty<Float>(slot_count);
+    raw.hit_y = empty<Float>(slot_count);
+    raw.hit_z = empty<Float>(slot_count);
+    raw.norm_x = empty<Float>(slot_count);
+    raw.norm_y = empty<Float>(slot_count);
+    raw.norm_z = empty<Float>(slot_count);
+    raw.img_x = empty<Float>(slot_count);
+    raw.img_y = empty<Float>(slot_count);
+    raw.img_z = empty<Float>(slot_count);
+    raw.trailing_t = empty<Float>(ray_count);
+    raw.trailing_prim = empty<Int>(ray_count);
+    raw.trailing_dir_x = empty<Float>(ray_count);
+    raw.trailing_dir_y = empty<Float>(ray_count);
+    raw.trailing_dir_z = empty<Float>(ray_count);
+    raw.trailing_origin_x = empty<Float>(ray_count);
+    raw.trailing_origin_y = empty<Float>(ray_count);
+    raw.trailing_origin_z = empty<Float>(ray_count);
     return raw;
 }
 
@@ -619,28 +619,28 @@ AccumRaw allocate_reflection_accumulation_raw(int ray_count,
     raw.max_bounces = max_bounces;
     raw.grid_cell_count = grid_cell_count;
     raw.wedge_capacity = wedge_capacity;
-    raw.reflection_power = empty<FloatDetached>(grid_cell_count);
-    raw.field_x_re = empty<FloatDetached>(grid_cell_count);
-    raw.field_x_im = empty<FloatDetached>(grid_cell_count);
-    raw.field_y_re = empty<FloatDetached>(grid_cell_count);
-    raw.field_y_im = empty<FloatDetached>(grid_cell_count);
-    raw.field_z_re = empty<FloatDetached>(grid_cell_count);
-    raw.field_z_im = empty<FloatDetached>(grid_cell_count);
-    raw.reflection_count = empty<IntDetached>(1);
-    raw.wedge_count = empty<IntDetached>(1);
+    raw.reflection_power = empty<Float>(grid_cell_count);
+    raw.field_x_re = empty<Float>(grid_cell_count);
+    raw.field_x_im = empty<Float>(grid_cell_count);
+    raw.field_y_re = empty<Float>(grid_cell_count);
+    raw.field_y_im = empty<Float>(grid_cell_count);
+    raw.field_z_re = empty<Float>(grid_cell_count);
+    raw.field_z_im = empty<Float>(grid_cell_count);
+    raw.reflection_count = empty<Int>(1);
+    raw.wedge_count = empty<Int>(1);
     const int event_count = std::max(1, wedge_capacity);
-    raw.wedge_ray_index = empty<IntDetached>(event_count);
-    raw.wedge_hit_x = empty<FloatDetached>(event_count);
-    raw.wedge_hit_y = empty<FloatDetached>(event_count);
-    raw.wedge_hit_z = empty<FloatDetached>(event_count);
-    raw.wedge_normal_x = empty<FloatDetached>(event_count);
-    raw.wedge_normal_y = empty<FloatDetached>(event_count);
-    raw.wedge_normal_z = empty<FloatDetached>(event_count);
-    raw.wedge_prim_id = empty<IntDetached>(event_count);
-    raw.wedge_dir_x = empty<FloatDetached>(event_count);
-    raw.wedge_dir_y = empty<FloatDetached>(event_count);
-    raw.wedge_dir_z = empty<FloatDetached>(event_count);
-    raw.wedge_bounce_depth = empty<IntDetached>(event_count);
+    raw.wedge_ray_index = empty<Int>(event_count);
+    raw.wedge_hit_x = empty<Float>(event_count);
+    raw.wedge_hit_y = empty<Float>(event_count);
+    raw.wedge_hit_z = empty<Float>(event_count);
+    raw.wedge_normal_x = empty<Float>(event_count);
+    raw.wedge_normal_y = empty<Float>(event_count);
+    raw.wedge_normal_z = empty<Float>(event_count);
+    raw.wedge_prim_id = empty<Int>(event_count);
+    raw.wedge_dir_x = empty<Float>(event_count);
+    raw.wedge_dir_y = empty<Float>(event_count);
+    raw.wedge_dir_z = empty<Float>(event_count);
+    raw.wedge_bounce_depth = empty<Int>(event_count);
     return raw;
 }
 
@@ -751,7 +751,7 @@ void initialize_reflection_accumulation_raw(AccumRaw &raw) {
 
 template <typename ArrayD>
 ArrayD prefix_array(const ArrayD &value, int count) {
-    return gather<ArrayD>(value, arange<IntDetached>(count));
+    return gather<ArrayD>(value, arange<Int>(count));
 }
 
 template <typename ArrayD>
@@ -765,17 +765,17 @@ ArrayD concat_array_sequence(const std::vector<ArrayD> &parts) {
     return result;
 }
 
-IntDetached reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
-    const IntDetached slot = arange<IntDetached>(ray_count * max_bounces);
-    const IntDetached ray_index = slot / IntDetached(max_bounces);
-    const IntDetached bounce_index = slot - ray_index * IntDetached(max_bounces);
-    return bounce_index * IntDetached(ray_count) + ray_index;
+Int reflection_trace_ray_major_indices(int ray_count, int max_bounces) {
+    const Int slot = arange<Int>(ray_count * max_bounces);
+    const Int ray_index = slot / Int(max_bounces);
+    const Int bounce_index = slot - ray_index * Int(max_bounces);
+    return bounce_index * Int(ray_count) + ray_index;
 }
 
 template <bool Detached>
-MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
+Mask sanitize_reflection_active(const RayT<Detached> &ray,
                                         MaskT<Detached> active) {
-    MaskDetached active_detached;
+    Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         active_detached &= drjit::isfinite(detach<false>(ray.o.x())) &&
@@ -784,7 +784,7 @@ MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
         active_detached &= drjit::isfinite(detach<false>(ray.d.x())) &&
                            drjit::isfinite(detach<false>(ray.d.y())) &&
                            drjit::isfinite(detach<false>(ray.d.z()));
-        active_detached &= squared_norm(Vector3fDetached(detach<false>(ray.d.x()),
+        active_detached &= squared_norm(Vector3f(detach<false>(ray.d.x()),
                                                         detach<false>(ray.d.y()),
                                                         detach<false>(ray.d.z()))) > 0.f;
         active_detached &= ~drjit::isfinite(detach<false>(ray.tmax)) ||
@@ -804,10 +804,10 @@ MaskDetached sanitize_reflection_active(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-MaskDetached sanitize_segment_active(const Vector3fT<Detached> &start,
+Mask sanitize_segment_active(const Vector3fT<Detached> &start,
                                      const Vector3fT<Detached> &end,
                                      MaskT<Detached> active) {
-    MaskDetached active_detached;
+    Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         active_detached &= drjit::isfinite(detach<false>(start.x())) &&
@@ -837,11 +837,11 @@ void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline> &pipeline,
     }
 }
 
-void eval_segment_visibility_common(const Vector3fDetached &start,
-                                    const IntDetached &face_offsets,
-                                    const IntDetached &ignore_prim_ids,
+void eval_segment_visibility_common(const Vector3f &start,
+                                    const Int &face_offsets,
+                                    const Int &ignore_prim_ids,
                                     int ignore_k,
-                                    const MaskDetached &active_detached) {
+                                    const Mask &active_detached) {
     if (ignore_k > 0) {
         drjit::eval(start, face_offsets, ignore_prim_ids, active_detached);
     } else {
@@ -851,12 +851,12 @@ void eval_segment_visibility_common(const Vector3fDetached &start,
 
 SegmentVisibilityParams make_segment_visibility_params(
     const OptixScene &optix_scene,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &start,
-    const IntDetached &ignore_prim_ids,
+    const Vector3f &start,
+    const Int &ignore_prim_ids,
     int ignore_k,
-    const MaskDetached &active_detached,
+    const Mask &active_detached,
     int ray_count) {
     SegmentVisibilityParams params = {};
     params.handle = optix_scene.ias_handle();
@@ -872,22 +872,22 @@ SegmentVisibilityParams make_segment_visibility_params(
     return params;
 }
 
-MaskDetached launch_segment_visibility_detached(
+Mask launch_segment_visibility_detached(
     const OptixScene &optix_scene,
     const OptixLaunchPipeline &pipeline,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &start,
-    const Vector3fDetached &end,
-    const IntDetached &ignore_prim_ids,
+    const Vector3f &start,
+    const Vector3f &end,
+    const Int &ignore_prim_ids,
     int ignore_k,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     if (ray_count == 0) {
-        return MaskDetached();
+        return Mask();
     }
 
-    MaskDetached visible = empty<MaskDetached>(ray_count);
+    Mask visible = empty<Mask>(ray_count);
     eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
     drjit::eval(end);
 
@@ -911,9 +911,9 @@ MaskDetached launch_segment_visibility_detached(
 template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(
     const OptixScene &optix_scene,
-    const Vector3fDetached &start,
-    const Vector3fDetached &end,
-    const MaskDetached &active_detached) {
+    const Vector3f &start,
+    const Vector3f &end,
+    const Mask &active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentVisibilityT<Detached> result;
     result.ray_count = ray_count;
@@ -921,7 +921,7 @@ SegmentVisibilityT<Detached> trace_segment_visibility_jit_no_ignore(
     const OptixSegmentHit hit =
         optix_scene.segment_hit<true>(start, end, active_detached);
     if constexpr (!Detached) {
-        result.visible = Mask(hit.visible);
+        result.visible = MaskAD(hit.visible);
     } else {
         result.visible = hit.visible;
     }
@@ -932,18 +932,18 @@ template <bool Detached>
 SegmentVisibilityT<Detached> trace_segment_visibility_native(
     const OptixScene &optix_scene,
     const OptixLaunchPipeline &pipeline,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &start,
-    const Vector3fDetached &end,
-    const IntDetached &ignore_prim_ids,
+    const Vector3f &start,
+    const Vector3f &end,
+    const Int &ignore_prim_ids,
     int ignore_k,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
-    const MaskDetached visible_detached =
+    const Mask visible_detached =
         launch_segment_visibility_detached(optix_scene,
                                            pipeline,
                                            face_offsets,
@@ -954,7 +954,7 @@ SegmentVisibilityT<Detached> trace_segment_visibility_native(
                                            ignore_k,
                                            active_detached);
     if constexpr (!Detached) {
-        result.visible = Mask(visible_detached);
+        result.visible = MaskAD(visible_detached);
     } else {
         result.visible = visible_detached;
     }
@@ -964,10 +964,10 @@ SegmentVisibilityT<Detached> trace_segment_visibility_native(
 template <bool Detached>
 SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(
     const OptixScene &optix_scene,
-    const Vector3fDetached &start,
-    const Vector3fDetached &end_a,
-    const Vector3fDetached &end_b,
-    const MaskDetached &active_detached) {
+    const Vector3f &start,
+    const Vector3f &end_a,
+    const Vector3f &end_b,
+    const Mask &active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentPairVisibilityT<Detached> result;
     result.ray_count = ray_count;
@@ -977,8 +977,8 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_jit_no_ignore(
     const OptixSegmentHit hit_b =
         optix_scene.segment_hit<true>(start, end_b, active_detached);
     if constexpr (!Detached) {
-        result.visible_a = Mask(hit_a.visible);
-        result.visible_b = Mask(hit_b.visible);
+        result.visible_a = MaskAD(hit_a.visible);
+        result.visible_b = MaskAD(hit_b.visible);
     } else {
         result.visible_a = hit_a.visible;
         result.visible_b = hit_b.visible;
@@ -990,20 +990,20 @@ template <bool Detached>
 SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     const OptixScene &optix_scene,
     const OptixLaunchPipeline &pipeline,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &start,
-    const Vector3fDetached &end_a,
-    const Vector3fDetached &end_b,
-    const IntDetached &ignore_prim_ids,
+    const Vector3f &start,
+    const Vector3f &end_a,
+    const Vector3f &end_b,
+    const Int &ignore_prim_ids,
     int ignore_k,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     const int ray_count = static_cast<int>(slices(start));
     SegmentPairVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
-    MaskDetached visible_a = empty<MaskDetached>(ray_count);
-    MaskDetached visible_b = empty<MaskDetached>(ray_count);
+    Mask visible_a = empty<Mask>(ray_count);
+    Mask visible_b = empty<Mask>(ray_count);
     eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
     drjit::eval(end_a, end_b);
 
@@ -1027,8 +1027,8 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentPair), params);
 
     if constexpr (!Detached) {
-        result.visible_a = Mask(visible_a);
-        result.visible_b = Mask(visible_b);
+        result.visible_a = MaskAD(visible_a);
+        result.visible_b = MaskAD(visible_b);
     } else {
         result.visible_a = visible_a;
         result.visible_b = visible_b;
@@ -1039,30 +1039,30 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
 template <bool Detached>
 AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(
     const OptixScene &optix_scene,
-    const Vector3fDetached &source_pos,
-    const Vector3fDetached &edge_pos,
-    const Vector3fDetached &edge_dir,
-    const FloatDetached &edge_line_min,
-    const FloatDetached &edge_line_max,
+    const Vector3f &source_pos,
+    const Vector3f &edge_pos,
+    const Vector3f &edge_dir,
+    const Float &edge_line_min,
+    const Float &edge_line_max,
     const std::vector<float> &sample_fractions,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     const int state_count = static_cast<int>(slices(source_pos));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
 
-    MaskDetached any_visible = full<MaskDetached>(false, state_count);
-    const FloatDetached span =
-        maximum(edge_line_max - edge_line_min, FloatDetached(0.f));
+    Mask any_visible = full<Mask>(false, state_count);
+    const Float span =
+        maximum(edge_line_max - edge_line_min, Float(0.f));
     for (float fraction : sample_fractions) {
-        const FloatDetached sample_t = edge_line_min + fraction * span;
-        const Vector3fDetached sample_pos = edge_pos + sample_t * edge_dir;
+        const Float sample_t = edge_line_min + fraction * span;
+        const Vector3f sample_pos = edge_pos + sample_t * edge_dir;
         const OptixSegmentHit hit =
             optix_scene.segment_hit<true>(source_pos, sample_pos, active_detached);
         any_visible = any_visible || hit.visible;
     }
 
     if constexpr (!Detached) {
-        result.any_visible = Mask(any_visible);
+        result.any_visible = MaskAD(any_visible);
     } else {
         result.any_visible = any_visible;
     }
@@ -1073,20 +1073,20 @@ template <bool Detached>
 AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     const OptixScene &optix_scene,
     const OptixLaunchPipeline &pipeline,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &source_pos,
-    const Vector3fDetached &edge_pos,
-    const Vector3fDetached &edge_dir,
-    const FloatDetached &edge_line_min,
-    const FloatDetached &edge_line_max,
+    const Vector3f &source_pos,
+    const Vector3f &edge_pos,
+    const Vector3f &edge_dir,
+    const Float &edge_line_min,
+    const Float &edge_line_max,
     const std::vector<float> &sample_fractions,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     const int state_count = static_cast<int>(slices(source_pos));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
 
-    MaskDetached any_visible = empty<MaskDetached>(state_count);
+    Mask any_visible = empty<Mask>(state_count);
     drjit::eval(source_pos,
                 edge_pos,
                 edge_dir,
@@ -1100,7 +1100,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
                                        face_offsets,
                                        mesh_count,
                                        source_pos,
-                                       IntDetached(),
+                                       Int(),
                                        0,
                                        active_detached,
                                        state_count);
@@ -1120,7 +1120,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::AxialEdge), params);
 
     if constexpr (!Detached) {
-        result.any_visible = Mask(any_visible);
+        result.any_visible = MaskAD(any_visible);
     } else {
         result.any_visible = any_visible;
     }
@@ -1130,44 +1130,44 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
 template <bool Detached>
 SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_jit_no_ignore(
     const OptixScene &optix_scene,
-    const Vector3fDetached &points,
-    const IntDetached &chain_length,
+    const Vector3f &points,
+    const Int &chain_length,
     int chain_count,
     int max_points,
     int max_segments,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     SegmentChainVisibilityT<Detached> result;
     result.chain_count = chain_count;
     result.max_segments = max_segments;
 
-    const IntDetached chain_index = arange<IntDetached>(chain_count);
-    const IntDetached chain_base = chain_index * max_points;
-    MaskDetached all_visible = active_detached;
-    IntDetached first_blocked_segment = full<IntDetached>(-1, chain_count);
-    IntDetached first_blocked_prim = full<IntDetached>(-1, chain_count);
+    const Int chain_index = arange<Int>(chain_count);
+    const Int chain_base = chain_index * max_points;
+    Mask all_visible = active_detached;
+    Int first_blocked_segment = full<Int>(-1, chain_count);
+    Int first_blocked_prim = full<Int>(-1, chain_count);
 
     for (int segment = 0; segment < max_segments; ++segment) {
-        const MaskDetached segment_active =
+        const Mask segment_active =
             active_detached && all_visible && (chain_length > segment);
-        const IntDetached start_index = chain_base + segment;
-        const Vector3fDetached start_point =
-            gather<Vector3fDetached>(points, start_index, segment_active);
-        const Vector3fDetached end_point =
-            gather<Vector3fDetached>(points, start_index + 1, segment_active);
+        const Int start_index = chain_base + segment;
+        const Vector3f start_point =
+            gather<Vector3f>(points, start_index, segment_active);
+        const Vector3f end_point =
+            gather<Vector3f>(points, start_index + 1, segment_active);
         const OptixSegmentHit hit =
             optix_scene.segment_hit<true>(start_point, end_point, segment_active);
-        const MaskDetached blocked = segment_active && !hit.visible;
+        const Mask blocked = segment_active && !hit.visible;
         all_visible &= !blocked;
         first_blocked_segment =
-            select(blocked, IntDetached(segment), first_blocked_segment);
+            select(blocked, Int(segment), first_blocked_segment);
         first_blocked_prim =
             select(blocked, hit.global_prim_id, first_blocked_prim);
     }
 
     if constexpr (!Detached) {
-        result.all_visible = Mask(all_visible);
-        result.first_blocked_segment = Int(first_blocked_segment);
-        result.first_blocked_prim = Int(first_blocked_prim);
+        result.all_visible = MaskAD(all_visible);
+        result.first_blocked_segment = IntAD(first_blocked_segment);
+        result.first_blocked_prim = IntAD(first_blocked_prim);
     } else {
         result.all_visible = all_visible;
         result.first_blocked_segment = first_blocked_segment;
@@ -1180,23 +1180,23 @@ template <bool Detached>
 SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     const OptixScene &optix_scene,
     const OptixLaunchPipeline &pipeline,
-    const IntDetached &face_offsets,
+    const Int &face_offsets,
     int mesh_count,
-    const Vector3fDetached &points,
-    const IntDetached &chain_length,
-    const IntDetached &ignore_prim_per_segment,
+    const Vector3f &points,
+    const Int &chain_length,
+    const Int &ignore_prim_per_segment,
     int ignore_k,
     int chain_count,
     int max_points,
     int max_segments,
-    const MaskDetached &active_detached) {
+    const Mask &active_detached) {
     SegmentChainVisibilityT<Detached> result;
     result.chain_count = chain_count;
     result.max_segments = max_segments;
 
-    MaskDetached all_visible = empty<MaskDetached>(chain_count);
-    IntDetached first_blocked_segment = empty<IntDetached>(chain_count);
-    IntDetached first_blocked_prim = empty<IntDetached>(chain_count);
+    Mask all_visible = empty<Mask>(chain_count);
+    Int first_blocked_segment = empty<Int>(chain_count);
+    Int first_blocked_prim = empty<Int>(chain_count);
     if (ignore_k > 0) {
         drjit::eval(points,
                     chain_length,
@@ -1227,9 +1227,9 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentChain), params);
 
     if constexpr (!Detached) {
-        result.all_visible = Mask(all_visible);
-        result.first_blocked_segment = Int(first_blocked_segment);
-        result.first_blocked_prim = Int(first_blocked_prim);
+        result.all_visible = MaskAD(all_visible);
+        result.first_blocked_segment = IntAD(first_blocked_segment);
+        result.first_blocked_prim = IntAD(first_blocked_prim);
     } else {
         result.all_visible = all_visible;
         result.first_blocked_segment = first_blocked_segment;
@@ -1256,17 +1256,17 @@ ReflectionTraceT<Detached> trace_bounces_impl(
         return result;
     }
 
-    const MaskDetached sanitized_active_detached =
+    const Mask sanitized_active_detached =
         sanitize_reflection_active<Detached>(ray, active);
 
     RayT<Detached> current_ray = ray;
     MaskT<Detached> current_active;
     if constexpr (Detached) {
         current_active = sanitized_active_detached;
-        result.representative_ray_index = arange<IntDetached>(ray_count);
+        result.representative_ray_index = arange<Int>(ray_count);
     } else {
-        current_active = Mask(sanitized_active_detached);
-        result.representative_ray_index = Int(arange<IntDetached>(ray_count));
+        current_active = MaskAD(sanitized_active_detached);
+        result.representative_ray_index = IntAD(arange<Int>(ray_count));
     }
     Vector3fT<Detached> current_image_source = ray.o;
 
@@ -1394,9 +1394,9 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     mesh_count_ = static_cast<int>(mesh_records_.size());
     is_ready_ = false;
     pending_updates_ = false;
-    vertex_offsets_ = IntDetached();
+    vertex_offsets_ = Int();
     global_geometry_ = SceneGeometry();
-    edge_mask_ = MaskDetached();
+    edge_mask_ = Mask();
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
     mask_dirty_ = false;
@@ -1430,10 +1430,10 @@ void Scene::scatter_mesh_data(const SceneMeshRecord &record, bool include_static
         return;
     }
 
-    const TriangleInfo *mesh_triangle_info = mesh.triangle_info();
-    const Int scatter_indices = arange<Int>(mesh_face_count) + record.face_offset;
-    const IntDetached scatter_indices_detached =
-        arange<IntDetached>(mesh_face_count) + record.face_offset;
+    const TriangleInfoAD *mesh_triangle_info = mesh.triangle_info();
+    const IntAD scatter_indices = arange<IntAD>(mesh_face_count) + record.face_offset;
+    const Int scatter_indices_detached =
+        arange<Int>(mesh_face_count) + record.face_offset;
 
     scatter(triangle_info_.p0, mesh_triangle_info->p0, scatter_indices);
     scatter(triangle_info_.e1, mesh_triangle_info->e1, scatter_indices);
@@ -1466,10 +1466,10 @@ void Scene::scatter_mesh_data(const SceneMeshRecord &record, bool include_static
             detach<false>(mesh_triangle_info->face_indices),
             scatter_indices_detached);
     scatter(triangle_face_normal_mask_,
-            full<Mask>(mesh.use_face_normals(), mesh_face_count),
+            full<MaskAD>(mesh.use_face_normals(), mesh_face_count),
             scatter_indices);
     scatter(triangle_face_normal_mask_detached_,
-            full<MaskDetached>(mesh.use_face_normals(), mesh_face_count),
+            full<Mask>(mesh.use_face_normals(), mesh_face_count),
             scatter_indices_detached);
 
     if (mesh.has_uv() && mesh.triangle_uv() != nullptr) {
@@ -1485,13 +1485,13 @@ void Scene::scatter_mesh_data(const SceneMeshRecord &record, bool include_static
 
 void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_static_ids) {
     const Mesh &mesh = *record.mesh;
-    const SecondaryEdgeInfo *mesh_edge_info = mesh.secondary_edge_info();
+    const SecondaryEdgeInfoAD *mesh_edge_info = mesh.secondary_edge_info();
     const int mesh_edge_count = mesh_edge_info != nullptr ? mesh_edge_info->size() : 0;
     if (mesh_edge_count == 0) {
         return;
     }
 
-    const Int scatter_indices = arange<Int>(mesh_edge_count) + record.edge_offset;
+    const IntAD scatter_indices = arange<IntAD>(mesh_edge_count) + record.edge_offset;
     scatter(edge_info_.start, mesh_edge_info->start, scatter_indices);
     scatter(edge_info_.edge, mesh_edge_info->edge, scatter_indices);
     scatter(edge_info_.normal0, mesh_edge_info->normal0, scatter_indices);
@@ -1503,12 +1503,12 @@ void Scene::scatter_mesh_edge_data(const SceneMeshRecord &record, bool include_s
         return;
     }
 
-    const IntDetached scatter_indices_detached = arange<IntDetached>(mesh_edge_count) + record.edge_offset;
+    const Int scatter_indices_detached = arange<Int>(mesh_edge_count) + record.edge_offset;
     scatter(edge_shape_ids_,
-            full<IntDetached>(mesh.mesh_id(), mesh_edge_count),
+            full<Int>(mesh.mesh_id(), mesh_edge_count),
             scatter_indices_detached);
     scatter(edge_local_ids_,
-            arange<IntDetached>(mesh_edge_count),
+            arange<Int>(mesh_edge_count),
             scatter_indices_detached);
 }
 
@@ -1624,7 +1624,7 @@ void Scene::build() {
         mesh.build();
         record.vertex_offset = vertex_offsets.back();
         record.face_offset = face_offsets.back();
-        const SecondaryEdgeInfo *mesh_edge_info = mesh.secondary_edge_info();
+        const SecondaryEdgeInfoAD *mesh_edge_info = mesh.secondary_edge_info();
         const int mesh_edge_count = mesh_edge_info != nullptr ? mesh_edge_info->size() : 0;
         record.edge_offset = edge_offsets.back();
         record.vertices_dirty = false;
@@ -1676,7 +1676,7 @@ void Scene::build() {
         const Mesh &mesh = *record.mesh;
         const auto &mesh_edge_indices = mesh.edge_indices();
         const int mesh_edge_count = mesh.edges_enabled() ? static_cast<int>(slices(mesh_edge_indices)) : 0;
-        const Vector3iDetached mesh_face_indices(detach<false>(mesh.face_indices()[0]),
+        const Vector3i mesh_face_indices(detach<false>(mesh.face_indices()[0]),
                                                  detach<false>(mesh.face_indices()[1]),
                                                  detach<false>(mesh.face_indices()[2]));
         std::array<std::vector<int>, 3> mesh_face_cpu;
@@ -1754,32 +1754,32 @@ void Scene::build() {
     }
 
     auto load_or_empty = [](const std::vector<int> &values) {
-        return values.empty() ? IntDetached() : load<IntDetached>(values.data(), values.size());
+        return values.empty() ? Int() : load<Int>(values.data(), values.size());
     };
 
-    face_offsets_ = load<IntDetached>(face_offsets.data(), face_offsets.size());
-    edge_offsets_ = load<IntDetached>(edge_offsets.data(), edge_offsets.size());
-    vertex_offsets_ = load<IntDetached>(vertex_offsets.data(), vertex_offsets.size());
-    triangle_info_ = empty<TriangleInfo>(total_face_count);
-    triangle_info_detached_ = empty<TriangleInfoDetached>(total_face_count);
-    triangle_uv_ = zeros<TriangleUV>(total_face_count);
-    triangle_uv_detached_ = zeros<TriangleUVDetached>(total_face_count);
-    triangle_face_normal_mask_ = empty<Mask>(total_face_count);
-    triangle_face_normal_mask_detached_ = empty<MaskDetached>(total_face_count);
-    global_geometry_.vertices = total_vertex_count > 0 ? empty<Vector3f>(total_vertex_count) : Vector3f();
-    global_geometry_.faces = Vector3iDetached(
-        load<IntDetached>(global_face_indices_cpu[0].data(), total_face_count),
-        load<IntDetached>(global_face_indices_cpu[1].data(), total_face_count),
-        load<IntDetached>(global_face_indices_cpu[2].data(), total_face_count));
-    global_geometry_.shape_id = load<IntDetached>(global_shape_ids_cpu.data(), total_face_count);
+    face_offsets_ = load<Int>(face_offsets.data(), face_offsets.size());
+    edge_offsets_ = load<Int>(edge_offsets.data(), edge_offsets.size());
+    vertex_offsets_ = load<Int>(vertex_offsets.data(), vertex_offsets.size());
+    triangle_info_ = empty<TriangleInfoAD>(total_face_count);
+    triangle_info_detached_ = empty<TriangleInfo>(total_face_count);
+    triangle_uv_ = zeros<TriangleUVAD>(total_face_count);
+    triangle_uv_detached_ = zeros<TriangleUV>(total_face_count);
+    triangle_face_normal_mask_ = empty<MaskAD>(total_face_count);
+    triangle_face_normal_mask_detached_ = empty<Mask>(total_face_count);
+    global_geometry_.vertices = total_vertex_count > 0 ? empty<Vector3fAD>(total_vertex_count) : Vector3fAD();
+    global_geometry_.faces = Vector3i(
+        load<Int>(global_face_indices_cpu[0].data(), total_face_count),
+        load<Int>(global_face_indices_cpu[1].data(), total_face_count),
+        load<Int>(global_face_indices_cpu[2].data(), total_face_count));
+    global_geometry_.shape_id = load<Int>(global_shape_ids_cpu.data(), total_face_count);
     global_geometry_.local_prim_id =
-        load<IntDetached>(global_local_prim_ids_cpu.data(), total_face_count);
-    global_geometry_.global_prim_id = load<IntDetached>(global_prim_ids_cpu.data(), total_face_count);
-    triangle_edge_ids_ = VectoriT<3, true>(load<IntDetached>(triangle_edge_ids_cpu[0].data(), total_face_count),
-                                           load<IntDetached>(triangle_edge_ids_cpu[1].data(), total_face_count),
-                                           load<IntDetached>(triangle_edge_ids_cpu[2].data(), total_face_count));
+        load<Int>(global_local_prim_ids_cpu.data(), total_face_count);
+    global_geometry_.global_prim_id = load<Int>(global_prim_ids_cpu.data(), total_face_count);
+    triangle_edge_ids_ = VectoriT<3, true>(load<Int>(triangle_edge_ids_cpu[0].data(), total_face_count),
+                                           load<Int>(triangle_edge_ids_cpu[1].data(), total_face_count),
+                                           load<Int>(triangle_edge_ids_cpu[2].data(), total_face_count));
     if (edge_count_ > 0) {
-        edge_info_ = empty<SecondaryEdgeInfo>(edge_count_);
+        edge_info_ = empty<SecondaryEdgeInfoAD>(edge_count_);
         edge_topology_ = SceneEdgeTopology {
             load_or_empty(topology_v0),
             load_or_empty(topology_v1),
@@ -1794,15 +1794,15 @@ void Scene::build() {
             load_or_empty(topology_opposite0_global),
             load_or_empty(topology_opposite1_global)
         };
-        edge_shape_ids_ = empty<IntDetached>(edge_count_);
-        edge_local_ids_ = empty<IntDetached>(edge_count_);
-        edge_mask_ = full<MaskDetached>(true, edge_count_);
+        edge_shape_ids_ = empty<Int>(edge_count_);
+        edge_local_ids_ = empty<Int>(edge_count_);
+        edge_mask_ = full<Mask>(true, edge_count_);
     } else {
-        edge_info_ = SecondaryEdgeInfo();
+        edge_info_ = SecondaryEdgeInfoAD();
         edge_topology_ = SceneEdgeTopology();
-        edge_shape_ids_ = IntDetached();
-        edge_local_ids_ = IntDetached();
-        edge_mask_ = MaskDetached();
+        edge_shape_ids_ = Int();
+        edge_local_ids_ = Int();
+        edge_mask_ = Mask();
     }
 
     for (const SceneMeshRecord &record : mesh_records_) {
@@ -1811,7 +1811,7 @@ void Scene::build() {
         const Mesh &mesh = *record.mesh;
         const int mesh_vertex_count = mesh.vertex_count();
         if (mesh_vertex_count > 0) {
-            const Int vertex_scatter_indices = arange<Int>(mesh_vertex_count) + record.vertex_offset;
+            const IntAD vertex_scatter_indices = arange<IntAD>(mesh_vertex_count) + record.vertex_offset;
             scatter(global_geometry_.vertices, mesh.vertex_positions_world(), vertex_scatter_indices);
         }
     }
@@ -1888,7 +1888,7 @@ void Scene::build() {
     ++edge_version_;
 }
 
-void Scene::update_mesh_vertices(int mesh_id, const Vector3f &positions) {
+void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD &positions) {
     require(is_ready(), "Scene::update_mesh_vertices(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
@@ -1901,7 +1901,7 @@ void Scene::update_mesh_vertices(int mesh_id, const Vector3f &positions) {
     pending_updates_ = true;
 }
 
-void Scene::set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_left) {
+void Scene::set_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool set_left) {
     require(is_ready(), "Scene::set_mesh_transform(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
@@ -1912,7 +1912,7 @@ void Scene::set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_lef
     pending_updates_ = true;
 }
 
-void Scene::append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left) {
+void Scene::append_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool append_left) {
     require(is_ready(), "Scene::append_mesh_transform(): scene is not built.");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
@@ -1923,7 +1923,7 @@ void Scene::append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool appe
     pending_updates_ = true;
 }
 
-void Scene::set_edge_mask(const MaskDetached &mask) {
+void Scene::set_edge_mask(const Mask &mask) {
     require(is_ready(), "Scene::set_edge_mask(): scene is not built.");
     require(static_cast<int>(mask.size()) == edge_count_,
             "Scene::set_edge_mask(): mask size must match the scene edge count.");
@@ -1974,7 +1974,7 @@ void Scene::sync() {
         scatter_mesh_data(record, false);
         const int mesh_vertex_count = record.mesh->vertex_count();
         if (mesh_vertex_count > 0) {
-            const Int vertex_scatter_indices = arange<Int>(mesh_vertex_count) + record.vertex_offset;
+            const IntAD vertex_scatter_indices = arange<IntAD>(mesh_vertex_count) + record.vertex_offset;
             scatter(global_geometry_.vertices,
                     record.mesh->vertex_positions_world(),
                     vertex_scatter_indices);
@@ -2103,7 +2103,7 @@ SceneEdgeInfo Scene::edge_info() const {
     info.is_boundary = edge_info_.is_boundary;
     info.shape_id = edge_shape_ids_;
     info.local_edge_id = edge_local_ids_;
-    info.global_edge_id = arange<IntDetached>(edge_count_);
+    info.global_edge_id = arange<Int>(edge_count_);
     return info;
 }
 
@@ -2124,7 +2124,7 @@ const SceneEdgeTopology &Scene::edge_topology() const {
     return edge_topology_;
 }
 
-const MaskDetached &Scene::edge_mask() const {
+const Mask &Scene::edge_mask() const {
     require(is_ready(), "Scene::edge_mask(): scene is not built.");
     return edge_mask_;
 }
@@ -2136,22 +2136,22 @@ const SceneGeometry &Scene::global_geometry() const {
     return global_geometry_;
 }
 
-VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool global) const {
+VectoriT<3, true> Scene::triangle_edge_indices(const Int &prim_id, bool global) const {
     require(is_ready(), "Scene::triangle_edge_indices(): scene is not built.");
 
     const int query_count = static_cast<int>(slices(prim_id));
-    VectoriT<3, true> result(full<IntDetached>(-1, query_count),
-                             full<IntDetached>(-1, query_count),
-                             full<IntDetached>(-1, query_count));
+    VectoriT<3, true> result(full<Int>(-1, query_count),
+                             full<Int>(-1, query_count),
+                             full<Int>(-1, query_count));
     if (query_count == 0) {
         return result;
     }
 
     const int face_count = static_cast<int>(slices(triangle_edge_ids_[0]));
-    const MaskDetached valid = prim_id >= 0 && prim_id < face_count;
-    const IntDetached edge0 = gather<IntDetached>(triangle_edge_ids_[0], prim_id, valid);
-    const IntDetached edge1 = gather<IntDetached>(triangle_edge_ids_[1], prim_id, valid);
-    const IntDetached edge2 = gather<IntDetached>(triangle_edge_ids_[2], prim_id, valid);
+    const Mask valid = prim_id >= 0 && prim_id < face_count;
+    const Int edge0 = gather<Int>(triangle_edge_ids_[0], prim_id, valid);
+    const Int edge1 = gather<Int>(triangle_edge_ids_[1], prim_id, valid);
+    const Int edge2 = gather<Int>(triangle_edge_ids_[2], prim_id, valid);
 
     if (global) {
         result[0] = select(valid, edge0, result[0]);
@@ -2160,32 +2160,32 @@ VectoriT<3, true> Scene::triangle_edge_indices(const IntDetached &prim_id, bool 
         return result;
     }
 
-    const MaskDetached valid0 = valid && edge0 >= 0;
-    const MaskDetached valid1 = valid && edge1 >= 0;
-    const MaskDetached valid2 = valid && edge2 >= 0;
-    result[0] = select(valid0, gather<IntDetached>(edge_local_ids_, edge0, valid0), result[0]);
-    result[1] = select(valid1, gather<IntDetached>(edge_local_ids_, edge1, valid1), result[1]);
-    result[2] = select(valid2, gather<IntDetached>(edge_local_ids_, edge2, valid2), result[2]);
+    const Mask valid0 = valid && edge0 >= 0;
+    const Mask valid1 = valid && edge1 >= 0;
+    const Mask valid2 = valid && edge2 >= 0;
+    result[0] = select(valid0, gather<Int>(edge_local_ids_, edge0, valid0), result[0]);
+    result[1] = select(valid1, gather<Int>(edge_local_ids_, edge1, valid1), result[1]);
+    result[2] = select(valid2, gather<Int>(edge_local_ids_, edge2, valid2), result[2]);
     return result;
 }
 
-VectoriT<2, true> Scene::edge_adjacent_faces(const IntDetached &edge_id, bool global) const {
+VectoriT<2, true> Scene::edge_adjacent_faces(const Int &edge_id, bool global) const {
     require(is_ready(), "Scene::edge_adjacent_faces(): scene is not built.");
 
     const int query_count = static_cast<int>(slices(edge_id));
-    VectoriT<2, true> result(full<IntDetached>(-1, query_count),
-                             full<IntDetached>(-1, query_count));
+    VectoriT<2, true> result(full<Int>(-1, query_count),
+                             full<Int>(-1, query_count));
     if (query_count == 0 || edge_count_ == 0) {
         return result;
     }
 
-    const MaskDetached valid = edge_id >= 0 && edge_id < edge_count_;
-    const IntDetached face0 = global
-        ? gather<IntDetached>(edge_topology_.face0_global, edge_id, valid)
-        : gather<IntDetached>(edge_topology_.face0_local, edge_id, valid);
-    const IntDetached face1 = global
-        ? gather<IntDetached>(edge_topology_.face1_global, edge_id, valid)
-        : gather<IntDetached>(edge_topology_.face1_local, edge_id, valid);
+    const Mask valid = edge_id >= 0 && edge_id < edge_count_;
+    const Int face0 = global
+        ? gather<Int>(edge_topology_.face0_global, edge_id, valid)
+        : gather<Int>(edge_topology_.face0_local, edge_id, valid);
+    const Int face1 = global
+        ? gather<Int>(edge_topology_.face1_global, edge_id, valid)
+        : gather<Int>(edge_topology_.face1_local, edge_id, valid);
     result[0] = select(valid, face0, result[0]);
     result[1] = select(valid, face1, result[1]);
     return result;
@@ -2239,12 +2239,12 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         const OptixIntersection dynamic_hit =
             optix_dynamic_scene_->template intersect<Detached>(ray, dynamic_hit_mask);
 
-        const MaskDetached static_hit_mask_detached = detach<false>(static_hit_mask);
-        const MaskDetached dynamic_hit_mask_detached = detach<false>(dynamic_hit_mask);
-        const MaskDetached choose_dynamic =
+        const Mask static_hit_mask_detached = detach<false>(static_hit_mask);
+        const Mask dynamic_hit_mask_detached = detach<false>(dynamic_hit_mask);
+        const Mask choose_dynamic =
             dynamic_hit_mask_detached &&
             (!static_hit_mask_detached || (dynamic_hit.t < static_hit.t));
-        const MaskDetached any_hit = static_hit_mask_detached || dynamic_hit_mask_detached;
+        const Mask any_hit = static_hit_mask_detached || dynamic_hit_mask_detached;
 
         optix_hit.reserve(ray_count);
         optix_hit.t = select(choose_dynamic, dynamic_hit.t, static_hit.t);
@@ -2257,7 +2257,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
             select(choose_dynamic, dynamic_hit.global_prim_id, static_hit.global_prim_id);
 
         if constexpr (!Detached) {
-            hit_mask = Mask(any_hit);
+            hit_mask = MaskAD(any_hit);
         } else {
             hit_mask = any_hit;
         }
@@ -2265,31 +2265,31 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
     }
 
-    const IntDetached shape_id = optix_hit.shape_id;
-    const IntDetached global_primitive_id = optix_hit.global_prim_id;
-    const MaskDetached hit_mask_detached = detach<false>(hit_mask);
-    const IntDetached mesh_face_offset = gather<IntDetached>(face_offsets_, shape_id, hit_mask_detached);
-    const IntDetached local_primitive_id = global_primitive_id - mesh_face_offset;
+    const Int shape_id = optix_hit.shape_id;
+    const Int global_primitive_id = optix_hit.global_prim_id;
+    const Mask hit_mask_detached = detach<false>(hit_mask);
+    const Int mesh_face_offset = gather<Int>(face_offsets_, shape_id, hit_mask_detached);
+    const Int local_primitive_id = global_primitive_id - mesh_face_offset;
 
     Vector2fT<Detached> triangle_uv_coords;
     FloatT<Detached> hit_distance;
 
     if constexpr (!Detached) {
         // AD path: re-gather vertex data and recompute intersection for gradients.
-        const Int global_primitive_id_ad = Int(global_primitive_id);
-        const Vector3f triangle_p0 = gather<Vector3f>(triangle_info_.p0, global_primitive_id_ad, hit_mask);
-        const Vector3f triangle_e1 = gather<Vector3f>(triangle_info_.e1, global_primitive_id_ad, hit_mask);
-        const Vector3f triangle_e2 = gather<Vector3f>(triangle_info_.e2, global_primitive_id_ad, hit_mask);
+        const IntAD global_primitive_id_ad = IntAD(global_primitive_id);
+        const Vector3fAD triangle_p0 = gather<Vector3fAD>(triangle_info_.p0, global_primitive_id_ad, hit_mask);
+        const Vector3fAD triangle_e1 = gather<Vector3fAD>(triangle_info_.e1, global_primitive_id_ad, hit_mask);
+        const Vector3fAD triangle_e2 = gather<Vector3fAD>(triangle_info_.e2, global_primitive_id_ad, hit_mask);
         std::tie(triangle_uv_coords, hit_distance) = ray_intersect_triangle<Detached>(triangle_p0, triangle_e1, triangle_e2, ray);
 
         if (want_geo_n || want_shading) {
-            Vector3fT<Detached> geometric_normal = gather<Vector3f>(triangle_info_.face_normal, global_primitive_id_ad, hit_mask);
+            Vector3fT<Detached> geometric_normal = gather<Vector3fAD>(triangle_info_.face_normal, global_primitive_id_ad, hit_mask);
 
             if (want_shading) {
-                Vector3fT<Detached> shading_n0 = gather<Vector3f>(triangle_info_.n0, global_primitive_id_ad, hit_mask);
-                Vector3fT<Detached> shading_n1 = gather<Vector3f>(triangle_info_.n1, global_primitive_id_ad, hit_mask);
-                Vector3fT<Detached> shading_n2 = gather<Vector3f>(triangle_info_.n2, global_primitive_id_ad, hit_mask);
-                MaskT<Detached> use_face_normal_mask = gather<Mask>(triangle_face_normal_mask_, global_primitive_id_ad, hit_mask);
+                Vector3fT<Detached> shading_n0 = gather<Vector3fAD>(triangle_info_.n0, global_primitive_id_ad, hit_mask);
+                Vector3fT<Detached> shading_n1 = gather<Vector3fAD>(triangle_info_.n1, global_primitive_id_ad, hit_mask);
+                Vector3fT<Detached> shading_n2 = gather<Vector3fAD>(triangle_info_.n2, global_primitive_id_ad, hit_mask);
+                MaskT<Detached> use_face_normal_mask = gather<MaskAD>(triangle_face_normal_mask_, global_primitive_id_ad, hit_mask);
                 const Vector2fT<Detached> safe_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
                 Vector3fT<Detached> shading_normal =
                     normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, safe_uv));
@@ -2302,7 +2302,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         }
 
         if (want_uv) {
-            TriangleUVT<Detached> triangle_uv_data = gather<TriangleUV>(triangle_uv_, global_primitive_id_ad, hit_mask);
+            TriangleUVT<Detached> triangle_uv_data = gather<TriangleUVAD>(triangle_uv_, global_primitive_id_ad, hit_mask);
             const Vector2fT<Detached> safe_uv = select(hit_mask, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
             const Vector2fT<Detached> uv =
                 bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], safe_uv);
@@ -2314,13 +2314,13 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         hit_distance = optix_hit.t;
 
         if (want_geo_n || want_shading) {
-            Vector3fT<Detached> geometric_normal = gather<Vector3fDetached>(triangle_info_detached_.face_normal, global_primitive_id, hit_mask_detached);
+            Vector3fT<Detached> geometric_normal = gather<Vector3f>(triangle_info_detached_.face_normal, global_primitive_id, hit_mask_detached);
 
             if (want_shading) {
-                Vector3fT<Detached> shading_n0 = gather<Vector3fDetached>(triangle_info_detached_.n0, global_primitive_id, hit_mask_detached);
-                Vector3fT<Detached> shading_n1 = gather<Vector3fDetached>(triangle_info_detached_.n1, global_primitive_id, hit_mask_detached);
-                Vector3fT<Detached> shading_n2 = gather<Vector3fDetached>(triangle_info_detached_.n2, global_primitive_id, hit_mask_detached);
-                MaskT<Detached> use_face_normal_mask = gather<MaskDetached>(triangle_face_normal_mask_detached_, global_primitive_id, hit_mask_detached);
+                Vector3fT<Detached> shading_n0 = gather<Vector3f>(triangle_info_detached_.n0, global_primitive_id, hit_mask_detached);
+                Vector3fT<Detached> shading_n1 = gather<Vector3f>(triangle_info_detached_.n1, global_primitive_id, hit_mask_detached);
+                Vector3fT<Detached> shading_n2 = gather<Vector3f>(triangle_info_detached_.n2, global_primitive_id, hit_mask_detached);
+                MaskT<Detached> use_face_normal_mask = gather<Mask>(triangle_face_normal_mask_detached_, global_primitive_id, hit_mask_detached);
                 const Vector2fT<Detached> safe_uv = select(hit_mask_detached, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
                 Vector3fT<Detached> shading_normal =
                     normalize(bilinear<Detached>(shading_n0, shading_n1 - shading_n0, shading_n2 - shading_n0, safe_uv));
@@ -2333,7 +2333,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         }
 
         if (want_uv) {
-            TriangleUVT<Detached> triangle_uv_data = gather<TriangleUVDetached>(triangle_uv_detached_, global_primitive_id, hit_mask_detached);
+            TriangleUVT<Detached> triangle_uv_data = gather<TriangleUV>(triangle_uv_detached_, global_primitive_id, hit_mask_detached);
             const Vector2fT<Detached> safe_uv = select(hit_mask_detached, triangle_uv_coords, zeros<Vector2fT<Detached>>(ray_count));
             const Vector2fT<Detached> uv =
                 bilinear2<Detached>(triangle_uv_data[0], triangle_uv_data[1] - triangle_uv_data[0], triangle_uv_data[2] - triangle_uv_data[0], safe_uv);
@@ -2489,7 +2489,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         return result;
     }
 
-    const MaskDetached active_detached = sanitize_reflection_active<Detached>(ray, active);
+    const Mask active_detached = sanitize_reflection_active<Detached>(ray, active);
     if (drjit::none(active_detached)) {
         return result;
     }
@@ -2508,9 +2508,9 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     ensure_pipeline(reflection_pipeline_, primary_scene->context(),
                     hitgroup_record_count, reflection_trace_pipeline_config());
 
-    RayDetached broadphase_ray;
+    Ray broadphase_ray;
     if constexpr (!Detached) {
-        broadphase_ray = RayDetached(detach<false>(ray.o),
+        broadphase_ray = Ray(detach<false>(ray.o),
                                      detach<false>(ray.d),
                                      detach<false>(ray.tmax));
     } else {
@@ -2590,38 +2590,38 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     reflection_pipeline_->launch(0, params);
 
     int trace_ray_count = ray_count;
-    IntDetached trace_bounce_count = raw.bounce_count;
-    IntDetached trace_discovery_count =
+    Int trace_bounce_count = raw.bounce_count;
+    Int trace_discovery_count =
         select(raw.bounce_count > 0,
-               full<IntDetached>(1, ray_count),
-               full<IntDetached>(0, ray_count));
-    IntDetached trace_representative_ray_index = arange<IntDetached>(ray_count);
-    IntDetached trace_shape_ids = raw.shape_ids;
-    IntDetached trace_prim_ids = raw.prim_ids;
-    FloatDetached trace_t = raw.t;
-    FloatDetached trace_hit_x = raw.hit_x;
-    FloatDetached trace_hit_y = raw.hit_y;
-    FloatDetached trace_hit_z = raw.hit_z;
-    FloatDetached trace_norm_x = raw.norm_x;
-    FloatDetached trace_norm_y = raw.norm_y;
-    FloatDetached trace_norm_z = raw.norm_z;
-    FloatDetached trace_img_x = raw.img_x;
-    FloatDetached trace_img_y = raw.img_y;
-    FloatDetached trace_img_z = raw.img_z;
-    FloatDetached trace_trailing_t = raw.trailing_t;
-    IntDetached trace_trailing_prim = raw.trailing_prim;
-    FloatDetached trace_trailing_dir_x = raw.trailing_dir_x;
-    FloatDetached trace_trailing_dir_y = raw.trailing_dir_y;
-    FloatDetached trace_trailing_dir_z = raw.trailing_dir_z;
-    FloatDetached trace_trailing_origin_x = raw.trailing_origin_x;
-    FloatDetached trace_trailing_origin_y = raw.trailing_origin_y;
-    FloatDetached trace_trailing_origin_z = raw.trailing_origin_z;
+               full<Int>(1, ray_count),
+               full<Int>(0, ray_count));
+    Int trace_representative_ray_index = arange<Int>(ray_count);
+    Int trace_shape_ids = raw.shape_ids;
+    Int trace_prim_ids = raw.prim_ids;
+    Float trace_t = raw.t;
+    Float trace_hit_x = raw.hit_x;
+    Float trace_hit_y = raw.hit_y;
+    Float trace_hit_z = raw.hit_z;
+    Float trace_norm_x = raw.norm_x;
+    Float trace_norm_y = raw.norm_y;
+    Float trace_norm_z = raw.norm_z;
+    Float trace_img_x = raw.img_x;
+    Float trace_img_y = raw.img_y;
+    Float trace_img_z = raw.img_z;
+    Float trace_trailing_t = raw.trailing_t;
+    Int trace_trailing_prim = raw.trailing_prim;
+    Float trace_trailing_dir_x = raw.trailing_dir_x;
+    Float trace_trailing_dir_y = raw.trailing_dir_y;
+    Float trace_trailing_dir_z = raw.trailing_dir_z;
+    Float trace_trailing_origin_x = raw.trailing_origin_x;
+    Float trace_trailing_origin_y = raw.trailing_origin_y;
+    Float trace_trailing_origin_z = raw.trailing_origin_z;
 
     if (options.deduplicate) {
         ReflectionTraceRaw compacted = allocate_reflection_trace_raw(ray_count, max_bounces);
         initialize_reflection_trace_raw(compacted);
 
-        const IntDetached canonical_table = options.canonical_prim_table;
+        const Int canonical_table = options.canonical_prim_table;
         const int canonical_table_size = static_cast<int>(slices(canonical_table));
         const int n_unique = reflection_dedup_gpu(
             ray_count,
@@ -2682,39 +2682,39 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         trace_img_x = prefix_array(compacted.img_x, unique_slot_count);
         trace_img_y = prefix_array(compacted.img_y, unique_slot_count);
         trace_img_z = prefix_array(compacted.img_z, unique_slot_count);
-        const MaskDetached unique_mask = full<MaskDetached>(true, trace_ray_count);
+        const Mask unique_mask = full<Mask>(true, trace_ray_count);
         trace_trailing_t =
-            gather<FloatDetached>(raw.trailing_t, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_t, trace_representative_ray_index, unique_mask);
         trace_trailing_prim =
-            gather<IntDetached>(raw.trailing_prim, trace_representative_ray_index, unique_mask);
+            gather<Int>(raw.trailing_prim, trace_representative_ray_index, unique_mask);
         trace_trailing_dir_x =
-            gather<FloatDetached>(raw.trailing_dir_x, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_dir_x, trace_representative_ray_index, unique_mask);
         trace_trailing_dir_y =
-            gather<FloatDetached>(raw.trailing_dir_y, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_dir_y, trace_representative_ray_index, unique_mask);
         trace_trailing_dir_z =
-            gather<FloatDetached>(raw.trailing_dir_z, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_dir_z, trace_representative_ray_index, unique_mask);
         trace_trailing_origin_x =
-            gather<FloatDetached>(raw.trailing_origin_x, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_origin_x, trace_representative_ray_index, unique_mask);
         trace_trailing_origin_y =
-            gather<FloatDetached>(raw.trailing_origin_y, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_origin_y, trace_representative_ray_index, unique_mask);
         trace_trailing_origin_z =
-            gather<FloatDetached>(raw.trailing_origin_z, trace_representative_ray_index, unique_mask);
+            gather<Float>(raw.trailing_origin_z, trace_representative_ray_index, unique_mask);
         result.ray_count = trace_ray_count;
     }
 
-    const IntDetached trace_global_prim_ids =
+    const Int trace_global_prim_ids =
         globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
 
     if constexpr (Detached) {
-        const Vector3fDetached hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
-        const Vector3fDetached plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
+        const Vector3f hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
+        const Vector3f plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
         result.bounce_count = trace_bounce_count;
         result.discovery_count = trace_discovery_count;
         result.representative_ray_index = trace_representative_ray_index;
         result.t = trace_t;
         result.hit_points = hit_points;
         result.geo_normals = plane_normals;
-        result.image_sources = Vector3fDetached(trace_img_x, trace_img_y, trace_img_z);
+        result.image_sources = Vector3f(trace_img_x, trace_img_y, trace_img_z);
         result.plane_points = hit_points;
         result.plane_normals = plane_normals;
         result.shape_ids = trace_shape_ids;
@@ -2723,90 +2723,90 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.global_prim_ids = trace_global_prim_ids;
         result.trailing_t = trace_trailing_t;
         result.trailing_prim = trace_trailing_prim;
-        result.trailing_dir = Vector3fDetached(trace_trailing_dir_x,
+        result.trailing_dir = Vector3f(trace_trailing_dir_x,
                                                trace_trailing_dir_y,
                                                trace_trailing_dir_z);
-        result.trailing_origin = Vector3fDetached(trace_trailing_origin_x,
+        result.trailing_origin = Vector3f(trace_trailing_origin_x,
                                                   trace_trailing_origin_y,
                                                   trace_trailing_origin_z);
         return result;
     } else {
         result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
-        result.bounce_count = Int(trace_bounce_count);
-        result.discovery_count = Int(trace_discovery_count);
-        result.representative_ray_index = Int(trace_representative_ray_index);
-        result.shape_ids = Int(trace_shape_ids);
-        result.prim_ids = Int(trace_prim_ids);
-        result.local_prim_ids = Int(trace_prim_ids);
-        result.global_prim_ids = Int(trace_global_prim_ids);
-        result.trailing_t = Float(trace_trailing_t);
-        result.trailing_prim = Int(trace_trailing_prim);
-        result.trailing_dir = Vector3f(Float(trace_trailing_dir_x),
-                                       Float(trace_trailing_dir_y),
-                                       Float(trace_trailing_dir_z));
-        result.trailing_origin = Vector3f(Float(trace_trailing_origin_x),
-                                          Float(trace_trailing_origin_y),
-                                          Float(trace_trailing_origin_z));
+        result.bounce_count = IntAD(trace_bounce_count);
+        result.discovery_count = IntAD(trace_discovery_count);
+        result.representative_ray_index = IntAD(trace_representative_ray_index);
+        result.shape_ids = IntAD(trace_shape_ids);
+        result.prim_ids = IntAD(trace_prim_ids);
+        result.local_prim_ids = IntAD(trace_prim_ids);
+        result.global_prim_ids = IntAD(trace_global_prim_ids);
+        result.trailing_t = FloatAD(trace_trailing_t);
+        result.trailing_prim = IntAD(trace_trailing_prim);
+        result.trailing_dir = Vector3fAD(FloatAD(trace_trailing_dir_x),
+                                       FloatAD(trace_trailing_dir_y),
+                                       FloatAD(trace_trailing_dir_z));
+        result.trailing_origin = Vector3fAD(FloatAD(trace_trailing_origin_x),
+                                          FloatAD(trace_trailing_origin_y),
+                                          FloatAD(trace_trailing_origin_z));
 
         if (trace_ray_count == 0) {
             return result;
         }
 
-        const Mask representative_mask = full<Mask>(true, trace_ray_count);
-        const MaskDetached representative_mask_detached =
-            full<MaskDetached>(true, trace_ray_count);
-        const Int representative_ray_index = Int(trace_representative_ray_index);
-        Ray current_ray(
-            gather<Vector3f>(ray.o, representative_ray_index, representative_mask),
-            gather<Vector3f>(ray.d, representative_ray_index, representative_mask),
-            gather<Float>(ray.tmax, representative_ray_index, representative_mask));
-        MaskDetached current_active_detached =
-            gather<MaskDetached>(active_detached,
+        const MaskAD representative_mask = full<MaskAD>(true, trace_ray_count);
+        const Mask representative_mask_detached =
+            full<Mask>(true, trace_ray_count);
+        const IntAD representative_ray_index = IntAD(trace_representative_ray_index);
+        RayAD current_ray(
+            gather<Vector3fAD>(ray.o, representative_ray_index, representative_mask),
+            gather<Vector3fAD>(ray.d, representative_ray_index, representative_mask),
+            gather<FloatAD>(ray.tmax, representative_ray_index, representative_mask));
+        Mask current_active_detached =
+            gather<Mask>(active_detached,
                                  trace_representative_ray_index,
                                  representative_mask_detached);
-        Vector3f current_image_source = current_ray.o;
-        const IntDetached bounce_slots =
-            arange<IntDetached>(trace_ray_count) * IntDetached(max_bounces);
+        Vector3fAD current_image_source = current_ray.o;
+        const Int bounce_slots =
+            arange<Int>(trace_ray_count) * Int(max_bounces);
 
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
-            const IntDetached slot_detached = bounce_slots + bounce;
-            const Int slot = Int(slot_detached);
-            const IntDetached shape_id_detached =
-                gather<IntDetached>(trace_shape_ids, slot_detached, current_active_detached);
-            const IntDetached prim_id_detached =
-                gather<IntDetached>(trace_prim_ids, slot_detached, current_active_detached);
-            const MaskDetached broadphase_hit =
+            const Int slot_detached = bounce_slots + bounce;
+            const IntAD slot = IntAD(slot_detached);
+            const Int shape_id_detached =
+                gather<Int>(trace_shape_ids, slot_detached, current_active_detached);
+            const Int prim_id_detached =
+                gather<Int>(trace_prim_ids, slot_detached, current_active_detached);
+            const Mask broadphase_hit =
                 current_active_detached && (shape_id_detached >= 0) && (prim_id_detached >= 0);
             if (drjit::none(broadphase_hit)) {
                 break;
             }
 
-            const IntDetached mesh_face_offset =
-                gather<IntDetached>(face_offsets_, shape_id_detached, broadphase_hit);
-            const IntDetached global_prim_detached = mesh_face_offset + prim_id_detached;
-            const Int global_prim = Int(global_prim_detached);
-            const Mask hit_mask = Mask(broadphase_hit);
+            const Int mesh_face_offset =
+                gather<Int>(face_offsets_, shape_id_detached, broadphase_hit);
+            const Int global_prim_detached = mesh_face_offset + prim_id_detached;
+            const IntAD global_prim = IntAD(global_prim_detached);
+            const MaskAD hit_mask = MaskAD(broadphase_hit);
 
-            const Vector3f triangle_p0 = gather<Vector3f>(triangle_info_.p0, global_prim, hit_mask);
-            const Vector3f triangle_e1 = gather<Vector3f>(triangle_info_.e1, global_prim, hit_mask);
-            const Vector3f triangle_e2 = gather<Vector3f>(triangle_info_.e2, global_prim, hit_mask);
+            const Vector3fAD triangle_p0 = gather<Vector3fAD>(triangle_info_.p0, global_prim, hit_mask);
+            const Vector3fAD triangle_e1 = gather<Vector3fAD>(triangle_info_.e1, global_prim, hit_mask);
+            const Vector3fAD triangle_e2 = gather<Vector3fAD>(triangle_info_.e2, global_prim, hit_mask);
 
-            Vector2f triangle_barycentric;
-            Float hit_distance;
+            Vector2fAD triangle_barycentric;
+            FloatAD hit_distance;
             std::tie(triangle_barycentric, hit_distance) =
                 ray_intersect_triangle<false>(triangle_p0, triangle_e1, triangle_e2, current_ray);
 
-            Mask bounce_hit =
+            MaskAD bounce_hit =
                 hit_mask && drjit::isfinite(hit_distance) && (hit_distance < current_ray.tmax);
-            const Float safe_t =
-                select(bounce_hit, hit_distance, full<Float>(Infinity, trace_ray_count));
-            Vector3f geo_normal = gather<Vector3f>(triangle_info_.face_normal, global_prim, hit_mask);
-            geo_normal = normalize(select(hit_mask, geo_normal, Vector3f(0.f, 0.f, 1.f)));
+            const FloatAD safe_t =
+                select(bounce_hit, hit_distance, full<FloatAD>(Infinity, trace_ray_count));
+            Vector3fAD geo_normal = gather<Vector3fAD>(triangle_info_.face_normal, global_prim, hit_mask);
+            geo_normal = normalize(select(hit_mask, geo_normal, Vector3fAD(0.f, 0.f, 1.f)));
             geo_normal = select(dot(current_ray.d, geo_normal) > 0.f, -geo_normal, geo_normal);
-            const Vector3f hit_point =
-                current_ray(select(bounce_hit, safe_t, zeros<Float>(trace_ray_count)));
-            const Float plane_distance = dot(current_image_source - hit_point, geo_normal);
-            const Vector3f reflected_image_source =
+            const Vector3fAD hit_point =
+                current_ray(select(bounce_hit, safe_t, zeros<FloatAD>(trace_ray_count)));
+            const FloatAD plane_distance = dot(current_image_source - hit_point, geo_normal);
+            const Vector3fAD reflected_image_source =
                 current_image_source - 2.f * plane_distance * geo_normal;
 
             scatter(result.t, safe_t, slot, bounce_hit);
@@ -2816,42 +2816,42 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             scatter(result.plane_points, hit_point, slot, bounce_hit);
             scatter(result.plane_normals, geo_normal, slot, bounce_hit);
 
-            const Float ray_dot_normal = dot(current_ray.d, geo_normal);
-            const Vector3f reflected_direction =
+            const FloatAD ray_dot_normal = dot(current_ray.d, geo_normal);
+            const Vector3fAD reflected_direction =
                 current_ray.d - 2.f * ray_dot_normal * geo_normal;
             current_ray.o = select(bounce_hit,
                                    hit_point + Epsilon * reflected_direction,
                                    current_ray.o);
             current_ray.d = select(bounce_hit, reflected_direction, current_ray.d);
             current_ray.tmax = select(bounce_hit,
-                                      full<Float>(Infinity, trace_ray_count),
+                                      full<FloatAD>(Infinity, trace_ray_count),
                                       current_ray.tmax);
             current_image_source =
                 select(bounce_hit, reflected_image_source, current_image_source);
             current_active_detached = detach<false>(bounce_hit);
         }
 
-        const Mask trailing_active = result.bounce_count > 0;
-        const Intersection trailing =
+        const MaskAD trailing_active = result.bounce_count > 0;
+        const IntersectionAD trailing =
             this->template intersect<false>(
                 current_ray, trailing_active, RayFlags::Geometric);
-        const Mask trailing_hit = trailing_active && trailing.is_valid();
+        const MaskAD trailing_hit = trailing_active && trailing.is_valid();
         result.trailing_t =
             select(trailing_hit,
                    trailing.t,
-                   full<Float>(Infinity, trace_ray_count));
+                   full<FloatAD>(Infinity, trace_ray_count));
         result.trailing_prim =
             select(trailing_hit,
                    trailing.global_prim_id,
-                   full<Int>(-1, trace_ray_count));
+                   full<IntAD>(-1, trace_ray_count));
         result.trailing_dir =
             select(trailing_active,
                    current_ray.d,
-                   zeros<Vector3f>(trace_ray_count));
+                   zeros<Vector3fAD>(trace_ray_count));
         result.trailing_origin =
             select(trailing_active,
                    current_ray.o,
-                   zeros<Vector3f>(trace_ray_count));
+                   zeros<Vector3fAD>(trace_ray_count));
 
         return result;
     }
@@ -2883,7 +2883,7 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
     if constexpr (!Detached) {
         require(false,
                 "Scene::trace_reflection_epc(): native EPC is a non-AD native fast path. "
-                "Pass RayDetached and detached receiver positions.");
+                "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
@@ -2930,7 +2930,7 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         require(final_ignore_group_count == 0 || surface_group_ignore,
                 "Scene::trace_reflection_epc(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
-        const MaskDetached active_detached =
+        const Mask active_detached =
             sanitize_reflection_active<Detached>(ray, active);
         if (drjit::none(active_detached)) {
             return result;
@@ -3048,13 +3048,13 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         result.bounce_count = raw.bounce_count;
         result.path_length = raw.path_length;
         result.reflection_points =
-            Vector3fDetached(raw.point_x, raw.point_y, raw.point_z);
+            Vector3f(raw.point_x, raw.point_y, raw.point_z);
         result.prim_ids = raw.trace_prim_ids;
         result.trace_prim_ids = raw.trace_prim_ids;
         result.resolved_prim_ids = raw.resolved_prim_ids;
         result.surface_group_ids = raw.surface_group_ids;
         result.plane_normals =
-            Vector3fDetached(raw.plane_normal_x,
+            Vector3f(raw.plane_normal_x,
                              raw.plane_normal_y,
                              raw.plane_normal_z);
         result.first_blocked_segment = raw.first_blocked_segment;
@@ -3097,7 +3097,7 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
     if constexpr (!Detached) {
         require(false,
                 "Scene::trace_reflection_epc_field(): native EPC field is a non-AD native fast path. "
-                "Pass RayDetached and detached receiver positions.");
+                "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
@@ -3127,7 +3127,7 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
 
         const ReflectionEpcOptions epc_options =
             epc_options_from_field_options(options);
-        const ReflectionEpcResultDetached epc =
+        const ReflectionEpcResult epc =
             trace_reflection_epc<true>(
                 ray,
                 receiver,
@@ -3314,7 +3314,7 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         require(final_ignore_group_count == 0 || surface_group_ignore,
                 "Scene::trace_reflection_epc_field(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
-        MaskDetached active_detached = sanitize_segment_active<Detached>(
+        Mask active_detached = sanitize_segment_active<Detached>(
             tx_position,
             receiver,
             active);
@@ -3567,26 +3567,26 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             "Scene::accumulate_reflections(): native accumulation is a non-AD native fast path. "
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
-        result.reflection_power = zeros<FloatDetached>(grid_cell_count);
+        result.reflection_power = zeros<Float>(grid_cell_count);
         result.reflection_field_x =
-            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
-                                          zeros<FloatDetached>(grid_cell_count));
+            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                          zeros<Float>(grid_cell_count));
         result.reflection_field_y =
-            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
-                                          zeros<FloatDetached>(grid_cell_count));
+            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                          zeros<Float>(grid_cell_count));
         result.reflection_field_z =
-            drjit::Complex<FloatDetached>(zeros<FloatDetached>(grid_cell_count),
-                                          zeros<FloatDetached>(grid_cell_count));
-        result.reflection_count = full<IntDetached>(0, 1);
+            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                          zeros<Float>(grid_cell_count));
+        result.reflection_count = full<Int>(0, 1);
         result.wedge_events.capacity = options.wedge_capacity;
-        result.wedge_events.count = full<IntDetached>(0, 1);
+        result.wedge_events.count = full<Int>(0, 1);
         const int event_count = std::max(1, options.wedge_capacity);
-        result.wedge_events.ray_index = full<IntDetached>(-1, event_count);
-        result.wedge_events.hit_points = zeros<Vector3fDetached>(event_count);
-        result.wedge_events.normals = zeros<Vector3fDetached>(event_count);
-        result.wedge_events.prim_id = full<IntDetached>(-1, event_count);
-        result.wedge_events.directions = zeros<Vector3fDetached>(event_count);
-        result.wedge_events.bounce_depth = full<IntDetached>(-1, event_count);
+        result.wedge_events.ray_index = full<Int>(-1, event_count);
+        result.wedge_events.hit_points = zeros<Vector3f>(event_count);
+        result.wedge_events.normals = zeros<Vector3f>(event_count);
+        result.wedge_events.prim_id = full<Int>(-1, event_count);
+        result.wedge_events.directions = zeros<Vector3f>(event_count);
+        result.wedge_events.bounce_depth = full<Int>(-1, event_count);
         if (ray_count == 0) {
             return result;
         }
@@ -3614,24 +3614,24 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         require(material_count >= triangle_count,
                 "Scene::accumulate_reflections(): material payload must provide one entry per global primitive.");
 
-        Vector3fDetached tx_detached = tx_position;
+        Vector3f tx_detached = tx_position;
         if (tx_count == 1 && ray_count > 1) {
-            const IntDetached zero_index = full<IntDetached>(0, ray_count);
-            tx_detached = Vector3fDetached(
-                gather<FloatDetached>(tx_position.x(), zero_index),
-                gather<FloatDetached>(tx_position.y(), zero_index),
-                gather<FloatDetached>(tx_position.z(), zero_index));
+            const Int zero_index = full<Int>(0, ray_count);
+            tx_detached = Vector3f(
+                gather<Float>(tx_position.x(), zero_index),
+                gather<Float>(tx_position.y(), zero_index),
+                gather<Float>(tx_position.z(), zero_index));
         }
-        Vector3fDetached tx_pol_detached = tx_polarization;
+        Vector3f tx_pol_detached = tx_polarization;
         if (tx_pol_count == 1 && ray_count > 1) {
-            const IntDetached zero_index = full<IntDetached>(0, ray_count);
-            tx_pol_detached = Vector3fDetached(
-                gather<FloatDetached>(tx_polarization.x(), zero_index),
-                gather<FloatDetached>(tx_polarization.y(), zero_index),
-                gather<FloatDetached>(tx_polarization.z(), zero_index));
+            const Int zero_index = full<Int>(0, ray_count);
+            tx_pol_detached = Vector3f(
+                gather<Float>(tx_polarization.x(), zero_index),
+                gather<Float>(tx_polarization.y(), zero_index),
+                gather<Float>(tx_polarization.z(), zero_index));
         }
 
-        MaskDetached active_detached = sanitize_reflection_active<true>(ray, active);
+        Mask active_detached = sanitize_reflection_active<true>(ray, active);
         active_detached &= drjit::isfinite(tx_detached.x()) &&
                            drjit::isfinite(tx_detached.y()) &&
                            drjit::isfinite(tx_detached.z()) &&
@@ -3764,22 +3764,22 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 
         result.reflection_power = raw.reflection_power;
         result.reflection_field_x =
-            drjit::Complex<FloatDetached>(raw.field_x_re, raw.field_x_im);
+            drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
         result.reflection_field_y =
-            drjit::Complex<FloatDetached>(raw.field_y_re, raw.field_y_im);
+            drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
         result.reflection_field_z =
-            drjit::Complex<FloatDetached>(raw.field_z_re, raw.field_z_im);
+            drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
         result.reflection_count = raw.reflection_count;
         result.wedge_events.capacity = options.wedge_capacity;
         result.wedge_events.count = raw.wedge_count;
         result.wedge_events.ray_index = raw.wedge_ray_index;
         result.wedge_events.hit_points =
-            Vector3fDetached(raw.wedge_hit_x, raw.wedge_hit_y, raw.wedge_hit_z);
+            Vector3f(raw.wedge_hit_x, raw.wedge_hit_y, raw.wedge_hit_z);
         result.wedge_events.normals =
-            Vector3fDetached(raw.wedge_normal_x, raw.wedge_normal_y, raw.wedge_normal_z);
+            Vector3f(raw.wedge_normal_x, raw.wedge_normal_y, raw.wedge_normal_z);
         result.wedge_events.prim_id = raw.wedge_prim_id;
         result.wedge_events.directions =
-            Vector3fDetached(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
+            Vector3f(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
         result.wedge_events.bounce_depth = raw.wedge_bounce_depth;
         return result;
     }
@@ -3806,7 +3806,7 @@ template <bool Detached>
 SegmentVisibilityT<Detached> Scene::visible(
     const Vector3fT<Detached> &start,
     const Vector3fT<Detached> &end,
-    const IntDetached &ignore_prim_ids,
+    const Int &ignore_prim_ids,
     MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible(): scene is not built.");
     require(!pending_updates_,
@@ -3831,9 +3831,9 @@ SegmentVisibilityT<Detached> Scene::visible(
         ignore_k = ignore_count / ray_count;
     }
 
-    const MaskDetached active_detached = sanitize_segment_active<Detached>(start, end, active);
-    Vector3fDetached start_detached;
-    Vector3fDetached end_detached;
+    const Mask active_detached = sanitize_segment_active<Detached>(start, end, active);
+    Vector3f start_detached;
+    Vector3f end_detached;
     if constexpr (!Detached) {
         start_detached = detach<false>(start);
         end_detached = detach<false>(end);
@@ -3870,7 +3870,7 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
     const Vector3fT<Detached> &start,
     const Vector3fT<Detached> &end_a,
     const Vector3fT<Detached> &end_b,
-    const IntDetached &ignore_prim_ids,
+    const Int &ignore_prim_ids,
     MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible_pair(): scene is not built.");
     require(!pending_updates_,
@@ -3897,12 +3897,12 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
         ignore_k = ignore_count / ray_count;
     }
 
-    const MaskDetached active_detached =
+    const Mask active_detached =
         sanitize_segment_active<Detached>(start, end_a, active) &&
         sanitize_segment_active<Detached>(start, end_b, active);
-    Vector3fDetached start_detached;
-    Vector3fDetached end_a_detached;
-    Vector3fDetached end_b_detached;
+    Vector3f start_detached;
+    Vector3f end_a_detached;
+    Vector3f end_b_detached;
     if constexpr (!Detached) {
         start_detached = detach<false>(start);
         end_a_detached = detach<false>(end_a);
@@ -3972,12 +3972,12 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
         return result;
     }
 
-    MaskDetached active_detached;
-    Vector3fDetached source_detached;
-    Vector3fDetached edge_pos_detached;
-    Vector3fDetached edge_dir_detached;
-    FloatDetached edge_line_min_detached;
-    FloatDetached edge_line_max_detached;
+    Mask active_detached;
+    Vector3f source_detached;
+    Vector3f edge_pos_detached;
+    Vector3f edge_dir_detached;
+    Float edge_line_min_detached;
+    Float edge_line_max_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         source_detached = detach<false>(source_pos);
@@ -4037,8 +4037,8 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
 template <bool Detached>
 SegmentChainVisibilityT<Detached> Scene::visible_chain(
     const Vector3fT<Detached> &points,
-    const IntDetached &chain_length,
-    const IntDetached &ignore_prim_per_segment,
+    const Int &chain_length,
+    const Int &ignore_prim_per_segment,
     MaskT<Detached> active) const {
     require(is_ready(), "Scene::visible_chain(): scene is not built.");
     require(!pending_updates_,
@@ -4074,8 +4074,8 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
         ignore_k = ignore_count / ignore_slots;
     }
 
-    MaskDetached active_detached;
-    Vector3fDetached points_detached;
+    Mask active_detached;
+    Vector3f points_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         points_detached = detach<false>(points);
@@ -4130,13 +4130,13 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
 
     ensure_scene_edge_data_ready();
 
-    MaskDetached active_detached;
+    Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         active_detached &= drjit::isfinite(detach<false>(point.x()));
         active_detached &= drjit::isfinite(detach<false>(point.y()));
         active_detached &= drjit::isfinite(detach<false>(point.z()));
-        active &= Mask(active_detached);
+        active &= MaskAD(active_detached);
     } else {
         active_detached = active;
         active_detached &= drjit::isfinite(point.x()) && drjit::isfinite(point.y()) && drjit::isfinite(point.z());
@@ -4153,51 +4153,51 @@ NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point
         use_optix_candidate
             ? edge_optix_->template nearest_edge<Detached>(point, query_mask)
             : edge_bvh_->template nearest_edge<Detached>(point, query_mask);
-    const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
+    const Mask valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
     if (drjit::none(valid_detached)) {
         return result;
     }
 
-    const IntDetached global_edge_id_detached =
+    const Int global_edge_id_detached =
         use_optix_candidate
             ? candidate.global_edge_id
             : edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
-    const IntDetached shape_id_detached =
-        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
-    const IntDetached edge_id_detached =
-        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
+    const Int shape_id_detached =
+        gather<Int>(edge_shape_ids_, global_edge_id_detached, valid_detached);
+    const Int edge_id_detached =
+        gather<Int>(edge_local_ids_, global_edge_id_detached, valid_detached);
 
     if constexpr (!Detached) {
-        const Mask valid = Mask(valid_detached);
-        const Int global_edge_id = Int(global_edge_id_detached);
-        const Vector3f p0 = gather<Vector3f>(edge_info_.start, global_edge_id, valid);
-        const Vector3f e1 = gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
-        const Mask is_boundary = gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
+        const MaskAD valid = MaskAD(valid_detached);
+        const IntAD global_edge_id = IntAD(global_edge_id_detached);
+        const Vector3fAD p0 = gather<Vector3fAD>(edge_info_.start, global_edge_id, valid);
+        const Vector3fAD e1 = gather<Vector3fAD>(edge_info_.edge, global_edge_id, valid);
+        const MaskAD is_boundary = gather<MaskAD>(edge_info_.is_boundary, global_edge_id, valid);
 
-        Float edge_t;
-        Vector3f edge_point;
-        Float distance_sq;
+        FloatAD edge_t;
+        Vector3fAD edge_point;
+        FloatAD distance_sq;
         std::tie(edge_t, edge_point, distance_sq) = closest_point_on_segment<false>(point, p0, e1);
 
         result.distance = select(valid, sqrt(distance_sq), result.distance);
         result.point = select(valid, point, result.point);
         result.edge_t = select(valid, edge_t, result.edge_t);
         result.edge_point = select(valid, edge_point, result.edge_point);
-        result.shape_id = select(valid, Int(shape_id_detached), result.shape_id);
-        result.edge_id = select(valid, Int(edge_id_detached), result.edge_id);
+        result.shape_id = select(valid, IntAD(shape_id_detached), result.shape_id);
+        result.edge_id = select(valid, IntAD(edge_id_detached), result.edge_id);
         result.global_edge_id = select(valid, global_edge_id, result.global_edge_id);
         result.is_boundary = select(valid, is_boundary, result.is_boundary);
     } else {
-        const Vector3fDetached p0 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
-        const Vector3fDetached e1 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
-        const MaskDetached is_boundary =
-            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
+        const Vector3f p0 =
+            gather<Vector3f>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
+        const Vector3f e1 =
+            gather<Vector3f>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
+        const Mask is_boundary =
+            gather<Mask>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
 
-        FloatDetached edge_t;
-        Vector3fDetached edge_point;
-        FloatDetached distance_sq;
+        Float edge_t;
+        Vector3f edge_point;
+        Float distance_sq;
         std::tie(edge_t, edge_point, distance_sq) = closest_point_on_segment<true>(point, p0, e1);
 
         result.distance = select(valid_detached, sqrt(distance_sq), result.distance);
@@ -4226,8 +4226,8 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
 
     ensure_scene_edge_data_ready();
 
-    FloatDetached t_max_input;
-    MaskDetached active_detached;
+    Float t_max_input;
+    Mask active_detached;
     if constexpr (!Detached) {
         t_max_input = detach<false>(ray.tmax);
         active_detached = detach<false>(active);
@@ -4237,11 +4237,11 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         active_detached &= drjit::isfinite(detach<false>(ray.d.x())) &&
                            drjit::isfinite(detach<false>(ray.d.y())) &&
                            drjit::isfinite(detach<false>(ray.d.z()));
-        active_detached &= squared_norm(Vector3fDetached(detach<false>(ray.d.x()),
+        active_detached &= squared_norm(Vector3f(detach<false>(ray.d.x()),
                                                         detach<false>(ray.d.y()),
                                                         detach<false>(ray.d.z()))) > 0.f;
         active_detached &= ~drjit::isfinite(t_max_input) || (t_max_input > 0.f);
-        active &= Mask(active_detached);
+        active &= MaskAD(active_detached);
     } else {
         t_max_input = ray.tmax;
         active_detached = active;
@@ -4262,44 +4262,44 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         use_optix_candidate
             ? edge_optix_->template nearest_edge<Detached>(ray, query_mask)
             : edge_bvh_->template nearest_edge<Detached>(ray, query_mask);
-    const MaskDetached valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
+    const Mask valid_detached = detach<false>(query_mask) && (candidate.global_edge_id >= 0);
     if (drjit::none(valid_detached)) {
         return result;
     }
 
-    const MaskDetached finite_tmax = drjit::isfinite(t_max_input);
-    const IntDetached global_edge_id_detached =
+    const Mask finite_tmax = drjit::isfinite(t_max_input);
+    const Int global_edge_id_detached =
         use_optix_candidate
             ? candidate.global_edge_id
             : edge_bvh_->map_to_global(candidate.global_edge_id, valid_detached);
-    const IntDetached shape_id_detached =
-        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
-    const IntDetached edge_id_detached =
-        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
+    const Int shape_id_detached =
+        gather<Int>(edge_shape_ids_, global_edge_id_detached, valid_detached);
+    const Int edge_id_detached =
+        gather<Int>(edge_local_ids_, global_edge_id_detached, valid_detached);
 
     if constexpr (!Detached) {
-        const Mask valid = Mask(valid_detached);
-        const Int global_edge_id = Int(global_edge_id_detached);
-        const Vector3f p0 = gather<Vector3f>(edge_info_.start, global_edge_id, valid);
-        const Vector3f e1 = gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
-        const Mask is_boundary = gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
+        const MaskAD valid = MaskAD(valid_detached);
+        const IntAD global_edge_id = IntAD(global_edge_id_detached);
+        const Vector3fAD p0 = gather<Vector3fAD>(edge_info_.start, global_edge_id, valid);
+        const Vector3fAD e1 = gather<Vector3fAD>(edge_info_.edge, global_edge_id, valid);
+        const MaskAD is_boundary = gather<MaskAD>(edge_info_.is_boundary, global_edge_id, valid);
 
-        const Mask finite_mask = valid && Mask(finite_tmax);
-        const Mask infinite_mask = valid && !Mask(finite_tmax);
-        const Float safe_tmax = select(finite_mask, Float(t_max_input), zeros<Float>(query_count));
+        const MaskAD finite_mask = valid && MaskAD(finite_tmax);
+        const MaskAD infinite_mask = valid && !MaskAD(finite_tmax);
+        const FloatAD safe_tmax = select(finite_mask, FloatAD(t_max_input), zeros<FloatAD>(query_count));
 
-        Float query_t = zeros<Float>(query_count);
-        Vector3f query_point = zeros<Vector3f>(query_count);
-        Float edge_t = zeros<Float>(query_count);
-        Vector3f edge_point = zeros<Vector3f>(query_count);
-        Float distance_sq = full<Float>(Infinity, query_count);
+        FloatAD query_t = zeros<FloatAD>(query_count);
+        Vector3fAD query_point = zeros<Vector3fAD>(query_count);
+        FloatAD edge_t = zeros<FloatAD>(query_count);
+        Vector3fAD edge_point = zeros<Vector3fAD>(query_count);
+        FloatAD distance_sq = full<FloatAD>(Infinity, query_count);
 
         if (drjit::any(finite_mask)) {
-            Float segment_query_t;
-            Vector3f segment_query_point;
-            Float segment_edge_t;
-            Vector3f segment_edge_point;
-            Float segment_distance_sq;
+            FloatAD segment_query_t;
+            Vector3fAD segment_query_point;
+            FloatAD segment_edge_t;
+            Vector3fAD segment_edge_point;
+            FloatAD segment_distance_sq;
             std::tie(segment_query_t, segment_query_point, segment_edge_t, segment_edge_point, segment_distance_sq) =
                 closest_segment_segment<false>(ray.o, ray.d * safe_tmax, p0, e1);
 
@@ -4311,11 +4311,11 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         }
 
         if (drjit::any(infinite_mask)) {
-            Float ray_query_t;
-            Vector3f ray_query_point;
-            Float ray_edge_t;
-            Vector3f ray_edge_point;
-            Float ray_distance_sq;
+            FloatAD ray_query_t;
+            Vector3fAD ray_query_point;
+            FloatAD ray_edge_t;
+            Vector3fAD ray_edge_point;
+            FloatAD ray_distance_sq;
             std::tie(ray_query_t, ray_query_point, ray_edge_t, ray_edge_point, ray_distance_sq) =
                 closest_ray_segment<false>(ray.o, ray.d, p0, e1);
 
@@ -4331,34 +4331,34 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         result.point = select(valid, query_point, result.point);
         result.edge_t = select(valid, edge_t, result.edge_t);
         result.edge_point = select(valid, edge_point, result.edge_point);
-        result.shape_id = select(valid, Int(shape_id_detached), result.shape_id);
-        result.edge_id = select(valid, Int(edge_id_detached), result.edge_id);
+        result.shape_id = select(valid, IntAD(shape_id_detached), result.shape_id);
+        result.edge_id = select(valid, IntAD(edge_id_detached), result.edge_id);
         result.global_edge_id = select(valid, global_edge_id, result.global_edge_id);
         result.is_boundary = select(valid, is_boundary, result.is_boundary);
     } else {
-        const Vector3fDetached p0 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
-        const Vector3fDetached e1 =
-            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
-        const MaskDetached is_boundary =
-            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
+        const Vector3f p0 =
+            gather<Vector3f>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
+        const Vector3f e1 =
+            gather<Vector3f>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
+        const Mask is_boundary =
+            gather<Mask>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
 
-        const MaskDetached finite_mask = valid_detached && finite_tmax;
-        const MaskDetached infinite_mask = valid_detached && !finite_tmax;
-        const FloatDetached safe_tmax = select(finite_mask, t_max_input, zeros<FloatDetached>(query_count));
+        const Mask finite_mask = valid_detached && finite_tmax;
+        const Mask infinite_mask = valid_detached && !finite_tmax;
+        const Float safe_tmax = select(finite_mask, t_max_input, zeros<Float>(query_count));
 
-        FloatDetached query_t = zeros<FloatDetached>(query_count);
-        Vector3fDetached query_point = zeros<Vector3fDetached>(query_count);
-        FloatDetached edge_t = zeros<FloatDetached>(query_count);
-        Vector3fDetached edge_point = zeros<Vector3fDetached>(query_count);
-        FloatDetached distance_sq = full<FloatDetached>(Infinity, query_count);
+        Float query_t = zeros<Float>(query_count);
+        Vector3f query_point = zeros<Vector3f>(query_count);
+        Float edge_t = zeros<Float>(query_count);
+        Vector3f edge_point = zeros<Vector3f>(query_count);
+        Float distance_sq = full<Float>(Infinity, query_count);
 
         if (drjit::any(finite_mask)) {
-            FloatDetached segment_query_t;
-            Vector3fDetached segment_query_point;
-            FloatDetached segment_edge_t;
-            Vector3fDetached segment_edge_point;
-            FloatDetached segment_distance_sq;
+            Float segment_query_t;
+            Vector3f segment_query_point;
+            Float segment_edge_t;
+            Vector3f segment_edge_point;
+            Float segment_distance_sq;
             std::tie(segment_query_t, segment_query_point, segment_edge_t, segment_edge_point, segment_distance_sq) =
                 closest_segment_segment<true>(ray.o, ray.d * safe_tmax, p0, e1);
 
@@ -4370,11 +4370,11 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
         }
 
         if (drjit::any(infinite_mask)) {
-            FloatDetached ray_query_t;
-            Vector3fDetached ray_query_point;
-            FloatDetached ray_edge_t;
-            Vector3fDetached ray_edge_point;
-            FloatDetached ray_distance_sq;
+            Float ray_query_t;
+            Vector3f ray_query_point;
+            Float ray_edge_t;
+            Vector3f ray_edge_point;
+            Float ray_distance_sq;
             std::tie(ray_query_t, ray_query_point, ray_edge_t, ray_edge_point, ray_distance_sq) =
                 closest_ray_segment<true>(ray.o, ray.d, p0, e1);
 
@@ -4429,13 +4429,13 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
 
     ensure_scene_edge_data_ready();
 
-    MaskDetached active_detached;
+    Mask active_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
         active_detached &= drjit::isfinite(detach<false>(point.x())) &&
                            drjit::isfinite(detach<false>(point.y())) &&
                            drjit::isfinite(detach<false>(point.z()));
-        active &= Mask(active_detached);
+        active &= MaskAD(active_detached);
     } else {
         active_detached = active;
         active_detached &= drjit::isfinite(point.x()) &&
@@ -4454,37 +4454,37 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
         use_optix_candidate
             ? edge_optix_->template nearest_edges_topk<Detached>(point, k, query_mask)
             : edge_bvh_->template nearest_edges_topk<Detached>(point, k, query_mask);
-    const MaskDetached valid_detached = candidate.is_valid;
+    const Mask valid_detached = candidate.is_valid;
     if (drjit::none(valid_detached)) {
         return result;
     }
 
-    const IntDetached output_index = arange<IntDetached>(output_count);
-    const IntDetached output_query = output_index / k;
-    const IntDetached global_edge_id_detached =
+    const Int output_index = arange<Int>(output_count);
+    const Int output_query = output_index / k;
+    const Int global_edge_id_detached =
         use_optix_candidate
             ? candidate.global_edge_ids
             : edge_bvh_->map_to_global(candidate.global_edge_ids, valid_detached);
-    const IntDetached shape_id_detached =
-        gather<IntDetached>(edge_shape_ids_, global_edge_id_detached, valid_detached);
-    const IntDetached edge_id_detached =
-        gather<IntDetached>(edge_local_ids_, global_edge_id_detached, valid_detached);
+    const Int shape_id_detached =
+        gather<Int>(edge_shape_ids_, global_edge_id_detached, valid_detached);
+    const Int edge_id_detached =
+        gather<Int>(edge_local_ids_, global_edge_id_detached, valid_detached);
 
     if constexpr (!Detached) {
-        const Mask valid = Mask(valid_detached);
-        const Int global_edge_id = Int(global_edge_id_detached);
-        const Int query_id = Int(output_query);
-        const Vector3f output_point = gather<Vector3f>(point, query_id, valid);
-        const Vector3f edge_start =
-            gather<Vector3f>(edge_info_.start, global_edge_id, valid);
-        const Vector3f edge_vector =
-            gather<Vector3f>(edge_info_.edge, global_edge_id, valid);
-        const Mask boundary =
-            gather<Mask>(edge_info_.is_boundary, global_edge_id, valid);
+        const MaskAD valid = MaskAD(valid_detached);
+        const IntAD global_edge_id = IntAD(global_edge_id_detached);
+        const IntAD query_id = IntAD(output_query);
+        const Vector3fAD output_point = gather<Vector3fAD>(point, query_id, valid);
+        const Vector3fAD edge_start =
+            gather<Vector3fAD>(edge_info_.start, global_edge_id, valid);
+        const Vector3fAD edge_vector =
+            gather<Vector3fAD>(edge_info_.edge, global_edge_id, valid);
+        const MaskAD boundary =
+            gather<MaskAD>(edge_info_.is_boundary, global_edge_id, valid);
 
-        Float edge_t;
-        Vector3f edge_point;
-        Float distance_sq;
+        FloatAD edge_t;
+        Vector3fAD edge_point;
+        FloatAD distance_sq;
         std::tie(edge_t, edge_point, distance_sq) =
             closest_point_on_segment<false>(output_point, edge_start, edge_vector);
 
@@ -4493,23 +4493,23 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
         result.points = select(valid, output_point, result.points);
         result.edge_t = select(valid, edge_t, result.edge_t);
         result.edge_points = select(valid, edge_point, result.edge_points);
-        result.shape_ids = select(valid, Int(shape_id_detached), result.shape_ids);
-        result.edge_ids = select(valid, Int(edge_id_detached), result.edge_ids);
+        result.shape_ids = select(valid, IntAD(shape_id_detached), result.shape_ids);
+        result.edge_ids = select(valid, IntAD(edge_id_detached), result.edge_ids);
         result.global_edge_ids = select(valid, global_edge_id, result.global_edge_ids);
         result.is_boundary = select(valid, boundary, result.is_boundary);
     } else {
-        const Vector3fDetached output_point =
-            gather<Vector3fDetached>(point, output_query, valid_detached);
-        const Vector3fDetached edge_start =
-            gather<Vector3fDetached>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
-        const Vector3fDetached edge_vector =
-            gather<Vector3fDetached>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
-        const MaskDetached boundary =
-            gather<MaskDetached>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
+        const Vector3f output_point =
+            gather<Vector3f>(point, output_query, valid_detached);
+        const Vector3f edge_start =
+            gather<Vector3f>(detach<false>(edge_info_.start), global_edge_id_detached, valid_detached);
+        const Vector3f edge_vector =
+            gather<Vector3f>(detach<false>(edge_info_.edge), global_edge_id_detached, valid_detached);
+        const Mask boundary =
+            gather<Mask>(detach<false>(edge_info_.is_boundary), global_edge_id_detached, valid_detached);
 
-        FloatDetached edge_t;
-        Vector3fDetached edge_point;
-        FloatDetached distance_sq;
+        Float edge_t;
+        Vector3f edge_point;
+        Float distance_sq;
         std::tie(edge_t, edge_point, distance_sq) =
             closest_point_on_segment<true>(output_point, edge_start, edge_vector);
 
@@ -4526,32 +4526,23 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
     return result;
 }
 
-template IntersectionDetached Scene::intersect<true>(const RayDetached &ray, MaskDetached active, RayFlags flags) const;
-template Intersection Scene::intersect<false>(const Ray &ray, Mask active, RayFlags flags) const;
-template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetached &ray,
+template Intersection Scene::intersect<true>(const Ray &ray, Mask active, RayFlags flags) const;
+template IntersectionAD Scene::intersect<false>(const RayAD &ray, MaskAD active, RayFlags flags) const;
+template ReflectionChain Scene::trace_reflections<true>(const Ray &ray,
                                                                 int max_bounces,
                                                                 const ReflectionTraceOptions &options,
-                                                                MaskDetached active) const;
-template ReflectionChain Scene::trace_reflections<false>(const Ray &ray,
+                                                                Mask active) const;
+template ReflectionChainAD Scene::trace_reflections<false>(const RayAD &ray,
                                                          int max_bounces,
                                                          const ReflectionTraceOptions &options,
-                                                         Mask active) const;
-template ReflectionChainDetached Scene::trace_reflections<true>(const RayDetached &ray,
+                                                         MaskAD active) const;
+template ReflectionChain Scene::trace_reflections<true>(const Ray &ray,
                                                                 int max_bounces,
-                                                                MaskDetached active) const;
-template ReflectionChain Scene::trace_reflections<false>(const Ray &ray,
+                                                                Mask active) const;
+template ReflectionChainAD Scene::trace_reflections<false>(const RayAD &ray,
                                                          int max_bounces,
-                                                         Mask active) const;
-template AccumResultDetached Scene::accumulate_reflections<true>(
-    const RayDetached &ray,
-    const Vector3fDetached &tx_position,
-    const AccumGrid &grid,
-    const MaterialDetached &material,
-    int max_bounces,
-    const AccumOptions &options,
-    MaskDetached active,
-    const Vector3fDetached &tx_polarization) const;
-template AccumResult Scene::accumulate_reflections<false>(
+                                                         MaskAD active) const;
+template AccumResult Scene::accumulate_reflections<true>(
     const Ray &ray,
     const Vector3f &tx_position,
     const AccumGrid &grid,
@@ -4560,93 +4551,94 @@ template AccumResult Scene::accumulate_reflections<false>(
     const AccumOptions &options,
     Mask active,
     const Vector3f &tx_polarization) const;
-template ReflectionEpcResultDetached Scene::trace_reflection_epc<true>(
-    const RayDetached &ray,
-    const Vector3fDetached &receiver,
+template AccumResultAD Scene::accumulate_reflections<false>(
+    const RayAD &ray,
+    const Vector3fAD &tx_position,
+    const AccumGrid &grid,
+    const MaterialAD &material,
     int max_bounces,
-    const ReflectionEpcOptions &options,
-    MaskDetached active) const;
-template ReflectionEpcResult Scene::trace_reflection_epc<false>(
+    const AccumOptions &options,
+    MaskAD active,
+    const Vector3fAD &tx_polarization) const;
+template ReflectionEpcResult Scene::trace_reflection_epc<true>(
     const Ray &ray,
     const Vector3f &receiver,
     int max_bounces,
     const ReflectionEpcOptions &options,
     Mask active) const;
-template ReflectionEpcFieldResultDetached Scene::trace_reflection_epc_field<true>(
-    const RayDetached &ray,
-    const Vector3fDetached &receiver,
+template ReflectionEpcResultAD Scene::trace_reflection_epc<false>(
+    const RayAD &ray,
+    const Vector3fAD &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
-    MaskDetached active) const;
-template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<false>(
+    const ReflectionEpcOptions &options,
+    MaskAD active) const;
+template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<true>(
     const Ray &ray,
     const Vector3f &receiver,
     int max_bounces,
     const ReflectionEpcFieldOptions &options,
     Mask active) const;
-template ReflectionEpcFieldResultDetached Scene::trace_reflection_epc_field<true>(
-    const Vector3fDetached &tx_position,
-    const Vector3fDetached &receiver,
+template ReflectionEpcFieldResultAD Scene::trace_reflection_epc_field<false>(
+    const RayAD &ray,
+    const Vector3fAD &receiver,
     int max_bounces,
     const ReflectionEpcFieldOptions &options,
-    MaskDetached active) const;
-template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<false>(
+    MaskAD active) const;
+template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<true>(
     const Vector3f &tx_position,
     const Vector3f &receiver,
     int max_bounces,
     const ReflectionEpcFieldOptions &options,
     Mask active) const;
-template ReflectionTraceDetached Scene::trace_bounces<true>(
-    const RayDetached &ray,
+template ReflectionEpcFieldResultAD Scene::trace_reflection_epc_field<false>(
+    const Vector3fAD &tx_position,
+    const Vector3fAD &receiver,
     int max_bounces,
-    const ReflectionTraceOptions &options,
-    MaskDetached active) const;
-template ReflectionTrace Scene::trace_bounces<false>(
+    const ReflectionEpcFieldOptions &options,
+    MaskAD active) const;
+template ReflectionTrace Scene::trace_bounces<true>(
     const Ray &ray,
     int max_bounces,
     const ReflectionTraceOptions &options,
     Mask active) const;
-template ReflectionTraceDetached Scene::trace_bounces<true>(
-    const RayDetached &ray,
+template ReflectionTraceAD Scene::trace_bounces<false>(
+    const RayAD &ray,
     int max_bounces,
-    MaskDetached active) const;
-template ReflectionTrace Scene::trace_bounces<false>(
+    const ReflectionTraceOptions &options,
+    MaskAD active) const;
+template ReflectionTrace Scene::trace_bounces<true>(
     const Ray &ray,
     int max_bounces,
     Mask active) const;
-template MaskDetached Scene::shadow_test<true>(const RayDetached &ray, MaskDetached active) const;
-template Mask Scene::shadow_test<false>(const Ray &ray, Mask active) const;
-template SegmentVisibilityDetached Scene::visible<true>(
-    const Vector3fDetached &start,
-    const Vector3fDetached &end,
-    const IntDetached &ignore_prim_ids,
-    MaskDetached active) const;
-template SegmentVisibility Scene::visible<false>(
+template ReflectionTraceAD Scene::trace_bounces<false>(
+    const RayAD &ray,
+    int max_bounces,
+    MaskAD active) const;
+template Mask Scene::shadow_test<true>(const Ray &ray, Mask active) const;
+template MaskAD Scene::shadow_test<false>(const RayAD &ray, MaskAD active) const;
+template SegmentVisibility Scene::visible<true>(
     const Vector3f &start,
     const Vector3f &end,
-    const IntDetached &ignore_prim_ids,
+    const Int &ignore_prim_ids,
     Mask active) const;
-template SegmentPairVisibilityDetached Scene::visible_pair<true>(
-    const Vector3fDetached &start,
-    const Vector3fDetached &end_a,
-    const Vector3fDetached &end_b,
-    const IntDetached &ignore_prim_ids,
-    MaskDetached active) const;
-template SegmentPairVisibility Scene::visible_pair<false>(
+template SegmentVisibilityAD Scene::visible<false>(
+    const Vector3fAD &start,
+    const Vector3fAD &end,
+    const Int &ignore_prim_ids,
+    MaskAD active) const;
+template SegmentPairVisibility Scene::visible_pair<true>(
     const Vector3f &start,
     const Vector3f &end_a,
     const Vector3f &end_b,
-    const IntDetached &ignore_prim_ids,
+    const Int &ignore_prim_ids,
     Mask active) const;
-template AxialEdgeVisibilityDetached Scene::visible_axial_edge<true>(
-    const Vector3fDetached &source_pos,
-    const Vector3fDetached &edge_pos,
-    const Vector3fDetached &edge_dir,
-    const FloatDetached &edge_line_min,
-    const FloatDetached &edge_line_max,
-    const std::vector<float> &sample_fractions,
-    MaskDetached active) const;
-template AxialEdgeVisibility Scene::visible_axial_edge<false>(
+template SegmentPairVisibilityAD Scene::visible_pair<false>(
+    const Vector3fAD &start,
+    const Vector3fAD &end_a,
+    const Vector3fAD &end_b,
+    const Int &ignore_prim_ids,
+    MaskAD active) const;
+template AxialEdgeVisibility Scene::visible_axial_edge<true>(
     const Vector3f &source_pos,
     const Vector3f &edge_pos,
     const Vector3f &edge_dir,
@@ -4654,28 +4646,36 @@ template AxialEdgeVisibility Scene::visible_axial_edge<false>(
     const Float &edge_line_max,
     const std::vector<float> &sample_fractions,
     Mask active) const;
-template SegmentChainVisibilityDetached Scene::visible_chain<true>(
-    const Vector3fDetached &points,
-    const IntDetached &chain_length,
-    const IntDetached &ignore_prim_per_segment,
-    MaskDetached active) const;
-template SegmentChainVisibility Scene::visible_chain<false>(
+template AxialEdgeVisibilityAD Scene::visible_axial_edge<false>(
+    const Vector3fAD &source_pos,
+    const Vector3fAD &edge_pos,
+    const Vector3fAD &edge_dir,
+    const FloatAD &edge_line_min,
+    const FloatAD &edge_line_max,
+    const std::vector<float> &sample_fractions,
+    MaskAD active) const;
+template SegmentChainVisibility Scene::visible_chain<true>(
     const Vector3f &points,
-    const IntDetached &chain_length,
-    const IntDetached &ignore_prim_per_segment,
+    const Int &chain_length,
+    const Int &ignore_prim_per_segment,
     Mask active) const;
-template NearestPointEdgeDetached Scene::nearest_edge<true>(const Vector3fDetached &point, MaskDetached active) const;
-template NearestPointEdge Scene::nearest_edge<false>(const Vector3f &point, Mask active) const;
-template NearestRayEdgeDetached Scene::nearest_edge<true>(const RayDetached &ray, MaskDetached active) const;
-template NearestRayEdge Scene::nearest_edge<false>(const Ray &ray, Mask active) const;
-template NearestEdgesTopKDetached Scene::nearest_edges_topk<true>(
-    const Vector3fDetached &point,
-    int k,
-    MaskDetached active) const;
-template NearestEdgesTopK Scene::nearest_edges_topk<false>(
+template SegmentChainVisibilityAD Scene::visible_chain<false>(
+    const Vector3fAD &points,
+    const Int &chain_length,
+    const Int &ignore_prim_per_segment,
+    MaskAD active) const;
+template NearestPointEdge Scene::nearest_edge<true>(const Vector3f &point, Mask active) const;
+template NearestPointEdgeAD Scene::nearest_edge<false>(const Vector3fAD &point, MaskAD active) const;
+template NearestRayEdge Scene::nearest_edge<true>(const Ray &ray, Mask active) const;
+template NearestRayEdgeAD Scene::nearest_edge<false>(const RayAD &ray, MaskAD active) const;
+template NearestEdgesTopK Scene::nearest_edges_topk<true>(
     const Vector3f &point,
     int k,
     Mask active) const;
+template NearestEdgesTopKAD Scene::nearest_edges_topk<false>(
+    const Vector3fAD &point,
+    int k,
+    MaskAD active) const;
 
 } // namespace rayd
 

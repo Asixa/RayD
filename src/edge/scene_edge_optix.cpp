@@ -22,7 +22,7 @@ namespace {
 /// Which edge query to launch; selects the matching raygen program and SBT record.
 enum class EdgeOptixLaunchKind {
     Point,
-    Ray,
+    RayAD,
     PointTopK
 };
 
@@ -83,7 +83,7 @@ struct EdgeOptixState {
         switch (kind) {
         case EdgeOptixLaunchKind::Point:
             return sbt_raygen_point;
-        case EdgeOptixLaunchKind::Ray:
+        case EdgeOptixLaunchKind::RayAD:
             return sbt_raygen_ray;
         case EdgeOptixLaunchKind::PointTopK:
             return sbt_raygen_topk;
@@ -305,20 +305,20 @@ void SceneEdgeOptix::ensure_pipeline() {
 }
 
 /// Upload the current edge endpoints and recompute per-edge search radii from \p edge_info.
-void SceneEdgeOptix::refresh_geometry(const SecondaryEdgeInfo &edge_info) {
+void SceneEdgeOptix::refresh_geometry(const SecondaryEdgeInfoAD &edge_info) {
     primitive_count_ = edge_info.size();
     edge_p0_ = detach<false>(edge_info.start);
     edge_e1_ = detach<false>(edge_info.edge);
 }
 
-std::vector<float> SceneEdgeOptix::compute_search_radii(const SecondaryEdgeInfo &edge_info) const {
+std::vector<float> SceneEdgeOptix::compute_search_radii(const SecondaryEdgeInfoAD &edge_info) const {
     const int edge_count = edge_info.size();
     if (edge_count <= 0) {
         return {};
     }
 
-    const Vector3fDetached p0 = detach<false>(edge_info.start);
-    const Vector3fDetached e1 = detach<false>(edge_info.edge);
+    const Vector3f p0 = detach<false>(edge_info.start);
+    const Vector3f e1 = detach<false>(edge_info.edge);
     drjit::eval(p0, e1);
 
     std::vector<float> p0_x(static_cast<size_t>(edge_count));
@@ -516,8 +516,8 @@ void SceneEdgeOptix::build_gases(bool update) {
     }
 }
 
-void SceneEdgeOptix::build(const SecondaryEdgeInfo &edge_info,
-                           const MaskDetached &mask) {
+void SceneEdgeOptix::build(const SecondaryEdgeInfoAD &edge_info,
+                           const Mask &mask) {
     require(static_cast<int>(mask.size()) == edge_info.size(),
             "SceneEdgeOptix::build(): mask size must match the edge count.");
     ensure_pipeline();
@@ -528,14 +528,14 @@ void SceneEdgeOptix::build(const SecondaryEdgeInfo &edge_info,
     ready_ = true;
 }
 
-void SceneEdgeOptix::set_mask(const MaskDetached &mask) {
+void SceneEdgeOptix::set_mask(const Mask &mask) {
     require(ready_, "SceneEdgeOptix::set_mask(): GAS is not built.");
     require(static_cast<int>(mask.size()) == primitive_count_,
             "SceneEdgeOptix::set_mask(): mask size must match the edge count.");
     edge_mask_ = mask;
 }
 
-void SceneEdgeOptix::refit(const SecondaryEdgeInfo &edge_info,
+void SceneEdgeOptix::refit(const SecondaryEdgeInfoAD &edge_info,
                            const std::vector<EdgeDirtyRange> &dirty_ranges) {
     require(ready_, "SceneEdgeOptix::refit(): GAS is not built.");
     if (primitive_count_ == 0 || dirty_ranges.empty()) {
@@ -579,8 +579,8 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const Vector3fT<Detached> &poi
 
     const int query_count = static_cast<int>(slices(point));
     ClosestEdgeCandidate result;
-    result.global_edge_id = full<IntDetached>(-1, query_count);
-    result.distance_sq = full<FloatDetached>(Infinity, query_count);
+    result.global_edge_id = full<Int>(-1, query_count);
+    result.distance_sq = full<Float>(Infinity, query_count);
     if (primitive_count_ == 0 || query_count == 0) {
         if constexpr (!Detached) {
             active &= false;
@@ -590,21 +590,21 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const Vector3fT<Detached> &poi
         return result;
     }
 
-    const Vector3fDetached point_detached = detach<false>(point);
-    const MaskDetached active_detached = detach<false>(active);
+    const Vector3f point_detached = detach<false>(point);
+    const Mask active_detached = detach<false>(active);
     if (drjit::none(active_detached)) {
         return result;
     }
 
     drjit::eval(point_detached, active_detached, edge_mask_);
 
-    MaskDetached unresolved = active_detached;
+    Mask unresolved = active_detached;
     for (const EdgeOptixState::Gas &gas : state_->gases) {
         ClosestEdgeCandidate stage;
-        stage.global_edge_id = full<IntDetached>(-1, query_count);
-        stage.distance_sq = full<FloatDetached>(Infinity, query_count);
-        FloatDetached edge_t = empty<FloatDetached>(query_count);
-        MaskDetached valid = empty<MaskDetached>(query_count);
+        stage.global_edge_id = full<Int>(-1, query_count);
+        stage.distance_sq = full<Float>(Infinity, query_count);
+        Float edge_t = empty<Float>(query_count);
+        Mask valid = empty<Mask>(query_count);
         drjit::eval(unresolved);
 
         EdgeOptixQueryParams params = {};
@@ -630,15 +630,15 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const Vector3fT<Detached> &poi
 
         state_->launch(EdgeOptixLaunchKind::Point, params);
 
-        const MaskDetached hit = stage.global_edge_id >= 0;
+        const Mask hit = stage.global_edge_id >= 0;
         result.global_edge_id = select(hit, stage.global_edge_id, result.global_edge_id);
         result.distance_sq = select(hit, stage.distance_sq, result.distance_sq);
         unresolved &= !hit;
     }
 
-    const MaskDetached hit = result.global_edge_id >= 0;
+    const Mask hit = result.global_edge_id >= 0;
     if constexpr (!Detached) {
-        active &= Mask(hit);
+        active &= MaskAD(hit);
     } else {
         active &= hit;
     }
@@ -652,8 +652,8 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const RayT<Detached> &ray,
 
     const int query_count = static_cast<int>(slices(ray.o));
     ClosestEdgeCandidate result;
-    result.global_edge_id = full<IntDetached>(-1, query_count);
-    result.distance_sq = full<FloatDetached>(Infinity, query_count);
+    result.global_edge_id = full<Int>(-1, query_count);
+    result.distance_sq = full<Float>(Infinity, query_count);
     if (primitive_count_ == 0 || query_count == 0) {
         if constexpr (!Detached) {
             active &= false;
@@ -663,23 +663,23 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const RayT<Detached> &ray,
         return result;
     }
 
-    RayDetached ray_detached(detach<false>(ray.o), detach<false>(ray.d));
+    Ray ray_detached(detach<false>(ray.o), detach<false>(ray.d));
     ray_detached.tmax = detach<false>(ray.tmax);
-    const MaskDetached active_detached = detach<false>(active);
+    const Mask active_detached = detach<false>(active);
     if (drjit::none(active_detached)) {
         return result;
     }
 
     drjit::eval(ray_detached.o, ray_detached.d, ray_detached.tmax, active_detached, edge_mask_);
 
-    MaskDetached unresolved = active_detached;
+    Mask unresolved = active_detached;
     for (const EdgeOptixState::Gas &gas : state_->gases) {
         ClosestEdgeCandidate stage;
-        stage.global_edge_id = full<IntDetached>(-1, query_count);
-        stage.distance_sq = full<FloatDetached>(Infinity, query_count);
-        FloatDetached ray_t = empty<FloatDetached>(query_count);
-        FloatDetached edge_t = empty<FloatDetached>(query_count);
-        MaskDetached valid = empty<MaskDetached>(query_count);
+        stage.global_edge_id = full<Int>(-1, query_count);
+        stage.distance_sq = full<Float>(Infinity, query_count);
+        Float ray_t = empty<Float>(query_count);
+        Float edge_t = empty<Float>(query_count);
+        Mask valid = empty<Mask>(query_count);
         drjit::eval(unresolved);
 
         EdgeOptixQueryParams params = {};
@@ -708,17 +708,17 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const RayT<Detached> &ray,
         params.out_edge_t = edge_t.data();
         params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
 
-        state_->launch(EdgeOptixLaunchKind::Ray, params);
+        state_->launch(EdgeOptixLaunchKind::RayAD, params);
 
-        const MaskDetached hit = stage.global_edge_id >= 0;
+        const Mask hit = stage.global_edge_id >= 0;
         result.global_edge_id = select(hit, stage.global_edge_id, result.global_edge_id);
         result.distance_sq = select(hit, stage.distance_sq, result.distance_sq);
         unresolved &= !hit;
     }
 
-    const MaskDetached hit = result.global_edge_id >= 0;
+    const Mask hit = result.global_edge_id >= 0;
     if constexpr (!Detached) {
-        active &= Mask(hit);
+        active &= MaskAD(hit);
     } else {
         active &= hit;
     }
@@ -738,9 +738,9 @@ ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk(const Vector3fT<Deta
     ClosestEdgeTopKCandidate result;
     result.query_count = query_count;
     result.k = k;
-    result.is_valid = full<MaskDetached>(false, output_count);
-    result.global_edge_ids = full<IntDetached>(-1, output_count);
-    result.distance_sq = full<FloatDetached>(Infinity, output_count);
+    result.is_valid = full<Mask>(false, output_count);
+    result.global_edge_ids = full<Int>(-1, output_count);
+    result.distance_sq = full<Float>(Infinity, output_count);
     if (primitive_count_ == 0 || query_count == 0) {
         if constexpr (!Detached) {
             active &= false;
@@ -750,27 +750,27 @@ ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk(const Vector3fT<Deta
         return result;
     }
 
-    const Vector3fDetached point_detached = detach<false>(point);
-    const MaskDetached active_detached = detach<false>(active);
+    const Vector3f point_detached = detach<false>(point);
+    const Mask active_detached = detach<false>(active);
     if (drjit::none(active_detached)) {
         return result;
     }
 
     drjit::eval(point_detached, active_detached, edge_mask_);
 
-    MaskDetached unresolved = active_detached;
-    const IntDetached output_indices = arange<IntDetached>(output_count);
-    const IntDetached output_query_indices = output_indices / k;
-    const MaskDetached output_active = full<MaskDetached>(true, output_count);
-    const IntDetached kth_slot = arange<IntDetached>(query_count) * k + (k - 1);
+    Mask unresolved = active_detached;
+    const Int output_indices = arange<Int>(output_count);
+    const Int output_query_indices = output_indices / k;
+    const Mask output_active = full<Mask>(true, output_count);
+    const Int kth_slot = arange<Int>(query_count) * k + (k - 1);
     for (const EdgeOptixState::Gas &gas : state_->gases) {
         ClosestEdgeTopKCandidate stage;
         stage.query_count = query_count;
         stage.k = k;
-        stage.is_valid = full<MaskDetached>(false, output_count);
-        stage.global_edge_ids = full<IntDetached>(-1, output_count);
-        stage.distance_sq = full<FloatDetached>(Infinity, output_count);
-        FloatDetached edge_t = empty<FloatDetached>(output_count);
+        stage.is_valid = full<Mask>(false, output_count);
+        stage.global_edge_ids = full<Int>(-1, output_count);
+        stage.distance_sq = full<Float>(Infinity, output_count);
+        Float edge_t = empty<Float>(output_count);
         drjit::eval(unresolved);
 
         EdgeOptixQueryParams params = {};
@@ -797,41 +797,41 @@ ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk(const Vector3fT<Deta
 
         state_->launch(EdgeOptixLaunchKind::PointTopK, params);
 
-        const MaskDetached take_slot =
-            gather<MaskDetached>(unresolved, output_query_indices, output_active);
+        const Mask take_slot =
+            gather<Mask>(unresolved, output_query_indices, output_active);
         result.is_valid = select(take_slot, stage.is_valid, result.is_valid);
         result.global_edge_ids = select(take_slot, stage.global_edge_ids, result.global_edge_ids);
         result.distance_sq = select(take_slot, stage.distance_sq, result.distance_sq);
 
-        const MaskDetached has_k = gather<MaskDetached>(stage.is_valid, kth_slot, unresolved);
+        const Mask has_k = gather<Mask>(stage.is_valid, kth_slot, unresolved);
         unresolved &= !has_k;
     }
 
-    const IntDetached first_slot = arange<IntDetached>(query_count) * k;
-    const MaskDetached has_any = gather<MaskDetached>(result.is_valid, first_slot, active_detached);
+    const Int first_slot = arange<Int>(query_count) * k;
+    const Mask has_any = gather<Mask>(result.is_valid, first_slot, active_detached);
     if constexpr (!Detached) {
-        active &= Mask(has_any);
+        active &= MaskAD(has_any);
     } else {
         active &= has_any;
     }
     return result;
 }
 
-template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<true>(const Vector3fDetached &point,
-                                                                 MaskDetached &active) const;
-template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<false>(const Vector3f &point,
-                                                                  Mask &active) const;
-template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<true>(const RayDetached &ray,
-                                                                 MaskDetached &active) const;
-template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<false>(const Ray &ray,
-                                                                  Mask &active) const;
+template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<true>(const Vector3f &point,
+                                                                 Mask &active) const;
+template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<false>(const Vector3fAD &point,
+                                                                  MaskAD &active) const;
+template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<true>(const Ray &ray,
+                                                                 Mask &active) const;
+template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<false>(const RayAD &ray,
+                                                                  MaskAD &active) const;
 template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk<true>(
-    const Vector3fDetached &point,
-    int k,
-    MaskDetached &active) const;
-template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk<false>(
     const Vector3f &point,
     int k,
     Mask &active) const;
+template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk<false>(
+    const Vector3fAD &point,
+    int k,
+    MaskAD &active) const;
 
 } // namespace rayd

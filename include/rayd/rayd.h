@@ -13,116 +13,116 @@ constexpr int RAYD_NUM_CHANNELS = 3;
 namespace rayd {
 
 constexpr float Epsilon = 1e-5f;       // General-purpose geometric tolerance.
-constexpr float RayEpsilon = 1e-3f;    // Ray t_min offset to avoid self-intersection.
+constexpr float RayEpsilon = 1e-3f;    // RayAD t_min offset to avoid self-intersection.
 constexpr float ShadowEpsilon = 1e-3f; // Shadow/visibility ray offset.
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 
 // Forward declarations and the canonical alias pattern for RayD's value types.
 // Each type X is defined as a template XData<Float_>; XT<Detached> selects the
-// AD or detached Float, and X / XDetached are the two concrete instantiations.
+// non-AD or AD Float, and X (non-AD) / XAD (AD) are the two concrete instantiations.
 template <typename> struct RayData;
 template <bool Detached>
 using RayT = RayData<FloatT<Detached>>;
-using Ray = RayT<false>;
-using RayDetached = RayT<true>;
+using RayAD = RayT<false>;
+using Ray = RayT<true>;
 
 template <typename> struct IntersectionData;
 template <bool Detached>
 using IntersectionT = IntersectionData<FloatT<Detached>>;
-using Intersection = IntersectionT<false>;
-using IntersectionDetached = IntersectionT<true>;
+using IntersectionAD = IntersectionT<false>;
+using Intersection = IntersectionT<true>;
 
 template <typename> struct ReflectionChainData;
 template <bool Detached>
 using ReflectionChainT = ReflectionChainData<FloatT<Detached>>;
-using ReflectionChain = ReflectionChainT<false>;
-using ReflectionChainDetached = ReflectionChainT<true>;
+using ReflectionChainAD = ReflectionChainT<false>;
+using ReflectionChain = ReflectionChainT<true>;
 
 template <typename> struct ReflectionBounceData;
 template <bool Detached>
 using ReflectionBounceT = ReflectionBounceData<FloatT<Detached>>;
-using ReflectionBounce = ReflectionBounceT<false>;
-using ReflectionBounceDetached = ReflectionBounceT<true>;
+using ReflectionBounceAD = ReflectionBounceT<false>;
+using ReflectionBounce = ReflectionBounceT<true>;
 
 template <typename> struct ReflectionTraceData;
 template <bool Detached>
 using ReflectionTraceT = ReflectionTraceData<FloatT<Detached>>;
-using ReflectionTrace = ReflectionTraceT<false>;
-using ReflectionTraceDetached = ReflectionTraceT<true>;
+using ReflectionTraceAD = ReflectionTraceT<false>;
+using ReflectionTrace = ReflectionTraceT<true>;
 
 template <typename> struct ReflectionEpcResultData;
 template <bool Detached>
 using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
-using ReflectionEpcResult = ReflectionEpcResultT<false>;
-using ReflectionEpcResultDetached = ReflectionEpcResultT<true>;
+using ReflectionEpcResultAD = ReflectionEpcResultT<false>;
+using ReflectionEpcResult = ReflectionEpcResultT<true>;
 struct ReflectionEpcOptions;
 struct ReflectionEpcFieldOptions;
 template <typename> struct ReflectionEpcFieldResultData;
 template <bool Detached>
 using ReflectionEpcFieldResultT = ReflectionEpcFieldResultData<FloatT<Detached>>;
-using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<false>;
-using ReflectionEpcFieldResultDetached = ReflectionEpcFieldResultT<true>;
+using ReflectionEpcFieldResultAD = ReflectionEpcFieldResultT<false>;
+using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<true>;
 
 template <typename> struct MaterialData;
 template <bool Detached>
 using MaterialT = MaterialData<FloatT<Detached>>;
-using Material = MaterialT<false>;
-using MaterialDetached = MaterialT<true>;
+using MaterialAD = MaterialT<false>;
+using Material = MaterialT<true>;
 
 template <typename> struct WedgeEventsData;
 template <bool Detached>
 using WedgeEventsT = WedgeEventsData<FloatT<Detached>>;
-using WedgeEvents = WedgeEventsT<false>;
-using WedgeEventsDetached = WedgeEventsT<true>;
+using WedgeEventsAD = WedgeEventsT<false>;
+using WedgeEvents = WedgeEventsT<true>;
 
 template <typename> struct AccumResultData;
 template <bool Detached>
 using AccumResultT = AccumResultData<FloatT<Detached>>;
-using AccumResult = AccumResultT<false>;
-using AccumResultDetached = AccumResultT<true>;
+using AccumResultAD = AccumResultT<false>;
+using AccumResult = AccumResultT<true>;
 
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>
 using NearestPointEdgeT = NearestPointEdgeData<FloatT<Detached>>;
-using NearestPointEdge = NearestPointEdgeT<false>;
-using NearestPointEdgeDetached = NearestPointEdgeT<true>;
+using NearestPointEdgeAD = NearestPointEdgeT<false>;
+using NearestPointEdge = NearestPointEdgeT<true>;
 
 template <typename> struct NearestRayEdgeData;
 template <bool Detached>
 using NearestRayEdgeT = NearestRayEdgeData<FloatT<Detached>>;
-using NearestRayEdge = NearestRayEdgeT<false>;
-using NearestRayEdgeDetached = NearestRayEdgeT<true>;
+using NearestRayEdgeAD = NearestRayEdgeT<false>;
+using NearestRayEdge = NearestRayEdgeT<true>;
 
 template <typename> struct NearestEdgesTopKData;
 template <bool Detached>
 using NearestEdgesTopKT = NearestEdgesTopKData<FloatT<Detached>>;
-using NearestEdgesTopK = NearestEdgesTopKT<false>;
-using NearestEdgesTopKDetached = NearestEdgesTopKT<true>;
+using NearestEdgesTopKAD = NearestEdgesTopKT<false>;
+using NearestEdgesTopK = NearestEdgesTopKT<true>;
 
 template <typename> struct SegmentVisibilityData;
 template <bool Detached>
 using SegmentVisibilityT = SegmentVisibilityData<FloatT<Detached>>;
-using SegmentVisibility = SegmentVisibilityT<false>;
-using SegmentVisibilityDetached = SegmentVisibilityT<true>;
+using SegmentVisibilityAD = SegmentVisibilityT<false>;
+using SegmentVisibility = SegmentVisibilityT<true>;
 
 template <typename> struct SegmentPairVisibilityData;
 template <bool Detached>
 using SegmentPairVisibilityT = SegmentPairVisibilityData<FloatT<Detached>>;
-using SegmentPairVisibility = SegmentPairVisibilityT<false>;
-using SegmentPairVisibilityDetached = SegmentPairVisibilityT<true>;
+using SegmentPairVisibilityAD = SegmentPairVisibilityT<false>;
+using SegmentPairVisibility = SegmentPairVisibilityT<true>;
 
 template <typename> struct AxialEdgeVisibilityData;
 template <bool Detached>
 using AxialEdgeVisibilityT = AxialEdgeVisibilityData<FloatT<Detached>>;
-using AxialEdgeVisibility = AxialEdgeVisibilityT<false>;
-using AxialEdgeVisibilityDetached = AxialEdgeVisibilityT<true>;
+using AxialEdgeVisibilityAD = AxialEdgeVisibilityT<false>;
+using AxialEdgeVisibility = AxialEdgeVisibilityT<true>;
 
 template <typename> struct SegmentChainVisibilityData;
 template <bool Detached>
 using SegmentChainVisibilityT = SegmentChainVisibilityData<FloatT<Detached>>;
-using SegmentChainVisibility = SegmentChainVisibilityT<false>;
-using SegmentChainVisibilityDetached = SegmentChainVisibilityT<true>;
+using SegmentChainVisibilityAD = SegmentChainVisibilityT<false>;
+using SegmentChainVisibility = SegmentChainVisibilityT<true>;
 
 struct OptixIntersection;
 

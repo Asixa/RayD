@@ -314,7 +314,7 @@ static __forceinline__ __device__ void insert_topk_payload_candidate(int edge_id
 // query (launch index x); intersection programs report the point/segment-to-edge
 // distance, and the anyhit/closesthit programs keep the running nearest edge.
 
-/// Intersection for point queries: report the point-to-edge distance if within the search radius.
+/// IntersectionAD for point queries: report the point-to-edge distance if within the search radius.
 extern "C" __global__ void __intersection__edge_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -334,7 +334,7 @@ extern "C" __global__ void __intersection__edge_point() {
     }
 }
 
-/// Intersection for ray queries: report the ray-to-edge closest approach within the search radius.
+/// IntersectionAD for ray queries: report the ray-to-edge closest approach within the search radius.
 extern "C" __global__ void __intersection__edge_ray() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -365,7 +365,7 @@ extern "C" __global__ void __intersection__edge_ray() {
     (void) query;
 }
 
-/// Intersection for top-k point queries: report every edge within the search radius for ranking.
+/// IntersectionAD for top-k point queries: report every edge within the search radius for ranking.
 extern "C" __global__ void __intersection__edge_topk_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {

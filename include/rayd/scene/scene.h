@@ -67,14 +67,14 @@ public:
     bool has_pending_updates() const { return pending_updates_; }
 
     /// Queue new object-space \p positions for a dynamic mesh; applied on the next sync().
-    void update_mesh_vertices(int mesh_id, const Vector3f &positions);
+    void update_mesh_vertices(int mesh_id, const Vector3fAD &positions);
     /// Queue a transform for a dynamic mesh; \p set_left chooses the left vs. right factor. See Mesh::set_transform.
-    void set_mesh_transform(int mesh_id, const Matrix4f &matrix, bool set_left = true);
+    void set_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool set_left = true);
     /// Queue a transform composed onto a dynamic mesh's existing transform; applied on the next sync().
-    void append_mesh_transform(int mesh_id, const Matrix4f &matrix, bool append_left = true);
+    void append_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool append_left = true);
     /// Set the per-edge active mask used by edge queries; size must equal the scene edge count.
-    void set_edge_mask(const MaskDetached &mask);
-    void set_edge_mask(const Mask &mask) { set_edge_mask(detach<false>(mask)); }
+    void set_edge_mask(const Mask &mask);
+    void set_edge_mask(const MaskAD &mask) { set_edge_mask(detach<false>(mask)); }
     /// Apply all queued dynamic edits, refitting acceleration structures in place.
     void sync();
     const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
@@ -87,13 +87,13 @@ public:
     /// Scene-global edge connectivity tables.
     const SceneEdgeTopology &edge_topology() const;
     /// Current per-edge active mask. See set_edge_mask.
-    const MaskDetached &edge_mask() const;
+    const Mask &edge_mask() const;
     /// Prefix-sum of per-mesh face counts; mesh m owns faces [offset[m], offset[m+1]).
-    const IntDetached &mesh_face_offsets() const { return face_offsets_; }
+    const Int &mesh_face_offsets() const { return face_offsets_; }
     /// Prefix-sum of per-mesh edge counts.
-    const IntDetached &mesh_edge_offsets() const { return edge_offsets_; }
+    const Int &mesh_edge_offsets() const { return edge_offsets_; }
     /// Prefix-sum of per-mesh vertex counts.
-    const IntDetached &mesh_vertex_offsets() const { return vertex_offsets_; }
+    const Int &mesh_vertex_offsets() const { return vertex_offsets_; }
     /// Flattened scene-global geometry (vertices, faces, normals, ids).
     const SceneGeometry &global_geometry() const;
     /// Monotonic version counter bumped whenever geometry changes; for cache invalidation.
@@ -101,9 +101,9 @@ public:
     /// Monotonic version counter bumped whenever the edge set changes.
     uint64_t edge_version() const { return edge_version_; }
     /// The three edge ids of each queried triangle; \p global selects scene-global vs. per-mesh ids.
-    VectoriT<3, true> triangle_edge_indices(const IntDetached &prim_id, bool global = true) const;
+    VectoriT<3, true> triangle_edge_indices(const Int &prim_id, bool global = true) const;
     /// The two faces adjacent to each queried edge (second is -1 on a boundary); \p global selects the id space.
-    VectoriT<2, true> edge_adjacent_faces(const IntDetached &edge_id, bool global = true) const;
+    VectoriT<2, true> edge_adjacent_faces(const Int &edge_id, bool global = true) const;
 
     /// \brief Closest-hit ray-triangle intersection against the built scene.
     ///
@@ -113,7 +113,7 @@ public:
     ///
     /// \tparam Detached  When true, operate on detached (non-AD) arrays; when false,
     ///                   gradients flow through the recomputed hit fields.
-    /// \param ray     Ray batch (origin, direction, tmax).
+    /// \param ray     RayAD batch (origin, direction, tmax).
     /// \param active  Per-lane mask; inactive lanes are skipped and returned invalid.
     /// \param flags   Selects which intersection fields are computed (see RayFlags).
     /// \return Per-ray intersection; check is_valid() before reading other fields.
@@ -203,7 +203,7 @@ public:
     SegmentVisibilityT<Detached> visible(
         const Vector3fT<Detached> &start,
         const Vector3fT<Detached> &end,
-        const IntDetached &ignore_prim_ids = IntDetached(),
+        const Int &ignore_prim_ids = Int(),
         MaskT<Detached> active = true) const;
     /// Visibility from \p start to two endpoints in one pass (shared origin, see visible()).
     template <bool Detached>
@@ -211,7 +211,7 @@ public:
         const Vector3fT<Detached> &start,
         const Vector3fT<Detached> &end_a,
         const Vector3fT<Detached> &end_b,
-        const IntDetached &ignore_prim_ids = IntDetached(),
+        const Int &ignore_prim_ids = Int(),
         MaskT<Detached> active = true) const;
     /// \brief Whether \p source_pos sees any sample point along an edge segment.
     ///
@@ -233,8 +233,8 @@ public:
     template <bool Detached>
     SegmentChainVisibilityT<Detached> visible_chain(
         const Vector3fT<Detached> &points,
-        const IntDetached &chain_length,
-        const IntDetached &ignore_prim_per_segment = IntDetached(),
+        const Int &chain_length,
+        const Int &ignore_prim_per_segment = Int(),
         MaskT<Detached> active = true) const;
     /// Nearest scene edge to each query point (see edge BVH; multipath/edge headers).
     template <bool Detached>
@@ -286,21 +286,21 @@ private:
     int mesh_count_ = 0;
     std::vector<SceneMeshRecord> mesh_records_;
 
-    IntDetached face_offsets_;
-    IntDetached edge_offsets_;
-    IntDetached vertex_offsets_;
-    TriangleInfo triangle_info_;
-    TriangleInfoDetached triangle_info_detached_;
-    TriangleUV triangle_uv_;
-    TriangleUVDetached triangle_uv_detached_;
-    Mask triangle_face_normal_mask_;
-    MaskDetached triangle_face_normal_mask_detached_;
+    Int face_offsets_;
+    Int edge_offsets_;
+    Int vertex_offsets_;
+    TriangleInfoAD triangle_info_;
+    TriangleInfo triangle_info_detached_;
+    TriangleUVAD triangle_uv_;
+    TriangleUV triangle_uv_detached_;
+    MaskAD triangle_face_normal_mask_;
+    Mask triangle_face_normal_mask_detached_;
     SceneGeometry global_geometry_;
-    SecondaryEdgeInfo edge_info_;
+    SecondaryEdgeInfoAD edge_info_;
     SceneEdgeTopology edge_topology_;
-    IntDetached edge_shape_ids_;
-    IntDetached edge_local_ids_;
-    MaskDetached edge_mask_;
+    Int edge_shape_ids_;
+    Int edge_local_ids_;
+    Mask edge_mask_;
     VectoriT<3, true> triangle_edge_ids_;
 
     bool is_ready_ = false;
