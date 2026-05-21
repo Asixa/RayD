@@ -318,6 +318,37 @@ NB_MODULE(rayd, m) {
             .def_rw("canonical_prim_table", &ReflectionTraceOptions::canonical_prim_table)
             .def_rw("image_source_tolerance", &ReflectionTraceOptions::image_source_tolerance);
 
+        nb::class_<ReflectionEpcOptions>(m, "ReflectionEpcOptions")
+            .def(nb::init<>())
+            .def_rw("expected_prim_ids", &ReflectionEpcOptions::expected_prim_ids)
+            .def_rw("surface_group_id", &ReflectionEpcOptions::surface_group_id)
+            .def_rw("surface_group_size", &ReflectionEpcOptions::surface_group_size)
+            .def_rw("surface_group_members", &ReflectionEpcOptions::surface_group_members)
+            .def_rw("surface_max_group_size", &ReflectionEpcOptions::surface_max_group_size)
+            .def_rw("visibility_ignore_mode", &ReflectionEpcOptions::visibility_ignore_mode)
+            .def_rw("final_ignore_group_ids", &ReflectionEpcOptions::final_ignore_group_ids);
+
+        nb::class_<ReflectionEpcFieldOptions, ReflectionEpcOptions>(
+                m, "ReflectionEpcFieldOptions")
+            .def(nb::init<>())
+            .def_rw("slot_plane_point", &ReflectionEpcFieldOptions::slot_plane_point)
+            .def_rw("slot_plane_normal", &ReflectionEpcFieldOptions::slot_plane_normal)
+            .def_rw("slot_eta_r", &ReflectionEpcFieldOptions::slot_eta_r)
+            .def_rw("slot_mu_r", &ReflectionEpcFieldOptions::slot_mu_r)
+            .def_rw("slot_sigma", &ReflectionEpcFieldOptions::slot_sigma)
+            .def_rw("slot_gain", &ReflectionEpcFieldOptions::slot_gain)
+            .def_rw("tx_polarization", &ReflectionEpcFieldOptions::tx_polarization)
+            .def_rw("omega", &ReflectionEpcFieldOptions::omega)
+            .def_rw("wavelength", &ReflectionEpcFieldOptions::wavelength)
+            .def_rw("return_geometry", &ReflectionEpcFieldOptions::return_geometry)
+            .def_rw("return_endpoints", &ReflectionEpcFieldOptions::return_endpoints)
+            .def_rw("return_hit_points", &ReflectionEpcFieldOptions::return_hit_points)
+            .def_rw("return_normals", &ReflectionEpcFieldOptions::return_normals)
+            .def_rw("return_resolved_prim_ids",
+                    &ReflectionEpcFieldOptions::return_resolved_prim_ids)
+            .def_rw("return_surface_group_ids",
+                    &ReflectionEpcFieldOptions::return_surface_group_ids);
+
         nb::class_<IntersectionDetached>(m, "IntersectionDetached")
             .def("is_valid", &IntersectionDetached::is_valid)
             .def_ro("t", &IntersectionDetached::t)
@@ -479,8 +510,13 @@ NB_MODULE(rayd, m) {
             .def_ro("path_length", &ReflectionEpcResultDetached::path_length)
             .def_ro("reflection_points", &ReflectionEpcResultDetached::reflection_points)
             .def_ro("prim_ids", &ReflectionEpcResultDetached::prim_ids)
+            .def_ro("trace_prim_ids", &ReflectionEpcResultDetached::trace_prim_ids)
+            .def_ro("resolved_prim_ids", &ReflectionEpcResultDetached::resolved_prim_ids)
+            .def_ro("surface_group_ids", &ReflectionEpcResultDetached::surface_group_ids)
+            .def_ro("plane_normals", &ReflectionEpcResultDetached::plane_normals)
             .def_ro("first_blocked_segment", &ReflectionEpcResultDetached::first_blocked_segment)
-            .def_ro("first_blocked_prim", &ReflectionEpcResultDetached::first_blocked_prim);
+            .def_ro("first_blocked_prim", &ReflectionEpcResultDetached::first_blocked_prim)
+            .def_ro("first_blocked_group", &ReflectionEpcResultDetached::first_blocked_group);
 
         nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
             .def_ro("ray_count", &ReflectionEpcResult::ray_count)
@@ -490,8 +526,56 @@ NB_MODULE(rayd, m) {
             .def_ro("path_length", &ReflectionEpcResult::path_length)
             .def_ro("reflection_points", &ReflectionEpcResult::reflection_points)
             .def_ro("prim_ids", &ReflectionEpcResult::prim_ids)
+            .def_ro("trace_prim_ids", &ReflectionEpcResult::trace_prim_ids)
+            .def_ro("resolved_prim_ids", &ReflectionEpcResult::resolved_prim_ids)
+            .def_ro("surface_group_ids", &ReflectionEpcResult::surface_group_ids)
+            .def_ro("plane_normals", &ReflectionEpcResult::plane_normals)
             .def_ro("first_blocked_segment", &ReflectionEpcResult::first_blocked_segment)
-            .def_ro("first_blocked_prim", &ReflectionEpcResult::first_blocked_prim);
+            .def_ro("first_blocked_prim", &ReflectionEpcResult::first_blocked_prim)
+            .def_ro("first_blocked_group", &ReflectionEpcResult::first_blocked_group);
+
+        nb::class_<ReflectionEpcFieldResultDetached>(
+                m, "ReflectionEpcFieldResultDetached")
+            .def_ro("ray_count", &ReflectionEpcFieldResultDetached::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcFieldResultDetached::max_bounces)
+            .def_ro("valid", &ReflectionEpcFieldResultDetached::valid)
+            .def_ro("bounce_count", &ReflectionEpcFieldResultDetached::bounce_count)
+            .def_ro("path_length", &ReflectionEpcFieldResultDetached::path_length)
+            .def_ro("field_x_re", &ReflectionEpcFieldResultDetached::field_x_re)
+            .def_ro("field_x_im", &ReflectionEpcFieldResultDetached::field_x_im)
+            .def_ro("field_y_re", &ReflectionEpcFieldResultDetached::field_y_re)
+            .def_ro("field_y_im", &ReflectionEpcFieldResultDetached::field_y_im)
+            .def_ro("field_z_re", &ReflectionEpcFieldResultDetached::field_z_re)
+            .def_ro("field_z_im", &ReflectionEpcFieldResultDetached::field_z_im)
+            .def_ro("tx_pos", &ReflectionEpcFieldResultDetached::tx_pos)
+            .def_ro("first_hit", &ReflectionEpcFieldResultDetached::first_hit)
+            .def_ro("last_hit", &ReflectionEpcFieldResultDetached::last_hit)
+            .def_ro("hit_points", &ReflectionEpcFieldResultDetached::hit_points)
+            .def_ro("normals", &ReflectionEpcFieldResultDetached::normals)
+            .def_ro("resolved_prim_ids",
+                    &ReflectionEpcFieldResultDetached::resolved_prim_ids)
+            .def_ro("surface_group_ids",
+                    &ReflectionEpcFieldResultDetached::surface_group_ids);
+
+        nb::class_<ReflectionEpcFieldResult>(m, "ReflectionEpcFieldResult")
+            .def_ro("ray_count", &ReflectionEpcFieldResult::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcFieldResult::max_bounces)
+            .def_ro("valid", &ReflectionEpcFieldResult::valid)
+            .def_ro("bounce_count", &ReflectionEpcFieldResult::bounce_count)
+            .def_ro("path_length", &ReflectionEpcFieldResult::path_length)
+            .def_ro("field_x_re", &ReflectionEpcFieldResult::field_x_re)
+            .def_ro("field_x_im", &ReflectionEpcFieldResult::field_x_im)
+            .def_ro("field_y_re", &ReflectionEpcFieldResult::field_y_re)
+            .def_ro("field_y_im", &ReflectionEpcFieldResult::field_y_im)
+            .def_ro("field_z_re", &ReflectionEpcFieldResult::field_z_re)
+            .def_ro("field_z_im", &ReflectionEpcFieldResult::field_z_im)
+            .def_ro("tx_pos", &ReflectionEpcFieldResult::tx_pos)
+            .def_ro("first_hit", &ReflectionEpcFieldResult::first_hit)
+            .def_ro("last_hit", &ReflectionEpcFieldResult::last_hit)
+            .def_ro("hit_points", &ReflectionEpcFieldResult::hit_points)
+            .def_ro("normals", &ReflectionEpcFieldResult::normals)
+            .def_ro("resolved_prim_ids", &ReflectionEpcFieldResult::resolved_prim_ids)
+            .def_ro("surface_group_ids", &ReflectionEpcFieldResult::surface_group_ids);
 
         nb::class_<ReflectionBounceDetached>(m, "ReflectionBounceDetached")
             .def("is_valid", &ReflectionBounceDetached::is_valid)
@@ -1021,13 +1105,64 @@ NB_MODULE(rayd, m) {
                     const RayDetached &ray,
                     const Vector3fDetached &receiver,
                     int max_bounces,
+                    nb::object options_obj,
                     rayd::MaskDetached active) {
+                     ReflectionEpcOptions options;
+                     if (!options_obj.is_none()) {
+                         bool parsed_options = false;
+                         if (nb::inst_check(options_obj)) {
+                             try {
+                                 if (nb::type_info(options_obj.type()) ==
+                                     typeid(ReflectionEpcOptions)) {
+                                     options =
+                                         *nb::inst_ptr<ReflectionEpcOptions>(options_obj);
+                                     parsed_options = true;
+                                 }
+                             } catch (...) {
+                                 PyErr_Clear();
+                             }
+                         }
+                         if (!parsed_options) {
+                             active = nb::cast<rayd::MaskDetached>(options_obj);
+                         }
+                     }
                      return scene.trace_reflection_epc<true>(
-                         ray, receiver, max_bounces, active);
+                          ray, receiver, max_bounces, options, active);
+                  },
+                  nb::arg("ray").noconvert(),
+                  nb::arg("receiver"),
+                  "max_bounces"_a,
+                  "options"_a = nb::none(),
+                  "active"_a = true)
+            .def("trace_reflection_epc_field",
+                 [](const Scene &scene,
+                    const RayDetached &ray,
+                    const Vector3fDetached &receiver,
+                    int max_bounces,
+                    const ReflectionEpcFieldOptions &options,
+                    rayd::MaskDetached active) {
+                     return scene.trace_reflection_epc_field<true>(
+                         ray, receiver, max_bounces, options, active);
                  },
                  nb::arg("ray").noconvert(),
                  nb::arg("receiver"),
+                  "max_bounces"_a,
+                  "options"_a,
+                  "active"_a = true)
+            .def("trace_reflection_epc_field_direct",
+                 [](const Scene &scene,
+                    const Vector3fDetached &tx_position,
+                    const Vector3fDetached &receiver,
+                    int max_bounces,
+                    const ReflectionEpcFieldOptions &options,
+                    rayd::MaskDetached active) {
+                     return scene.trace_reflection_epc_field_direct<true>(
+                         tx_position, receiver, max_bounces, options, active);
+                 },
+                 nb::arg("tx_position"),
+                 nb::arg("receiver"),
                  "max_bounces"_a,
+                 "options"_a,
                  "active"_a = true)
             .def("trace_reflections_accumulating",
                  [](const Scene &scene,

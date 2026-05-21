@@ -11,6 +11,8 @@
 namespace rayd {
 
 constexpr int ReflectionEpcMaxBounces = 8;
+constexpr int ReflectionEpcVisibilityIgnorePrimitive = 0;
+constexpr int ReflectionEpcVisibilityIgnoreSurfaceGroup = 1;
 
 struct ReflectionEpcParams {
     OptixTraversableHandle primary_handle;
@@ -34,6 +36,18 @@ struct ReflectionEpcParams {
     int n_meshes;
     int n_triangles;
 
+    const int *expected_prim_ids;
+    int expected_prim_count;
+    const int *surface_group_id;
+    int surface_group_id_count;
+    const int *surface_group_size;
+    int surface_group_count;
+    const int *surface_group_members;
+    int surface_max_group_size;
+    int visibility_ignore_mode;
+    const int *final_ignore_group_ids;
+    int final_ignore_group_count;
+
     const float *ray_ox;
     const float *ray_oy;
     const float *ray_oz;
@@ -41,6 +55,12 @@ struct ReflectionEpcParams {
     const float *ray_dy;
     const float *ray_dz;
     const float *ray_tmax;
+    const float *direct_plane_point_x;
+    const float *direct_plane_point_y;
+    const float *direct_plane_point_z;
+    const float *direct_plane_normal_x;
+    const float *direct_plane_normal_y;
+    const float *direct_plane_normal_z;
     const float *rx_x;
     const float *rx_y;
     const float *rx_z;
@@ -55,9 +75,15 @@ struct ReflectionEpcParams {
     float *out_point_x;
     float *out_point_y;
     float *out_point_z;
-    int *out_prim_ids;
+    int *out_trace_prim_ids;
+    int *out_resolved_prim_ids;
+    int *out_surface_group_ids;
+    float *out_plane_normal_x;
+    float *out_plane_normal_y;
+    float *out_plane_normal_z;
     int *out_first_blocked_segment;
     int *out_first_blocked_prim;
+    int *out_first_blocked_group;
 };
 
 } // namespace rayd

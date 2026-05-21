@@ -39,6 +39,13 @@ template <bool Detached>
 using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
 using ReflectionEpcResult = ReflectionEpcResultT<false>;
 using ReflectionEpcResultDetached = ReflectionEpcResultT<true>;
+struct ReflectionEpcOptions;
+struct ReflectionEpcFieldOptions;
+template <typename> struct ReflectionEpcFieldResultData;
+template <bool Detached>
+using ReflectionEpcFieldResultT = ReflectionEpcFieldResultData<FloatT<Detached>>;
+using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<false>;
+using ReflectionEpcFieldResultDetached = ReflectionEpcFieldResultT<true>;
 
 template <typename> struct PrimitiveMaterialPayloadData;
 template <bool Detached>
