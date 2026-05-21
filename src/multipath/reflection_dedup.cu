@@ -1,4 +1,4 @@
-#include "reflection_dedup.h"
+#include <rayd/multipath/reflection_dedup.h>
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -8,7 +8,7 @@
 #include <string>
 
 #include <rayd/rayd.h>
-#include "../native_launch_audit.h"
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

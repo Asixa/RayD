@@ -14,13 +14,13 @@
 #include <rayd/scene/scene.h>
 #include <rayd/edge/scene_edge.h>
 
-#include "../multipath/reflection_dedup.h"
-#include "../multipath/reflection_accumulation_host.h"
-#include "../multipath/reflection_epc_field.h"
-#include "../multipath/reflection_epc_host.h"
-#include "../multipath/reflection_trace_host.h"
-#include "../multipath/segment_visibility_host.h"
-#include "../native_launch_audit.h"
+#include <rayd/multipath/reflection_dedup.h>
+#include <rayd/multipath/reflection_accumulation_host.h>
+#include <rayd/multipath/reflection_epc_field.h>
+#include <rayd/multipath/reflection_epc_host.h>
+#include <rayd/multipath/reflection_trace_host.h>
+#include <rayd/multipath/segment_visibility_host.h>
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

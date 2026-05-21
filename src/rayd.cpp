@@ -16,7 +16,7 @@
 #include <rayd/camera.h>
 #include <rayd/scene/scene.h>
 
-#include "native_launch_audit.h"
+#include <rayd/native_launch_audit.h>
 
 namespace nb = nanobind;
 using namespace nb::literals;

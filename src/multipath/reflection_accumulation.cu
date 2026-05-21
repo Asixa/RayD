@@ -1,7 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include "reflection_accumulation_params.h"
+#include <rayd/multipath/reflection_accumulation_params.h>
 
 namespace rayd {
 

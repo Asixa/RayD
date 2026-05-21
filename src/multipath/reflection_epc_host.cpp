@@ -1,12 +1,12 @@
-#include "reflection_epc_host.h"
+#include <rayd/multipath/reflection_epc_host.h>
 
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "reflection_epc_ptx.h"
-#include "../native_launch_audit.h"
+#include <rayd/multipath/reflection_epc_ptx.h>
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

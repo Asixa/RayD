@@ -12,7 +12,7 @@
 #include <rayd/mesh.h>
 #include <rayd/scene/scene_optix.h>
 
-#include "../native_launch_audit.h"
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 

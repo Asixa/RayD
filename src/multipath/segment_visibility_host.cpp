@@ -1,12 +1,12 @@
-#include "segment_visibility_host.h"
+#include <rayd/multipath/segment_visibility_host.h>
 
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "segment_visibility_ptx.h"
-#include "../native_launch_audit.h"
+#include <rayd/multipath/segment_visibility_ptx.h>
+#include <rayd/native_launch_audit.h>
 
 namespace rayd {
 
