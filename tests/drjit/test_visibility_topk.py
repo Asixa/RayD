@@ -112,15 +112,15 @@ class VisibilityAndTopKTests(unittest.TestCase):
             ignore = cuda.Int([-1, 0, -1])
             active = cuda.Bool([True, True, False])
 
-            vis = scene.trace_segment_visibility(start, end, ignore, active)
-            pair = scene.trace_segment_pair_visibility(
+            vis = scene.visible(start, end, ignore, active)
+            pair = scene.visible_pair(
                 start,
                 end,
                 cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0]),
                 ignore,
                 active,
             )
-            axial = scene.trace_axial_edge_visibility(
+            axial = scene.visible_axial_edge(
                 cuda.Array3f([0.0], [0.0], [-1.0]),
                 cuda.Array3f([-2.0], [0.0], [1.0]),
                 cuda.Array3f([1.0], [0.0], [0.0]),
@@ -132,7 +132,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
 
             rd.native_launch_audit_clear()
             with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
-                lazy = scene.trace_segment_visibility(start, end, ignore, active)
+                lazy = scene.visible(start, end, ignore, active)
                 lazy_hist = dr.kernel_history()
                 values = [bool(v) for v in list(lazy.visible)]
                 consume_hist = dr.kernel_history()
@@ -180,12 +180,12 @@ class VisibilityAndTopKTests(unittest.TestCase):
             end_b = cuda.Array3f([0.5], [0.5], [1.0])
             ignore9 = cuda.Int([-1, -1, -1, -1, -1, -1, -1, -1, 0])
 
-            pair = scene.trace_segment_pair_visibility(start, end, end_b, ignore9)
-            seg = scene.trace_segment_visibility(start, end, ignore9)
+            pair = scene.visible_pair(start, end, end_b, ignore9)
+            seg = scene.visible(start, end, ignore9)
 
             chain_points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
             chain_length = cuda.Int([1])
-            chain = scene.trace_segment_chain_visibility(chain_points, chain_length, ignore9)
+            chain = scene.visible_chain(chain_points, chain_length, ignore9)
 
             print(json.dumps({
                 "segment_visible": bool(seg.visible[0]),
@@ -233,9 +233,9 @@ class VisibilityAndTopKTests(unittest.TestCase):
 
             rd.native_launch_audit_clear()
             with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
-                vis = scene.trace_segment_visibility(start, end, active=active)
-                pair = scene.trace_segment_pair_visibility(start, end, end_b, active=active)
-                axial = scene.trace_axial_edge_visibility(
+                vis = scene.visible(start, end, active=active)
+                pair = scene.visible_pair(start, end, end_b, active=active)
+                axial = scene.visible_axial_edge(
                     cuda.Array3f([0.0], [0.0], [-1.0]),
                     cuda.Array3f([-2.0], [0.0], [1.0]),
                     cuda.Array3f([1.0], [0.0], [0.0]),
@@ -244,7 +244,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
                     [0.0, 0.5, 1.0],
                     cuda.Bool([True]),
                 )
-                chain = scene.trace_segment_chain_visibility(chain_points, chain_length)
+                chain = scene.visible_chain(chain_points, chain_length)
                 call_hist = dr.kernel_history()
 
                 values = {
@@ -315,9 +315,9 @@ class VisibilityAndTopKTests(unittest.TestCase):
             chain_length = cuda.Int([1, 1])
 
             rd.native_launch_audit_clear()
-            vis = scene.trace_segment_visibility(start, end, active=active)
-            pair = scene.trace_segment_pair_visibility(start, end, end_b, active=active)
-            axial = scene.trace_axial_edge_visibility(
+            vis = scene.visible(start, end, active=active)
+            pair = scene.visible_pair(start, end, end_b, active=active)
+            axial = scene.visible_axial_edge(
                 cuda.Array3f([0.0], [0.0], [-1.0]),
                 cuda.Array3f([-2.0], [0.0], [1.0]),
                 cuda.Array3f([1.0], [0.0], [0.0]),
@@ -326,7 +326,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
                 [0.0, 0.5, 1.0],
                 cuda.Bool([True]),
             )
-            chain = scene.trace_segment_chain_visibility(chain_points, chain_length)
+            chain = scene.visible_chain(chain_points, chain_length)
             native_audit = rd.native_launch_audit()
 
             print(json.dumps({
@@ -369,9 +369,9 @@ class VisibilityAndTopKTests(unittest.TestCase):
             )
             chain_length = cuda.Int([2, 2])
 
-            blocked = scene.trace_segment_chain_visibility(points, chain_length)
+            blocked = scene.visible_chain(points, chain_length)
             ignore = cuda.Int([0, -1, -1, -1])
-            ignored = scene.trace_segment_chain_visibility(points, chain_length, ignore)
+            ignored = scene.visible_chain(points, chain_length, ignore)
 
             print(json.dumps({
                 "chain_count": int(blocked.chain_count),

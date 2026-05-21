@@ -37,7 +37,7 @@ def run_json(script: str):
 
 
 class ReflectionAccumulationTests(unittest.TestCase):
-    def test_trace_reflections_accumulating_writes_grid_and_wedge_events(self):
+    def test_accumulate_reflections_writes_grid_and_wedge_events(self):
         data = run_json(
             """
             import json
@@ -53,11 +53,11 @@ class ReflectionAccumulationTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, faces))
             scene.build()
 
-            ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             tx = cuda.Array3f([0.0], [0.0], [-1.0])
 
-            grid = pj.ReflectionAccumulationGrid()
+            grid = pj.AccumGrid()
             grid.axis = 2
             grid.position = -2.0
             grid.coord0_min = -1.0
@@ -67,14 +67,14 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.PrimitiveMaterialPayloadDetached()
+            material = pj.Material()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
             material.mu_r = cuda.Float([1.0])
             material.valid = cuda.Bool([True])
 
-            options = pj.ReflectionAccumulationOptions()
+            options = pj.AccumOptions()
             options.wavelength = 12.566370614359172
             options.k = 0.5
             options.solid_angle_per_ray = 1.0
@@ -88,7 +88,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
             options.wedge_capacity = 4
 
             pj.native_launch_audit_clear()
-            result = scene.trace_reflections_accumulating(
+            result = scene.accumulate_reflections(
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.reflection_power,
@@ -121,8 +121,8 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "wedge_prim0": int(result.wedge_events.prim_id[0]),
                 "wedge_depth0": int(result.wedge_events.bounce_depth[0]),
                 "trace_reflections_launches": audit["trace_reflections"]["optix_launch"],
-                "trace_reflections_accumulating_launches": (
-                    audit["trace_reflections_accumulating"]["optix_launch"]
+                "accumulate_reflections_launches": (
+                    audit["accumulate_reflections"]["optix_launch"]
                 ),
             }))
             """
@@ -141,9 +141,9 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["wedge_prim0"], 0)
         self.assertEqual(data["wedge_depth0"], 0)
         self.assertEqual(data["trace_reflections_launches"], 0)
-        self.assertEqual(data["trace_reflections_accumulating_launches"], 1)
+        self.assertEqual(data["accumulate_reflections_launches"], 1)
 
-    def test_trace_reflections_accumulating_rejects_ad_inputs(self):
+    def test_accumulate_reflections_rejects_ad_inputs(self):
         result = run_script(
             """
             import drjit.cuda as cuda
@@ -157,13 +157,13 @@ class ReflectionAccumulationTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.0], [0.0], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
-            grid = pj.ReflectionAccumulationGrid()
-            material = pj.PrimitiveMaterialPayload()
-            options = pj.ReflectionAccumulationOptions()
+            grid = pj.AccumGrid()
+            material = pj.MaterialAD()
+            options = pj.AccumOptions()
             try:
-                scene.trace_reflections_accumulating(
+                scene.accumulate_reflections(
                     ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
                 )
             except RuntimeError as exc:
@@ -177,7 +177,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_trace_reflections_accumulating_accepts_tx_polarization(self):
+    def test_accumulate_reflections_accepts_tx_polarization(self):
         data = run_json(
             """
             import json
@@ -192,12 +192,12 @@ class ReflectionAccumulationTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             tx = cuda.Array3f([0.0], [0.0], [-1.0])
             tx_pol = cuda.Array3f([0.0], [1.0], [0.0])
 
-            grid = pj.ReflectionAccumulationGrid()
+            grid = pj.AccumGrid()
             grid.axis = 2
             grid.position = -2.0
             grid.coord0_min = -1.0
@@ -207,19 +207,19 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.PrimitiveMaterialPayloadDetached()
+            material = pj.Material()
             material.eta_r = cuda.Float([4.0])
             material.sigma = cuda.Float([0.0])
             material.gain = cuda.Float([1.0])
             material.mu_r = cuda.Float([1.0])
             material.valid = cuda.Bool([True])
 
-            options = pj.ReflectionAccumulationOptions()
+            options = pj.AccumOptions()
             options.wavelength = 12.566370614359172
             options.k = 0.5
             options.cell_area = 1.0
 
-            result = scene.trace_reflections_accumulating(
+            result = scene.accumulate_reflections(
                 ray, tx, grid, material, 1, options, True, tx_pol
             )
             dr.eval(result.reflection_field_x.real,

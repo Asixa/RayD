@@ -54,7 +54,7 @@ def make_grid_mesh(resolution: int) -> rd.Mesh:
     )
 
 
-def make_ray_grid(side: int, z_origin: float = -1.0) -> rd.RayDetached:
+def make_ray_grid(side: int, z_origin: float = -1.0) -> rd.Ray:
     xs: list[float] = []
     ys: list[float] = []
     zs: list[float] = []
@@ -64,7 +64,7 @@ def make_ray_grid(side: int, z_origin: float = -1.0) -> rd.RayDetached:
             ys.append((iy + 0.5) / side)
             zs.append(z_origin)
 
-    return rd.RayDetached(
+    return rd.Ray(
         dr.cuda.Array3f(xs, ys, zs),
         dr.cuda.Array3f(
             [0.0] * len(xs),
@@ -157,7 +157,7 @@ def profile_stage(name: str, fn, materialize=None) -> tuple[dict[str, Any], Any]
     return summary, value
 
 
-def materialize_trace_result(result: rd.ReflectionChainDetached) -> None:
+def materialize_trace_result(result: rd.ReflectionChain) -> None:
     dr.eval(
         result.bounce_count,
         result.discovery_count,

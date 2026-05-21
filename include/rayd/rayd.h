@@ -60,23 +60,23 @@ using ReflectionEpcFieldResultT = ReflectionEpcFieldResultData<FloatT<Detached>>
 using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<false>;
 using ReflectionEpcFieldResultDetached = ReflectionEpcFieldResultT<true>;
 
-template <typename> struct PrimitiveMaterialPayloadData;
+template <typename> struct MaterialData;
 template <bool Detached>
-using PrimitiveMaterialPayloadT = PrimitiveMaterialPayloadData<FloatT<Detached>>;
-using PrimitiveMaterialPayload = PrimitiveMaterialPayloadT<false>;
-using PrimitiveMaterialPayloadDetached = PrimitiveMaterialPayloadT<true>;
+using MaterialT = MaterialData<FloatT<Detached>>;
+using Material = MaterialT<false>;
+using MaterialDetached = MaterialT<true>;
 
-template <typename> struct ReflectionWedgeEventBufferData;
+template <typename> struct WedgeEventsData;
 template <bool Detached>
-using ReflectionWedgeEventBufferT = ReflectionWedgeEventBufferData<FloatT<Detached>>;
-using ReflectionWedgeEventBuffer = ReflectionWedgeEventBufferT<false>;
-using ReflectionWedgeEventBufferDetached = ReflectionWedgeEventBufferT<true>;
+using WedgeEventsT = WedgeEventsData<FloatT<Detached>>;
+using WedgeEvents = WedgeEventsT<false>;
+using WedgeEventsDetached = WedgeEventsT<true>;
 
-template <typename> struct ReflectionAccumulationResultData;
+template <typename> struct AccumResultData;
 template <bool Detached>
-using ReflectionAccumulationResultT = ReflectionAccumulationResultData<FloatT<Detached>>;
-using ReflectionAccumulationResult = ReflectionAccumulationResultT<false>;
-using ReflectionAccumulationResultDetached = ReflectionAccumulationResultT<true>;
+using AccumResultT = AccumResultData<FloatT<Detached>>;
+using AccumResult = AccumResultT<false>;
+using AccumResultDetached = AccumResultT<true>;
 
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>

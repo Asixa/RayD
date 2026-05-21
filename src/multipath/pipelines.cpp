@@ -209,7 +209,7 @@ OptixPipelineConfig reflection_accumulation_pipeline_config() {
     config.miss_entry = "__miss__reflection_accumulation";
     config.closesthit_entry = "__closesthit__reflection_accumulation";
     config.num_payload_values = 6;
-    config.params_size = sizeof(ReflectionAccumulationParams);
+    config.params_size = sizeof(AccumParams);
     return config;
 }
 

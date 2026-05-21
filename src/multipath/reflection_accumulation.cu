@@ -6,7 +6,7 @@
 namespace rayd {
 
 extern "C" {
-extern __constant__ ReflectionAccumulationParams params;
+extern __constant__ AccumParams params;
 }
 
 namespace {
@@ -519,7 +519,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
 } // namespace
 
 extern "C" {
-__constant__ ReflectionAccumulationParams params;
+__constant__ AccumParams params;
 }
 
 extern "C" __global__ void __closesthit__reflection_accumulation() {

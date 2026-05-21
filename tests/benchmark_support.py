@@ -381,13 +381,13 @@ class RayDBackend:
         return scene, mesh_id
 
     def _ray_detached(self, ray_data: dict[str, list[float]]) -> Any:
-        return pj.RayDetached(
+        return pj.Ray(
             cuda.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
             cuda.Array3f(ray_data["dx"], ray_data["dy"], ray_data["dz"]),
         )
 
     def _ray_ad(self, ray_data: dict[str, list[float]]) -> Any:
-        return pj.Ray(
+        return pj.RayAD(
             ad.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
             ad.Array3f(ray_data["dx"], ray_data["dy"], ray_data["dz"]),
         )
