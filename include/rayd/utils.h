@@ -60,7 +60,7 @@ DRJIT_INLINE Vector2fT<Detached> bilinear2(const Vector2fT<Detached> &p0,
 /// \param p0   First triangle vertex.
 /// \param e1   Edge vector to the second vertex.
 /// \param e2   Edge vector to the third vertex.
-/// \param ray  Ray batch to test.
+/// \param ray  RayAD batch to test.
 /// \return Pair of (barycentric (u, v), hit distance t); t is Infinity on degenerate triangles.
 template <bool Detached>
 DRJIT_INLINE auto ray_intersect_triangle(const Vector3fT<Detached> &p0,

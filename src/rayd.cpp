@@ -234,21 +234,12 @@ NB_MODULE(rayd, m) {
           "Dr.Jit arrays that you intend to use with them. When "
           "initialize_optix=True, RayD also initializes the OptiX device "
           "context for the selected device.");
-    // Python naming convention: the bare class name is the non-AD (detached)
-    // variant, which is the common case; the autodiff variant carries an "AD"
-    // suffix (e.g. Ray / RayAD, Intersection / IntersectionAD). This is the
-    // reverse of the C++ aliases, where the bare name is the AD type and the
-    // detached type carries a "Detached" suffix.
+    // Naming convention: the bare class name is the non-AD variant, which is the
+    // common case; the autodiff variant carries an "AD" suffix (e.g. Ray / RayAD,
+    // Intersection / IntersectionAD). The C++ aliases follow the same convention,
+    // so each Python class name matches its underlying C++ type.
     bind_section("core types", [&]() {
-        nb::class_<RayDetached>(m, "Ray")
-            .def(nb::init<>())
-            .def(nb::init<const Vector3fDetached &, const Vector3fDetached &>())
-            .def("reversed", &RayDetached::reversed)
-            .def_rw("o", &RayDetached::o)
-            .def_rw("d", &RayDetached::d)
-            .def_rw("tmax", &RayDetached::tmax);
-
-        nb::class_<Ray>(m, "RayAD")
+        nb::class_<Ray>(m, "Ray")
             .def(nb::init<>())
             .def(nb::init<const Vector3f &, const Vector3f &>())
             .def("reversed", &Ray::reversed)
@@ -256,15 +247,23 @@ NB_MODULE(rayd, m) {
             .def_rw("d", &Ray::d)
             .def_rw("tmax", &Ray::tmax);
 
-        nb::class_<SecondaryEdgeInfo>(m, "SecondaryEdgeInfo")
+        nb::class_<RayAD>(m, "RayAD")
             .def(nb::init<>())
-            .def("size", &SecondaryEdgeInfo::size)
-            .def_ro("start", &SecondaryEdgeInfo::start)
-            .def_ro("edge", &SecondaryEdgeInfo::edge)
-            .def_ro("normal0", &SecondaryEdgeInfo::normal0)
-            .def_ro("normal1", &SecondaryEdgeInfo::normal1)
-            .def_ro("opposite", &SecondaryEdgeInfo::opposite)
-            .def_ro("is_boundary", &SecondaryEdgeInfo::is_boundary);
+            .def(nb::init<const Vector3fAD &, const Vector3fAD &>())
+            .def("reversed", &RayAD::reversed)
+            .def_rw("o", &RayAD::o)
+            .def_rw("d", &RayAD::d)
+            .def_rw("tmax", &RayAD::tmax);
+
+        nb::class_<SecondaryEdgeInfoAD>(m, "SecondaryEdgeInfo")
+            .def(nb::init<>())
+            .def("size", &SecondaryEdgeInfoAD::size)
+            .def_ro("start", &SecondaryEdgeInfoAD::start)
+            .def_ro("edge", &SecondaryEdgeInfoAD::edge)
+            .def_ro("normal0", &SecondaryEdgeInfoAD::normal0)
+            .def_ro("normal1", &SecondaryEdgeInfoAD::normal1)
+            .def_ro("opposite", &SecondaryEdgeInfoAD::opposite)
+            .def_ro("is_boundary", &SecondaryEdgeInfoAD::is_boundary);
 
         nb::class_<SceneEdgeInfo>(m, "SceneEdgeInfo")
             .def(nb::init<>())
@@ -351,20 +350,7 @@ NB_MODULE(rayd, m) {
             .def_rw("return_surface_group_ids",
                     &ReflectionEpcFieldOptions::return_surface_group_ids);
 
-        nb::class_<IntersectionDetached>(m, "Intersection")
-            .def("is_valid", &IntersectionDetached::is_valid)
-            .def_ro("t", &IntersectionDetached::t)
-            .def_ro("p", &IntersectionDetached::p)
-            .def_ro("n", &IntersectionDetached::n)
-            .def_ro("geo_n", &IntersectionDetached::geo_n)
-            .def_ro("uv", &IntersectionDetached::uv)
-            .def_ro("barycentric", &IntersectionDetached::barycentric)
-            .def_ro("shape_id", &IntersectionDetached::shape_id)
-            .def_ro("prim_id", &IntersectionDetached::prim_id)
-            .def_ro("local_prim_id", &IntersectionDetached::local_prim_id)
-            .def_ro("global_prim_id", &IntersectionDetached::global_prim_id);
-
-        nb::class_<Intersection>(m, "IntersectionAD")
+        nb::class_<Intersection>(m, "Intersection")
             .def("is_valid", &Intersection::is_valid)
             .def_ro("t", &Intersection::t)
             .def_ro("p", &Intersection::p)
@@ -377,29 +363,20 @@ NB_MODULE(rayd, m) {
             .def_ro("local_prim_id", &Intersection::local_prim_id)
             .def_ro("global_prim_id", &Intersection::global_prim_id);
 
-        nb::class_<ReflectionChainDetached>(m, "ReflectionChain")
-            .def("is_valid", &ReflectionChainDetached::is_valid)
-            .def_ro("max_bounces", &ReflectionChainDetached::max_bounces)
-            .def_ro("ray_count", &ReflectionChainDetached::ray_count)
-            .def_ro("bounce_count", &ReflectionChainDetached::bounce_count)
-            .def_ro("discovery_count", &ReflectionChainDetached::discovery_count)
-            .def_ro("representative_ray_index", &ReflectionChainDetached::representative_ray_index)
-            .def_ro("t", &ReflectionChainDetached::t)
-            .def_ro("hit_points", &ReflectionChainDetached::hit_points)
-            .def_ro("geo_normals", &ReflectionChainDetached::geo_normals)
-            .def_ro("image_sources", &ReflectionChainDetached::image_sources)
-            .def_ro("plane_points", &ReflectionChainDetached::plane_points)
-            .def_ro("plane_normals", &ReflectionChainDetached::plane_normals)
-            .def_ro("shape_ids", &ReflectionChainDetached::shape_ids)
-            .def_ro("prim_ids", &ReflectionChainDetached::prim_ids)
-            .def_ro("local_prim_ids", &ReflectionChainDetached::local_prim_ids)
-            .def_ro("global_prim_ids", &ReflectionChainDetached::global_prim_ids)
-            .def_ro("trailing_t", &ReflectionChainDetached::trailing_t)
-            .def_ro("trailing_prim", &ReflectionChainDetached::trailing_prim)
-            .def_ro("trailing_dir", &ReflectionChainDetached::trailing_dir)
-            .def_ro("trailing_origin", &ReflectionChainDetached::trailing_origin);
+        nb::class_<IntersectionAD>(m, "IntersectionAD")
+            .def("is_valid", &IntersectionAD::is_valid)
+            .def_ro("t", &IntersectionAD::t)
+            .def_ro("p", &IntersectionAD::p)
+            .def_ro("n", &IntersectionAD::n)
+            .def_ro("geo_n", &IntersectionAD::geo_n)
+            .def_ro("uv", &IntersectionAD::uv)
+            .def_ro("barycentric", &IntersectionAD::barycentric)
+            .def_ro("shape_id", &IntersectionAD::shape_id)
+            .def_ro("prim_id", &IntersectionAD::prim_id)
+            .def_ro("local_prim_id", &IntersectionAD::local_prim_id)
+            .def_ro("global_prim_id", &IntersectionAD::global_prim_id);
 
-        nb::class_<ReflectionChain>(m, "ReflectionChainAD")
+        nb::class_<ReflectionChain>(m, "ReflectionChain")
             .def("is_valid", &ReflectionChain::is_valid)
             .def_ro("max_bounces", &ReflectionChain::max_bounces)
             .def_ro("ray_count", &ReflectionChain::ray_count)
@@ -420,6 +397,28 @@ NB_MODULE(rayd, m) {
             .def_ro("trailing_prim", &ReflectionChain::trailing_prim)
             .def_ro("trailing_dir", &ReflectionChain::trailing_dir)
             .def_ro("trailing_origin", &ReflectionChain::trailing_origin);
+
+        nb::class_<ReflectionChainAD>(m, "ReflectionChainAD")
+            .def("is_valid", &ReflectionChainAD::is_valid)
+            .def_ro("max_bounces", &ReflectionChainAD::max_bounces)
+            .def_ro("ray_count", &ReflectionChainAD::ray_count)
+            .def_ro("bounce_count", &ReflectionChainAD::bounce_count)
+            .def_ro("discovery_count", &ReflectionChainAD::discovery_count)
+            .def_ro("representative_ray_index", &ReflectionChainAD::representative_ray_index)
+            .def_ro("t", &ReflectionChainAD::t)
+            .def_ro("hit_points", &ReflectionChainAD::hit_points)
+            .def_ro("geo_normals", &ReflectionChainAD::geo_normals)
+            .def_ro("image_sources", &ReflectionChainAD::image_sources)
+            .def_ro("plane_points", &ReflectionChainAD::plane_points)
+            .def_ro("plane_normals", &ReflectionChainAD::plane_normals)
+            .def_ro("shape_ids", &ReflectionChainAD::shape_ids)
+            .def_ro("prim_ids", &ReflectionChainAD::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionChainAD::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionChainAD::global_prim_ids)
+            .def_ro("trailing_t", &ReflectionChainAD::trailing_t)
+            .def_ro("trailing_prim", &ReflectionChainAD::trailing_prim)
+            .def_ro("trailing_dir", &ReflectionChainAD::trailing_dir)
+            .def_ro("trailing_origin", &ReflectionChainAD::trailing_origin);
 
         nb::class_<AccumGrid>(m, "AccumGrid")
             .def(nb::init<>())
@@ -446,15 +445,7 @@ NB_MODULE(rayd, m) {
             .def_rw("collect_wedge_prefixes", &AccumOptions::collect_wedge_prefixes)
             .def_rw("wedge_capacity", &AccumOptions::wedge_capacity);
 
-        nb::class_<MaterialDetached>(m, "Material")
-            .def(nb::init<>())
-            .def_rw("eta_r", &MaterialDetached::eta_r)
-            .def_rw("sigma", &MaterialDetached::sigma)
-            .def_rw("gain", &MaterialDetached::gain)
-            .def_rw("mu_r", &MaterialDetached::mu_r)
-            .def_rw("valid", &MaterialDetached::valid);
-
-        nb::class_<Material>(m, "MaterialAD")
+        nb::class_<Material>(m, "Material")
             .def(nb::init<>())
             .def_rw("eta_r", &Material::eta_r)
             .def_rw("sigma", &Material::sigma)
@@ -462,17 +453,15 @@ NB_MODULE(rayd, m) {
             .def_rw("mu_r", &Material::mu_r)
             .def_rw("valid", &Material::valid);
 
-        nb::class_<WedgeEventsDetached>(m, "WedgeEvents")
-            .def_ro("capacity", &WedgeEventsDetached::capacity)
-            .def_ro("count", &WedgeEventsDetached::count)
-            .def_ro("ray_index", &WedgeEventsDetached::ray_index)
-            .def_ro("hit_points", &WedgeEventsDetached::hit_points)
-            .def_ro("normals", &WedgeEventsDetached::normals)
-            .def_ro("prim_id", &WedgeEventsDetached::prim_id)
-            .def_ro("directions", &WedgeEventsDetached::directions)
-            .def_ro("bounce_depth", &WedgeEventsDetached::bounce_depth);
+        nb::class_<MaterialAD>(m, "MaterialAD")
+            .def(nb::init<>())
+            .def_rw("eta_r", &MaterialAD::eta_r)
+            .def_rw("sigma", &MaterialAD::sigma)
+            .def_rw("gain", &MaterialAD::gain)
+            .def_rw("mu_r", &MaterialAD::mu_r)
+            .def_rw("valid", &MaterialAD::valid);
 
-        nb::class_<WedgeEvents>(m, "WedgeEventsAD")
+        nb::class_<WedgeEvents>(m, "WedgeEvents")
             .def_ro("capacity", &WedgeEvents::capacity)
             .def_ro("count", &WedgeEvents::count)
             .def_ro("ray_index", &WedgeEvents::ray_index)
@@ -482,18 +471,17 @@ NB_MODULE(rayd, m) {
             .def_ro("directions", &WedgeEvents::directions)
             .def_ro("bounce_depth", &WedgeEvents::bounce_depth);
 
-        nb::class_<AccumResultDetached>(m, "AccumResult")
-            .def_ro("ray_count", &AccumResultDetached::ray_count)
-            .def_ro("max_bounces", &AccumResultDetached::max_bounces)
-            .def_ro("grid_cell_count", &AccumResultDetached::grid_cell_count)
-            .def_ro("reflection_power", &AccumResultDetached::reflection_power)
-            .def_ro("reflection_field_x", &AccumResultDetached::reflection_field_x)
-            .def_ro("reflection_field_y", &AccumResultDetached::reflection_field_y)
-            .def_ro("reflection_field_z", &AccumResultDetached::reflection_field_z)
-            .def_ro("reflection_count", &AccumResultDetached::reflection_count)
-            .def_ro("wedge_events", &AccumResultDetached::wedge_events);
+        nb::class_<WedgeEventsAD>(m, "WedgeEventsAD")
+            .def_ro("capacity", &WedgeEventsAD::capacity)
+            .def_ro("count", &WedgeEventsAD::count)
+            .def_ro("ray_index", &WedgeEventsAD::ray_index)
+            .def_ro("hit_points", &WedgeEventsAD::hit_points)
+            .def_ro("normals", &WedgeEventsAD::normals)
+            .def_ro("prim_id", &WedgeEventsAD::prim_id)
+            .def_ro("directions", &WedgeEventsAD::directions)
+            .def_ro("bounce_depth", &WedgeEventsAD::bounce_depth);
 
-        nb::class_<AccumResult>(m, "AccumResultAD")
+        nb::class_<AccumResult>(m, "AccumResult")
             .def_ro("ray_count", &AccumResult::ray_count)
             .def_ro("max_bounces", &AccumResult::max_bounces)
             .def_ro("grid_cell_count", &AccumResult::grid_cell_count)
@@ -504,23 +492,18 @@ NB_MODULE(rayd, m) {
             .def_ro("reflection_count", &AccumResult::reflection_count)
             .def_ro("wedge_events", &AccumResult::wedge_events);
 
-        nb::class_<ReflectionEpcResultDetached>(m, "ReflectionEpcResult")
-            .def_ro("ray_count", &ReflectionEpcResultDetached::ray_count)
-            .def_ro("max_bounces", &ReflectionEpcResultDetached::max_bounces)
-            .def_ro("valid", &ReflectionEpcResultDetached::valid)
-            .def_ro("bounce_count", &ReflectionEpcResultDetached::bounce_count)
-            .def_ro("path_length", &ReflectionEpcResultDetached::path_length)
-            .def_ro("reflection_points", &ReflectionEpcResultDetached::reflection_points)
-            .def_ro("prim_ids", &ReflectionEpcResultDetached::prim_ids)
-            .def_ro("trace_prim_ids", &ReflectionEpcResultDetached::trace_prim_ids)
-            .def_ro("resolved_prim_ids", &ReflectionEpcResultDetached::resolved_prim_ids)
-            .def_ro("surface_group_ids", &ReflectionEpcResultDetached::surface_group_ids)
-            .def_ro("plane_normals", &ReflectionEpcResultDetached::plane_normals)
-            .def_ro("first_blocked_segment", &ReflectionEpcResultDetached::first_blocked_segment)
-            .def_ro("first_blocked_prim", &ReflectionEpcResultDetached::first_blocked_prim)
-            .def_ro("first_blocked_group", &ReflectionEpcResultDetached::first_blocked_group);
+        nb::class_<AccumResultAD>(m, "AccumResultAD")
+            .def_ro("ray_count", &AccumResultAD::ray_count)
+            .def_ro("max_bounces", &AccumResultAD::max_bounces)
+            .def_ro("grid_cell_count", &AccumResultAD::grid_cell_count)
+            .def_ro("reflection_power", &AccumResultAD::reflection_power)
+            .def_ro("reflection_field_x", &AccumResultAD::reflection_field_x)
+            .def_ro("reflection_field_y", &AccumResultAD::reflection_field_y)
+            .def_ro("reflection_field_z", &AccumResultAD::reflection_field_z)
+            .def_ro("reflection_count", &AccumResultAD::reflection_count)
+            .def_ro("wedge_events", &AccumResultAD::wedge_events);
 
-        nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResultAD")
+        nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
             .def_ro("ray_count", &ReflectionEpcResult::ray_count)
             .def_ro("max_bounces", &ReflectionEpcResult::max_bounces)
             .def_ro("valid", &ReflectionEpcResult::valid)
@@ -536,30 +519,24 @@ NB_MODULE(rayd, m) {
             .def_ro("first_blocked_prim", &ReflectionEpcResult::first_blocked_prim)
             .def_ro("first_blocked_group", &ReflectionEpcResult::first_blocked_group);
 
-        nb::class_<ReflectionEpcFieldResultDetached>(
-                m, "ReflectionEpcFieldResult")
-            .def_ro("ray_count", &ReflectionEpcFieldResultDetached::ray_count)
-            .def_ro("max_bounces", &ReflectionEpcFieldResultDetached::max_bounces)
-            .def_ro("valid", &ReflectionEpcFieldResultDetached::valid)
-            .def_ro("bounce_count", &ReflectionEpcFieldResultDetached::bounce_count)
-            .def_ro("path_length", &ReflectionEpcFieldResultDetached::path_length)
-            .def_ro("field_x_re", &ReflectionEpcFieldResultDetached::field_x_re)
-            .def_ro("field_x_im", &ReflectionEpcFieldResultDetached::field_x_im)
-            .def_ro("field_y_re", &ReflectionEpcFieldResultDetached::field_y_re)
-            .def_ro("field_y_im", &ReflectionEpcFieldResultDetached::field_y_im)
-            .def_ro("field_z_re", &ReflectionEpcFieldResultDetached::field_z_re)
-            .def_ro("field_z_im", &ReflectionEpcFieldResultDetached::field_z_im)
-            .def_ro("tx_pos", &ReflectionEpcFieldResultDetached::tx_pos)
-            .def_ro("first_hit", &ReflectionEpcFieldResultDetached::first_hit)
-            .def_ro("last_hit", &ReflectionEpcFieldResultDetached::last_hit)
-            .def_ro("hit_points", &ReflectionEpcFieldResultDetached::hit_points)
-            .def_ro("normals", &ReflectionEpcFieldResultDetached::normals)
-            .def_ro("resolved_prim_ids",
-                    &ReflectionEpcFieldResultDetached::resolved_prim_ids)
-            .def_ro("surface_group_ids",
-                    &ReflectionEpcFieldResultDetached::surface_group_ids);
+        nb::class_<ReflectionEpcResultAD>(m, "ReflectionEpcResultAD")
+            .def_ro("ray_count", &ReflectionEpcResultAD::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcResultAD::max_bounces)
+            .def_ro("valid", &ReflectionEpcResultAD::valid)
+            .def_ro("bounce_count", &ReflectionEpcResultAD::bounce_count)
+            .def_ro("path_length", &ReflectionEpcResultAD::path_length)
+            .def_ro("reflection_points", &ReflectionEpcResultAD::reflection_points)
+            .def_ro("prim_ids", &ReflectionEpcResultAD::prim_ids)
+            .def_ro("trace_prim_ids", &ReflectionEpcResultAD::trace_prim_ids)
+            .def_ro("resolved_prim_ids", &ReflectionEpcResultAD::resolved_prim_ids)
+            .def_ro("surface_group_ids", &ReflectionEpcResultAD::surface_group_ids)
+            .def_ro("plane_normals", &ReflectionEpcResultAD::plane_normals)
+            .def_ro("first_blocked_segment", &ReflectionEpcResultAD::first_blocked_segment)
+            .def_ro("first_blocked_prim", &ReflectionEpcResultAD::first_blocked_prim)
+            .def_ro("first_blocked_group", &ReflectionEpcResultAD::first_blocked_group);
 
-        nb::class_<ReflectionEpcFieldResult>(m, "ReflectionEpcFieldResultAD")
+        nb::class_<ReflectionEpcFieldResult>(
+                m, "ReflectionEpcFieldResult")
             .def_ro("ray_count", &ReflectionEpcFieldResult::ray_count)
             .def_ro("max_bounces", &ReflectionEpcFieldResult::max_bounces)
             .def_ro("valid", &ReflectionEpcFieldResult::valid)
@@ -576,23 +553,32 @@ NB_MODULE(rayd, m) {
             .def_ro("last_hit", &ReflectionEpcFieldResult::last_hit)
             .def_ro("hit_points", &ReflectionEpcFieldResult::hit_points)
             .def_ro("normals", &ReflectionEpcFieldResult::normals)
-            .def_ro("resolved_prim_ids", &ReflectionEpcFieldResult::resolved_prim_ids)
-            .def_ro("surface_group_ids", &ReflectionEpcFieldResult::surface_group_ids);
+            .def_ro("resolved_prim_ids",
+                    &ReflectionEpcFieldResult::resolved_prim_ids)
+            .def_ro("surface_group_ids",
+                    &ReflectionEpcFieldResult::surface_group_ids);
 
-        nb::class_<ReflectionBounceDetached>(m, "ReflectionBounce")
-            .def("is_valid", &ReflectionBounceDetached::is_valid)
-            .def_ro("t", &ReflectionBounceDetached::t)
-            .def_ro("hit_points", &ReflectionBounceDetached::hit_points)
-            .def_ro("geo_normals", &ReflectionBounceDetached::geo_normals)
-            .def_ro("image_sources", &ReflectionBounceDetached::image_sources)
-            .def_ro("plane_points", &ReflectionBounceDetached::plane_points)
-            .def_ro("plane_normals", &ReflectionBounceDetached::plane_normals)
-            .def_ro("shape_ids", &ReflectionBounceDetached::shape_ids)
-            .def_ro("prim_ids", &ReflectionBounceDetached::prim_ids)
-            .def_ro("local_prim_ids", &ReflectionBounceDetached::local_prim_ids)
-            .def_ro("global_prim_ids", &ReflectionBounceDetached::global_prim_ids);
+        nb::class_<ReflectionEpcFieldResultAD>(m, "ReflectionEpcFieldResultAD")
+            .def_ro("ray_count", &ReflectionEpcFieldResultAD::ray_count)
+            .def_ro("max_bounces", &ReflectionEpcFieldResultAD::max_bounces)
+            .def_ro("valid", &ReflectionEpcFieldResultAD::valid)
+            .def_ro("bounce_count", &ReflectionEpcFieldResultAD::bounce_count)
+            .def_ro("path_length", &ReflectionEpcFieldResultAD::path_length)
+            .def_ro("field_x_re", &ReflectionEpcFieldResultAD::field_x_re)
+            .def_ro("field_x_im", &ReflectionEpcFieldResultAD::field_x_im)
+            .def_ro("field_y_re", &ReflectionEpcFieldResultAD::field_y_re)
+            .def_ro("field_y_im", &ReflectionEpcFieldResultAD::field_y_im)
+            .def_ro("field_z_re", &ReflectionEpcFieldResultAD::field_z_re)
+            .def_ro("field_z_im", &ReflectionEpcFieldResultAD::field_z_im)
+            .def_ro("tx_pos", &ReflectionEpcFieldResultAD::tx_pos)
+            .def_ro("first_hit", &ReflectionEpcFieldResultAD::first_hit)
+            .def_ro("last_hit", &ReflectionEpcFieldResultAD::last_hit)
+            .def_ro("hit_points", &ReflectionEpcFieldResultAD::hit_points)
+            .def_ro("normals", &ReflectionEpcFieldResultAD::normals)
+            .def_ro("resolved_prim_ids", &ReflectionEpcFieldResultAD::resolved_prim_ids)
+            .def_ro("surface_group_ids", &ReflectionEpcFieldResultAD::surface_group_ids);
 
-        nb::class_<ReflectionBounce>(m, "ReflectionBounceAD")
+        nb::class_<ReflectionBounce>(m, "ReflectionBounce")
             .def("is_valid", &ReflectionBounce::is_valid)
             .def_ro("t", &ReflectionBounce::t)
             .def_ro("hit_points", &ReflectionBounce::hit_points)
@@ -605,32 +591,25 @@ NB_MODULE(rayd, m) {
             .def_ro("local_prim_ids", &ReflectionBounce::local_prim_ids)
             .def_ro("global_prim_ids", &ReflectionBounce::global_prim_ids);
 
-        nb::class_<ReflectionTraceDetached>(m, "ReflectionTrace")
-            .def("is_valid", &ReflectionTraceDetached::is_valid)
-            .def("bounce",
-                 [](const ReflectionTraceDetached &trace, int index) {
-                     if (index < 0 || index >= trace.max_bounces) {
-                         throw std::out_of_range("ReflectionTrace.bounce(): index out of range.");
-                     }
-                     return trace.bounces[static_cast<size_t>(index)];
-                 },
-                 "index"_a)
-            .def_ro("max_bounces", &ReflectionTraceDetached::max_bounces)
-            .def_ro("ray_count", &ReflectionTraceDetached::ray_count)
-            .def_ro("deduplicate_requested", &ReflectionTraceDetached::deduplicate_requested)
-            .def_ro("deduplicate_applied", &ReflectionTraceDetached::deduplicate_applied)
-            .def_ro("bounce_count", &ReflectionTraceDetached::bounce_count)
-            .def_ro("discovery_count", &ReflectionTraceDetached::discovery_count)
-            .def_ro("representative_ray_index", &ReflectionTraceDetached::representative_ray_index)
-            .def_ro("dedup_keep_mask", &ReflectionTraceDetached::dedup_keep_mask)
-            .def_ro("bounces", &ReflectionTraceDetached::bounces);
+        nb::class_<ReflectionBounceAD>(m, "ReflectionBounceAD")
+            .def("is_valid", &ReflectionBounceAD::is_valid)
+            .def_ro("t", &ReflectionBounceAD::t)
+            .def_ro("hit_points", &ReflectionBounceAD::hit_points)
+            .def_ro("geo_normals", &ReflectionBounceAD::geo_normals)
+            .def_ro("image_sources", &ReflectionBounceAD::image_sources)
+            .def_ro("plane_points", &ReflectionBounceAD::plane_points)
+            .def_ro("plane_normals", &ReflectionBounceAD::plane_normals)
+            .def_ro("shape_ids", &ReflectionBounceAD::shape_ids)
+            .def_ro("prim_ids", &ReflectionBounceAD::prim_ids)
+            .def_ro("local_prim_ids", &ReflectionBounceAD::local_prim_ids)
+            .def_ro("global_prim_ids", &ReflectionBounceAD::global_prim_ids);
 
-        nb::class_<ReflectionTrace>(m, "ReflectionTraceAD")
+        nb::class_<ReflectionTrace>(m, "ReflectionTrace")
             .def("is_valid", &ReflectionTrace::is_valid)
             .def("bounce",
                  [](const ReflectionTrace &trace, int index) {
                      if (index < 0 || index >= trace.max_bounces) {
-                         throw std::out_of_range("ReflectionTraceAD.bounce(): index out of range.");
+                         throw std::out_of_range("ReflectionTrace.bounce(): index out of range.");
                      }
                      return trace.bounces[static_cast<size_t>(index)];
                  },
@@ -645,18 +624,27 @@ NB_MODULE(rayd, m) {
             .def_ro("dedup_keep_mask", &ReflectionTrace::dedup_keep_mask)
             .def_ro("bounces", &ReflectionTrace::bounces);
 
-        nb::class_<NearestPointEdgeDetached>(m, "NearestPointEdge")
-            .def("is_valid", &NearestPointEdgeDetached::is_valid)
-            .def_ro("distance", &NearestPointEdgeDetached::distance)
-            .def_ro("point", &NearestPointEdgeDetached::point)
-            .def_ro("edge_t", &NearestPointEdgeDetached::edge_t)
-            .def_ro("edge_point", &NearestPointEdgeDetached::edge_point)
-            .def_ro("shape_id", &NearestPointEdgeDetached::shape_id)
-            .def_ro("edge_id", &NearestPointEdgeDetached::edge_id)
-            .def_ro("global_edge_id", &NearestPointEdgeDetached::global_edge_id)
-            .def_ro("is_boundary", &NearestPointEdgeDetached::is_boundary);
+        nb::class_<ReflectionTraceAD>(m, "ReflectionTraceAD")
+            .def("is_valid", &ReflectionTraceAD::is_valid)
+            .def("bounce",
+                 [](const ReflectionTraceAD &trace, int index) {
+                     if (index < 0 || index >= trace.max_bounces) {
+                         throw std::out_of_range("ReflectionTraceAD.bounce(): index out of range.");
+                     }
+                     return trace.bounces[static_cast<size_t>(index)];
+                 },
+                 "index"_a)
+            .def_ro("max_bounces", &ReflectionTraceAD::max_bounces)
+            .def_ro("ray_count", &ReflectionTraceAD::ray_count)
+            .def_ro("deduplicate_requested", &ReflectionTraceAD::deduplicate_requested)
+            .def_ro("deduplicate_applied", &ReflectionTraceAD::deduplicate_applied)
+            .def_ro("bounce_count", &ReflectionTraceAD::bounce_count)
+            .def_ro("discovery_count", &ReflectionTraceAD::discovery_count)
+            .def_ro("representative_ray_index", &ReflectionTraceAD::representative_ray_index)
+            .def_ro("dedup_keep_mask", &ReflectionTraceAD::dedup_keep_mask)
+            .def_ro("bounces", &ReflectionTraceAD::bounces);
 
-        nb::class_<NearestPointEdge>(m, "NearestPointEdgeAD")
+        nb::class_<NearestPointEdge>(m, "NearestPointEdge")
             .def("is_valid", &NearestPointEdge::is_valid)
             .def_ro("distance", &NearestPointEdge::distance)
             .def_ro("point", &NearestPointEdge::point)
@@ -667,19 +655,18 @@ NB_MODULE(rayd, m) {
             .def_ro("global_edge_id", &NearestPointEdge::global_edge_id)
             .def_ro("is_boundary", &NearestPointEdge::is_boundary);
 
-        nb::class_<NearestRayEdgeDetached>(m, "NearestRayEdge")
-            .def("is_valid", &NearestRayEdgeDetached::is_valid)
-            .def_ro("distance", &NearestRayEdgeDetached::distance)
-            .def_ro("ray_t", &NearestRayEdgeDetached::ray_t)
-            .def_ro("point", &NearestRayEdgeDetached::point)
-            .def_ro("edge_t", &NearestRayEdgeDetached::edge_t)
-            .def_ro("edge_point", &NearestRayEdgeDetached::edge_point)
-            .def_ro("shape_id", &NearestRayEdgeDetached::shape_id)
-            .def_ro("edge_id", &NearestRayEdgeDetached::edge_id)
-            .def_ro("global_edge_id", &NearestRayEdgeDetached::global_edge_id)
-            .def_ro("is_boundary", &NearestRayEdgeDetached::is_boundary);
+        nb::class_<NearestPointEdgeAD>(m, "NearestPointEdgeAD")
+            .def("is_valid", &NearestPointEdgeAD::is_valid)
+            .def_ro("distance", &NearestPointEdgeAD::distance)
+            .def_ro("point", &NearestPointEdgeAD::point)
+            .def_ro("edge_t", &NearestPointEdgeAD::edge_t)
+            .def_ro("edge_point", &NearestPointEdgeAD::edge_point)
+            .def_ro("shape_id", &NearestPointEdgeAD::shape_id)
+            .def_ro("edge_id", &NearestPointEdgeAD::edge_id)
+            .def_ro("global_edge_id", &NearestPointEdgeAD::global_edge_id)
+            .def_ro("is_boundary", &NearestPointEdgeAD::is_boundary);
 
-        nb::class_<NearestRayEdge>(m, "NearestRayEdgeAD")
+        nb::class_<NearestRayEdge>(m, "NearestRayEdge")
             .def("is_valid", &NearestRayEdge::is_valid)
             .def_ro("distance", &NearestRayEdge::distance)
             .def_ro("ray_t", &NearestRayEdge::ray_t)
@@ -691,20 +678,19 @@ NB_MODULE(rayd, m) {
             .def_ro("global_edge_id", &NearestRayEdge::global_edge_id)
             .def_ro("is_boundary", &NearestRayEdge::is_boundary);
 
-        nb::class_<NearestEdgesTopKDetached>(m, "NearestEdgesTopK")
-            .def_ro("query_count", &NearestEdgesTopKDetached::query_count)
-            .def_ro("k", &NearestEdgesTopKDetached::k)
-            .def_ro("is_valid", &NearestEdgesTopKDetached::is_valid)
-            .def_ro("distances", &NearestEdgesTopKDetached::distances)
-            .def_ro("points", &NearestEdgesTopKDetached::points)
-            .def_ro("edge_t", &NearestEdgesTopKDetached::edge_t)
-            .def_ro("edge_points", &NearestEdgesTopKDetached::edge_points)
-            .def_ro("shape_ids", &NearestEdgesTopKDetached::shape_ids)
-            .def_ro("edge_ids", &NearestEdgesTopKDetached::edge_ids)
-            .def_ro("global_edge_ids", &NearestEdgesTopKDetached::global_edge_ids)
-            .def_ro("is_boundary", &NearestEdgesTopKDetached::is_boundary);
+        nb::class_<NearestRayEdgeAD>(m, "NearestRayEdgeAD")
+            .def("is_valid", &NearestRayEdgeAD::is_valid)
+            .def_ro("distance", &NearestRayEdgeAD::distance)
+            .def_ro("ray_t", &NearestRayEdgeAD::ray_t)
+            .def_ro("point", &NearestRayEdgeAD::point)
+            .def_ro("edge_t", &NearestRayEdgeAD::edge_t)
+            .def_ro("edge_point", &NearestRayEdgeAD::edge_point)
+            .def_ro("shape_id", &NearestRayEdgeAD::shape_id)
+            .def_ro("edge_id", &NearestRayEdgeAD::edge_id)
+            .def_ro("global_edge_id", &NearestRayEdgeAD::global_edge_id)
+            .def_ro("is_boundary", &NearestRayEdgeAD::is_boundary);
 
-        nb::class_<NearestEdgesTopK>(m, "NearestEdgesTopKAD")
+        nb::class_<NearestEdgesTopK>(m, "NearestEdgesTopK")
             .def_ro("query_count", &NearestEdgesTopK::query_count)
             .def_ro("k", &NearestEdgesTopK::k)
             .def_ro("is_valid", &NearestEdgesTopK::is_valid)
@@ -717,42 +703,46 @@ NB_MODULE(rayd, m) {
             .def_ro("global_edge_ids", &NearestEdgesTopK::global_edge_ids)
             .def_ro("is_boundary", &NearestEdgesTopK::is_boundary);
 
-        nb::class_<SegmentVisibilityDetached>(m, "SegmentVisibility")
-            .def_ro("ray_count", &SegmentVisibilityDetached::ray_count)
-            .def_ro("visible", &SegmentVisibilityDetached::visible);
+        nb::class_<NearestEdgesTopKAD>(m, "NearestEdgesTopKAD")
+            .def_ro("query_count", &NearestEdgesTopKAD::query_count)
+            .def_ro("k", &NearestEdgesTopKAD::k)
+            .def_ro("is_valid", &NearestEdgesTopKAD::is_valid)
+            .def_ro("distances", &NearestEdgesTopKAD::distances)
+            .def_ro("points", &NearestEdgesTopKAD::points)
+            .def_ro("edge_t", &NearestEdgesTopKAD::edge_t)
+            .def_ro("edge_points", &NearestEdgesTopKAD::edge_points)
+            .def_ro("shape_ids", &NearestEdgesTopKAD::shape_ids)
+            .def_ro("edge_ids", &NearestEdgesTopKAD::edge_ids)
+            .def_ro("global_edge_ids", &NearestEdgesTopKAD::global_edge_ids)
+            .def_ro("is_boundary", &NearestEdgesTopKAD::is_boundary);
 
-        nb::class_<SegmentVisibility>(m, "SegmentVisibilityAD")
+        nb::class_<SegmentVisibility>(m, "SegmentVisibility")
             .def_ro("ray_count", &SegmentVisibility::ray_count)
             .def_ro("visible", &SegmentVisibility::visible);
 
-        nb::class_<SegmentPairVisibilityDetached>(m, "SegmentPairVisibility")
-            .def_ro("ray_count", &SegmentPairVisibilityDetached::ray_count)
-            .def_ro("visible_a", &SegmentPairVisibilityDetached::visible_a)
-            .def_ro("visible_b", &SegmentPairVisibilityDetached::visible_b);
+        nb::class_<SegmentVisibilityAD>(m, "SegmentVisibilityAD")
+            .def_ro("ray_count", &SegmentVisibilityAD::ray_count)
+            .def_ro("visible", &SegmentVisibilityAD::visible);
 
-        nb::class_<SegmentPairVisibility>(m, "SegmentPairVisibilityAD")
+        nb::class_<SegmentPairVisibility>(m, "SegmentPairVisibility")
             .def_ro("ray_count", &SegmentPairVisibility::ray_count)
             .def_ro("visible_a", &SegmentPairVisibility::visible_a)
             .def_ro("visible_b", &SegmentPairVisibility::visible_b);
 
-        nb::class_<AxialEdgeVisibilityDetached>(m, "AxialEdgeVisibility")
-            .def_ro("state_count", &AxialEdgeVisibilityDetached::state_count)
-            .def_ro("any_visible", &AxialEdgeVisibilityDetached::any_visible);
+        nb::class_<SegmentPairVisibilityAD>(m, "SegmentPairVisibilityAD")
+            .def_ro("ray_count", &SegmentPairVisibilityAD::ray_count)
+            .def_ro("visible_a", &SegmentPairVisibilityAD::visible_a)
+            .def_ro("visible_b", &SegmentPairVisibilityAD::visible_b);
 
-        nb::class_<AxialEdgeVisibility>(m, "AxialEdgeVisibilityAD")
+        nb::class_<AxialEdgeVisibility>(m, "AxialEdgeVisibility")
             .def_ro("state_count", &AxialEdgeVisibility::state_count)
             .def_ro("any_visible", &AxialEdgeVisibility::any_visible);
 
-        nb::class_<SegmentChainVisibilityDetached>(m, "SegmentChainVisibility")
-            .def_ro("chain_count", &SegmentChainVisibilityDetached::chain_count)
-            .def_ro("max_segments", &SegmentChainVisibilityDetached::max_segments)
-            .def_ro("all_visible", &SegmentChainVisibilityDetached::all_visible)
-            .def_ro("first_blocked_segment",
-                    &SegmentChainVisibilityDetached::first_blocked_segment)
-            .def_ro("first_blocked_prim",
-                    &SegmentChainVisibilityDetached::first_blocked_prim);
+        nb::class_<AxialEdgeVisibilityAD>(m, "AxialEdgeVisibilityAD")
+            .def_ro("state_count", &AxialEdgeVisibilityAD::state_count)
+            .def_ro("any_visible", &AxialEdgeVisibilityAD::any_visible);
 
-        nb::class_<SegmentChainVisibility>(m, "SegmentChainVisibilityAD")
+        nb::class_<SegmentChainVisibility>(m, "SegmentChainVisibility")
             .def_ro("chain_count", &SegmentChainVisibility::chain_count)
             .def_ro("max_segments", &SegmentChainVisibility::max_segments)
             .def_ro("all_visible", &SegmentChainVisibility::all_visible)
@@ -760,6 +750,15 @@ NB_MODULE(rayd, m) {
                     &SegmentChainVisibility::first_blocked_segment)
             .def_ro("first_blocked_prim",
                     &SegmentChainVisibility::first_blocked_prim);
+
+        nb::class_<SegmentChainVisibilityAD>(m, "SegmentChainVisibilityAD")
+            .def_ro("chain_count", &SegmentChainVisibilityAD::chain_count)
+            .def_ro("max_segments", &SegmentChainVisibilityAD::max_segments)
+            .def_ro("all_visible", &SegmentChainVisibilityAD::all_visible)
+            .def_ro("first_blocked_segment",
+                    &SegmentChainVisibilityAD::first_blocked_segment)
+            .def_ro("first_blocked_prim",
+                    &SegmentChainVisibilityAD::first_blocked_prim);
 
         nb::class_<SceneSyncProfile>(m, "SceneSyncProfile")
             .def_ro("mesh_update_ms", &SceneSyncProfile::mesh_update_ms)
@@ -804,9 +803,9 @@ NB_MODULE(rayd, m) {
             .def("__init__",
                  [](Mesh *mesh,
                     nb::handle v_obj,
-                    const Vector3iDetached &f,
+                    const Vector3i &f,
                     nb::handle uv_obj,
-                    const Vector3iDetached &f_uv,
+                    const Vector3i &f_uv,
                     bool verbose) {
                      const std::string v_module_name =
                          nb::cast<std::string>(v_obj.type().attr("__module__"));
@@ -825,50 +824,50 @@ NB_MODULE(rayd, m) {
                          throw nb::next_overload();
                      }
 
-                     Vector3fDetached v_detached;
+                     Vector3f v_detached;
                      if (has_live_v) {
-                         const Vector3f v_live = nb::cast<Vector3f>(v_obj);
+                         const Vector3fAD v_live = nb::cast<Vector3fAD>(v_obj);
                          v_detached = detach<false>(v_live);
-                     } else if (!drjit_try_load<Vector3fDetached>(v_obj, v_detached, true)) {
+                     } else if (!drjit_try_load<Vector3f>(v_obj, v_detached, true)) {
                          throw nb::next_overload();
                      }
 
-                     Vector2fDetached uv_detached;
+                     Vector2f uv_detached;
                      if (has_live_uv) {
-                         const Vector2f uv_live = nb::cast<Vector2f>(uv_obj);
+                         const Vector2fAD uv_live = nb::cast<Vector2fAD>(uv_obj);
                          uv_detached = detach<false>(uv_live);
-                     } else if (!drjit_try_load<Vector2fDetached>(uv_obj, uv_detached, true)) {
+                     } else if (!drjit_try_load<Vector2f>(uv_obj, uv_detached, true)) {
                          throw nb::next_overload();
                      }
 
                      new (mesh) Mesh(v_detached, f, uv_detached, f_uv, verbose);
                      if (has_live_v) {
-                         const Vector3f v_live = nb::cast<Vector3f>(v_obj);
+                         const Vector3fAD v_live = nb::cast<Vector3fAD>(v_obj);
                          mesh->set_vertex_positions(v_live);
                      }
                      if (has_live_uv) {
-                         const Vector2f uv_live = nb::cast<Vector2f>(uv_obj);
+                         const Vector2fAD uv_live = nb::cast<Vector2fAD>(uv_obj);
                          mesh->set_vertex_uv(uv_live);
                      }
                  },
                  "v"_a,
                  "f"_a,
-                 "uv"_a = Vector2fDetached(),
-                 "f_uv"_a = Vector3iDetached(),
+                 "uv"_a = Vector2f(),
+                 "f_uv"_a = Vector3i(),
                  "verbose"_a = false)
             .def("__init__",
                  [](Mesh *mesh,
-                    const Vector3fDetached &v,
-                    const Vector3iDetached &f,
-                    const Vector2fDetached &uv,
-                    const Vector3iDetached &f_uv,
+                    const Vector3f &v,
+                    const Vector3i &f,
+                    const Vector2f &uv,
+                    const Vector3i &f_uv,
                     bool verbose) {
                      new (mesh) Mesh(v, f, uv, f_uv, verbose);
                  },
                  "v"_a,
                  "f"_a,
-                 "uv"_a = Vector2fDetached(),
-                 "f_uv"_a = Vector3iDetached(),
+                 "uv"_a = Vector2f(),
+                 "f_uv"_a = Vector3i(),
                  "verbose"_a = false)
             .def("build", &Mesh::build)
             .def("set_transform", &Mesh::set_transform, "mat"_a, "set_left"_a = true)
@@ -882,7 +881,7 @@ NB_MODULE(rayd, m) {
                                       edge_indices[4]);
             })
             .def("secondary_edges", [](const Mesh &mesh) {
-                return mesh.secondary_edge_info() != nullptr ? *mesh.secondary_edge_info() : SecondaryEdgeInfo();
+                return mesh.secondary_edge_info() != nullptr ? *mesh.secondary_edge_info() : SecondaryEdgeInfoAD();
             })
             .def_prop_ro("num_vertices", &Mesh::vertex_count)
             .def_prop_ro("num_faces", &Mesh::face_count)
@@ -909,10 +908,10 @@ NB_MODULE(rayd, m) {
             .def("set_mesh_transform", &Scene::set_mesh_transform, "mesh_id"_a, "mat"_a, "set_left"_a = true)
             .def("append_mesh_transform", &Scene::append_mesh_transform, "mesh_id"_a, "mat"_a, "append_left"_a = true)
             .def("set_edge_mask",
-                 nb::overload_cast<const rayd::MaskDetached &>(&Scene::set_edge_mask),
+                 nb::overload_cast<const rayd::Mask &>(&Scene::set_edge_mask),
                  nb::arg("mask"))
             .def("set_edge_mask",
-                 nb::overload_cast<const rayd::Mask &>(&Scene::set_edge_mask),
+                 nb::overload_cast<const rayd::MaskAD &>(&Scene::set_edge_mask),
                  nb::arg("mask"))
             .def("sync", &Scene::sync)
             .def("is_ready", &Scene::is_ready)
@@ -928,34 +927,34 @@ NB_MODULE(rayd, m) {
             .def("mesh_vertex_offsets", &Scene::mesh_vertex_offsets)
             .def("global_geometry", &Scene::global_geometry)
             .def("triangle_edge_indices",
-                 [](const Scene &scene, const IntDetached &prim_id, bool global) {
+                 [](const Scene &scene, const Int &prim_id, bool global) {
                      const auto edge_ids = scene.triangle_edge_indices(prim_id, global);
                      return nb::make_tuple(edge_ids[0], edge_ids[1], edge_ids[2]);
                  },
                  "prim_id"_a,
                  "global_"_a = true)
             .def("edge_adjacent_faces",
-                 [](const Scene &scene, const IntDetached &edge_id, bool global) {
+                 [](const Scene &scene, const Int &edge_id, bool global) {
                      const auto face_ids = scene.edge_adjacent_faces(edge_id, global);
                      return nb::make_tuple(face_ids[0], face_ids[1]);
                  },
                  "edge_id"_a,
                  "global_"_a = true)
             .def("intersect",
-                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active, RayFlags flags) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active, RayFlags flags) {
                      return scene.intersect<true>(ray, active, flags);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
             .def("intersect",
-                 [](const Scene &scene, const Ray &ray, rayd::Mask active, RayFlags flags) {
+                 [](const Scene &scene, const RayAD &ray, rayd::MaskAD active, RayFlags flags) {
                      return scene.intersect<false>(ray, active, flags);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const RayDetached &ray,
+                    const Ray &ray,
                     int max_bounces,
-                    rayd::MaskDetached active,
+                    rayd::Mask active,
                     bool symbolic) -> nb::object {
                      if (symbolic) {
                          return nb::cast(scene.trace_bounces<true>(ray, max_bounces, active));
@@ -965,9 +964,9 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true, "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const Ray &ray,
+                    const RayAD &ray,
                     int max_bounces,
-                    rayd::Mask active,
+                    rayd::MaskAD active,
                     bool symbolic) -> nb::object {
                      if (symbolic) {
                          return nb::cast(scene.trace_bounces<false>(ray, max_bounces, active));
@@ -977,10 +976,10 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true, "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const RayDetached &ray,
+                    const Ray &ray,
                     int max_bounces,
                     const ReflectionTraceOptions &options,
-                    rayd::MaskDetached active,
+                    rayd::Mask active,
                     bool symbolic) -> nb::object {
                      if (symbolic) {
                          return nb::cast(scene.trace_bounces<true>(ray, max_bounces, options, active));
@@ -994,10 +993,10 @@ NB_MODULE(rayd, m) {
                  "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const Ray &ray,
+                    const RayAD &ray,
                     int max_bounces,
                     const ReflectionTraceOptions &options,
-                    rayd::Mask active,
+                    rayd::MaskAD active,
                     bool symbolic) -> nb::object {
                      if (symbolic) {
                          return nb::cast(scene.trace_bounces<false>(ray, max_bounces, options, active));
@@ -1011,12 +1010,12 @@ NB_MODULE(rayd, m) {
                  "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const RayDetached &ray,
+                    const Ray &ray,
                     int max_bounces,
                     bool deduplicate,
-                    const IntDetached &canonical_prim_table,
+                    const Int &canonical_prim_table,
                     float image_source_tolerance,
-                    rayd::MaskDetached active,
+                    rayd::Mask active,
                     bool symbolic) -> nb::object {
                      ReflectionTraceOptions options;
                      options.deduplicate = deduplicate;
@@ -1030,18 +1029,18 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
-                 "canonical_prim_table"_a = IntDetached(),
+                 "canonical_prim_table"_a = Int(),
                  "image_source_tolerance"_a = 1e-5f,
                  "active"_a = true,
                  "symbolic"_a = true)
             .def("trace_reflections",
                  [](const Scene &scene,
-                    const Ray &ray,
+                    const RayAD &ray,
                     int max_bounces,
                     bool deduplicate,
-                    const IntDetached &canonical_prim_table,
+                    const Int &canonical_prim_table,
                     float image_source_tolerance,
-                    rayd::Mask active,
+                    rayd::MaskAD active,
                     bool symbolic) -> nb::object {
                      ReflectionTraceOptions options;
                      options.deduplicate = deduplicate;
@@ -1055,17 +1054,17 @@ NB_MODULE(rayd, m) {
                  nb::arg("ray").noconvert(),
                  "max_bounces"_a,
                  "deduplicate"_a = false,
-                 "canonical_prim_table"_a = IntDetached(),
+                 "canonical_prim_table"_a = Int(),
                   "image_source_tolerance"_a = 1e-5f,
                   "active"_a = true,
                   "symbolic"_a = true)
             .def("trace_reflection_epc",
                  [](const Scene &scene,
-                    const RayDetached &ray,
-                    const Vector3fDetached &receiver,
+                    const Ray &ray,
+                    const Vector3f &receiver,
                     int max_bounces,
                     nb::object options_obj,
-                    rayd::MaskDetached active) {
+                    rayd::Mask active) {
                      ReflectionEpcOptions options;
                      if (!options_obj.is_none()) {
                          bool parsed_options = false;
@@ -1082,7 +1081,7 @@ NB_MODULE(rayd, m) {
                              }
                          }
                          if (!parsed_options) {
-                             active = nb::cast<rayd::MaskDetached>(options_obj);
+                             active = nb::cast<rayd::Mask>(options_obj);
                          }
                      }
                      return scene.trace_reflection_epc<true>(
@@ -1095,11 +1094,11 @@ NB_MODULE(rayd, m) {
                   "active"_a = true)
             .def("trace_reflection_epc_field",
                  [](const Scene &scene,
-                    const RayDetached &ray,
-                    const Vector3fDetached &receiver,
+                    const Ray &ray,
+                    const Vector3f &receiver,
                     int max_bounces,
                     const ReflectionEpcFieldOptions &options,
-                    rayd::MaskDetached active) {
+                    rayd::Mask active) {
                      return scene.trace_reflection_epc_field<true>(
                          ray, receiver, max_bounces, options, active);
                  },
@@ -1110,11 +1109,11 @@ NB_MODULE(rayd, m) {
                   "active"_a = true)
             .def("trace_reflection_epc_field",
                  [](const Scene &scene,
-                    const Vector3fDetached &tx_position,
-                    const Vector3fDetached &receiver,
+                    const Vector3f &tx_position,
+                    const Vector3f &receiver,
                     int max_bounces,
                     const ReflectionEpcFieldOptions &options,
-                    rayd::MaskDetached active) {
+                    rayd::Mask active) {
                      return scene.trace_reflection_epc_field<true>(
                          tx_position, receiver, max_bounces, options, active);
                  },
@@ -1133,20 +1132,6 @@ NB_MODULE(rayd, m) {
                      const AccumOptions &options,
                      nb::handle active_obj,
                      nb::handle tx_polarization_obj) -> nb::object {
-                      if (nb::isinstance<RayDetached>(ray_obj)) {
-                          const RayDetached ray = nb::cast<RayDetached>(ray_obj);
-                          const Vector3fDetached tx_position =
-                              nb::cast<Vector3fDetached>(tx_position_obj);
-                          const Vector3fDetached tx_polarization =
-                              nb::cast<Vector3fDetached>(tx_polarization_obj);
-                          const MaterialDetached material =
-                              nb::cast<MaterialDetached>(material_obj);
-                          const rayd::MaskDetached active =
-                              nb::cast<rayd::MaskDetached>(active_obj);
-                          return nb::cast(scene.accumulate_reflections<true>(
-                              ray, tx_position, grid, material, max_bounces, options, active,
-                              tx_polarization));
-                      }
                       if (nb::isinstance<Ray>(ray_obj)) {
                           const Ray ray = nb::cast<Ray>(ray_obj);
                           const Vector3f tx_position =
@@ -1155,7 +1140,21 @@ NB_MODULE(rayd, m) {
                               nb::cast<Vector3f>(tx_polarization_obj);
                           const Material material =
                               nb::cast<Material>(material_obj);
-                          const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                          const rayd::Mask active =
+                              nb::cast<rayd::Mask>(active_obj);
+                          return nb::cast(scene.accumulate_reflections<true>(
+                              ray, tx_position, grid, material, max_bounces, options, active,
+                              tx_polarization));
+                      }
+                      if (nb::isinstance<RayAD>(ray_obj)) {
+                          const RayAD ray = nb::cast<RayAD>(ray_obj);
+                          const Vector3fAD tx_position =
+                              nb::cast<Vector3fAD>(tx_position_obj);
+                          const Vector3fAD tx_polarization =
+                              nb::cast<Vector3fAD>(tx_polarization_obj);
+                          const MaterialAD material =
+                              nb::cast<MaterialAD>(material_obj);
+                          const rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                           return nb::cast(scene.accumulate_reflections<false>(
                               ray, tx_position, grid, material, max_bounces, options, active,
                               tx_polarization));
@@ -1169,14 +1168,14 @@ NB_MODULE(rayd, m) {
                   "max_bounces"_a,
                   "options"_a = AccumOptions(),
                   "active"_a = true,
-                  "tx_polarization"_a = Vector3fDetached(1.f, 0.f, 0.f))
+                  "tx_polarization"_a = Vector3f(1.f, 0.f, 0.f))
             .def("shadow_test",
-                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.shadow_test<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("shadow_test",
-                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
+                 [](const Scene &scene, const RayAD &ray, rayd::MaskAD active) {
                      return scene.shadow_test<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
@@ -1184,7 +1183,7 @@ NB_MODULE(rayd, m) {
                  [](const Scene &scene,
                     nb::handle start_obj,
                     nb::handle end_obj,
-                    const IntDetached &ignore_prim_ids,
+                    const Int &ignore_prim_ids,
                     nb::handle active_obj) -> nb::object {
                      const std::string module_name =
                          nb::cast<std::string>(start_obj.type().attr("__module__"));
@@ -1192,17 +1191,17 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(start_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f start = nb::cast<Vector3f>(start_obj);
-                         Vector3f end = nb::cast<Vector3f>(end_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD start = nb::cast<Vector3fAD>(start_obj);
+                         Vector3fAD end = nb::cast<Vector3fAD>(end_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.visible<false>(
                              start, end, ignore_prim_ids, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached start = nb::cast<Vector3fDetached>(start_obj);
-                         Vector3fDetached end = nb::cast<Vector3fDetached>(end_obj);
-                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f start = nb::cast<Vector3f>(start_obj);
+                         Vector3f end = nb::cast<Vector3f>(end_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.visible<true>(
                              start, end, ignore_prim_ids, active));
                      }
@@ -1210,14 +1209,14 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("start"),
                  nb::arg("end"),
-                 "ignore_prim_ids"_a = IntDetached(),
+                 "ignore_prim_ids"_a = Int(),
                  "active"_a = true)
             .def("visible_pair",
                  [](const Scene &scene,
                     nb::handle start_obj,
                     nb::handle end_a_obj,
                     nb::handle end_b_obj,
-                    const IntDetached &ignore_prim_ids,
+                    const Int &ignore_prim_ids,
                     nb::handle active_obj) -> nb::object {
                      const std::string module_name =
                          nb::cast<std::string>(start_obj.type().attr("__module__"));
@@ -1225,19 +1224,19 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(start_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f start = nb::cast<Vector3f>(start_obj);
-                         Vector3f end_a = nb::cast<Vector3f>(end_a_obj);
-                         Vector3f end_b = nb::cast<Vector3f>(end_b_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD start = nb::cast<Vector3fAD>(start_obj);
+                         Vector3fAD end_a = nb::cast<Vector3fAD>(end_a_obj);
+                         Vector3fAD end_b = nb::cast<Vector3fAD>(end_b_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.visible_pair<false>(
                              start, end_a, end_b, ignore_prim_ids, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached start = nb::cast<Vector3fDetached>(start_obj);
-                         Vector3fDetached end_a = nb::cast<Vector3fDetached>(end_a_obj);
-                         Vector3fDetached end_b = nb::cast<Vector3fDetached>(end_b_obj);
-                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f start = nb::cast<Vector3f>(start_obj);
+                         Vector3f end_a = nb::cast<Vector3f>(end_a_obj);
+                         Vector3f end_b = nb::cast<Vector3f>(end_b_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.visible_pair<true>(
                              start, end_a, end_b, ignore_prim_ids, active));
                      }
@@ -1246,7 +1245,7 @@ NB_MODULE(rayd, m) {
                  nb::arg("start"),
                  nb::arg("end_a"),
                  nb::arg("end_b"),
-                 "ignore_prim_ids"_a = IntDetached(),
+                 "ignore_prim_ids"_a = Int(),
                  "active"_a = true)
             .def("visible_axial_edge",
                  [](const Scene &scene,
@@ -1263,12 +1262,12 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(source_pos_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f source_pos = nb::cast<Vector3f>(source_pos_obj);
-                         Vector3f edge_pos = nb::cast<Vector3f>(edge_pos_obj);
-                         Vector3f edge_dir = nb::cast<Vector3f>(edge_dir_obj);
-                         Float edge_line_min = nb::cast<Float>(edge_line_min_obj);
-                         Float edge_line_max = nb::cast<Float>(edge_line_max_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD source_pos = nb::cast<Vector3fAD>(source_pos_obj);
+                         Vector3fAD edge_pos = nb::cast<Vector3fAD>(edge_pos_obj);
+                         Vector3fAD edge_dir = nb::cast<Vector3fAD>(edge_dir_obj);
+                         FloatAD edge_line_min = nb::cast<FloatAD>(edge_line_min_obj);
+                         FloatAD edge_line_max = nb::cast<FloatAD>(edge_line_max_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.visible_axial_edge<false>(
                              source_pos,
                              edge_pos,
@@ -1280,18 +1279,18 @@ NB_MODULE(rayd, m) {
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached source_pos =
-                             nb::cast<Vector3fDetached>(source_pos_obj);
-                         Vector3fDetached edge_pos =
-                             nb::cast<Vector3fDetached>(edge_pos_obj);
-                         Vector3fDetached edge_dir =
-                             nb::cast<Vector3fDetached>(edge_dir_obj);
-                         FloatDetached edge_line_min =
-                             nb::cast<FloatDetached>(edge_line_min_obj);
-                         FloatDetached edge_line_max =
-                             nb::cast<FloatDetached>(edge_line_max_obj);
-                         rayd::MaskDetached active =
-                             nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f source_pos =
+                             nb::cast<Vector3f>(source_pos_obj);
+                         Vector3f edge_pos =
+                             nb::cast<Vector3f>(edge_pos_obj);
+                         Vector3f edge_dir =
+                             nb::cast<Vector3f>(edge_dir_obj);
+                         Float edge_line_min =
+                             nb::cast<Float>(edge_line_min_obj);
+                         Float edge_line_max =
+                             nb::cast<Float>(edge_line_max_obj);
+                         rayd::Mask active =
+                             nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.visible_axial_edge<true>(
                              source_pos,
                              edge_pos,
@@ -1313,8 +1312,8 @@ NB_MODULE(rayd, m) {
             .def("visible_chain",
                  [](const Scene &scene,
                     nb::handle points_obj,
-                    const IntDetached &chain_length,
-                    const IntDetached &ignore_prim_per_segment,
+                    const Int &chain_length,
+                    const Int &ignore_prim_per_segment,
                     nb::handle active_obj) -> nb::object {
                      const std::string module_name =
                          nb::cast<std::string>(points_obj.type().attr("__module__"));
@@ -1322,16 +1321,16 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(points_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f points = nb::cast<Vector3f>(points_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD points = nb::cast<Vector3fAD>(points_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.visible_chain<false>(
                              points, chain_length, ignore_prim_per_segment, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached points = nb::cast<Vector3fDetached>(points_obj);
-                         rayd::MaskDetached active =
-                             nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f points = nb::cast<Vector3f>(points_obj);
+                         rayd::Mask active =
+                             nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.visible_chain<true>(
                              points, chain_length, ignore_prim_per_segment, active));
                      }
@@ -1339,7 +1338,7 @@ NB_MODULE(rayd, m) {
                  },
                  nb::arg("points"),
                  "chain_length"_a,
-                 "ignore_prim_per_segment"_a = IntDetached(),
+                 "ignore_prim_per_segment"_a = Int(),
                  "active"_a = true)
             .def("nearest_edge",
                  [](const Scene &scene, nb::handle point_obj, nb::handle active_obj) -> nb::object {
@@ -1349,26 +1348,26 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(point_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f point = nb::cast<Vector3f>(point_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD point = nb::cast<Vector3fAD>(point_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.nearest_edge<false>(point, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached point_detached = nb::cast<Vector3fDetached>(point_obj);
-                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f point_detached = nb::cast<Vector3f>(point_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.nearest_edge<true>(point_detached, active));
                      }
                      throw nb::next_overload();
                  },
                  nb::arg("point"), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const RayDetached &ray, rayd::MaskDetached active) {
+                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.nearest_edge<true>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("nearest_edge",
-                 [](const Scene &scene, const Ray &ray, rayd::Mask active) {
+                 [](const Scene &scene, const RayAD &ray, rayd::MaskAD active) {
                      return scene.nearest_edge<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
@@ -1380,14 +1379,14 @@ NB_MODULE(rayd, m) {
                          nb::cast<std::string>(point_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3f point = nb::cast<Vector3f>(point_obj);
-                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         Vector3fAD point = nb::cast<Vector3fAD>(point_obj);
+                         rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
                          return nb::cast(scene.nearest_edges_topk<false>(point, k, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3fDetached point_detached = nb::cast<Vector3fDetached>(point_obj);
-                         rayd::MaskDetached active = nb::cast<rayd::MaskDetached>(active_obj);
+                         Vector3f point_detached = nb::cast<Vector3f>(point_obj);
+                         rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
                          return nb::cast(scene.nearest_edges_topk<true>(point_detached, k, active));
                      }
                      throw nb::next_overload();

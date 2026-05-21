@@ -7,9 +7,9 @@ namespace rayd {
 /// Batch of rays, each with an origin, direction, and maximum parametric extent.
 template <typename Float_>
 struct RayData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
 
     RayData(const Vec3f &origin, const Vec3f &direction, const Float_ &t_max)
         : o(origin), d(direction), tmax(t_max) {}
@@ -28,8 +28,8 @@ struct RayData {
     /// Point at parametric distance \p t along the ray: o + t * d.
     Vec3f operator()(const Float_ &t) const { return drjit::fmadd(d, t, o); }
 
-    Vec3f o = drjit::zeros<Vec3f>(1);    ///< Ray origins.
-    Vec3f d = Vec3f(0.f, 0.f, 1.f);      ///< Ray directions (not required to be normalized).
+    Vec3f o = drjit::zeros<Vec3f>(1);    ///< RayAD origins.
+    Vec3f d = Vec3f(0.f, 0.f, 1.f);      ///< RayAD directions (not required to be normalized).
     Float_ tmax = drjit::full<Float_>(Infinity, 1); ///< Maximum t; hits beyond this are ignored.
 
     DRJIT_STRUCT(RayData, o, d, tmax)
@@ -57,12 +57,12 @@ inline constexpr bool has_flag(RayFlags set, RayFlags flag) {
 /// Result of a ray-triangle intersection query, one entry per input ray.
 template <typename Float_>
 struct IntersectionData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Vec2f = std::conditional_t<IsDetached, Vector2fDetached, Vector2f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Vec2f = std::conditional_t<IsDetached, Vector2f, Vector2fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     /// Per-lane mask of lanes that hit a surface (prim_id >= 0).
     Mask_ is_valid() const {

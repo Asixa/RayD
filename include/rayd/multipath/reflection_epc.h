@@ -11,28 +11,28 @@ namespace rayd {
 /// reflector sequence and optional surface-group tables steer which primitives a
 /// path is allowed to use and which to ignore during visibility checks.
 struct ReflectionEpcOptions {
-    IntDetached expected_prim_ids;       ///< Expected reflector per slot (n_rays * max_bounces).
-    IntDetached surface_group_id;        ///< Surface-group id per triangle (optional).
-    IntDetached surface_group_size;      ///< Member count of each surface group.
-    IntDetached surface_group_members;   ///< Flattened group membership table (surface_group_count * max_group_size).
+    Int expected_prim_ids;       ///< Expected reflector per slot (n_rays * max_bounces).
+    Int surface_group_id;        ///< Surface-group id per triangle (optional).
+    Int surface_group_size;      ///< Member count of each surface group.
+    Int surface_group_members;   ///< Flattened group membership table (surface_group_count * max_group_size).
     int surface_max_group_size = 0;      ///< Width of the group-members table.
     std::string visibility_ignore_mode = "primitive"; ///< "primitive" or "surface_group" ignore semantics.
-    IntDetached final_ignore_group_ids;  ///< Groups ignored on the final receiver segment.
+    Int final_ignore_group_ids;  ///< Groups ignored on the final receiver segment.
 };
 
 /// EPC options extended with per-slot material/geometry and the field-evaluation
 /// parameters (frequency, polarization) plus output selectors.
 struct ReflectionEpcFieldOptions : ReflectionEpcOptions {
-    Vector3fDetached slot_plane_point = zeros<Vector3fDetached>(1);  ///< Override reflecting-plane point per slot.
-    Vector3fDetached slot_plane_normal = zeros<Vector3fDetached>(1); ///< Override reflecting-plane normal per slot.
-    FloatDetached slot_eta_r = full<FloatDetached>(1.f, 1);  ///< Relative permittivity per slot.
-    FloatDetached slot_mu_r = full<FloatDetached>(1.f, 1);   ///< Relative permeability per slot.
-    FloatDetached slot_sigma = full<FloatDetached>(0.f, 1);  ///< Conductivity per slot.
-    FloatDetached slot_gain = full<FloatDetached>(1.f, 1);   ///< Extra gain factor per slot.
-    Vector3fDetached tx_polarization =                       ///< Transmitter polarization vector.
-        Vector3fDetached(full<FloatDetached>(1.f, 1),
-                         full<FloatDetached>(0.f, 1),
-                         full<FloatDetached>(0.f, 1));
+    Vector3f slot_plane_point = zeros<Vector3f>(1);  ///< Override reflecting-plane point per slot.
+    Vector3f slot_plane_normal = zeros<Vector3f>(1); ///< Override reflecting-plane normal per slot.
+    Float slot_eta_r = full<Float>(1.f, 1);  ///< Relative permittivity per slot.
+    Float slot_mu_r = full<Float>(1.f, 1);   ///< Relative permeability per slot.
+    Float slot_sigma = full<Float>(0.f, 1);  ///< Conductivity per slot.
+    Float slot_gain = full<Float>(1.f, 1);   ///< Extra gain factor per slot.
+    Vector3f tx_polarization =                       ///< Transmitter polarization vector.
+        Vector3f(full<Float>(1.f, 1),
+                         full<Float>(0.f, 1),
+                         full<Float>(0.f, 1));
     float omega = 2.f * 3.14159265358979323846f * 299792458.f; ///< Angular frequency (rad/s).
     float wavelength = 1.f;               ///< Wavelength in world units.
     bool return_geometry = false;         ///< Master switch for the per-slot geometry outputs below.
@@ -47,11 +47,11 @@ struct ReflectionEpcFieldOptions : ReflectionEpcOptions {
 /// per-ray arrays carry the path validity, length, and first occlusion encountered.
 template <typename Float_>
 struct ReflectionEpcResultData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
 
     int ray_count = 0;
     int max_bounces = 0;
@@ -87,19 +87,19 @@ struct ReflectionEpcResultData {
 template <bool Detached>
 using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
 
-using ReflectionEpcResult = ReflectionEpcResultT<false>;
-using ReflectionEpcResultDetached = ReflectionEpcResultT<true>;
+using ReflectionEpcResultAD = ReflectionEpcResultT<false>;
+using ReflectionEpcResult = ReflectionEpcResultT<true>;
 
 /// Result of an EPC reflection trace that also evaluates the complex field per ray.
 /// The field is the per-component (x, y, z) complex phasor; geometry/endpoint arrays
 /// are present only when the corresponding ReflectionEpcFieldOptions flags are set.
 template <typename Float_>
 struct ReflectionEpcFieldResultData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
 
     int ray_count = 0;
     int max_bounces = 0;
@@ -147,7 +147,7 @@ template <bool Detached>
 using ReflectionEpcFieldResultT =
     ReflectionEpcFieldResultData<FloatT<Detached>>;
 
-using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<false>;
-using ReflectionEpcFieldResultDetached = ReflectionEpcFieldResultT<true>;
+using ReflectionEpcFieldResultAD = ReflectionEpcFieldResultT<false>;
+using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<true>;
 
 } // namespace rayd

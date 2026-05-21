@@ -8,11 +8,11 @@ namespace rayd {
 /// Result of a nearest-edge query from a point, one entry per query.
 template <typename Float_>
 struct NearestPointEdgeData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     /// Per-lane mask of queries that found an edge (edge_id >= 0).
     Mask_ is_valid() const {
@@ -42,17 +42,17 @@ struct NearestPointEdgeData {
 template <bool Detached>
 using NearestPointEdgeT = NearestPointEdgeData<FloatT<Detached>>;
 
-using NearestPointEdge = NearestPointEdgeT<false>;
-using NearestPointEdgeDetached = NearestPointEdgeT<true>;
+using NearestPointEdgeAD = NearestPointEdgeT<false>;
+using NearestPointEdge = NearestPointEdgeT<true>;
 
 /// Result of a nearest-edge query from a ray or segment, one entry per query.
 template <typename Float_>
 struct NearestRayEdgeData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     /// Per-lane mask of queries that found an edge (edge_id >= 0).
     Mask_ is_valid() const {
@@ -84,18 +84,18 @@ struct NearestRayEdgeData {
 template <bool Detached>
 using NearestRayEdgeT = NearestRayEdgeData<FloatT<Detached>>;
 
-using NearestRayEdge = NearestRayEdgeT<false>;
-using NearestRayEdgeDetached = NearestRayEdgeT<true>;
+using NearestRayEdgeAD = NearestRayEdgeT<false>;
+using NearestRayEdge = NearestRayEdgeT<true>;
 
 /// Result of a k-nearest-edges query. The per-result arrays are laid out as
 /// query_count * k, with each query's k results contiguous and ordered nearest-first.
 template <typename Float_>
 struct NearestEdgesTopKData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     int query_count = 0;  ///< Number of query points.
     int k = 0;            ///< Neighbors requested per query.
@@ -125,16 +125,16 @@ struct NearestEdgesTopKData {
 template <bool Detached>
 using NearestEdgesTopKT = NearestEdgesTopKData<FloatT<Detached>>;
 
-using NearestEdgesTopK = NearestEdgesTopKT<false>;
-using NearestEdgesTopKDetached = NearestEdgesTopKT<true>;
+using NearestEdgesTopKAD = NearestEdgesTopKT<false>;
+using NearestEdgesTopK = NearestEdgesTopKT<true>;
 
 /// World-space geometry per edge consumed by the edge BVH and edge queries.
 template <typename Float_>
 struct SecondaryEdgeInfoData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
 
     /// First edge endpoint in world space.
     Vec3f start;
@@ -154,21 +154,21 @@ struct SecondaryEdgeInfoData {
     DRJIT_STRUCT(SecondaryEdgeInfoData, start, edge, normal0, normal1, opposite, is_boundary)
 };
 
+using SecondaryEdgeInfoAD = SecondaryEdgeInfoData<FloatAD>;
 using SecondaryEdgeInfo = SecondaryEdgeInfoData<Float>;
-using SecondaryEdgeInfoDetached = SecondaryEdgeInfoData<FloatDetached>;
 
 /// Scene-global per-edge geometry and ids, as returned by Scene::edge_info().
 struct SceneEdgeInfo {
-    Vector3f start;          ///< First edge endpoint in world space.
-    Vector3f edge;           ///< Edge vector; start + edge is the second endpoint.
-    Vector3f end;            ///< Second edge endpoint in world space.
-    Float length;            ///< Edge length.
-    Vector3f normal0;        ///< Face normal on one side of the edge.
-    Vector3f normal1;        ///< Face normal on the other side (undefined for boundary edges).
-    Mask is_boundary;        ///< Whether the edge has only one adjacent face.
-    IntDetached shape_id;        ///< Owning mesh id.
-    IntDetached local_edge_id;   ///< Edge index within the owning mesh.
-    IntDetached global_edge_id;  ///< Edge index within the scene-global edge set.
+    Vector3fAD start;          ///< First edge endpoint in world space.
+    Vector3fAD edge;           ///< Edge vector; start + edge is the second endpoint.
+    Vector3fAD end;            ///< Second edge endpoint in world space.
+    FloatAD length;            ///< Edge length.
+    Vector3fAD normal0;        ///< Face normal on one side of the edge.
+    Vector3fAD normal1;        ///< Face normal on the other side (undefined for boundary edges).
+    MaskAD is_boundary;        ///< Whether the edge has only one adjacent face.
+    Int shape_id;        ///< Owning mesh id.
+    Int local_edge_id;   ///< Edge index within the owning mesh.
+    Int global_edge_id;  ///< Edge index within the scene-global edge set.
 
     int size() const { return global_edge_id.size(); }
 
@@ -189,18 +189,18 @@ struct SceneEdgeInfo {
 /// variants index the scene-global vertex/face buffers, the others are per-mesh.
 /// face1 / opposite_vertex1 are -1 for boundary edges.
 struct SceneEdgeTopology {
-    IntDetached v0;          ///< First endpoint vertex id (per-mesh).
-    IntDetached v1;          ///< Second endpoint vertex id (per-mesh).
-    IntDetached v0_global;   ///< First endpoint vertex id (scene-global).
-    IntDetached v1_global;   ///< Second endpoint vertex id (scene-global).
-    IntDetached face0_local; ///< First adjacent face id (per-mesh).
-    IntDetached face1_local; ///< Second adjacent face id (per-mesh); -1 if boundary.
-    IntDetached face0_global; ///< First adjacent face id (scene-global).
-    IntDetached face1_global; ///< Second adjacent face id (scene-global); -1 if boundary.
-    IntDetached opposite_vertex0;        ///< Vertex of face0 opposite the edge (per-mesh).
-    IntDetached opposite_vertex1;        ///< Vertex of face1 opposite the edge (per-mesh); -1 if boundary.
-    IntDetached opposite_vertex0_global; ///< opposite_vertex0 in scene-global indexing.
-    IntDetached opposite_vertex1_global; ///< opposite_vertex1 in scene-global indexing; -1 if boundary.
+    Int v0;          ///< First endpoint vertex id (per-mesh).
+    Int v1;          ///< Second endpoint vertex id (per-mesh).
+    Int v0_global;   ///< First endpoint vertex id (scene-global).
+    Int v1_global;   ///< Second endpoint vertex id (scene-global).
+    Int face0_local; ///< First adjacent face id (per-mesh).
+    Int face1_local; ///< Second adjacent face id (per-mesh); -1 if boundary.
+    Int face0_global; ///< First adjacent face id (scene-global).
+    Int face1_global; ///< Second adjacent face id (scene-global); -1 if boundary.
+    Int opposite_vertex0;        ///< Vertex of face0 opposite the edge (per-mesh).
+    Int opposite_vertex1;        ///< Vertex of face1 opposite the edge (per-mesh); -1 if boundary.
+    Int opposite_vertex0_global; ///< opposite_vertex0 in scene-global indexing.
+    Int opposite_vertex1_global; ///< opposite_vertex1 in scene-global indexing; -1 if boundary.
 
     int size() const { return v0.size(); }
 

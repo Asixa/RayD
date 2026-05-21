@@ -9,18 +9,18 @@ namespace rayd {
 /// Options controlling specular reflection traces.
 struct ReflectionTraceOptions {
     bool deduplicate = false;          ///< Merge paths that share the same sequence of reflectors.
-    IntDetached canonical_prim_table;  ///< Optional map collapsing primitives to a canonical id for dedup.
+    Int canonical_prim_table;  ///< Optional map collapsing primitives to a canonical id for dedup.
     float image_source_tolerance = 1e-5f; ///< Distance tolerance when comparing image sources for dedup.
 };
 
 /// One reflection bounce for a batch of rays (the per-bounce slice of a chain).
 template <typename Float_>
 struct ReflectionBounceData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     /// Per-lane mask of bounces that hit a reflector (prim_ids >= 0).
     Mask_ is_valid() const {
@@ -55,11 +55,11 @@ struct ReflectionBounceData {
 /// ray_count * max_bounces; bounce_count gives how many slots are valid per ray.
 template <typename Float_>
 struct ReflectionChainData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     /// Per-slot mask of valid reflections (prim_ids >= 0).
     Mask_ is_valid() const {
@@ -71,7 +71,7 @@ struct ReflectionChainData {
 
     Int_ bounce_count = full<Int_>(0, 1);             ///< Valid reflections per ray.
     Int_ discovery_count = full<Int_>(0, 1);          ///< Paths collapsed into this one by dedup.
-    Int_ representative_ray_index = full<Int_>(-1, 1); ///< Ray chosen to represent a deduplicated group.
+    Int_ representative_ray_index = full<Int_>(-1, 1); ///< RayAD chosen to represent a deduplicated group.
     Float_ t = full<Float_>(Infinity, 1);             ///< Per-slot reflection distance.
     Vec3f hit_points = zeros<Vec3f>(1);               ///< Per-slot reflection point.
     Vec3f geo_normals = zeros<Vec3f>(1);              ///< Per-slot geometric normal.
@@ -111,10 +111,10 @@ struct ReflectionChainData {
 /// per bounce level) rather than flattened arrays. Returned by Scene::trace_bounces().
 template <typename Float_>
 struct ReflectionTraceData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
     using Bounce = ReflectionBounceData<Float_>;
 
     /// Per-ray mask of rays with at least one reflection.

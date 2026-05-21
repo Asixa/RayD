@@ -39,9 +39,9 @@ struct AccumOptions {
 /// Per-primitive material used by reflection accumulation (electromagnetic surface parameters).
 template <typename Float_>
 struct MaterialData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
 
     Float_ eta_r = full<Float_>(1.f, 1);  ///< Relative permittivity.
     Float_ sigma = full<Float_>(0.f, 1);  ///< Conductivity.
@@ -61,10 +61,10 @@ struct MaterialData {
 /// entries (up to `capacity`) of the per-event arrays are valid.
 template <typename Float_>
 struct WedgeEventsData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
-    using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     int capacity = 0;                       ///< Allocated event slots.
     Int_ count = full<Int_>(0, 1);          ///< Number of recorded events.
@@ -89,11 +89,11 @@ struct WedgeEventsData {
 /// plus optional diffraction-wedge events. Grid arrays have grid_cell_count entries.
 template <typename Float_>
 struct AccumResultData {
-    static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using FloatArray = Float_;
     using ComplexArray = drjit::Complex<Float_>;
-    using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
     using WedgeBuffer = WedgeEventsData<Float_>;
 
     int ray_count = 0;
