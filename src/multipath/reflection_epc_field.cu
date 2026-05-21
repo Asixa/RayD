@@ -288,6 +288,8 @@ static __forceinline__ __device__ void store_zero_field(
     params.out_field_z_im[ray_index] = 0.f;
 }
 
+/// One ray per thread (blockIdx.x * blockDim.x + threadIdx.x, bounds-checked); evaluates the
+/// complex reflected field from the ray's precomputed EPC geometry and writes the per-ray outputs.
 __global__ void reflection_epc_field_kernel(ReflectionEpcFieldParams params) {
     const int ray_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (ray_index >= params.n_rays) {

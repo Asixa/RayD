@@ -10,11 +10,13 @@
 
 namespace rayd {
 
+/// Launch parameters for the native reflection-accumulation pipeline (flat SoA device pointers).
 struct AccumParams {
-    OptixTraversableHandle primary_handle;
-    OptixTraversableHandle secondary_handle;
-    int split_mode;
+    OptixTraversableHandle primary_handle;   ///< Primary scene IAS handle.
+    OptixTraversableHandle secondary_handle; ///< Secondary IAS handle (split scene).
+    int split_mode;                          ///< 0 = single scene, nonzero = traverse both handles.
 
+    // Scene-global triangles in edge-vector form (p0 + s*e1 + t*e2) with face normal fn.
     const float *tri_p0_x;
     const float *tri_p0_y;
     const float *tri_p0_z;
@@ -28,10 +30,11 @@ struct AccumParams {
     const float *tri_fn_y;
     const float *tri_fn_z;
 
-    const int *face_offsets;
+    const int *face_offsets;  ///< Per-mesh face prefix-sum for globalizing primitive ids.
     int n_meshes;
     int n_triangles;
 
+    // Input rays and per-ray active mask.
     const float *ray_ox;
     const float *ray_oy;
     const float *ray_oz;
@@ -42,6 +45,7 @@ struct AccumParams {
     const uint8_t *active_mask;
     int n_rays;
 
+    // Transmitter position and polarization (per ray or broadcast).
     const float *tx_x;
     const float *tx_y;
     const float *tx_z;
@@ -68,6 +72,7 @@ struct AccumParams {
     int grid_resolution0;
     int grid_resolution1;
 
+    // Per-global-primitive material payload (see MaterialData).
     const float *material_eta_r;
     const float *material_sigma;
     const float *material_gain;
@@ -75,10 +80,11 @@ struct AccumParams {
     const uint8_t *material_valid;
     int material_count;
 
-    int collect_wedges;
-    int collect_wedge_prefixes;
-    int wedge_capacity;
+    int collect_wedges;          ///< Record diffraction-wedge events when nonzero.
+    int collect_wedge_prefixes;  ///< Also record each wedge's reflection prefix.
+    int wedge_capacity;          ///< Capacity of the wedge-event output buffers.
 
+    // Outputs: per-grid-cell power/field, total reflection count, and the wedge-event buffers.
     float *out_reflection_power;
     float *out_field_x_re;
     float *out_field_x_im;

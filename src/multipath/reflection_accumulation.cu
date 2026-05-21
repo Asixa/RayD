@@ -522,6 +522,9 @@ extern "C" {
 __constant__ AccumParams params;
 }
 
+// OptiX programs for the native reflection-accumulation pipeline; one raygen launch per ray.
+
+/// Closest-hit: pack the hit (t, barycentrics, primitive, instance) into the ray payload.
 extern "C" __global__ void __closesthit__reflection_accumulation() {
     HitPayload payload;
     payload.hit = 1u;
@@ -534,10 +537,13 @@ extern "C" __global__ void __closesthit__reflection_accumulation() {
     set_payload(payload);
 }
 
+/// Miss: mark the payload as "no hit".
 extern "C" __global__ void __miss__reflection_accumulation() {
     optixSetPayload_0(0u);
 }
 
+/// Raygen: trace one ray through its reflections and scatter the resulting power/field
+/// contributions into the accumulation grid (with Russian-roulette termination).
 extern "C" __global__ void __raygen__reflection_accumulation() {
     const unsigned int ray_index = optixGetLaunchIndex().x;
     if (ray_index >= static_cast<unsigned int>(params.n_rays)) {

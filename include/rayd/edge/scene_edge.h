@@ -7,31 +7,35 @@
 
 namespace rayd {
 
+/// Contiguous span [offset, offset + count) of edge primitives changed since the last refit.
 struct EdgeDirtyRange {
     int offset = 0;
     int count = 0;
 };
 
+/// Broad-phase winner of a nearest-edge query (detached; squared distance, scene-global id).
 struct ClosestEdgeCandidate {
     IntDetached global_edge_id;
     FloatDetached distance_sq;
 };
 
+/// Broad-phase winners of a k-nearest-edges query, laid out as query_count * k slots.
 struct ClosestEdgeTopKCandidate {
     int query_count = 0;
     int k = 0;
-    MaskDetached is_valid;
-    IntDetached global_edge_ids;
-    FloatDetached distance_sq;
+    MaskDetached is_valid;        ///< Whether each slot holds a valid edge.
+    IntDetached global_edge_ids;  ///< Scene-global edge id per slot.
+    FloatDetached distance_sq;    ///< Squared distance per slot.
 };
 
+/// Structural and quality metrics of a built edge BVH (for diagnostics/tuning).
 struct SceneEdgeBVHStats {
-    int primitive_count = 0;
-    int node_count = 0;
+    int primitive_count = 0;       ///< Number of edge primitives.
+    int node_count = 0;            ///< Total BVH nodes.
     int internal_node_count = 0;
     int leaf_node_count = 0;
-    int max_height = 0;
-    int refit_level_count = 0;
+    int max_height = 0;            ///< Maximum root-to-leaf depth.
+    int refit_level_count = 0;     ///< Number of levels touched during refit.
     int min_leaf_size = 0;
     int max_leaf_size = 0;
     double avg_leaf_size = 0.0;
@@ -39,39 +43,50 @@ struct SceneEdgeBVHStats {
     double internal_surface_area_sum = 0.0;
     double sibling_overlap_surface_area_sum = 0.0;
     double sibling_overlap_surface_area_avg = 0.0;
-    double normalized_sibling_overlap = 0.0;
-    std::vector<int> leaf_size_histogram;
+    double normalized_sibling_overlap = 0.0; ///< Sibling overlap normalized by root area (BVH quality).
+    std::vector<int> leaf_size_histogram;    ///< Count of leaves by primitive count.
 };
 
+/// Custom Dr.Jit/CUDA BVH over scene-global edges; the default nearest-edge backend.
 class SceneEdge {
 public:
     SceneEdge() = default;
     ~SceneEdge() = default;
 
+    /// Build the BVH over all edges in \p edge_info (all edges active).
     void build(const SecondaryEdgeInfo &edge_info);
+    /// Build the BVH, restricting queries to edges where \p mask is true.
     void build(const SecondaryEdgeInfo &edge_info,
                const MaskDetached &mask);
+    /// Update the per-edge active mask without rebuilding the tree.
     void set_mask(const MaskDetached &mask);
+    /// Refit node bounds after the edges in \p dirty_ranges moved (topology unchanged).
     void refit(const SecondaryEdgeInfo &edge_info,
                const std::vector<EdgeDirtyRange> &dirty_ranges);
+    /// Refit node bounds after the edges at \p primitive_indices moved.
     void refit(const SecondaryEdgeInfo &edge_info,
                const IntDetached &primitive_indices);
+    /// Force evaluation of the lazily built BVH device buffers.
     void materialize() const;
+    /// Translate internal BVH primitive ids to scene-global edge ids; \p valid gates the gather.
     IntDetached map_to_global(const IntDetached &bvh_ids,
                               const MaskDetached &valid) const;
     bool is_ready() const { return ready_; }
     bool has_edges() const { return primitive_count_ > 0; }
     SceneEdgeBVHStats stats() const;
 
+    /// Nearest active edge to each query point; clears \p active lanes that find none.
     template <bool Detached>
     ClosestEdgeCandidate nearest_edge(const Vector3fT<Detached> &point,
                                       MaskT<Detached> &active) const;
 
+    /// The \p k nearest active edges to each query point (results in query_count * k order).
     template <bool Detached>
     ClosestEdgeTopKCandidate nearest_edges_topk(const Vector3fT<Detached> &point,
                                                 int k,
                                                 MaskT<Detached> &active) const;
 
+    /// Nearest active edge to each ray; uses segment semantics on [0, tmax] when tmax is finite.
     template <bool Detached>
     ClosestEdgeCandidate nearest_edge(const RayT<Detached> &ray,
                                       MaskT<Detached> &active) const;

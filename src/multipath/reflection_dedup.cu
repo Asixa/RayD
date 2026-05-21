@@ -86,6 +86,10 @@ void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
 }
 
+// Deduplication runs as a sort-and-segment pipeline; each kernel maps one thread to
+// one ray (blockIdx.x * blockDim.x + threadIdx.x, bounds-checked).
+
+/// One ray per thread; hashes its reflector sequence (via canonical ids) into a 64-bit grouping key.
 __global__ void reflection_dedup_build_keys_kernel(
     int n_rays,
     int max_bounces,
@@ -136,6 +140,7 @@ __global__ void reflection_dedup_build_keys_kernel(
     out_keys[i] = hash;
 }
 
+/// One ray per thread; flags the first entry of each run of equal sorted keys (segment boundary).
 __global__ void reflection_dedup_mark_boundaries_kernel(
     int n_rays,
     const uint64_t *sorted_keys,
@@ -154,6 +159,7 @@ __global__ void reflection_dedup_mark_boundaries_kernel(
         (i == 0 || sorted_keys[i] != sorted_keys[i - 1]) ? 1 : 0;
 }
 
+/// One ray per thread; converts the inclusive-scan boundary counts into 0-based group ids.
 __global__ void reflection_dedup_zero_base_ids_kernel(
     int n_rays,
     const uint64_t *sorted_keys,
@@ -166,6 +172,8 @@ __global__ void reflection_dedup_zero_base_ids_kernel(
     inout_ids[i] -= 1;
 }
 
+/// One ray per thread; refines each hash group by the spatially-quantized final image source,
+/// so paths that merely hash-collide are split into distinct clusters.
 __global__ void reflection_dedup_sub_cluster_kernel(
     int n_rays,
     int max_bounces,
@@ -209,6 +217,8 @@ __global__ void reflection_dedup_sub_cluster_kernel(
         static_cast<uint64_t>(spatial);
 }
 
+/// One ray per thread; writes each cluster's representative path to its compacted output slot
+/// and tallies how many paths it represents.
 __global__ void reflection_dedup_compact_kernel(
     int n_rays,
     int max_bounces,

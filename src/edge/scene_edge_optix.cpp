@@ -19,12 +19,14 @@ namespace rayd {
 
 namespace {
 
+/// Which edge query to launch; selects the matching raygen program and SBT record.
 enum class EdgeOptixLaunchKind {
     Point,
     Ray,
     PointTopK
 };
 
+/// Grow \p buffer to at least \p required_size, reallocating only when too small.
 void ensure_device_buffer(void *&buffer, size_t &buffer_size, size_t required_size) {
     if (required_size == 0) {
         return;
@@ -41,6 +43,8 @@ void ensure_device_buffer(void *&buffer, size_t &buffer_size, size_t required_si
 
 } // namespace
 
+/// All OptiX device state for the edge backend: pipeline, program groups, SBT, params buffer,
+/// and one custom-AABB GAS per search radius (edges may be bucketed by inflation radius).
 struct EdgeOptixState {
     struct Gas {
         void *aabb_buffer = nullptr;
@@ -185,6 +189,7 @@ SceneEdgeOptix::~SceneEdgeOptix() {
     delete state_;
 }
 
+/// Lazily create the OptiX module, program groups, pipeline, and SBT for the edge programs.
 void SceneEdgeOptix::ensure_pipeline() {
     if (state_->pipeline != nullptr) {
         return;
@@ -299,6 +304,7 @@ void SceneEdgeOptix::ensure_pipeline() {
     state_->params_buffer = jit_malloc(AllocType::Device, sizeof(EdgeOptixQueryParams));
 }
 
+/// Upload the current edge endpoints and recompute per-edge search radii from \p edge_info.
 void SceneEdgeOptix::refresh_geometry(const SecondaryEdgeInfo &edge_info) {
     primitive_count_ = edge_info.size();
     edge_p0_ = detach<false>(edge_info.start);
@@ -391,6 +397,7 @@ std::vector<float> SceneEdgeOptix::compute_search_radii(const SecondaryEdgeInfo 
     return unique_radii;
 }
 
+/// Build (or refit when \p update) the custom-AABB GAS over the edge primitives.
 void SceneEdgeOptix::build_gases(bool update) {
     auto release_gas = [](EdgeOptixState::Gas &gas) {
         if (gas.gas_buffer != nullptr) {

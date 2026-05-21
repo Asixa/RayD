@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include <rayd/optix.h>
@@ -65,6 +66,13 @@ private:
     void *params_buffer_ = nullptr;
 };
 
+std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
+    OptixDeviceContext context,
+    int hitgroup_record_count,
+    const OptixPipelineConfig &config);
+
+/// Selects which raygen entry of the segment-visibility pipeline to launch; passed
+/// as the raygen index to OptixLaunchPipeline::launch().
 enum class SegmentVisibilityLaunchKind {
     Segment = 0,
     SegmentPair = 1,
@@ -72,6 +80,8 @@ enum class SegmentVisibilityLaunchKind {
     SegmentChain = 3
 };
 
+// Pre-filled pipeline configs (PTX blob, entry points, payload/params sizes) for
+// each multipath pipeline; pass to OptixLaunchPipeline::build().
 OptixPipelineConfig reflection_trace_pipeline_config();
 OptixPipelineConfig reflection_epc_pipeline_config();
 OptixPipelineConfig reflection_accumulation_pipeline_config();

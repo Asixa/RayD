@@ -358,6 +358,10 @@ extern "C" {
 __constant__ ReflectionEpcParams params;
 }
 
+// OptiX programs for the native EPC pipeline; one raygen launch per ray. The same
+// programs serve reflection tracing and visibility checks, switched by payload 5.
+
+/// Anyhit (visibility mode only): skip occluders on the ignore list (primitive or surface group).
 extern "C" __global__ void __anyhit__reflection_epc() {
     if (optixGetPayload_5() != kTraceModeVisibility) {
         return;
@@ -380,6 +384,7 @@ extern "C" __global__ void __anyhit__reflection_epc() {
     }
 }
 
+/// Closest-hit: in visibility mode record the blocker; otherwise pack the reflection hit into payload.
 extern "C" __global__ void __closesthit__reflection_epc() {
     if (optixGetPayload_5() == kTraceModeVisibility) {
         const int shape_id = static_cast<int>(optixGetInstanceId());
@@ -401,12 +406,15 @@ extern "C" __global__ void __closesthit__reflection_epc() {
     set_reflection_payload(payload);
 }
 
+/// Miss: in reflection mode mark "no hit"; in visibility mode a miss means unoccluded.
 extern "C" __global__ void __miss__reflection_epc() {
     if (optixGetPayload_5() != kTraceModeVisibility) {
         optixSetPayload_0(0u);
     }
 }
 
+/// Raygen: trace the expected reflector sequence, apply equivalent-path correction, and check
+/// segment visibility to the receiver, writing per-slot reflection geometry and per-ray validity.
 extern "C" __global__ void __raygen__reflection_epc() {
     const unsigned int ray_index = optixGetLaunchIndex().x;
     if (ray_index >= static_cast<unsigned int>(params.n_rays)) {

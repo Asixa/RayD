@@ -10,15 +10,20 @@
 
 namespace rayd {
 
+/// Maximum reflection depth supported by the native EPC kernel.
 constexpr int ReflectionEpcMaxBounces = 8;
+/// visibility_ignore_mode value: ignore the exact reflector primitive on each segment.
 constexpr int ReflectionEpcVisibilityIgnorePrimitive = 0;
+/// visibility_ignore_mode value: ignore the reflector's whole surface group.
 constexpr int ReflectionEpcVisibilityIgnoreSurfaceGroup = 1;
 
+/// Launch parameters for the native EPC pipeline (flat SoA device pointers).
 struct ReflectionEpcParams {
-    OptixTraversableHandle primary_handle;
-    OptixTraversableHandle secondary_handle;
-    int split_mode;
+    OptixTraversableHandle primary_handle;   ///< Primary scene IAS handle.
+    OptixTraversableHandle secondary_handle; ///< Secondary IAS handle (split scene).
+    int split_mode;                          ///< 0 = single scene, nonzero = traverse both handles.
 
+    // Scene-global triangles in edge-vector form (p0 + s*e1 + t*e2) with face normal fn.
     const float *tri_p0_x;
     const float *tri_p0_y;
     const float *tri_p0_z;
@@ -32,10 +37,11 @@ struct ReflectionEpcParams {
     const float *tri_fn_y;
     const float *tri_fn_z;
 
-    const int *face_offsets;
+    const int *face_offsets;  ///< Per-mesh face prefix-sum for globalizing primitive ids.
     int n_meshes;
     int n_triangles;
 
+    // Expected reflector sequence and optional surface-group tables (see ReflectionEpcOptions).
     const int *expected_prim_ids;
     int expected_prim_count;
     const int *surface_group_id;
@@ -44,10 +50,11 @@ struct ReflectionEpcParams {
     int surface_group_count;
     const int *surface_group_members;
     int surface_max_group_size;
-    int visibility_ignore_mode;
+    int visibility_ignore_mode;  ///< One of the ReflectionEpcVisibilityIgnore* constants.
     const int *final_ignore_group_ids;
     int final_ignore_group_count;
 
+    // Input rays, optional per-slot direct-plane override, and receiver positions.
     const float *ray_ox;
     const float *ray_oy;
     const float *ray_oz;
@@ -69,6 +76,7 @@ struct ReflectionEpcParams {
     int n_rays;
     int max_bounces;
 
+    // Outputs: per-ray validity/length/blocking plus ray-major (n_rays * max_bounces) per-slot arrays.
     uint8_t *out_valid;
     int *out_bounce_count;
     float *out_path_length;
