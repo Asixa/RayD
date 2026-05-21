@@ -70,7 +70,7 @@ public:
     const IntDetached &mesh_face_offsets() const { return face_offsets_; }
     const IntDetached &mesh_edge_offsets() const { return edge_offsets_; }
     const IntDetached &mesh_vertex_offsets() const { return vertex_offsets_; }
-    const SceneGlobalGeometry &global_geometry() const;
+    const SceneGeometry &global_geometry() const;
     uint64_t version() const { return scene_version_; }
     uint64_t edge_version() const { return edge_version_; }
     VectoriT<3, true> triangle_edge_indices(const IntDetached &prim_id, bool global = true) const;
@@ -90,13 +90,13 @@ public:
                                                  int max_bounces,
                                                  MaskT<Detached> active = true) const;
     template <bool Detached>
-    ReflectionAccumulationResultT<Detached> trace_reflections_accumulating(
+    AccumResultT<Detached> accumulate_reflections(
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &tx_position,
-        const ReflectionAccumulationGrid &grid,
-        const PrimitiveMaterialPayloadT<Detached> &material,
+        const AccumGrid &grid,
+        const MaterialT<Detached> &material,
         int max_bounces,
-        const ReflectionAccumulationOptions &options,
+        const AccumOptions &options,
         MaskT<Detached> active,
         const Vector3fT<Detached> &tx_polarization) const;
     template <bool Detached>
@@ -126,7 +126,7 @@ public:
         const ReflectionEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
     template <bool Detached>
-    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field_direct(
+    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
         const Vector3fT<Detached> &tx_position,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
@@ -146,20 +146,20 @@ public:
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
     template <bool Detached>
-    SegmentVisibilityT<Detached> trace_segment_visibility(
+    SegmentVisibilityT<Detached> visible(
         const Vector3fT<Detached> &start,
         const Vector3fT<Detached> &end,
         const IntDetached &ignore_prim_ids = IntDetached(),
         MaskT<Detached> active = true) const;
     template <bool Detached>
-    SegmentPairVisibilityT<Detached> trace_segment_pair_visibility(
+    SegmentPairVisibilityT<Detached> visible_pair(
         const Vector3fT<Detached> &start,
         const Vector3fT<Detached> &end_a,
         const Vector3fT<Detached> &end_b,
         const IntDetached &ignore_prim_ids = IntDetached(),
         MaskT<Detached> active = true) const;
     template <bool Detached>
-    AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility(
+    AxialEdgeVisibilityT<Detached> visible_axial_edge(
         const Vector3fT<Detached> &source_pos,
         const Vector3fT<Detached> &edge_pos,
         const Vector3fT<Detached> &edge_dir,
@@ -168,7 +168,7 @@ public:
         const std::vector<float> &sample_fractions,
         MaskT<Detached> active = true) const;
     template <bool Detached>
-    SegmentChainVisibilityT<Detached> trace_segment_chain_visibility(
+    SegmentChainVisibilityT<Detached> visible_chain(
         const Vector3fT<Detached> &points,
         const IntDetached &chain_length,
         const IntDetached &ignore_prim_per_segment = IntDetached(),
@@ -228,7 +228,7 @@ private:
     TriangleUVDetached triangle_uv_detached_;
     Mask triangle_face_normal_mask_;
     MaskDetached triangle_face_normal_mask_detached_;
-    SceneGlobalGeometry global_geometry_;
+    SceneGeometry global_geometry_;
     SecondaryEdgeInfo edge_info_;
     SceneEdgeTopology edge_topology_;
     IntDetached edge_shape_ids_;

@@ -62,7 +62,7 @@ class ReflectionEpcTests(unittest.TestCase):
             tx = cuda.Array3f([-0.5], [0.0], [-1.0])
             rx = cuda.Array3f([0.5], [0.0], [-1.0])
             inv_len = 1.0 / math.sqrt(1.25)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 tx,
                 cuda.Array3f([0.5 * inv_len], [0.0], [1.0 * inv_len]),
             )
@@ -134,7 +134,7 @@ class ReflectionEpcTests(unittest.TestCase):
             tx = cuda.Array3f([-0.5], [0.0], [-1.0])
             rx = cuda.Array3f([0.5], [0.0], [-1.0])
             inv_len = 1.0 / math.sqrt(1.25)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 tx,
                 cuda.Array3f([0.5 * inv_len], [0.0], [1.0 * inv_len]),
             )
@@ -187,7 +187,7 @@ class ReflectionEpcTests(unittest.TestCase):
             scene.build()
 
             inv_sqrt2 = 1.0 / math.sqrt(2.0)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [0.0], [0.5]),
                 cuda.Array3f([inv_sqrt2], [0.0], [inv_sqrt2]),
             )
@@ -251,7 +251,7 @@ class ReflectionEpcTests(unittest.TestCase):
             scene.add_mesh(mirror)
             scene.build()
 
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [-0.5], [-1.0]),
                 cuda.Array3f([0.0], [0.0], [1.0]),
             )
@@ -347,7 +347,7 @@ class ReflectionEpcTests(unittest.TestCase):
             scene.add_mesh(blocker)
             scene.build()
 
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [-0.5], [-1.0]),
                 cuda.Array3f([0.0], [0.0], [1.0]),
             )
@@ -503,7 +503,7 @@ class ReflectionEpcTests(unittest.TestCase):
             tx = (0.0, -0.5, -1.0)
             hit = (0.0, 0.5, 0.0)
             rx_tuple = (0.0, 1.5, -1.0)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([tx[0]], [tx[1]], [tx[2]]),
                 cuda.Array3f([0.0], [0.0], [1.0]),
             )
@@ -626,7 +626,7 @@ class ReflectionEpcTests(unittest.TestCase):
             scene.add_mesh(mirror)
             scene.build()
 
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [-0.5], [-1.0]),
                 cuda.Array3f([0.0], [0.0], [1.0]),
             )
@@ -745,7 +745,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.return_endpoints = True
 
             pj.native_launch_audit_clear()
-            result = scene.trace_reflection_epc_field_direct(
+            result = scene.trace_reflection_epc_field(
                 tx, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.path_length,
@@ -831,7 +831,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.return_resolved_prim_ids = False
             options.return_surface_group_ids = False
 
-            result = scene.trace_reflection_epc_field_direct(
+            result = scene.trace_reflection_epc_field(
                 tx, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.hit_points,

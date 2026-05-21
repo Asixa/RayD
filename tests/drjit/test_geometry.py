@@ -84,7 +84,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh)
             scene.build()
-            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
 
@@ -137,7 +137,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh)
             scene.build()
-            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             print(json.dumps({
@@ -183,7 +183,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh)
             scene.build()
-            ray = pj.RayDetached(cuda.Array3f([2.0], [2.0], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([2.0], [2.0], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             print(json.dumps({
@@ -252,15 +252,15 @@ class GeometryCoreTests(unittest.TestCase):
                     "bary": vec3_rows(its.barycentric),
                 }
 
-            mixed_rays = pj.RayDetached(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
+            mixed_rays = pj.Ray(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
                                         cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
-            miss_rays = pj.RayDetached(cuda.Array3f([2.0, 3.0], [2.0, 3.0], [-1.0, -1.0]),
+            miss_rays = pj.Ray(cuda.Array3f([2.0, 3.0], [2.0, 3.0], [-1.0, -1.0]),
                                        cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
-            tmax_rays = pj.RayDetached(cuda.Array3f([0.25, 0.75], [0.25, 0.1], [-1.0, -1.0]),
+            tmax_rays = pj.Ray(cuda.Array3f([0.25, 0.75], [0.25, 0.1], [-1.0, -1.0]),
                                        cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
             tmax_rays.tmax = cuda.Float([0.5, 0.5])
 
-            ad_rays = pj.Ray(ad.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
+            ad_rays = pj.RayAD(ad.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
                              ad.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
 
             print(json.dumps({
@@ -314,7 +314,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            rays = pj.RayDetached(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
+            rays = pj.Ray(cuda.Array3f([0.25, 2.0], [0.25, 2.0], [-1.0, -1.0]),
                                   cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
             shadow = scene.shadow_test(rays)
 
@@ -352,9 +352,9 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(dynamic_mesh, dynamic=True)
             scene.build()
 
-            static_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            static_ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                         cuda.Array3f([0.0], [0.0], [1.0]))
-            dynamic_ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+            dynamic_ray = pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                          cuda.Array3f([0.0], [0.0], [1.0]))
 
             with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
@@ -413,7 +413,7 @@ class GeometryCoreTests(unittest.TestCase):
             direction = ad.Array3f([0.0], [0.0], [1.0])
 
             def body(i, origin, acc):
-                ray = pj.Ray(origin, direction)
+                ray = pj.RayAD(origin, direction)
                 its = scene.intersect(ray)
                 shadow = scene.shadow_test(ray)
                 next_origin = its.p + ad.Array3f([0.0], [0.0], [-1.0])
@@ -464,7 +464,7 @@ class GeometryCoreTests(unittest.TestCase):
             point = cuda.Array3f([0.5], [-0.2], [0.0])
             point_hit = scene.nearest_edge(point)
 
-            ray = pj.RayDetached(cuda.Array3f([0.5], [0.5], [1.0]),
+            ray = pj.Ray(cuda.Array3f([0.5], [0.5], [1.0]),
                                  cuda.Array3f([0.0], [0.0], [-1.0]))
             ray_hit = scene.nearest_edge(ray)
 
@@ -517,7 +517,7 @@ class GeometryCoreTests(unittest.TestCase):
             direction = ad.Array3f([0.0], [0.0], [1.0])
 
             def body(i, origin, acc):
-                trace = scene.trace_reflections(pj.Ray(origin, direction), max_bounces=1)
+                trace = scene.trace_reflections(pj.RayAD(origin, direction), max_bounces=1)
                 bounce = trace.bounce(0)
                 next_origin = bounce.hit_points + ad.Array3f([0.0], [0.0], [-1.0])
                 return i + 1, next_origin, acc + bounce.t + dr.select(bounce.is_valid(), 1.0, 0.0)
@@ -574,7 +574,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.build()
 
             inv_sqrt2 = 1.0 / math.sqrt(2.0)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [0.0], [0.5]),
                 cuda.Array3f([inv_sqrt2], [0.0], [inv_sqrt2]),
             )
@@ -651,7 +651,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(ceiling)
             scene.build()
 
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [0.0], [0.5]),
                 cuda.Array3f([0.0], [0.0], [-1.0]),
             )
@@ -711,7 +711,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
             chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
             dr.backward(dr.sum(chain.t))
@@ -751,7 +751,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
             chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
             dr.backward(dr.sum(chain.t))
@@ -805,7 +805,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             def body(i, acc):
                 trace = scene.trace_reflections(
-                    pj.Ray(ray_o, ray_d),
+                    pj.RayAD(ray_o, ray_d),
                     max_bounces=2,
                     symbolic=True,
                 )
@@ -860,7 +860,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.build()
 
             inv_sqrt2 = 1.0 / math.sqrt(2.0)
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0], [0.0], [0.5]),
                 cuda.Array3f([inv_sqrt2], [0.0], [inv_sqrt2]),
             )
@@ -949,7 +949,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
             trace = scene.trace_reflections(ray, max_bounces=2, symbolic=True)
             bounce0 = trace.bounce(0)
@@ -986,7 +986,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
 
             error = ""
@@ -1020,7 +1020,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(wall)
             scene.build()
 
-            ray = pj.RayDetached(
+            ray = pj.Ray(
                 cuda.Array3f([0.0, 0.0, 0.0],
                              [0.0, 0.0, 0.0],
                              [1.0, 1.0, 1.0]),
@@ -1090,7 +1090,7 @@ class GeometryCoreTests(unittest.TestCase):
             mesh_id = scene.add_mesh(mesh, dynamic=True)
             scene.build()
 
-            rays = pj.RayDetached(cuda.Array3f([0.25, 0.25], [0.25, 0.25], [-1.0, -1.0]),
+            rays = pj.Ray(cuda.Array3f([0.25, 0.25], [0.25, 0.25], [-1.0, -1.0]),
                                   cuda.Array3f([0.0, 0.0], [0.0, 0.0], [1.0, 1.0]))
             active = cuda.Bool([True, False])
             masked = scene.shadow_test(rays, active)
@@ -1105,7 +1105,7 @@ class GeometryCoreTests(unittest.TestCase):
             pending_error = False
             try:
                 scene.shadow_test(
-                    pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+                    pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                    cuda.Array3f([0.0], [0.0], [1.0]))
                 )
             except Exception as e:
@@ -1143,7 +1143,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             def run_forward():
                 scene = make_scene()
-                ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                      cuda.Array3f([0.0], [0.0], [1.0]))
                 its = scene.intersect(ray)
                 dr.eval(its.t, its.shape_id, its.prim_id)
@@ -1171,7 +1171,7 @@ class GeometryCoreTests(unittest.TestCase):
                 scene = pj.Scene()
                 scene.add_mesh(mesh)
                 scene.build()
-                ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+                ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                              ad.Array3f([0.0], [0.0], [1.0]))
                 its = scene.intersect(ray)
                 loss = dr.sum(its.t)
@@ -1243,7 +1243,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh_b)
             scene.build()
 
-            ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             print(json.dumps({
@@ -1265,7 +1265,7 @@ class GeometryCoreTests(unittest.TestCase):
             import rayd as pj
             import drjit.cuda as cuda
 
-            ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
 
             mesh0 = pj.Mesh(cuda.Array3f([0.0, 1.0, 0.0],
@@ -1323,7 +1323,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                           ad.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             dr.backward(its.t)
@@ -1370,7 +1370,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                           ad.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             dr.backward(its.t)
@@ -1448,7 +1448,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["type"], "NearestPointEdgeDetached")
+        self.assertEqual(data["type"], "NearestPointEdge")
         self.assertEqual(data["valid"], [True, True])
         self.assertEqual(data["shape_id"], [0, 0])
         self.assertEqual(data["edge_id"], [0, 1])
@@ -1484,7 +1484,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            rays = pj.RayDetached(cuda.Array3f([0.25, -0.2],
+            rays = pj.Ray(cuda.Array3f([0.25, -0.2],
                                                [0.0, 0.25],
                                                [1.0, 0.0]),
                                   cuda.Array3f([0.0, 1.0],
@@ -1508,7 +1508,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["type"], "NearestRayEdgeDetached")
+        self.assertEqual(data["type"], "NearestRayEdge")
         self.assertEqual(data["valid"], [True, True])
         self.assertEqual(data["shape_id"], [0, 0])
         self.assertEqual(data["edge_id"], [0, 1])
@@ -1555,7 +1555,7 @@ class GeometryCoreTests(unittest.TestCase):
             query_points = cuda.Array3f([0.25, -0.1],
                                         [-0.2, 0.25],
                                         [0.1, 0.0])
-            rays = pj.RayDetached(cuda.Array3f([0.25, -0.2],
+            rays = pj.Ray(cuda.Array3f([0.25, -0.2],
                                                [0.0, 0.25],
                                                [1.0, 0.0]),
                                   cuda.Array3f([0.0, 1.0],
@@ -2585,7 +2585,7 @@ class GeometryCoreTests(unittest.TestCase):
             ray_scene = pj.Scene()
             ray_scene.add_mesh(ray_mesh)
             ray_scene.build()
-            ray = pj.Ray(ray_origin, ad.Array3f([0.0], [0.0], [-1.0]))
+            ray = pj.RayAD(ray_origin, ad.Array3f([0.0], [0.0], [-1.0]))
             ray.tmax = ad.Float([2.0])
             ray_edge = ray_scene.nearest_edge(ray)
             dr.backward(ray_edge.ray_t)
@@ -2608,8 +2608,8 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["point_result_type"], "NearestPointEdge")
-        self.assertEqual(data["ray_result_type"], "NearestRayEdge")
+        self.assertEqual(data["point_result_type"], "NearestPointEdgeAD")
+        self.assertEqual(data["ray_result_type"], "NearestRayEdgeAD")
         self.assertTrue(data["point_valid"])
         self.assertEqual(data["point_edge_id"], 0)
         self.assertAlmostEqual(data["point_distance"], math.sqrt(0.1), places=5)
@@ -2640,7 +2640,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            zero_tmax_ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [0.0]),
+            zero_tmax_ray = pj.Ray(cuda.Array3f([0.0], [0.0], [0.0]),
                                            cuda.Array3f([0.0], [0.0], [1.0]))
             zero_tmax_ray.tmax = cuda.Float([0.0])
 
@@ -2648,7 +2648,7 @@ class GeometryCoreTests(unittest.TestCase):
                 "nan_point": scene.nearest_edge(cuda.Array3f([float("nan")], [0.0], [0.0])),
                 "inf_point": scene.nearest_edge(cuda.Array3f([float("inf")], [0.0], [0.0])),
                 "zero_dir_ray": scene.nearest_edge(
-                    pj.RayDetached(cuda.Array3f([0.0], [0.0], [0.0]),
+                    pj.Ray(cuda.Array3f([0.0], [0.0], [0.0]),
                                    cuda.Array3f([0.0], [0.0], [0.0]))
                 ),
                 "zero_tmax_ray": scene.nearest_edge(zero_tmax_ray),
@@ -2689,7 +2689,7 @@ class GeometryCoreTests(unittest.TestCase):
                 result["empty_scene_build"] = "missing meshes" in str(e)
 
             try:
-                ray = pj.RayDetached(cuda.Array3f([0.0], [0.0], [0.0]),
+                ray = pj.Ray(cuda.Array3f([0.0], [0.0], [0.0]),
                               cuda.Array3f([0.0], [0.0], [1.0]))
                 scene.intersect(ray)
             except Exception as e:
@@ -2774,24 +2774,24 @@ class GeometryCoreTests(unittest.TestCase):
                     "t_inf": math.isinf(float(its.t[0])),
                 }
 
-            nan_tmax = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            nan_tmax = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                cuda.Array3f([0.0], [0.0], [1.0]))
             nan_tmax.tmax = cuda.Float([float("nan")])
 
-            zero_tmax = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            zero_tmax = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                 cuda.Array3f([0.0], [0.0], [1.0]))
             zero_tmax.tmax = cuda.Float([0.0])
 
             cases = {
-                "nan_origin": summarize(pj.RayDetached(cuda.Array3f([float("nan")], [0.25], [-1.0]),
+                "nan_origin": summarize(pj.Ray(cuda.Array3f([float("nan")], [0.25], [-1.0]),
                                                 cuda.Array3f([0.0], [0.0], [1.0]))),
-                "nan_dir": summarize(pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                "nan_dir": summarize(pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                              cuda.Array3f([0.0], [float("nan")], [1.0]))),
-                "inf_origin": summarize(pj.RayDetached(cuda.Array3f([float("inf")], [0.25], [-1.0]),
+                "inf_origin": summarize(pj.Ray(cuda.Array3f([float("inf")], [0.25], [-1.0]),
                                                 cuda.Array3f([0.0], [0.0], [1.0]))),
-                "inf_dir": summarize(pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                "inf_dir": summarize(pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                              cuda.Array3f([0.0], [float("inf")], [1.0]))),
-                "zero_dir": summarize(pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+                "zero_dir": summarize(pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                               cuda.Array3f([0.0], [0.0], [0.0]))),
                 "nan_tmax": summarize(nan_tmax),
                 "zero_tmax": summarize(zero_tmax),
@@ -2825,7 +2825,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene = pj.Scene()
             scene.add_mesh(mesh)
             scene.build()
-            ray = pj.RayDetached(cuda.Array3f([0.5], [0.0], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([0.5], [0.0], [-1.0]),
                           cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
 
@@ -2878,7 +2878,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.add_mesh(mesh)
             scene.build()
 
-            rays = pj.RayDetached(cuda.Array3f(xs, ys, zs),
+            rays = pj.Ray(cuda.Array3f(xs, ys, zs),
                            cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
             its = scene.intersect(rays)
 
@@ -2944,7 +2944,7 @@ class GeometryCoreTests(unittest.TestCase):
 
                 xs = [0.1 + 0.02 * (i % 8) for i in range(64)]
                 ys = [0.1 + 0.02 * (i // 8) for i in range(64)]
-                rays = pj.RayDetached(cuda.Array3f(xs, ys, [-1.0] * 64),
+                rays = pj.Ray(cuda.Array3f(xs, ys, [-1.0] * 64),
                                cuda.Array3f([0.0] * 64, [0.0] * 64, [1.0] * 64))
                 its = scene.intersect(rays)
                 total_hits += sum(bool(v) for v in list(its.is_valid()))
@@ -2964,7 +2964,7 @@ class GeometryCoreTests(unittest.TestCase):
                 grad_scene = pj.Scene()
                 grad_scene.add_mesh(grad_mesh)
                 grad_scene.build()
-                ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+                ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                               ad.Array3f([0.0], [0.0], [1.0]))
                 hit = grad_scene.intersect(ray)
                 dr.backward(hit.t)
@@ -3006,14 +3006,14 @@ class GeometryCoreTests(unittest.TestCase):
             pending_error = False
             try:
                 scene.intersect(
-                    pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+                    pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                    cuda.Array3f([0.0], [0.0], [1.0]))
                 )
             except Exception as e:
                 pending_error = "pending updates" in str(e)
 
             scene.sync()
-            ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
 
@@ -3113,7 +3113,7 @@ class GeometryCoreTests(unittest.TestCase):
             )
             scene.sync()
 
-            ray = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+            ray = pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                  cuda.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             print(json.dumps({
@@ -3155,9 +3155,9 @@ class GeometryCoreTests(unittest.TestCase):
             dynamic_id = scene.add_mesh(dynamic_mesh, dynamic=True)
             scene.build()
 
-            static_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]),
+            static_ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]),
                                         cuda.Array3f([0.0], [0.0], [1.0]))
-            dynamic_ray_before = pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]),
+            dynamic_ray_before = pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]),
                                                 cuda.Array3f([0.0], [0.0], [1.0]))
 
             static_before = scene.intersect(static_ray)
@@ -3178,7 +3178,7 @@ class GeometryCoreTests(unittest.TestCase):
             )
             scene.sync()
 
-            dynamic_ray_after = pj.RayDetached(cuda.Array3f([4.25], [0.25], [-1.0]),
+            dynamic_ray_after = pj.Ray(cuda.Array3f([4.25], [0.25], [-1.0]),
                                                cuda.Array3f([0.0], [0.0], [1.0]))
             static_after = scene.intersect(static_ray)
             dynamic_after = scene.intersect(dynamic_ray_after)
@@ -3241,7 +3241,7 @@ class GeometryCoreTests(unittest.TestCase):
             scene.update_mesh_vertices(mesh_id, verts)
             scene.sync()
 
-            ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]),
+            ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]),
                          ad.Array3f([0.0], [0.0], [1.0]))
             its = scene.intersect(ray)
             dr.backward(its.t)

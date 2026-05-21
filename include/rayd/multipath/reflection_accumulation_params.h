@@ -10,7 +10,7 @@
 
 namespace rayd {
 
-struct ReflectionAccumulationParams {
+struct AccumParams {
     OptixTraversableHandle primary_handle;
     OptixTraversableHandle secondary_handle;
     int split_mode;

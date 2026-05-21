@@ -136,7 +136,7 @@ def _make_downward_rays(
 ) -> Any:
     origins = _make_world_query_grid(side, bounds, z_origin)
     count = len(origins[0])
-    ray = pj.RayDetached(
+    ray = pj.Ray(
         origins,
         cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count),
     )

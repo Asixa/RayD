@@ -142,7 +142,7 @@ def collect_baseline_data():
     scene = pj.Scene()
     scene.add_mesh(mesh)
     scene.build()
-    hit_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+    hit_ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     its = scene.intersect(hit_ray)
     geometry["constant_hit"] = {
         "valid": _bool_lane(its.is_valid()),
@@ -156,7 +156,7 @@ def collect_baseline_data():
         "barycentric": _vector_to_list(its.barycentric, 3),
     }
 
-    miss_ray = pj.RayDetached(cuda.Array3f([2.0], [2.0], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+    miss_ray = pj.Ray(cuda.Array3f([2.0], [2.0], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     its = scene.intersect(miss_ray)
     geometry["miss"] = {
         "valid": _bool_lane(its.is_valid()),
@@ -179,7 +179,7 @@ def collect_baseline_data():
     multi_scene.add_mesh(mesh_b)
     multi_scene.build()
     its = multi_scene.intersect(
-        pj.RayDetached(cuda.Array3f([2.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+        pj.Ray(cuda.Array3f([2.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     )
     geometry["multi_mesh"] = {
         "valid": _bool_lane(its.is_valid()),
@@ -189,7 +189,7 @@ def collect_baseline_data():
         "p": _vector_to_list(its.p, 3),
     }
 
-    uv_ray = pj.RayDetached(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
+    uv_ray = pj.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
     mesh_no_uv = pj.Mesh(
         cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
         cuda.Array3i([0], [1], [2]),
@@ -225,7 +225,7 @@ def collect_baseline_data():
     batched_scene = pj.Scene()
     batched_scene.add_mesh(square_mesh)
     batched_scene.build()
-    rays = pj.RayDetached(cuda.Array3f(xs, ys, zs), cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
+    rays = pj.Ray(cuda.Array3f(xs, ys, zs), cuda.Array3f([0.0] * len(xs), [0.0] * len(xs), [1.0] * len(xs)))
     its = batched_scene.intersect(rays)
     valid_flags = _bool_array_to_list(its.is_valid())
     geometry["batched_hits"] = {
@@ -249,7 +249,7 @@ def collect_baseline_data():
     grad_scene = pj.Scene()
     grad_scene.add_mesh(grad_mesh)
     grad_scene.build()
-    ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
+    ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
     its = grad_scene.intersect(ray)
     dr.backward(its.t)
     grad = dr.grad(verts)
@@ -276,7 +276,7 @@ def collect_baseline_data():
     transform_scene = pj.Scene()
     transform_scene.add_mesh(transform_mesh)
     transform_scene.build()
-    ray = pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
+    ray = pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
     its = transform_scene.intersect(ray)
     dr.backward(its.t)
     edge_mesh = pj.Mesh(
@@ -298,7 +298,7 @@ def collect_baseline_data():
 
         xs = [0.1 + 0.02 * (i % 8) for i in range(64)]
         ys = [0.1 + 0.02 * (i // 8) for i in range(64)]
-        rays = pj.RayDetached(
+        rays = pj.Ray(
             cuda.Array3f(xs, ys, [-1.0] * 64),
             cuda.Array3f([0.0] * 64, [0.0] * 64, [1.0] * 64),
         )
@@ -323,7 +323,7 @@ def collect_baseline_data():
         grad_scene.add_mesh(grad_mesh)
         grad_scene.build()
         hit = grad_scene.intersect(
-            pj.Ray(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
+            pj.RayAD(ad.Array3f([0.25], [0.25], [-1.0]), ad.Array3f([0.0], [0.0], [1.0]))
         )
         dr.backward(hit.t)
         max_abs_grad = max(max_abs_grad, abs(_float_lane(dr.grad(tz))))

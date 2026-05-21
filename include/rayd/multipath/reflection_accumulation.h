@@ -8,7 +8,7 @@
 
 namespace rayd {
 
-struct ReflectionAccumulationGrid {
+struct AccumGrid {
     int axis = 2;
     float position = 0.f;
     float coord0_min = 0.f;
@@ -19,7 +19,7 @@ struct ReflectionAccumulationGrid {
     int resolution1 = 0;
 };
 
-struct ReflectionAccumulationOptions {
+struct AccumOptions {
     float wavelength = 1.f;
     float k = 0.f;
     float solid_angle_per_ray = 1.f;
@@ -34,7 +34,7 @@ struct ReflectionAccumulationOptions {
 };
 
 template <typename Float_>
-struct PrimitiveMaterialPayloadData {
+struct MaterialData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
 
     using Mask_ = std::conditional_t<IsDetached, MaskDetached, Mask>;
@@ -45,7 +45,7 @@ struct PrimitiveMaterialPayloadData {
     Float_ mu_r = full<Float_>(1.f, 1);
     Mask_ valid = full<Mask_>(false, 1);
 
-    DRJIT_STRUCT(PrimitiveMaterialPayloadData,
+    DRJIT_STRUCT(MaterialData,
                  eta_r,
                  sigma,
                  gain,
@@ -54,7 +54,7 @@ struct PrimitiveMaterialPayloadData {
 };
 
 template <typename Float_>
-struct ReflectionWedgeEventBufferData {
+struct WedgeEventsData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
 
     using Vec3f = std::conditional_t<IsDetached, Vector3fDetached, Vector3f>;
@@ -69,7 +69,7 @@ struct ReflectionWedgeEventBufferData {
     Vec3f directions = zeros<Vec3f>(1);
     Int_ bounce_depth = full<Int_>(-1, 1);
 
-    DRJIT_STRUCT(ReflectionWedgeEventBufferData,
+    DRJIT_STRUCT(WedgeEventsData,
                  count,
                  ray_index,
                  hit_points,
@@ -80,13 +80,13 @@ struct ReflectionWedgeEventBufferData {
 };
 
 template <typename Float_>
-struct ReflectionAccumulationResultData {
+struct AccumResultData {
     static constexpr bool IsDetached = std::is_same_v<Float_, FloatDetached>;
 
     using FloatArray = Float_;
     using ComplexArray = drjit::Complex<Float_>;
     using Int_ = std::conditional_t<IsDetached, IntDetached, Int>;
-    using WedgeBuffer = ReflectionWedgeEventBufferData<Float_>;
+    using WedgeBuffer = WedgeEventsData<Float_>;
 
     int ray_count = 0;
     int max_bounces = 0;
@@ -101,7 +101,7 @@ struct ReflectionAccumulationResultData {
     Int_ reflection_count = full<Int_>(0, 1);
     WedgeBuffer wedge_events;
 
-    DRJIT_STRUCT(ReflectionAccumulationResultData,
+    DRJIT_STRUCT(AccumResultData,
                  reflection_power,
                  reflection_field_x,
                  reflection_field_y,

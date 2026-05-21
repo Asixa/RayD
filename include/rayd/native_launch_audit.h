@@ -11,7 +11,7 @@ enum class NativeLaunchStage {
     Build,
     Sync,
     TraceReflections,
-    TraceReflectionsAccumulating
+    AccumulateReflections
 };
 
 struct NativeKernelLaunchStat {
@@ -48,7 +48,7 @@ struct NativeLaunchAuditSnapshot {
     NativeLaunchStageStats build;
     NativeLaunchStageStats sync;
     NativeLaunchStageStats trace_reflections;
-    NativeLaunchStageStats trace_reflections_accumulating;
+    NativeLaunchStageStats accumulate_reflections;
 };
 
 class ScopedNativeLaunchStage {

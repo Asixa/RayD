@@ -66,7 +66,7 @@ def _make_downward_rays(
 
     array3_type = ad.Array3f if ad_mode else cuda.Array3f
     float_type = ad.Float if ad_mode else cuda.Float
-    ray_type = pj.Ray if ad_mode else pj.RayDetached
+    ray_type = pj.RayAD if ad_mode else pj.Ray
 
     ray = ray_type(
         array3_type(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
@@ -293,7 +293,7 @@ def _benchmark_finite_ray_gradient(
     origins = ad.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"])
     directions = ad.Array3f([0.0] * query_count, [0.0] * query_count, [-1.0] * query_count)
     dr.enable_grad(origins)
-    rays = pj.Ray(origins, directions)
+    rays = pj.RayAD(origins, directions)
     rays.tmax = ad.Float([ray_tmax] * query_count)
 
     def run() -> None:

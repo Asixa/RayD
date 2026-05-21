@@ -73,7 +73,7 @@ def _make_downward_rays(
 ) -> Any:
     ray_data = _make_ray_data(side, z_origin=z_origin)
     count = len(ray_data["ox"])
-    ray = pj.RayDetached(
+    ray = pj.Ray(
         cuda.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
         cuda.Array3f([0.0] * count, [0.0] * count, [-1.0] * count),
     )

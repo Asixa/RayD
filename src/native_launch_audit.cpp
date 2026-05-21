@@ -28,8 +28,8 @@ NativeLaunchStageStats &stage_stats(NativeLaunchAuditSnapshot &snapshot,
         return snapshot.sync;
     case NativeLaunchStage::TraceReflections:
         return snapshot.trace_reflections;
-    case NativeLaunchStage::TraceReflectionsAccumulating:
-        return snapshot.trace_reflections_accumulating;
+    case NativeLaunchStage::AccumulateReflections:
+        return snapshot.accumulate_reflections;
     case NativeLaunchStage::Unknown:
     default:
         return snapshot.unknown;
@@ -87,7 +87,7 @@ void native_launch_audit_clear() {
     clear_stage_stats(snapshot.build);
     clear_stage_stats(snapshot.sync);
     clear_stage_stats(snapshot.trace_reflections);
-    clear_stage_stats(snapshot.trace_reflections_accumulating);
+    clear_stage_stats(snapshot.accumulate_reflections);
 }
 
 NativeLaunchAuditSnapshot native_launch_audit_snapshot() {
