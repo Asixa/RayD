@@ -1669,7 +1669,7 @@ class GeometryCoreTests(unittest.TestCase):
             """
         )
 
-        self.assertEqual(data["default_backend"], "drjit")
+        self.assertEqual(data["default_backend"], "optix")
         self.assertEqual(data["optix_backend"], "optix")
         self.assertEqual(data["hybrid_backend"], "hybrid")
         self.assertEqual(data["point_ids"]["optix"], data["point_ids"]["drjit"])

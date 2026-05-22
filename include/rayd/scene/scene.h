@@ -41,8 +41,8 @@ struct SceneSyncProfile {
 
 /// Acceleration backend used for nearest-edge queries.
 enum class EdgeBVHBackend {
-    DrJit,   ///< Custom Dr.Jit/CUDA BVH (default).
-    Optix,   ///< OptiX custom-AABB backend.
+    DrJit,   ///< Custom Dr.Jit/CUDA BVH.
+    Optix,   ///< OptiX custom-AABB backend (default).
     Hybrid   ///< Dr.Jit point queries with OptiX ray queries.
 };
 
@@ -51,7 +51,7 @@ class Scene final {
 public:
     /// Construct an empty scene; \p edge_bvh_backend selects the nearest-edge backend
     /// ("drjit", "optix", or "hybrid"). See EdgeBVHBackend.
-    explicit Scene(const std::string &edge_bvh_backend = "drjit");
+    explicit Scene(const std::string &edge_bvh_backend = "optix");
     ~Scene();
 
     /// \brief Add a copy of \p mesh to the scene and return its mesh id.
@@ -325,7 +325,7 @@ private:
     mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;
-    EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::DrJit;
+    EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::Optix;
     SceneSyncProfile last_sync_profile_;
 };
 
