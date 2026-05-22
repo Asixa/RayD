@@ -105,6 +105,13 @@ struct AccumParams {
     float *out_wedge_dir_x;
     float *out_wedge_dir_y;
     float *out_wedge_dir_z;
+    float *out_wedge_source_x;
+    float *out_wedge_source_y;
+    float *out_wedge_source_z;
+    float *out_wedge_source_power;
+    float *out_wedge_initial_dir_x;
+    float *out_wedge_initial_dir_y;
+    float *out_wedge_initial_dir_z;
     int *out_wedge_bounce_depth;
 };
 

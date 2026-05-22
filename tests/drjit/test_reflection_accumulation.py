@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -10,9 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_script(script: str, *, check: bool = True):
+    env = os.environ.copy()
+    env["PYTHONSAFEPATH"] = "1"
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         cwd=ROOT,
+        env=env,
         text=True,
         capture_output=True,
         timeout=120,
@@ -101,6 +105,10 @@ class ReflectionAccumulationTests(unittest.TestCase):
                     result.reflection_count,
                     result.wedge_events.count,
                     result.wedge_events.prim_id,
+                    result.wedge_events.directions.z,
+                    result.wedge_events.source_points.z,
+                    result.wedge_events.source_power,
+                    result.wedge_events.initial_directions.z,
                     result.wedge_events.bounce_depth)
             audit = pj.native_launch_audit()
 
@@ -120,6 +128,10 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "wedge_count": int(result.wedge_events.count[0]),
                 "wedge_prim0": int(result.wedge_events.prim_id[0]),
                 "wedge_depth0": int(result.wedge_events.bounce_depth[0]),
+                "wedge_dir_z0": float(result.wedge_events.directions.z[0]),
+                "wedge_source_z0": float(result.wedge_events.source_points.z[0]),
+                "wedge_source_power0": float(result.wedge_events.source_power[0]),
+                "wedge_initial_dir_z0": float(result.wedge_events.initial_directions.z[0]),
                 "trace_reflections_launches": audit["trace_reflections"]["optix_launch"],
                 "accumulate_reflections_launches": (
                     audit["accumulate_reflections"]["optix_launch"]
@@ -140,6 +152,10 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["wedge_count"], 1)
         self.assertEqual(data["wedge_prim0"], 0)
         self.assertEqual(data["wedge_depth0"], 0)
+        self.assertGreater(data["wedge_dir_z0"], 0.0)
+        self.assertAlmostEqual(data["wedge_source_z0"], -1.0)
+        self.assertGreater(data["wedge_source_power0"], 0.0)
+        self.assertGreater(data["wedge_initial_dir_z0"], 0.0)
         self.assertEqual(data["trace_reflections_launches"], 0)
         self.assertEqual(data["accumulate_reflections_launches"], 1)
 

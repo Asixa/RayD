@@ -469,6 +469,9 @@ NB_MODULE(rayd, m) {
             .def_ro("normals", &WedgeEvents::normals)
             .def_ro("prim_id", &WedgeEvents::prim_id)
             .def_ro("directions", &WedgeEvents::directions)
+            .def_ro("source_points", &WedgeEvents::source_points)
+            .def_ro("source_power", &WedgeEvents::source_power)
+            .def_ro("initial_directions", &WedgeEvents::initial_directions)
             .def_ro("bounce_depth", &WedgeEvents::bounce_depth);
 
         nb::class_<WedgeEventsAD>(m, "WedgeEventsAD")
@@ -479,6 +482,9 @@ NB_MODULE(rayd, m) {
             .def_ro("normals", &WedgeEventsAD::normals)
             .def_ro("prim_id", &WedgeEventsAD::prim_id)
             .def_ro("directions", &WedgeEventsAD::directions)
+            .def_ro("source_points", &WedgeEventsAD::source_points)
+            .def_ro("source_power", &WedgeEventsAD::source_power)
+            .def_ro("initial_directions", &WedgeEventsAD::initial_directions)
             .def_ro("bounce_depth", &WedgeEventsAD::bounce_depth);
 
         nb::class_<AccumResult>(m, "AccumResult")

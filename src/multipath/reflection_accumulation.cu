@@ -402,7 +402,10 @@ static __forceinline__ __device__ void store_wedge_event(unsigned int ray_index,
                                                          int global_prim,
                                                          float3 hit_point,
                                                          float3 normal,
-                                                         float3 direction) {
+                                                         float3 incident_direction,
+                                                         float3 source_point,
+                                                         float source_power,
+                                                         float3 initial_direction) {
     if (params.collect_wedges == 0 || params.out_wedge_count == nullptr) {
         return;
     }
@@ -423,9 +426,16 @@ static __forceinline__ __device__ void store_wedge_event(unsigned int ray_index,
     params.out_wedge_normal_y[slot] = normal.y;
     params.out_wedge_normal_z[slot] = normal.z;
     params.out_wedge_prim_id[slot] = global_prim;
-    params.out_wedge_dir_x[slot] = direction.x;
-    params.out_wedge_dir_y[slot] = direction.y;
-    params.out_wedge_dir_z[slot] = direction.z;
+    params.out_wedge_dir_x[slot] = incident_direction.x;
+    params.out_wedge_dir_y[slot] = incident_direction.y;
+    params.out_wedge_dir_z[slot] = incident_direction.z;
+    params.out_wedge_source_x[slot] = source_point.x;
+    params.out_wedge_source_y[slot] = source_point.y;
+    params.out_wedge_source_z[slot] = source_point.z;
+    params.out_wedge_source_power[slot] = source_power;
+    params.out_wedge_initial_dir_x[slot] = initial_direction.x;
+    params.out_wedge_initial_dir_y[slot] = initial_direction.y;
+    params.out_wedge_initial_dir_z[slot] = initial_direction.z;
     params.out_wedge_bounce_depth[slot] = depth;
 }
 
@@ -559,6 +569,7 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
     float3 direction = normalize3(make_vec3(params.ray_dx[ray_index],
                                             params.ray_dy[ray_index],
                                             params.ray_dz[ray_index]));
+    const float3 initial_direction = direction;
     float3 image_source = make_vec3(params.tx_x[ray_index],
                                     params.tx_y[ray_index],
                                     params.tx_z[ray_index]);
@@ -621,6 +632,7 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
         }
 
         float3 reflected_dir;
+        const float source_power = c3_power(field) * params.solid_angle_per_ray;
         const Complex3 reflected_field =
             reflect_field_vector(field, direction, geo_normal, global_prim, reflected_dir);
         if (c3_power(reflected_field) <= 0.f) {
@@ -632,7 +644,10 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
                           global_prim,
                           hit_point,
                           geo_normal,
-                          reflected_dir);
+                          direction,
+                          image_source,
+                          source_power,
+                          initial_direction);
 
         const float image_distance = dot3(image_source - hit_point, geo_normal);
         image_source = image_source - 2.f * image_distance * geo_normal;

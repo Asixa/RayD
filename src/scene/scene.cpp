@@ -319,6 +319,13 @@ struct AccumRaw {
     Float wedge_dir_x;
     Float wedge_dir_y;
     Float wedge_dir_z;
+    Float wedge_source_x;
+    Float wedge_source_y;
+    Float wedge_source_z;
+    Float wedge_source_power;
+    Float wedge_initial_dir_x;
+    Float wedge_initial_dir_y;
+    Float wedge_initial_dir_z;
     Int wedge_bounce_depth;
 };
 
@@ -641,6 +648,13 @@ AccumRaw allocate_reflection_accumulation_raw(int ray_count,
     raw.wedge_dir_x = empty<Float>(event_count);
     raw.wedge_dir_y = empty<Float>(event_count);
     raw.wedge_dir_z = empty<Float>(event_count);
+    raw.wedge_source_x = empty<Float>(event_count);
+    raw.wedge_source_y = empty<Float>(event_count);
+    raw.wedge_source_z = empty<Float>(event_count);
+    raw.wedge_source_power = empty<Float>(event_count);
+    raw.wedge_initial_dir_x = empty<Float>(event_count);
+    raw.wedge_initial_dir_y = empty<Float>(event_count);
+    raw.wedge_initial_dir_z = empty<Float>(event_count);
     raw.wedge_bounce_depth = empty<Int>(event_count);
     return raw;
 }
@@ -740,6 +754,41 @@ void initialize_reflection_accumulation_raw(AccumRaw &raw) {
                      &zero_f);
     jit_memset_async(JitBackend::CUDA,
                      raw.wedge_dir_z.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_source_x.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_source_y.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_source_z.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_source_power.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_initial_dir_x.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_initial_dir_y.data(),
+                     event_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.wedge_initial_dir_z.data(),
                      event_count,
                      sizeof(float),
                      &zero_f);
@@ -3587,6 +3636,9 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         result.wedge_events.normals = zeros<Vector3f>(event_count);
         result.wedge_events.prim_id = full<Int>(-1, event_count);
         result.wedge_events.directions = zeros<Vector3f>(event_count);
+        result.wedge_events.source_points = zeros<Vector3f>(event_count);
+        result.wedge_events.source_power = zeros<Float>(event_count);
+        result.wedge_events.initial_directions = zeros<Vector3f>(event_count);
         result.wedge_events.bounce_depth = full<Int>(-1, event_count);
         if (ray_count == 0) {
             return result;
@@ -3759,6 +3811,13 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         params.out_wedge_dir_x = raw.wedge_dir_x.data();
         params.out_wedge_dir_y = raw.wedge_dir_y.data();
         params.out_wedge_dir_z = raw.wedge_dir_z.data();
+        params.out_wedge_source_x = raw.wedge_source_x.data();
+        params.out_wedge_source_y = raw.wedge_source_y.data();
+        params.out_wedge_source_z = raw.wedge_source_z.data();
+        params.out_wedge_source_power = raw.wedge_source_power.data();
+        params.out_wedge_initial_dir_x = raw.wedge_initial_dir_x.data();
+        params.out_wedge_initial_dir_y = raw.wedge_initial_dir_y.data();
+        params.out_wedge_initial_dir_z = raw.wedge_initial_dir_z.data();
         params.out_wedge_bounce_depth = raw.wedge_bounce_depth.data();
 
         reflection_accumulation_pipeline_->launch(0, params);
@@ -3781,6 +3840,13 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         result.wedge_events.prim_id = raw.wedge_prim_id;
         result.wedge_events.directions =
             Vector3f(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
+        result.wedge_events.source_points =
+            Vector3f(raw.wedge_source_x, raw.wedge_source_y, raw.wedge_source_z);
+        result.wedge_events.source_power = raw.wedge_source_power;
+        result.wedge_events.initial_directions = Vector3f(
+            raw.wedge_initial_dir_x,
+            raw.wedge_initial_dir_y,
+            raw.wedge_initial_dir_z);
         result.wedge_events.bounce_depth = raw.wedge_bounce_depth;
         return result;
     }
