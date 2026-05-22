@@ -4044,9 +4044,9 @@ AccumResultT<Detached> Scene::accumulate_reflections(
     require(options.wedge_capacity >= 0,
             "Scene::accumulate_reflections(): wedge_capacity must be non-negative.");
 
-    AccumResultT<Detached> result;
     const int ray_count = static_cast<int>(slices(ray.o));
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
+    AccumResultT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
     result.grid_cell_count = grid_cell_count;
@@ -4056,30 +4056,33 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             "Scene::accumulate_reflections(): native accumulation is a non-AD native fast path. "
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
-        result.reflection_power = zeros<Float>(grid_cell_count);
-        result.reflection_field_x =
-            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                          zeros<Float>(grid_cell_count));
-        result.reflection_field_y =
-            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                          zeros<Float>(grid_cell_count));
-        result.reflection_field_z =
-            drjit::Complex<Float>(zeros<Float>(grid_cell_count),
-                                          zeros<Float>(grid_cell_count));
-        result.reflection_count = full<Int>(0, 1);
-        result.wedge_events.capacity = options.wedge_capacity;
-        result.wedge_events.count = full<Int>(0, 1);
-        const int event_count = std::max(1, options.wedge_capacity);
-        result.wedge_events.ray_index = full<Int>(-1, event_count);
-        result.wedge_events.hit_points = zeros<Vector3f>(event_count);
-        result.wedge_events.normals = zeros<Vector3f>(event_count);
-        result.wedge_events.prim_id = full<Int>(-1, event_count);
-        result.wedge_events.directions = zeros<Vector3f>(event_count);
-        result.wedge_events.source_points = zeros<Vector3f>(event_count);
-        result.wedge_events.source_power = zeros<Float>(event_count);
-        result.wedge_events.initial_directions = zeros<Vector3f>(event_count);
-        result.wedge_events.bounce_depth = full<Int>(-1, event_count);
+        auto initialize_result_storage = [&]() {
+            result.reflection_power = zeros<Float>(grid_cell_count);
+            result.reflection_field_x =
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                      zeros<Float>(grid_cell_count));
+            result.reflection_field_y =
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                      zeros<Float>(grid_cell_count));
+            result.reflection_field_z =
+                drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                                      zeros<Float>(grid_cell_count));
+            result.reflection_count = full<Int>(0, 1);
+            result.wedge_events.capacity = options.wedge_capacity;
+            result.wedge_events.count = full<Int>(0, 1);
+            const int event_count = std::max(1, options.wedge_capacity);
+            result.wedge_events.ray_index = full<Int>(-1, event_count);
+            result.wedge_events.hit_points = zeros<Vector3f>(event_count);
+            result.wedge_events.normals = zeros<Vector3f>(event_count);
+            result.wedge_events.prim_id = full<Int>(-1, event_count);
+            result.wedge_events.directions = zeros<Vector3f>(event_count);
+            result.wedge_events.source_points = zeros<Vector3f>(event_count);
+            result.wedge_events.source_power = zeros<Float>(event_count);
+            result.wedge_events.initial_directions = zeros<Vector3f>(event_count);
+            result.wedge_events.bounce_depth = full<Int>(-1, event_count);
+        };
         if (ray_count == 0) {
+            initialize_result_storage();
             return result;
         }
 
@@ -4105,6 +4108,22 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         const int triangle_count = static_cast<int>(slices(triangle_info_detached_.p0));
         require(material_count >= triangle_count,
                 "Scene::accumulate_reflections(): material payload must provide one entry per global primitive.");
+
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        int split_mode = scenes.split_mode;
+        int hitgroup_record_count = scenes.hitgroup_record_count;
+
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::accumulate_reflections(): OptiX scene is not ready.");
+        require(hitgroup_record_count > 0,
+                "Scene::accumulate_reflections(): invalid hitgroup record count.");
+
+        ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, reflection_accumulation_pipeline_config());
+
+        initialize_result_storage();
 
         Vector3f tx_detached = tx_position;
         if (tx_count == 1 && ray_count > 1) {
@@ -4133,20 +4152,6 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         if (drjit::none(active_detached)) {
             return result;
         }
-
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        int split_mode = scenes.split_mode;
-        int hitgroup_record_count = scenes.hitgroup_record_count;
-
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accumulate_reflections(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::accumulate_reflections(): invalid hitgroup record count.");
-
-        ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
-                        hitgroup_record_count, reflection_accumulation_pipeline_config());
 
         drjit::eval(ray.o,
                     ray.d,
