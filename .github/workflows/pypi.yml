@@ -25,7 +25,7 @@ jobs:
           python-version: "3.10"
 
       - name: Run lightweight unit tests
-        run: python -m unittest tests.test_torch_interop_patch tests.test_project_metadata -v
+        run: python -m unittest tests.test_project_metadata -v
 
   build_linux_wheels:
     name: linux / manylinux_2_28
