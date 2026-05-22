@@ -222,6 +222,8 @@ NB_MODULE(rayd, m) {
               result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
               result["accumulate_reflections"] =
                   native_stage_dict(snapshot.accumulate_reflections);
+              result["accumulate_diffraction"] =
+                  native_stage_dict(snapshot.accumulate_diffraction);
               return result;
           },
           "Return grouped native launch audit counters.");
@@ -1312,6 +1314,39 @@ NB_MODULE(rayd, m) {
                   "options"_a = AccumOptions(),
                   "active"_a = true,
                   "tx_polarization"_a = Vector3f(1.f, 0.f, 0.f))
+            .def("accumulate_diffraction_order1",
+                 [](const Scene &scene,
+                    nb::handle states_obj,
+                    const DiffractionGrid &grid,
+                    nb::handle material_obj,
+                    const DiffractionAccumOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DiffractionStateTable>(states_obj)) {
+                         const DiffractionStateTable states =
+                             nb::cast<DiffractionStateTable>(states_obj);
+                         const DiffractionMaterial material =
+                             nb::cast<DiffractionMaterial>(material_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.accumulate_diffraction_order1<true>(
+                             states, grid, material, options, active));
+                     }
+                     if (nb::isinstance<DiffractionStateTableAD>(states_obj)) {
+                         const DiffractionStateTableAD states =
+                             nb::cast<DiffractionStateTableAD>(states_obj);
+                         const DiffractionMaterialAD material =
+                             nb::cast<DiffractionMaterialAD>(material_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.accumulate_diffraction_order1<false>(
+                             states, grid, material, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 "states"_a,
+                 "grid"_a,
+                 "material"_a,
+                 "options"_a = DiffractionAccumOptions(),
+                 "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.shadow_test<true>(ray, active);

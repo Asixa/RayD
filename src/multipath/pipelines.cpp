@@ -10,10 +10,12 @@
 #include <rayd/multipath/reflection_trace_ptx.h>
 #include <rayd/multipath/reflection_epc_ptx.h>
 #include <rayd/multipath/reflection_accumulation_ptx.h>
+#include <rayd/multipath/diffraction_accumulation_ptx.h>
 #include <rayd/multipath/segment_visibility_ptx.h>
 #include <rayd/multipath/reflection_trace_params.h>
 #include <rayd/multipath/reflection_epc_params.h>
 #include <rayd/multipath/reflection_accumulation_params.h>
+#include <rayd/multipath/diffraction_accumulation_params.h>
 #include <rayd/multipath/segment_visibility_params.h>
 
 namespace rayd {
@@ -268,6 +270,18 @@ OptixPipelineConfig reflection_accumulation_pipeline_config() {
     config.closesthit_entry = "__closesthit__reflection_accumulation";
     config.num_payload_values = 6;
     config.params_size = sizeof(AccumParams);
+    return config;
+}
+
+OptixPipelineConfig diffraction_accumulation_pipeline_config() {
+    OptixPipelineConfig config;
+    config.ptx = diffraction_accumulation_ptx;
+    config.ptx_size = diffraction_accumulation_ptx_size;
+    config.raygen_entries = {"__raygen__diffraction_order1_accumulation"};
+    config.miss_entry = "__miss__diffraction_accumulation";
+    config.closesthit_entry = "__closesthit__diffraction_accumulation";
+    config.num_payload_values = 4;
+    config.params_size = sizeof(DiffractionAccumParams);
     return config;
 }
 

@@ -144,6 +144,14 @@ public:
         const AccumOptions &options,
         MaskT<Detached> active,
         const Vector3fT<Detached> &tx_polarization) const;
+    /// Native order-1 diffraction accumulation onto a grid (non-AD fast path).
+    template <bool Detached>
+    DiffractionAccumResultT<Detached> accumulate_diffraction_order1(
+        const DiffractionStateTableT<Detached> &states,
+        const DiffractionGrid &grid,
+        const DiffractionMaterialT<Detached> &material,
+        const DiffractionAccumOptions &options,
+        MaskT<Detached> active) const;
     /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
     ReflectionEpcResultT<Detached> trace_reflection_epc(
@@ -321,6 +329,7 @@ private:
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_accumulation_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
     mutable bool reflection_epc_geometry_ready_ = false;

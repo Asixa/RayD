@@ -158,6 +158,242 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["direct0"], 4)
         self.assertEqual(data["edge_use1"], 15)
 
+    def test_accumulate_diffraction_order1_writes_grid(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DiffractionStateTable()
+            states.count = 1
+            states.edge_index = cuda.Int([0])
+            states.edge_pos = cuda.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            states.edge_line_min = cuda.Float([-0.5])
+            states.edge_line_max = cuda.Float([0.5])
+            states.face0_normal = cuda.Array3f([0.0], [1.0], [0.0])
+            states.face1_normal = cuda.Array3f([0.0], [-1.0], [0.0])
+            states.face0_prim_id = cuda.Int([-1])
+            states.face1_prim_id = cuda.Int([-1])
+            states.exterior_angle = cuda.Float([1.5 * 3.141592653589793])
+            states.source_pos = cuda.Array3f([0.0], [0.0], [1.0])
+            states.source_power = cuda.Float([2.0])
+            states.incident_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.initial_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_reflection_depth = cuda.Int([0])
+
+            grid = pj.DiffractionGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DiffractionMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DiffractionAccumOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.samples = 64
+            options.max_order = 1
+            options.direct_samples = 64
+            options.keller_samples = 0
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.sample_sequence = pj.RAYD_DIFF_HASH
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            pj.native_launch_audit_clear()
+            result = scene.accumulate_diffraction_order1(
+                states, grid, material, options, True
+            )
+            dr.eval(
+                result.diffraction_power,
+                result.diffraction_field_x.real,
+                result.diffraction_field_x.imag,
+                result.direct_count,
+                result.keller_count,
+                result.visibility_reject_count,
+                result.edge_use_count,
+            )
+            audit = pj.native_launch_audit()
+
+            keller_options = pj.DiffractionAccumOptions()
+            keller_options.wavelength = 0.125
+            keller_options.k = 50.26548245743669
+            keller_options.seed = 23
+            keller_options.samples = 64
+            keller_options.max_order = 1
+            keller_options.direct_samples = 0
+            keller_options.keller_samples = 64
+            keller_options.strategy_mask = pj.RAYD_DIFF_KELLER
+            keller_options.sample_sequence = pj.RAYD_DIFF_HASH
+            keller_options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+            keller_options.collect_edge_use = True
+            keller_options.collect_debug_counts = True
+
+            pj.native_launch_audit_clear()
+            keller_result = scene.accumulate_diffraction_order1(
+                states, grid, material, keller_options, True
+            )
+            dr.eval(
+                keller_result.diffraction_power,
+                keller_result.diffraction_field_x.real,
+                keller_result.direct_count,
+                keller_result.keller_count,
+                keller_result.visibility_reject_count,
+                keller_result.utd_reject_count,
+                keller_result.edge_use_count,
+            )
+            keller_audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "grid_cell_count": result.grid_cell_count,
+                "power": float(result.diffraction_power[0]),
+                "field_x_re": float(result.diffraction_field_x.real[0]),
+                "field_x_im": float(result.diffraction_field_x.imag[0]),
+                "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
+                "visibility_reject_count": int(result.visibility_reject_count[0]),
+                "edge_use_count": int(result.edge_use_count[0]),
+                "accumulate_diffraction_launches": (
+                    audit["accumulate_diffraction"]["optix_launch"]
+                ),
+                "keller_power": float(keller_result.diffraction_power[0]),
+                "keller_field_x_re": float(keller_result.diffraction_field_x.real[0]),
+                "keller_direct_count": int(keller_result.direct_count[0]),
+                "keller_path_count": int(keller_result.keller_count[0]),
+                "keller_visibility_reject_count": int(keller_result.visibility_reject_count[0]),
+                "keller_utd_reject_count": int(keller_result.utd_reject_count[0]),
+                "keller_edge_use_count": int(keller_result.edge_use_count[0]),
+                "keller_launches": (
+                    keller_audit["accumulate_diffraction"]["optix_launch"]
+                ),
+            }))
+            """
+        )
+
+        self.assertEqual(data["grid_cell_count"], 1)
+        self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["field_x_re"], 0.0)
+        self.assertEqual(data["field_x_im"], 0.0)
+        self.assertEqual(data["direct_count"], 64)
+        self.assertEqual(data["keller_count"], 0)
+        self.assertEqual(data["visibility_reject_count"], 0)
+        self.assertEqual(data["edge_use_count"], 64)
+        self.assertEqual(data["accumulate_diffraction_launches"], 1)
+        self.assertGreater(data["keller_power"], 0.0)
+        self.assertGreater(data["keller_field_x_re"], 0.0)
+        self.assertEqual(data["keller_direct_count"], 0)
+        self.assertGreater(data["keller_path_count"], 0)
+        self.assertLessEqual(data["keller_path_count"], 64)
+        self.assertEqual(data["keller_visibility_reject_count"], 0)
+        self.assertEqual(
+            data["keller_path_count"] + data["keller_utd_reject_count"], 64
+        )
+        self.assertEqual(data["keller_edge_use_count"], data["keller_path_count"])
+        self.assertEqual(data["keller_launches"], 1)
+
+    def test_accumulate_diffraction_order1_accepts_vector_active_mask(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DiffractionStateTable()
+            states.count = 2
+            states.edge_index = cuda.Int([0, 1])
+            states.edge_pos = cuda.Array3f([0.0, 0.5], [0.0, 0.0], [0.0, 0.0])
+            states.edge_dir = cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0])
+            states.edge_line_min = cuda.Float([-0.5, -0.5])
+            states.edge_line_max = cuda.Float([0.5, 0.5])
+            states.face0_normal = cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0])
+            states.face1_normal = cuda.Array3f([0.0, 0.0], [-1.0, -1.0], [0.0, 0.0])
+            states.face0_prim_id = cuda.Int([-1, -1])
+            states.face1_prim_id = cuda.Int([-1, -1])
+            states.exterior_angle = cuda.Float([1.5 * 3.141592653589793, 1.5 * 3.141592653589793])
+            states.source_pos = cuda.Array3f([0.0, 0.5], [0.0, 0.0], [1.0, 1.0])
+            states.source_power = cuda.Float([2.0, 2.0])
+            states.incident_direction = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, -1.0])
+            states.initial_direction = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, -1.0])
+            states.prefix_reflection_depth = cuda.Int([0, 0])
+
+            grid = pj.DiffractionGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DiffractionMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DiffractionAccumOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 31
+            options.samples = 16
+            options.max_order = 1
+            options.direct_samples = 8
+            options.keller_samples = 8
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT | pj.RAYD_DIFF_KELLER
+            options.sample_sequence = pj.RAYD_DIFF_HASH
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            result = scene.accumulate_diffraction_order1(
+                states, grid, material, options, cuda.Bool([True, False])
+            )
+            dr.eval(result.diffraction_power, result.direct_count, result.keller_count)
+            print(json.dumps({
+                "finite_power": bool(dr.all(dr.isfinite(result.diffraction_power))),
+                "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["finite_power"])
+        self.assertGreater(data["direct_count"] + data["keller_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
