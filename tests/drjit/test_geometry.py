@@ -2004,7 +2004,7 @@ class GeometryCoreTests(unittest.TestCase):
             mesh = pj.Mesh(cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
                            cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]))
 
-            scene = pj.Scene()
+            scene = pj.Scene(edge_bvh_backend="drjit")
             scene.add_mesh(mesh)
             scene.build()
             stats = scene.edge_bvh_stats()
