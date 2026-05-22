@@ -50,6 +50,27 @@ struct DiffractionAccumParams {
     const float *state_initial_dir_z;
     const int *state_prefix_reflection_depth;
 
+    int recursive_state_count;
+    const uint8_t *recursive_active_mask;
+    const int *recursive_state_edge_index;
+    const float *recursive_state_edge_pos_x;
+    const float *recursive_state_edge_pos_y;
+    const float *recursive_state_edge_pos_z;
+    const float *recursive_state_edge_dir_x;
+    const float *recursive_state_edge_dir_y;
+    const float *recursive_state_edge_dir_z;
+    const float *recursive_state_edge_line_min;
+    const float *recursive_state_edge_line_max;
+    const float *recursive_state_face0_normal_x;
+    const float *recursive_state_face0_normal_y;
+    const float *recursive_state_face0_normal_z;
+    const float *recursive_state_face1_normal_x;
+    const float *recursive_state_face1_normal_y;
+    const float *recursive_state_face1_normal_z;
+    const int *recursive_state_face0_prim_id;
+    const int *recursive_state_face1_prim_id;
+    const float *recursive_state_exterior_angle;
+
     int grid_axis;
     float grid_position;
     float grid_coord0_min;
@@ -71,6 +92,7 @@ struct DiffractionAccumParams {
     float k;
     int seed;
     int samples;
+    int max_order;
     int direct_samples;
     int keller_samples;
     int strategy_mask;
@@ -90,6 +112,7 @@ struct DiffractionAccumParams {
     int *out_keller_count;
     int *out_suffix_count;
     int *out_visibility_reject_count;
+    int *out_inter_edge_visibility_reject_count;
     int *out_utd_reject_count;
     int *out_edge_use_count;
 };

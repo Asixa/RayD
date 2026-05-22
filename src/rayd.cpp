@@ -626,6 +626,8 @@ NB_MODULE(rayd, m) {
             .def_rw("suffix_count", &DiffractionAccumResult::suffix_count)
             .def_rw("visibility_reject_count",
                     &DiffractionAccumResult::visibility_reject_count)
+            .def_rw("inter_edge_visibility_reject_count",
+                    &DiffractionAccumResult::inter_edge_visibility_reject_count)
             .def_rw("utd_reject_count", &DiffractionAccumResult::utd_reject_count)
             .def_rw("edge_use_count", &DiffractionAccumResult::edge_use_count);
 
@@ -645,6 +647,8 @@ NB_MODULE(rayd, m) {
             .def_rw("suffix_count", &DiffractionAccumResultAD::suffix_count)
             .def_rw("visibility_reject_count",
                     &DiffractionAccumResultAD::visibility_reject_count)
+            .def_rw("inter_edge_visibility_reject_count",
+                    &DiffractionAccumResultAD::inter_edge_visibility_reject_count)
             .def_rw("utd_reject_count", &DiffractionAccumResultAD::utd_reject_count)
             .def_rw("edge_use_count", &DiffractionAccumResultAD::edge_use_count);
 
@@ -1343,6 +1347,45 @@ NB_MODULE(rayd, m) {
                      throw nb::next_overload();
                  },
                  "states"_a,
+                 "grid"_a,
+                 "material"_a,
+                 "options"_a = DiffractionAccumOptions(),
+                 "active"_a = true)
+            .def("accumulate_diffraction_chains",
+                 [](const Scene &scene,
+                    nb::handle initial_states_obj,
+                    nb::handle recursive_states_obj,
+                    const DiffractionGrid &grid,
+                    nb::handle material_obj,
+                    const DiffractionAccumOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DiffractionStateTable>(initial_states_obj)) {
+                         const DiffractionStateTable initial_states =
+                             nb::cast<DiffractionStateTable>(initial_states_obj);
+                         const DiffractionStateTable recursive_states =
+                             nb::cast<DiffractionStateTable>(recursive_states_obj);
+                         const DiffractionMaterial material =
+                             nb::cast<DiffractionMaterial>(material_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.accumulate_diffraction_chains<true>(
+                             initial_states, recursive_states, grid, material, options, active));
+                     }
+                     if (nb::isinstance<DiffractionStateTableAD>(initial_states_obj)) {
+                         const DiffractionStateTableAD initial_states =
+                             nb::cast<DiffractionStateTableAD>(initial_states_obj);
+                         const DiffractionStateTableAD recursive_states =
+                             nb::cast<DiffractionStateTableAD>(recursive_states_obj);
+                         const DiffractionMaterialAD material =
+                             nb::cast<DiffractionMaterialAD>(material_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.accumulate_diffraction_chains<false>(
+                             initial_states, recursive_states, grid, material, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 "initial_states"_a,
+                 "recursive_states"_a,
                  "grid"_a,
                  "material"_a,
                  "options"_a = DiffractionAccumOptions(),

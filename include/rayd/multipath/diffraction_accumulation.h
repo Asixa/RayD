@@ -137,6 +137,7 @@ struct DiffractionAccumResultData {
     Int_ keller_count = full<Int_>(0, 1);
     Int_ suffix_count = full<Int_>(0, 1);
     Int_ visibility_reject_count = full<Int_>(0, 1);
+    Int_ inter_edge_visibility_reject_count = full<Int_>(0, 1);
     Int_ utd_reject_count = full<Int_>(0, 1);
     Int_ edge_use_count = full<Int_>(0, 1);
 
@@ -149,6 +150,7 @@ struct DiffractionAccumResultData {
                  keller_count,
                  suffix_count,
                  visibility_reject_count,
+                 inter_edge_visibility_reject_count,
                  utd_reject_count,
                  edge_use_count)
 };

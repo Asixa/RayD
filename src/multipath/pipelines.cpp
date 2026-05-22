@@ -277,7 +277,10 @@ OptixPipelineConfig diffraction_accumulation_pipeline_config() {
     OptixPipelineConfig config;
     config.ptx = diffraction_accumulation_ptx;
     config.ptx_size = diffraction_accumulation_ptx_size;
-    config.raygen_entries = {"__raygen__diffraction_order1_accumulation"};
+    config.raygen_entries = {
+        "__raygen__diffraction_order1_accumulation",
+        "__raygen__diffraction_chain_accumulation",
+    };
     config.miss_entry = "__miss__diffraction_accumulation";
     config.closesthit_entry = "__closesthit__diffraction_accumulation";
     config.num_payload_values = 4;

@@ -394,6 +394,113 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertTrue(data["finite_power"])
         self.assertGreater(data["direct_count"] + data["keller_count"], 0)
 
+    def test_accumulate_diffraction_chains_order2_direct_writes_grid(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            initial = pj.DiffractionStateTable()
+            initial.count = 1
+            initial.edge_index = cuda.Int([0])
+            initial.edge_pos = cuda.Array3f([0.0], [0.0], [0.0])
+            initial.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            initial.edge_line_min = cuda.Float([-0.5])
+            initial.edge_line_max = cuda.Float([0.5])
+            initial.face0_normal = cuda.Array3f([0.0], [1.0], [0.0])
+            initial.face1_normal = cuda.Array3f([0.0], [-1.0], [0.0])
+            initial.face0_prim_id = cuda.Int([-1])
+            initial.face1_prim_id = cuda.Int([-1])
+            initial.exterior_angle = cuda.Float([1.5 * 3.141592653589793])
+            initial.source_pos = cuda.Array3f([0.0], [0.0], [1.0])
+            initial.source_power = cuda.Float([2.0])
+            initial.incident_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            initial.initial_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            initial.prefix_reflection_depth = cuda.Int([0])
+
+            recursive = pj.DiffractionStateTable()
+            recursive.count = 1
+            recursive.edge_index = cuda.Int([1])
+            recursive.edge_pos = cuda.Array3f([0.0], [0.5], [0.0])
+            recursive.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            recursive.edge_line_min = cuda.Float([-0.5])
+            recursive.edge_line_max = cuda.Float([0.5])
+            recursive.face0_normal = cuda.Array3f([0.0], [1.0], [0.0])
+            recursive.face1_normal = cuda.Array3f([0.0], [-1.0], [0.0])
+            recursive.face0_prim_id = cuda.Int([-1])
+            recursive.face1_prim_id = cuda.Int([-1])
+            recursive.exterior_angle = cuda.Float([1.5 * 3.141592653589793])
+            recursive.source_pos = cuda.Array3f([0.0], [0.0], [1.0])
+            recursive.source_power = cuda.Float([1.0])
+            recursive.incident_direction = cuda.Array3f([0.0], [1.0], [0.0])
+            recursive.initial_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            recursive.prefix_reflection_depth = cuda.Int([0])
+
+            grid = pj.DiffractionGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DiffractionMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DiffractionAccumOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 41
+            options.samples = 32
+            options.max_order = 2
+            options.direct_samples = 32
+            options.keller_samples = 0
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.sample_sequence = pj.RAYD_DIFF_HASH
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            result = scene.accumulate_diffraction_chains(
+                initial, recursive, grid, material, options, True
+            )
+            dr.eval(
+                result.diffraction_power,
+                result.direct_count,
+                result.inter_edge_visibility_reject_count,
+                result.edge_use_count,
+            )
+            print(json.dumps({
+                "grid_cell_count": result.grid_cell_count,
+                "power": float(result.diffraction_power[0]),
+                "direct_count": int(result.direct_count[0]),
+                "inter_edge_rejects": int(result.inter_edge_visibility_reject_count[0]),
+                "edge_use_count": int(result.edge_use_count[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["grid_cell_count"], 1)
+        self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["direct_count"], 0)
+        self.assertEqual(data["edge_use_count"], data["direct_count"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

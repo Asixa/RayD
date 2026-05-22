@@ -156,6 +156,13 @@ static __forceinline__ __device__ float3 state_vec(const float *x,
     return make_vec3(x[idx], y[idx], z[idx]);
 }
 
+static __forceinline__ __device__ float3 recursive_state_vec(const float *x,
+                                                             const float *y,
+                                                             const float *z,
+                                                             int idx) {
+    return make_vec3(x[idx], y[idx], z[idx]);
+}
+
 static __forceinline__ __device__ float3 grid_cell_center(int cell) {
     const int i = cell % params.grid_resolution0;
     const int j = cell / params.grid_resolution0;
@@ -252,20 +259,26 @@ static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
     return grid_cell_from_point(target, cell);
 }
 
-static __forceinline__ __device__ float material_gain_for_state(int state_idx) {
+static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
+                                                                int face1_prim) {
     if (params.material_gain == nullptr || params.material_count <= 0) {
         return 1.f;
     }
-    int prim = params.state_face0_prim_id[state_idx];
+    int prim = face0_prim;
     if (prim < 0 || prim >= params.material_count ||
         (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
-        prim = params.state_face1_prim_id[state_idx];
+        prim = face1_prim;
     }
     if (prim < 0 || prim >= params.material_count ||
         (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
         return 1.f;
     }
     return fmaxf(params.material_gain[prim], 0.f);
+}
+
+static __forceinline__ __device__ float material_gain_for_state(int state_idx) {
+    return material_gain_for_faces(params.state_face0_prim_id[state_idx],
+                                   params.state_face1_prim_id[state_idx]);
 }
 
 static __forceinline__ __device__ float diffraction_weight(int state_idx,
@@ -290,6 +303,27 @@ static __forceinline__ __device__ float diffraction_weight(int state_idx,
            params.grid_cell_area *
            wedge_scale *
            sample_norm /
+           (source_distance * source_distance * target_distance * target_distance);
+}
+
+static __forceinline__ __device__ float chain_event_weight(float source_power,
+                                                           int face0_prim,
+                                                           int face1_prim,
+                                                           float edge_line_min,
+                                                           float edge_line_max,
+                                                           float exterior_angle,
+                                                           float3 source,
+                                                           float3 edge_point,
+                                                           float3 target) {
+    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
+    const float target_distance = fmaxf(norm3(target - edge_point), kSmallEps);
+    const float edge_length = fmaxf(edge_line_max - edge_line_min, 0.f);
+    const float wedge_scale = fminf(fmaxf(exterior_angle, 0.25f * kPi) / (2.f * kPi), 2.f);
+    const float material_gain = material_gain_for_faces(face0_prim, face1_prim);
+    return source_power *
+           material_gain *
+           edge_length *
+           wedge_scale /
            (source_distance * source_distance * target_distance * target_distance);
 }
 
@@ -385,6 +419,137 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     } else {
         atomicAdd(params.out_keller_count, 1);
     }
+    if (params.collect_edge_use != 0) {
+        atomicAdd(params.out_edge_use_count, 1);
+    }
+}
+
+extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.recursive_state_count <= 0 ||
+        params.grid_resolution0 <= 0 ||
+        params.grid_resolution1 <= 0 ||
+        params.max_order != 2 ||
+        (params.strategy_mask & RAYD_DIFF_DIRECT) == 0) {
+        return;
+    }
+
+    const int direct_limit = params.direct_samples;
+    if (direct_limit <= 0 || static_cast<int>(lane) >= direct_limit) {
+        return;
+    }
+
+    const int first_idx = static_cast<int>(
+        lane % static_cast<unsigned int>(params.state_count));
+    const unsigned int second_hash = hash_u32(
+        lane ^ (static_cast<unsigned int>(params.seed) * 0x9e3779b9u) ^ 0x51ed270bu);
+    const int second_idx = static_cast<int>(
+        second_hash % static_cast<unsigned int>(params.recursive_state_count));
+    if (params.active_mask != nullptr && params.active_mask[first_idx] == 0u) {
+        return;
+    }
+    if (params.recursive_active_mask != nullptr &&
+        params.recursive_active_mask[second_idx] == 0u) {
+        return;
+    }
+    if (params.state_edge_index[first_idx] == params.recursive_state_edge_index[second_idx]) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_reject_count, 1);
+        }
+        return;
+    }
+
+    const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+    const int cell = static_cast<int>(
+        (lane / static_cast<unsigned int>(params.state_count)) %
+        static_cast<unsigned int>(grid_cell_count));
+    const float first_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
+    const float second_u = uniform01(lane, 2u, static_cast<unsigned int>(params.seed));
+
+    const float3 first_edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, first_idx);
+    const float3 first_edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x,
+                             params.state_edge_dir_y,
+                             params.state_edge_dir_z,
+                             first_idx));
+    const float first_t = params.state_edge_line_min[first_idx] +
+                          first_u * (params.state_edge_line_max[first_idx] -
+                                     params.state_edge_line_min[first_idx]);
+    const float3 first_point = first_edge_pos + first_t * first_edge_dir;
+
+    const float3 second_edge_pos =
+        recursive_state_vec(params.recursive_state_edge_pos_x,
+                            params.recursive_state_edge_pos_y,
+                            params.recursive_state_edge_pos_z,
+                            second_idx);
+    const float3 second_edge_dir =
+        normalize3(recursive_state_vec(params.recursive_state_edge_dir_x,
+                                       params.recursive_state_edge_dir_y,
+                                       params.recursive_state_edge_dir_z,
+                                       second_idx));
+    const float second_t = params.recursive_state_edge_line_min[second_idx] +
+                           second_u * (params.recursive_state_edge_line_max[second_idx] -
+                                       params.recursive_state_edge_line_min[second_idx]);
+    const float3 second_point = second_edge_pos + second_t * second_edge_dir;
+
+    const float3 source =
+        state_vec(params.state_source_x, params.state_source_y, params.state_source_z, first_idx);
+    const float3 target = grid_cell_center(cell);
+    const bool source_visible = visible_segment(source, first_point);
+    const bool inter_edge_visible = visible_segment(first_point, second_point);
+    const bool target_visible = visible_segment(second_point, target);
+    if (!source_visible || !target_visible) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_visibility_reject_count, 1);
+        }
+        return;
+    }
+    if (!inter_edge_visible) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_inter_edge_visibility_reject_count, 1);
+        }
+        return;
+    }
+
+    const float first_weight = chain_event_weight(
+        params.state_source_power[first_idx],
+        params.state_face0_prim_id[first_idx],
+        params.state_face1_prim_id[first_idx],
+        params.state_edge_line_min[first_idx],
+        params.state_edge_line_max[first_idx],
+        params.state_exterior_angle[first_idx],
+        source,
+        first_point,
+        second_point);
+    const float second_weight = chain_event_weight(
+        1.f,
+        params.recursive_state_face0_prim_id[second_idx],
+        params.recursive_state_face1_prim_id[second_idx],
+        params.recursive_state_edge_line_min[second_idx],
+        params.recursive_state_edge_line_max[second_idx],
+        params.recursive_state_exterior_angle[second_idx],
+        first_point,
+        second_point,
+        target);
+    const float wave_gain =
+        (params.wavelength * (1.f / (4.f * kPi))) *
+        (params.wavelength * (1.f / (4.f * kPi)));
+    const float sample_norm = 1.f / fmaxf(static_cast<float>(direct_limit), 1.f);
+    const float contribution =
+        first_weight * second_weight * wave_gain * params.grid_cell_area * sample_norm;
+    if (!(contribution > 0.f) || !isfinite(contribution)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_reject_count, 1);
+        }
+        return;
+    }
+
+    atomicAdd(params.out_diffraction_power + cell, contribution);
+    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomicAdd(params.out_direct_count, 1);
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_use_count, 1);
     }

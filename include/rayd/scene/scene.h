@@ -152,6 +152,15 @@ public:
         const DiffractionMaterialT<Detached> &material,
         const DiffractionAccumOptions &options,
         MaskT<Detached> active) const;
+    /// Native higher-order direct-chain diffraction accumulation onto a grid (non-AD fast path).
+    template <bool Detached>
+    DiffractionAccumResultT<Detached> accumulate_diffraction_chains(
+        const DiffractionStateTableT<Detached> &initial_states,
+        const DiffractionStateTableT<Detached> &recursive_states,
+        const DiffractionGrid &grid,
+        const DiffractionMaterialT<Detached> &material,
+        const DiffractionAccumOptions &options,
+        MaskT<Detached> active) const;
     /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
     ReflectionEpcResultT<Detached> trace_reflection_epc(
