@@ -4274,7 +4274,10 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
             (options.strategy_mask & RAYD_DIFF_DIRECT) != 0
                 ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
                 : 0;
-        if (direct_samples <= 0) {
+        const int keller_samples =
+            (options.strategy_mask & RAYD_DIFF_KELLER) != 0 ? options.keller_samples : 0;
+        const int launch_count = direct_samples + keller_samples;
+        if (launch_count <= 0) {
             return result;
         }
 
@@ -4349,7 +4352,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
         params.split_mode = split_mode;
-        params.n_rays = direct_samples;
+        params.n_rays = launch_count;
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
         params.state_count = initial_count;
         params.state_edge_index = initial_states.edge_index.data();
@@ -4406,7 +4409,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.samples = options.samples;
         params.max_order = options.max_order;
         params.direct_samples = direct_samples;
-        params.keller_samples = 0;
+        params.keller_samples = keller_samples;
         params.strategy_mask = options.strategy_mask;
         params.sample_sequence = options.sample_sequence;
         params.receiver_model = options.receiver_model;

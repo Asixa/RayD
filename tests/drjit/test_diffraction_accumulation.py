@@ -394,7 +394,7 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertTrue(data["finite_power"])
         self.assertGreater(data["direct_count"] + data["keller_count"], 0)
 
-    def test_accumulate_diffraction_chains_order2_direct_writes_grid(self):
+    def test_accumulate_diffraction_chains_order2_direct_and_keller_writes_grid(self):
         data = run_json(
             """
             import json
@@ -467,11 +467,11 @@ class DiffractionAccumulationTests(unittest.TestCase):
             options.wavelength = 0.125
             options.k = 50.26548245743669
             options.seed = 41
-            options.samples = 32
+            options.samples = 288
             options.max_order = 2
             options.direct_samples = 32
-            options.keller_samples = 0
-            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.keller_samples = 256
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT | pj.RAYD_DIFF_KELLER
             options.sample_sequence = pj.RAYD_DIFF_HASH
             options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
             options.collect_edge_use = True
@@ -483,6 +483,7 @@ class DiffractionAccumulationTests(unittest.TestCase):
             dr.eval(
                 result.diffraction_power,
                 result.direct_count,
+                result.keller_count,
                 result.inter_edge_visibility_reject_count,
                 result.edge_use_count,
             )
@@ -490,6 +491,7 @@ class DiffractionAccumulationTests(unittest.TestCase):
                 "grid_cell_count": result.grid_cell_count,
                 "power": float(result.diffraction_power[0]),
                 "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
                 "inter_edge_rejects": int(result.inter_edge_visibility_reject_count[0]),
                 "edge_use_count": int(result.edge_use_count[0]),
             }))
@@ -499,9 +501,10 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["grid_cell_count"], 1)
         self.assertGreater(data["power"], 0.0)
         self.assertGreater(data["direct_count"], 0)
-        self.assertEqual(data["edge_use_count"], data["direct_count"])
+        self.assertGreater(data["keller_count"], 0)
+        self.assertEqual(data["edge_use_count"], data["direct_count"] + data["keller_count"])
 
-    def test_accumulate_diffraction_chains_order3_direct_writes_grid(self):
+    def test_accumulate_diffraction_chains_order3_direct_and_keller_writes_grid(self):
         data = run_json(
             """
             import json
@@ -575,11 +578,11 @@ class DiffractionAccumulationTests(unittest.TestCase):
             options.wavelength = 0.125
             options.k = 50.26548245743669
             options.seed = 43
-            options.samples = 64
+            options.samples = 320
             options.max_order = 3
             options.direct_samples = 64
-            options.keller_samples = 0
-            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.keller_samples = 256
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT | pj.RAYD_DIFF_KELLER
             options.sample_sequence = pj.RAYD_DIFF_HASH
             options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
             options.collect_edge_use = True
@@ -591,6 +594,7 @@ class DiffractionAccumulationTests(unittest.TestCase):
             dr.eval(
                 result.diffraction_power,
                 result.direct_count,
+                result.keller_count,
                 result.inter_edge_visibility_reject_count,
                 result.edge_use_count,
             )
@@ -598,6 +602,7 @@ class DiffractionAccumulationTests(unittest.TestCase):
                 "grid_cell_count": result.grid_cell_count,
                 "power": float(result.diffraction_power[0]),
                 "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
                 "inter_edge_rejects": int(result.inter_edge_visibility_reject_count[0]),
                 "edge_use_count": int(result.edge_use_count[0]),
             }))
@@ -607,7 +612,8 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["grid_cell_count"], 1)
         self.assertGreater(data["power"], 0.0)
         self.assertGreater(data["direct_count"], 0)
-        self.assertEqual(data["edge_use_count"], data["direct_count"])
+        self.assertGreater(data["keller_count"], 0)
+        self.assertEqual(data["edge_use_count"], data["direct_count"] + data["keller_count"])
 
 
 if __name__ == "__main__":

@@ -228,24 +228,21 @@ static __forceinline__ __device__ float3 stable_perpendicular(float3 axis,
     return normalize3(fallback - dot3(fallback, axis) * axis);
 }
 
-static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
-                                                       unsigned int lane,
-                                                       float3 edge_point,
-                                                       float3 edge_dir,
-                                                       float3 &target,
-                                                       int &cell) {
-    const float3 incident =
-        normalize3(state_vec(params.state_incident_dir_x,
-                             params.state_incident_dir_y,
-                             params.state_incident_dir_z,
-                             state_idx));
+static __forceinline__ __device__ bool keller_grid_hit_from_incident(float3 incident_vec,
+                                                                     unsigned int lane,
+                                                                     unsigned int stream,
+                                                                     float3 edge_point,
+                                                                     float3 edge_dir,
+                                                                     float3 &target,
+                                                                     int &cell) {
+    const float3 incident = normalize3(incident_vec);
     const float axial = fminf(fmaxf(dot3(incident, edge_dir), -1.f), 1.f);
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
     const float3 basis0 = stable_perpendicular(edge_dir, incident);
     const float3 basis1 = normalize3(cross3(edge_dir, basis0));
     float s;
     float c;
-    sincosf(2.f * kPi * uniform01(lane, 1u, static_cast<unsigned int>(params.seed)), &s, &c);
+    sincosf(2.f * kPi * uniform01(lane, stream, static_cast<unsigned int>(params.seed)), &s, &c);
     const float3 ko = normalize3(axial * edge_dir + radial * (c * basis0 + s * basis1));
     const float denom = component(ko, params.grid_axis);
     if (fabsf(denom) <= kSmallEps) {
@@ -257,6 +254,20 @@ static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
     }
     target = edge_point + t * ko;
     return grid_cell_from_point(target, cell);
+}
+
+static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
+                                                       unsigned int lane,
+                                                       float3 edge_point,
+                                                       float3 edge_dir,
+                                                       float3 &target,
+                                                       int &cell) {
+    const float3 incident =
+        state_vec(params.state_incident_dir_x,
+                  params.state_incident_dir_y,
+                  params.state_incident_dir_z,
+                  state_idx);
+    return keller_grid_hit_from_incident(incident, lane, 1u, edge_point, edge_dir, target, cell);
 }
 
 static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
@@ -432,14 +443,20 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         params.grid_resolution0 <= 0 ||
         params.grid_resolution1 <= 0 ||
         (params.max_order != 2 && params.max_order != 3) ||
-        (params.strategy_mask & RAYD_DIFF_DIRECT) == 0) {
+        (params.strategy_mask & (RAYD_DIFF_DIRECT | RAYD_DIFF_KELLER)) == 0) {
         return;
     }
 
-    const int direct_limit = params.direct_samples;
-    if (direct_limit <= 0 || static_cast<int>(lane) >= direct_limit) {
+    const int direct_limit =
+        (params.strategy_mask & RAYD_DIFF_DIRECT) != 0 ? params.direct_samples : 0;
+    const int keller_limit =
+        (params.strategy_mask & RAYD_DIFF_KELLER) != 0 ? params.keller_samples : 0;
+    const int total_samples = direct_limit + keller_limit;
+    if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
         return;
     }
+    const bool is_direct = static_cast<int>(lane) < direct_limit;
+    const bool is_keller = !is_direct;
 
     const int first_idx = static_cast<int>(
         lane % static_cast<unsigned int>(params.state_count));
@@ -480,7 +497,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     }
 
     const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
-    const int cell = static_cast<int>(
+    int cell = static_cast<int>(
         (lane / static_cast<unsigned int>(params.state_count)) %
         static_cast<unsigned int>(grid_cell_count));
     const float first_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
@@ -517,6 +534,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         state_vec(params.state_source_x, params.state_source_y, params.state_source_z, first_idx);
     const float3 target = grid_cell_center(cell);
     float3 third_point = second_point;
+    float3 third_edge_dir = second_edge_dir;
     if (params.max_order == 3) {
         const float third_u = uniform01(lane, 4u, static_cast<unsigned int>(params.seed));
         const float3 third_edge_pos =
@@ -524,7 +542,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
                                 params.recursive_state_edge_pos_y,
                                 params.recursive_state_edge_pos_z,
                                 third_idx);
-        const float3 third_edge_dir =
+        third_edge_dir =
             normalize3(recursive_state_vec(params.recursive_state_edge_dir_x,
                                            params.recursive_state_edge_dir_y,
                                            params.recursive_state_edge_dir_z,
@@ -535,11 +553,29 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         third_point = third_edge_pos + third_t * third_edge_dir;
     }
     const float3 terminal_point = params.max_order == 3 ? third_point : second_point;
+    const float3 terminal_edge_dir = params.max_order == 3 ? third_edge_dir : second_edge_dir;
+    float3 final_target = target;
+    if (is_keller) {
+        const float3 terminal_incident =
+            params.max_order == 3 ? (third_point - second_point) : (second_point - first_point);
+        if (!keller_grid_hit_from_incident(terminal_incident,
+                                           lane,
+                                           7u + static_cast<unsigned int>(params.max_order),
+                                           terminal_point,
+                                           terminal_edge_dir,
+                                           final_target,
+                                           cell)) {
+            if (params.collect_debug_counts != 0) {
+                atomicAdd(params.out_utd_reject_count, 1);
+            }
+            return;
+        }
+    }
     const bool source_visible = visible_segment(source, first_point);
     const bool first_inter_edge_visible = visible_segment(first_point, second_point);
     const bool second_inter_edge_visible =
         params.max_order == 3 ? visible_segment(second_point, third_point) : true;
-    const bool target_visible = visible_segment(terminal_point, target);
+    const bool target_visible = visible_segment(terminal_point, final_target);
     if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_visibility_reject_count, 1);
@@ -563,7 +599,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         source,
         first_point,
         second_point);
-    const float3 second_target = params.max_order == 3 ? third_point : target;
+    const float3 second_target = params.max_order == 3 ? third_point : final_target;
     const float second_weight = chain_event_weight(
         1.f,
         params.recursive_state_face0_prim_id[second_idx],
@@ -585,7 +621,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
             params.recursive_state_exterior_angle[third_idx],
             second_point,
             third_point,
-            target);
+            final_target);
         chain_weight *= third_weight;
     }
     const float wave_gain_per_event =
@@ -594,7 +630,8 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     const float wave_gain =
         params.max_order == 3 ? wave_gain_per_event * wave_gain_per_event
                               : wave_gain_per_event;
-    const float sample_norm = 1.f / fmaxf(static_cast<float>(direct_limit), 1.f);
+    const int strategy_sample_count = is_direct ? direct_limit : keller_limit;
+    const float sample_norm = 1.f / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
     const float contribution =
         chain_weight * wave_gain * params.grid_cell_area * sample_norm;
     if (!(contribution > 0.f) || !isfinite(contribution)) {
@@ -606,7 +643,11 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
 
     atomicAdd(params.out_diffraction_power + cell, contribution);
     atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
-    atomicAdd(params.out_direct_count, 1);
+    if (is_direct) {
+        atomicAdd(params.out_direct_count, 1);
+    } else {
+        atomicAdd(params.out_keller_count, 1);
+    }
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_use_count, 1);
     }
