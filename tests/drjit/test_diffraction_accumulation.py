@@ -474,6 +474,101 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["field_x_im0"]))
         self.assertAlmostEqual(data["point_0_x0"], 0.0, places=5)
 
+    def test_accumulate_diffraction_order1_suffix_reflection_writes_grid(self):
+        data = run_json(
+            """
+            import json
+            import math
+            import numpy as np
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-2.0, 2.0, -2.0],
+                                    [0.0, 0.0, 0.0],
+                                    [-2.0, -2.0, 2.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DiffractionStateTable()
+            states.count = 1
+            states.edge_index = cuda.Int([0])
+            states.edge_pos = cuda.Array3f([0.0], [-1.0], [0.0])
+            states.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            states.edge_line_min = cuda.Float([-0.25])
+            states.edge_line_max = cuda.Float([0.25])
+            states.face0_normal = cuda.Array3f([0.0], [1.0], [0.0])
+            states.face1_normal = cuda.Array3f([0.0], [-1.0], [0.0])
+            states.face0_prim_id = cuda.Int([0])
+            states.face1_prim_id = cuda.Int([0])
+            states.exterior_angle = cuda.Float([1.5 * math.pi])
+            states.source_pos = cuda.Array3f([0.0], [-1.0], [1.0])
+            states.source_power = cuda.Float([1.0])
+            states.incident_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.initial_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_reflection_depth = cuda.Int([0])
+
+            grid = pj.DiffractionGrid()
+            grid.axis = 1
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DiffractionMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DiffractionAccumOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 41
+            options.samples = 16
+            options.max_order = 1
+            options.direct_samples = 0
+            options.keller_samples = 0
+            options.suffix_samples = 16
+            options.strategy_mask = pj.RAYD_DIFF_SUFFIX_REFLECTION
+            options.sample_sequence = pj.RAYD_DIFF_HASH
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+            options.collect_debug_counts = True
+
+            result = scene.accumulate_diffraction_order1(
+                states,
+                grid,
+                material,
+                options,
+                cuda.Bool([True]),
+            )
+            dr.eval(
+                result.diffraction_power,
+                result.direct_count,
+                result.keller_count,
+                result.suffix_count,
+            )
+            print(json.dumps({
+                "power": float(np.asarray(result.diffraction_power, dtype=np.float32)[0]),
+                "direct": int(np.asarray(result.direct_count, dtype=np.int32)[0]),
+                "keller": int(np.asarray(result.keller_count, dtype=np.int32)[0]),
+                "suffix": int(np.asarray(result.suffix_count, dtype=np.int32)[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["direct"], 0)
+        self.assertEqual(data["keller"], 0)
+        self.assertGreater(data["suffix"], 0)
+        self.assertTrue(math.isfinite(data["power"]))
+        self.assertGreater(data["power"], 0.0)
+
     def test_accumulate_diffraction_order1_accepts_vector_active_mask(self):
         data = run_json(
             """

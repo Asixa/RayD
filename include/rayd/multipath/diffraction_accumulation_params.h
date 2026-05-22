@@ -81,6 +81,24 @@ struct DiffractionAccumParams {
     int grid_resolution1;
     float grid_cell_area;
 
+    const float *tri_p0_x;
+    const float *tri_p0_y;
+    const float *tri_p0_z;
+    const float *tri_e1_x;
+    const float *tri_e1_y;
+    const float *tri_e1_z;
+    const float *tri_e2_x;
+    const float *tri_e2_y;
+    const float *tri_e2_z;
+    const float *tri_fn_x;
+    const float *tri_fn_y;
+    const float *tri_fn_z;
+    const int *face_offsets;
+    int n_meshes;
+    int n_triangles;
+    const uint32_t *suffix_candidate_prim_id;
+    int suffix_candidate_count;
+
     const float *material_eta_r;
     const float *material_sigma;
     const float *material_mu_r;
@@ -95,6 +113,7 @@ struct DiffractionAccumParams {
     int max_order;
     int direct_samples;
     int keller_samples;
+    int suffix_samples;
     int strategy_mask;
     int sample_sequence;
     int receiver_model;

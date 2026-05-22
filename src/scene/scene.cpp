@@ -976,6 +976,29 @@ ArrayD prefix_array(const ArrayD &value, int count) {
     return gather<ArrayD>(value, arange<Int>(count));
 }
 
+struct DiffractionSuffixCandidateTable {
+    UInt prim_ids;
+    int count = 0;
+};
+
+DiffractionSuffixCandidateTable build_diffraction_suffix_candidates(
+    const DiffractionMaterial &material,
+    int material_count,
+    int triangle_count) {
+    DiffractionSuffixCandidateTable table;
+    if (material_count <= 0 || triangle_count <= 0) {
+        table.prim_ids = zeros<UInt>(0);
+        return table;
+    }
+    const int candidate_width = std::min(material_count, triangle_count);
+    const Int prim_i32 = arange<Int>(candidate_width);
+    const Mask valid_material =
+        gather<Mask>(material.valid, prim_i32, full<Mask>(true, candidate_width));
+    table.prim_ids = compress(valid_material);
+    table.count = static_cast<int>(slices(table.prim_ids));
+    return table;
+}
+
 template <typename ArrayD>
 ArrayD concat_array_sequence(const std::vector<ArrayD> &parts) {
     require(!parts.empty(),
@@ -4357,7 +4380,9 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
                 : 0;
         const int keller_samples =
             (options.strategy_mask & RAYD_DIFF_KELLER) != 0 ? options.keller_samples : 0;
-        const int launch_count = direct_samples + keller_samples;
+        const int suffix_samples =
+            (options.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? options.suffix_samples : 0;
+        const int launch_count = direct_samples + keller_samples + suffix_samples;
         if (launch_count <= 0) {
             return result;
         }
@@ -4383,15 +4408,33 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         const OptixScene *secondary_scene = scenes.secondary;
         const int split_mode = scenes.split_mode;
         const int hitgroup_record_count = scenes.hitgroup_record_count;
+        const int triangle_count =
+            static_cast<int>(slices(triangle_info_detached_.p0));
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::accumulate_diffraction_order1(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
                 "Scene::accumulate_diffraction_order1(): invalid hitgroup record count.");
+        if (suffix_samples > 0) {
+            require(triangle_count > 0,
+                    "Scene::accumulate_diffraction_order1(): suffix reflection requires scene triangles.");
+            require(material_count >= triangle_count,
+                    "Scene::accumulate_diffraction_order1(): suffix reflection requires per-triangle materials.");
+        }
 
         ensure_pipeline(diffraction_accumulation_pipeline_,
                         primary_scene->context(),
                         hitgroup_record_count,
                         diffraction_accumulation_pipeline_config());
+
+        DiffractionSuffixCandidateTable suffix_candidates;
+        if (suffix_samples > 0) {
+            suffix_candidates = build_diffraction_suffix_candidates(
+                material,
+                material_count,
+                triangle_count);
+            require(suffix_candidates.count > 0,
+                    "Scene::accumulate_diffraction_order1(): suffix reflection candidate table is empty.");
+        }
 
         drjit::eval(states.edge_index,
                     states.edge_pos,
@@ -4414,6 +4457,14 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
                     material.mu_r,
                     material.gain,
                     material.valid);
+        if (suffix_samples > 0) {
+            drjit::eval(triangle_info_detached_.p0,
+                        triangle_info_detached_.e1,
+                        triangle_info_detached_.e2,
+                        triangle_info_detached_.face_normal,
+                        face_offsets_,
+                        suffix_candidates.prim_ids);
+        }
 
         DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
         initialize_diffraction_accumulation_raw(raw);
@@ -4464,6 +4515,25 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.grid_resolution0 = grid.resolution0;
         params.grid_resolution1 = grid.resolution1;
         params.grid_cell_area = grid.cell_area;
+        params.tri_p0_x = suffix_samples > 0 ? triangle_info_detached_.p0.x().data() : nullptr;
+        params.tri_p0_y = suffix_samples > 0 ? triangle_info_detached_.p0.y().data() : nullptr;
+        params.tri_p0_z = suffix_samples > 0 ? triangle_info_detached_.p0.z().data() : nullptr;
+        params.tri_e1_x = suffix_samples > 0 ? triangle_info_detached_.e1.x().data() : nullptr;
+        params.tri_e1_y = suffix_samples > 0 ? triangle_info_detached_.e1.y().data() : nullptr;
+        params.tri_e1_z = suffix_samples > 0 ? triangle_info_detached_.e1.z().data() : nullptr;
+        params.tri_e2_x = suffix_samples > 0 ? triangle_info_detached_.e2.x().data() : nullptr;
+        params.tri_e2_y = suffix_samples > 0 ? triangle_info_detached_.e2.y().data() : nullptr;
+        params.tri_e2_z = suffix_samples > 0 ? triangle_info_detached_.e2.z().data() : nullptr;
+        params.tri_fn_x = suffix_samples > 0 ? triangle_info_detached_.face_normal.x().data() : nullptr;
+        params.tri_fn_y = suffix_samples > 0 ? triangle_info_detached_.face_normal.y().data() : nullptr;
+        params.tri_fn_z = suffix_samples > 0 ? triangle_info_detached_.face_normal.z().data() : nullptr;
+        params.face_offsets = suffix_samples > 0 ? face_offsets_.data() : nullptr;
+        params.n_meshes = mesh_count_;
+        params.n_triangles = triangle_count;
+        params.suffix_candidate_prim_id =
+            suffix_samples > 0 ? suffix_candidates.prim_ids.data() : nullptr;
+        params.suffix_candidate_count =
+            suffix_samples > 0 ? suffix_candidates.count : 0;
         params.material_eta_r = material.eta_r.data();
         params.material_sigma = material.sigma.data();
         params.material_mu_r = material.mu_r.data();
@@ -4477,6 +4547,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.max_order = options.max_order;
         params.direct_samples = direct_samples;
         params.keller_samples = keller_samples;
+        params.suffix_samples = suffix_samples;
         params.strategy_mask = options.strategy_mask;
         params.sample_sequence = options.sample_sequence;
         params.receiver_model = options.receiver_model;
@@ -4600,7 +4671,9 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
                 : 0;
         const int keller_samples =
             (options.strategy_mask & RAYD_DIFF_KELLER) != 0 ? options.keller_samples : 0;
-        const int launch_count = direct_samples + keller_samples;
+        const int suffix_samples =
+            (options.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? options.suffix_samples : 0;
+        const int launch_count = direct_samples + keller_samples + suffix_samples;
         if (launch_count <= 0) {
             return result;
         }
@@ -4632,15 +4705,33 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         const OptixScene *secondary_scene = scenes.secondary;
         const int split_mode = scenes.split_mode;
         const int hitgroup_record_count = scenes.hitgroup_record_count;
+        const int triangle_count =
+            static_cast<int>(slices(triangle_info_detached_.p0));
         require(primary_scene != nullptr && primary_scene->is_ready(),
                 "Scene::accumulate_diffraction_chains(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
                 "Scene::accumulate_diffraction_chains(): invalid hitgroup record count.");
+        if (suffix_samples > 0) {
+            require(triangle_count > 0,
+                    "Scene::accumulate_diffraction_chains(): suffix reflection requires scene triangles.");
+            require(material_count >= triangle_count,
+                    "Scene::accumulate_diffraction_chains(): suffix reflection requires per-triangle materials.");
+        }
 
         ensure_pipeline(diffraction_accumulation_pipeline_,
                         primary_scene->context(),
                         hitgroup_record_count,
                         diffraction_accumulation_pipeline_config());
+
+        DiffractionSuffixCandidateTable suffix_candidates;
+        if (suffix_samples > 0) {
+            suffix_candidates = build_diffraction_suffix_candidates(
+                material,
+                material_count,
+                triangle_count);
+            require(suffix_candidates.count > 0,
+                    "Scene::accumulate_diffraction_chains(): suffix reflection candidate table is empty.");
+        }
 
         drjit::eval(initial_states.edge_index,
                     initial_states.edge_pos,
@@ -4667,6 +4758,14 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
                     material.mu_r,
                     material.gain,
                     material.valid);
+        if (suffix_samples > 0) {
+            drjit::eval(triangle_info_detached_.p0,
+                        triangle_info_detached_.e1,
+                        triangle_info_detached_.e2,
+                        triangle_info_detached_.face_normal,
+                        face_offsets_,
+                        suffix_candidates.prim_ids);
+        }
 
         DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
         initialize_diffraction_accumulation_raw(raw);
@@ -4721,6 +4820,25 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.grid_resolution0 = grid.resolution0;
         params.grid_resolution1 = grid.resolution1;
         params.grid_cell_area = grid.cell_area;
+        params.tri_p0_x = suffix_samples > 0 ? triangle_info_detached_.p0.x().data() : nullptr;
+        params.tri_p0_y = suffix_samples > 0 ? triangle_info_detached_.p0.y().data() : nullptr;
+        params.tri_p0_z = suffix_samples > 0 ? triangle_info_detached_.p0.z().data() : nullptr;
+        params.tri_e1_x = suffix_samples > 0 ? triangle_info_detached_.e1.x().data() : nullptr;
+        params.tri_e1_y = suffix_samples > 0 ? triangle_info_detached_.e1.y().data() : nullptr;
+        params.tri_e1_z = suffix_samples > 0 ? triangle_info_detached_.e1.z().data() : nullptr;
+        params.tri_e2_x = suffix_samples > 0 ? triangle_info_detached_.e2.x().data() : nullptr;
+        params.tri_e2_y = suffix_samples > 0 ? triangle_info_detached_.e2.y().data() : nullptr;
+        params.tri_e2_z = suffix_samples > 0 ? triangle_info_detached_.e2.z().data() : nullptr;
+        params.tri_fn_x = suffix_samples > 0 ? triangle_info_detached_.face_normal.x().data() : nullptr;
+        params.tri_fn_y = suffix_samples > 0 ? triangle_info_detached_.face_normal.y().data() : nullptr;
+        params.tri_fn_z = suffix_samples > 0 ? triangle_info_detached_.face_normal.z().data() : nullptr;
+        params.face_offsets = suffix_samples > 0 ? face_offsets_.data() : nullptr;
+        params.n_meshes = mesh_count_;
+        params.n_triangles = triangle_count;
+        params.suffix_candidate_prim_id =
+            suffix_samples > 0 ? suffix_candidates.prim_ids.data() : nullptr;
+        params.suffix_candidate_count =
+            suffix_samples > 0 ? suffix_candidates.count : 0;
         params.material_eta_r = material.eta_r.data();
         params.material_sigma = material.sigma.data();
         params.material_mu_r = material.mu_r.data();
@@ -4734,6 +4852,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.max_order = options.max_order;
         params.direct_samples = direct_samples;
         params.keller_samples = keller_samples;
+        params.suffix_samples = suffix_samples;
         params.strategy_mask = options.strategy_mask;
         params.sample_sequence = options.sample_sequence;
         params.receiver_model = options.receiver_model;

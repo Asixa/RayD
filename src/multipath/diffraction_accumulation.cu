@@ -133,6 +133,35 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     return hit.hit == 0u;
 }
 
+static __forceinline__ __device__ int global_primitive_id(const HitPayload &hit) {
+    if (hit.hit == 0u) {
+        return -1;
+    }
+    const int instance = static_cast<int>(hit.instance);
+    if (params.face_offsets != nullptr &&
+        instance >= 0 &&
+        instance < params.n_meshes) {
+        return params.face_offsets[instance] + static_cast<int>(hit.prim);
+    }
+    return static_cast<int>(hit.prim);
+}
+
+static __forceinline__ __device__ bool visible_segment_ignore_prim(float3 start,
+                                                                   float3 end,
+                                                                   int ignore_prim) {
+    const float3 delta = end - start;
+    const float dist = norm3(delta);
+    if (dist <= 1e-5f) {
+        return true;
+    }
+    const float3 dir = (1.f / dist) * delta;
+    const HitPayload hit = trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+    if (hit.hit == 0u) {
+        return true;
+    }
+    return global_primitive_id(hit) == ignore_prim;
+}
+
 static __forceinline__ __device__ unsigned int hash_u32(unsigned int x) {
     x ^= x >> 16;
     x *= 0x7feb352du;
@@ -292,6 +321,137 @@ static __forceinline__ __device__ float material_gain_for_state(int state_idx) {
                                    params.state_face1_prim_id[state_idx]);
 }
 
+static __forceinline__ __device__ float material_gain_for_prim(int prim) {
+    if (params.material_gain == nullptr ||
+        prim < 0 ||
+        prim >= params.material_count ||
+        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        return 1.f;
+    }
+    return fmaxf(params.material_gain[prim], 0.f);
+}
+
+static __forceinline__ __device__ bool load_triangle(int prim,
+                                                     float3 &p0,
+                                                     float3 &e1,
+                                                     float3 &e2,
+                                                     float3 &normal) {
+    if (prim < 0 ||
+        prim >= params.n_triangles ||
+        params.tri_p0_x == nullptr ||
+        params.tri_e1_x == nullptr ||
+        params.tri_e2_x == nullptr ||
+        params.tri_fn_x == nullptr) {
+        return false;
+    }
+    p0 = make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
+    e1 = make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
+    e2 = make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
+    normal = make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]);
+    if (dot3(normal, normal) <= 1e-12f) {
+        normal = cross3(e1, e2);
+    }
+    normal = normalize3(normal);
+    return dot3(normal, normal) > 0.f;
+}
+
+static __forceinline__ __device__ bool intersect_reflection_triangle(float3 image_source,
+                                                                     float3 target,
+                                                                     int prim,
+                                                                     float3 &reflection_point,
+                                                                     float3 &normal) {
+    float3 p0;
+    float3 e1;
+    float3 e2;
+    if (!load_triangle(prim, p0, e1, e2, normal)) {
+        return false;
+    }
+    const float3 delta = target - image_source;
+    const float dist = norm3(delta);
+    if (!(dist > kRayBias) || !isfinite(dist)) {
+        return false;
+    }
+    const float3 dir = (1.f / dist) * delta;
+    const float3 h = cross3(dir, e2);
+    const float a = dot3(e1, h);
+    if (fabsf(a) <= 1e-7f) {
+        return false;
+    }
+    const float f = 1.f / a;
+    const float3 s = image_source - p0;
+    const float u = f * dot3(s, h);
+    if (u < -1e-5f || u > 1.f + 1e-5f) {
+        return false;
+    }
+    const float3 q = cross3(s, e1);
+    const float v = f * dot3(dir, q);
+    if (v < -1e-5f || u + v > 1.f + 1e-5f) {
+        return false;
+    }
+    const float t = f * dot3(e2, q);
+    if (!(t > kRayBias) || !(t < dist - kRayBias) || !isfinite(t)) {
+        return false;
+    }
+    reflection_point = image_source + t * dir;
+    return true;
+}
+
+static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_point,
+                                                                    float3 target,
+                                                                    unsigned int lane,
+                                                                    unsigned int stream,
+                                                                    float3 &reflection_point,
+                                                                    int &prim,
+                                                                    float &reflection_gain,
+                                                                    float &suffix_fspl) {
+    if (params.suffix_candidate_prim_id == nullptr ||
+        params.suffix_candidate_count <= 0) {
+        return false;
+    }
+    const unsigned int candidate_hash = hash_u32(
+        lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
+    const int candidate_slot = static_cast<int>(
+        candidate_hash % static_cast<unsigned int>(params.suffix_candidate_count));
+    prim = static_cast<int>(params.suffix_candidate_prim_id[candidate_slot]);
+
+    float3 p0;
+    float3 e1;
+    float3 e2;
+    float3 normal;
+    if (!load_triangle(prim, p0, e1, e2, normal)) {
+        return false;
+    }
+    const float plane_distance = dot3(diff_point - p0, normal);
+    const float3 image_source = diff_point - 2.f * plane_distance * normal;
+    if (!intersect_reflection_triangle(image_source, target, prim, reflection_point, normal)) {
+        return false;
+    }
+
+    const float3 incoming = reflection_point - diff_point;
+    const float3 outgoing = target - reflection_point;
+    const float incoming_dist = norm3(incoming);
+    const float outgoing_dist = norm3(outgoing);
+    if (!(incoming_dist > kSmallEps) || !(outgoing_dist > kSmallEps)) {
+        return false;
+    }
+    const float3 incoming_hat = (1.f / incoming_dist) * incoming;
+    const float3 oriented_normal =
+        dot3(incoming_hat, normal) > 0.f ? (-1.f * normal) : normal;
+    const float3 reflected_hat =
+        incoming_hat - 2.f * dot3(incoming_hat, oriented_normal) * oriented_normal;
+    const float3 outgoing_hat = (1.f / outgoing_dist) * outgoing;
+    if (dot3(reflected_hat, outgoing_hat) <= 1.f - 1e-3f) {
+        return false;
+    }
+
+    const float gain = material_gain_for_prim(prim);
+    reflection_gain = gain * gain;
+    suffix_fspl = (params.wavelength * (1.f / (4.f * kPi))) *
+                  (params.wavelength * (1.f / (4.f * kPi))) /
+                  fmaxf(outgoing_dist * outgoing_dist, kSmallEps);
+    return isfinite(reflection_gain) && isfinite(suffix_fspl);
+}
+
 static __forceinline__ __device__ float diffraction_weight(int state_idx,
                                                            float3 edge_point,
                                                            float3 target,
@@ -370,13 +530,19 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
         (params.strategy_mask & RAYD_DIFF_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
         (params.strategy_mask & RAYD_DIFF_KELLER) != 0 ? params.keller_samples : 0;
-    const int total_samples = direct_limit + keller_limit;
+    const int suffix_limit =
+        (params.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? params.suffix_samples : 0;
+    const int total_samples = direct_limit + keller_limit + suffix_limit;
     if (total_samples <= 0) {
         return;
     }
     const bool is_direct = static_cast<int>(lane) < direct_limit;
-    const bool is_keller = !is_direct;
-    if (is_keller && static_cast<int>(lane) >= total_samples) {
+    const bool is_keller =
+        !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
+    const bool is_suffix =
+        static_cast<int>(lane) >= direct_limit + keller_limit &&
+        static_cast<int>(lane) < total_samples;
+    if (!is_direct && !is_keller && !is_suffix) {
         return;
     }
 
@@ -407,15 +573,47 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
         return;
     }
 
-    if (!visible_segment(source, edge_point) || !visible_segment(edge_point, target)) {
+    float suffix_reflection_gain = 1.f;
+    float suffix_fspl = 1.f;
+    int suffix_prim = -1;
+    float3 connection_target = target;
+    if (is_suffix) {
+        if (!suffix_reflection_connection(edge_point,
+                                          target,
+                                          lane,
+                                          17u,
+                                          connection_target,
+                                          suffix_prim,
+                                          suffix_reflection_gain,
+                                          suffix_fspl)) {
+            if (params.collect_debug_counts != 0) {
+                atomicAdd(params.out_utd_reject_count, 1);
+            }
+            return;
+        }
+    }
+
+    const bool source_visible = visible_segment(source, edge_point);
+    const bool target_visible = is_suffix
+        ? (visible_segment_ignore_prim(edge_point, connection_target, suffix_prim) &&
+           visible_segment_ignore_prim(connection_target, target, suffix_prim))
+        : visible_segment(edge_point, target);
+    if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_visibility_reject_count, 1);
         }
         return;
     }
 
-    const float contribution =
-        diffraction_weight(state_idx, edge_point, target, total_samples);
+    const int strategy_sample_count =
+        is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
+    float contribution =
+        diffraction_weight(state_idx, edge_point, connection_target, strategy_sample_count);
+    if (is_suffix) {
+        contribution *= suffix_reflection_gain *
+                        suffix_fspl *
+                        fmaxf(static_cast<float>(params.suffix_candidate_count), 1.f);
+    }
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_reject_count, 1);
@@ -427,8 +625,10 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
         atomicAdd(params.out_direct_count, 1);
-    } else {
+    } else if (is_keller) {
         atomicAdd(params.out_keller_count, 1);
+    } else {
+        atomicAdd(params.out_suffix_count, 1);
     }
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_use_count, 1);
@@ -451,12 +651,18 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         (params.strategy_mask & RAYD_DIFF_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
         (params.strategy_mask & RAYD_DIFF_KELLER) != 0 ? params.keller_samples : 0;
-    const int total_samples = direct_limit + keller_limit;
+    const int suffix_limit =
+        (params.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? params.suffix_samples : 0;
+    const int total_samples = direct_limit + keller_limit + suffix_limit;
     if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
         return;
     }
     const bool is_direct = static_cast<int>(lane) < direct_limit;
-    const bool is_keller = !is_direct;
+    const bool is_keller =
+        !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
+    const bool is_suffix =
+        static_cast<int>(lane) >= direct_limit + keller_limit &&
+        static_cast<int>(lane) < total_samples;
 
     const int first_idx = static_cast<int>(
         lane % static_cast<unsigned int>(params.state_count));
@@ -571,11 +777,32 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
             return;
         }
     }
+    float suffix_reflection_gain = 1.f;
+    float suffix_fspl = 1.f;
+    int suffix_prim = -1;
+    if (is_suffix) {
+        if (!suffix_reflection_connection(terminal_point,
+                                          target,
+                                          lane,
+                                          23u + static_cast<unsigned int>(params.max_order),
+                                          final_target,
+                                          suffix_prim,
+                                          suffix_reflection_gain,
+                                          suffix_fspl)) {
+            if (params.collect_debug_counts != 0) {
+                atomicAdd(params.out_utd_reject_count, 1);
+            }
+            return;
+        }
+    }
     const bool source_visible = visible_segment(source, first_point);
     const bool first_inter_edge_visible = visible_segment(first_point, second_point);
     const bool second_inter_edge_visible =
         params.max_order == 3 ? visible_segment(second_point, third_point) : true;
-    const bool target_visible = visible_segment(terminal_point, final_target);
+    const bool target_visible = is_suffix
+        ? (visible_segment_ignore_prim(terminal_point, final_target, suffix_prim) &&
+           visible_segment_ignore_prim(final_target, target, suffix_prim))
+        : visible_segment(terminal_point, final_target);
     if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_visibility_reject_count, 1);
@@ -630,10 +857,16 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     const float wave_gain =
         params.max_order == 3 ? wave_gain_per_event * wave_gain_per_event
                               : wave_gain_per_event;
-    const int strategy_sample_count = is_direct ? direct_limit : keller_limit;
+    const int strategy_sample_count =
+        is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
     const float sample_norm = 1.f / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
-    const float contribution =
+    float contribution =
         chain_weight * wave_gain * params.grid_cell_area * sample_norm;
+    if (is_suffix) {
+        contribution *= suffix_reflection_gain *
+                        suffix_fspl *
+                        fmaxf(static_cast<float>(params.suffix_candidate_count), 1.f);
+    }
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_reject_count, 1);
@@ -645,8 +878,10 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
         atomicAdd(params.out_direct_count, 1);
-    } else {
+    } else if (is_keller) {
         atomicAdd(params.out_keller_count, 1);
+    } else {
+        atomicAdd(params.out_suffix_count, 1);
     }
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_use_count, 1);
