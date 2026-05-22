@@ -3817,10 +3817,10 @@ SegmentVisibilityT<Detached> Scene::visible(
     require(static_cast<int>(slices(end)) == ray_count,
             "Scene::visible(): start and end must have the same width.");
 
-    SegmentVisibilityT<Detached> result;
-    result.ray_count = ray_count;
-    result.visible = full<MaskT<Detached>>(false, ray_count);
     if (ray_count == 0) {
+        SegmentVisibilityT<Detached> result;
+        result.ray_count = ray_count;
+        result.visible = full<MaskT<Detached>>(false, ray_count);
         return result;
     }
 
@@ -3830,6 +3830,16 @@ SegmentVisibilityT<Detached> Scene::visible(
         require(ignore_count % ray_count == 0,
                 "Scene::visible(): ignore_prim_ids width must be a multiple of ray count.");
         ignore_k = ignore_count / ray_count;
+    }
+
+    const bool use_jit_visibility = use_jit_trace_visibility_path(ignore_k);
+    if (!use_jit_visibility) {
+        const SegmentPairVisibilityT<Detached> pair =
+            visible_pair<Detached>(start, end, end, ignore_prim_ids, active);
+        SegmentVisibilityT<Detached> result;
+        result.ray_count = pair.ray_count;
+        result.visible = pair.visible_a;
+        return result;
     }
 
     const Mask active_detached = sanitize_segment_active<Detached>(start, end, active);
@@ -3843,27 +3853,8 @@ SegmentVisibilityT<Detached> Scene::visible(
         end_detached = end;
     }
 
-    if (use_jit_trace_visibility_path(ignore_k)) {
-        return trace_segment_visibility_jit_no_ignore<Detached>(
-            *optix_scene_, start_detached, end_detached, active_detached);
-    }
-
-    eval_segment_visibility_common(
-        start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
-    drjit::eval(end_detached);
-
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
-    return trace_segment_visibility_native<Detached>(
-        *optix_scene_,
-        *segment_visibility_pipeline_,
-        face_offsets_,
-        mesh_count_,
-        start_detached,
-        end_detached,
-        ignore_prim_ids,
-        ignore_k,
-        active_detached);
+    return trace_segment_visibility_jit_no_ignore<Detached>(
+        *optix_scene_, start_detached, end_detached, active_detached);
 }
 
 template <bool Detached>
