@@ -9,6 +9,7 @@
 #include <rayd/edge/edge.h>
 #include <rayd/ray.h>
 #include <rayd/mesh.h>
+#include <rayd/multipath/diffraction_accumulation.h>
 #include <rayd/multipath/reflection_accumulation.h>
 #include <rayd/multipath/reflection_epc.h>
 #include <rayd/multipath/reflection.h>

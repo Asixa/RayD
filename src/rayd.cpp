@@ -509,6 +509,143 @@ NB_MODULE(rayd, m) {
             .def_ro("reflection_count", &AccumResultAD::reflection_count)
             .def_ro("wedge_events", &AccumResultAD::wedge_events);
 
+        m.attr("RAYD_DIFF_DIRECT") =
+            nb::int_(static_cast<int>(RAYD_DIFF_DIRECT));
+        m.attr("RAYD_DIFF_KELLER") =
+            nb::int_(static_cast<int>(RAYD_DIFF_KELLER));
+        m.attr("RAYD_DIFF_SUFFIX_REFLECTION") =
+            nb::int_(static_cast<int>(RAYD_DIFF_SUFFIX_REFLECTION));
+        m.attr("RAYD_DIFF_HASH") = nb::int_(static_cast<int>(RAYD_DIFF_HASH));
+        m.attr("RAYD_DIFF_SOBOL") = nb::int_(static_cast<int>(RAYD_DIFF_SOBOL));
+        m.attr("RAYD_DIFF_MATCHED_ISOTROPIC") =
+            nb::int_(static_cast<int>(RAYD_DIFF_MATCHED_ISOTROPIC));
+
+        nb::class_<DiffractionGrid>(m, "DiffractionGrid")
+            .def(nb::init<>())
+            .def_rw("axis", &DiffractionGrid::axis)
+            .def_rw("position", &DiffractionGrid::position)
+            .def_rw("coord0_min", &DiffractionGrid::coord0_min)
+            .def_rw("coord0_max", &DiffractionGrid::coord0_max)
+            .def_rw("coord1_min", &DiffractionGrid::coord1_min)
+            .def_rw("coord1_max", &DiffractionGrid::coord1_max)
+            .def_rw("resolution0", &DiffractionGrid::resolution0)
+            .def_rw("resolution1", &DiffractionGrid::resolution1)
+            .def_rw("cell_area", &DiffractionGrid::cell_area);
+
+        nb::class_<DiffractionAccumOptions>(m, "DiffractionAccumOptions")
+            .def(nb::init<>())
+            .def_rw("wavelength", &DiffractionAccumOptions::wavelength)
+            .def_rw("k", &DiffractionAccumOptions::k)
+            .def_rw("seed", &DiffractionAccumOptions::seed)
+            .def_rw("samples", &DiffractionAccumOptions::samples)
+            .def_rw("max_order", &DiffractionAccumOptions::max_order)
+            .def_rw("direct_samples", &DiffractionAccumOptions::direct_samples)
+            .def_rw("keller_samples", &DiffractionAccumOptions::keller_samples)
+            .def_rw("suffix_samples", &DiffractionAccumOptions::suffix_samples)
+            .def_rw("strategy_mask", &DiffractionAccumOptions::strategy_mask)
+            .def_rw("sample_sequence", &DiffractionAccumOptions::sample_sequence)
+            .def_rw("receiver_model", &DiffractionAccumOptions::receiver_model)
+            .def_rw("collect_edge_use", &DiffractionAccumOptions::collect_edge_use)
+            .def_rw("collect_debug_counts",
+                    &DiffractionAccumOptions::collect_debug_counts);
+
+        nb::class_<DiffractionMaterial>(m, "DiffractionMaterial")
+            .def(nb::init<>())
+            .def_rw("eta_r", &DiffractionMaterial::eta_r)
+            .def_rw("sigma", &DiffractionMaterial::sigma)
+            .def_rw("mu_r", &DiffractionMaterial::mu_r)
+            .def_rw("gain", &DiffractionMaterial::gain)
+            .def_rw("valid", &DiffractionMaterial::valid);
+
+        nb::class_<DiffractionMaterialAD>(m, "DiffractionMaterialAD")
+            .def(nb::init<>())
+            .def_rw("eta_r", &DiffractionMaterialAD::eta_r)
+            .def_rw("sigma", &DiffractionMaterialAD::sigma)
+            .def_rw("mu_r", &DiffractionMaterialAD::mu_r)
+            .def_rw("gain", &DiffractionMaterialAD::gain)
+            .def_rw("valid", &DiffractionMaterialAD::valid);
+
+        nb::class_<DiffractionStateTable>(m, "DiffractionStateTable")
+            .def(nb::init<>())
+            .def_rw("count", &DiffractionStateTable::count)
+            .def_rw("edge_index", &DiffractionStateTable::edge_index)
+            .def_rw("edge_pos", &DiffractionStateTable::edge_pos)
+            .def_rw("edge_dir", &DiffractionStateTable::edge_dir)
+            .def_rw("edge_line_min", &DiffractionStateTable::edge_line_min)
+            .def_rw("edge_line_max", &DiffractionStateTable::edge_line_max)
+            .def_rw("face0_normal", &DiffractionStateTable::face0_normal)
+            .def_rw("face1_normal", &DiffractionStateTable::face1_normal)
+            .def_rw("face0_prim_id", &DiffractionStateTable::face0_prim_id)
+            .def_rw("face1_prim_id", &DiffractionStateTable::face1_prim_id)
+            .def_rw("exterior_angle", &DiffractionStateTable::exterior_angle)
+            .def_rw("source_pos", &DiffractionStateTable::source_pos)
+            .def_rw("source_power", &DiffractionStateTable::source_power)
+            .def_rw("incident_direction",
+                    &DiffractionStateTable::incident_direction)
+            .def_rw("initial_direction",
+                    &DiffractionStateTable::initial_direction)
+            .def_rw("prefix_reflection_depth",
+                    &DiffractionStateTable::prefix_reflection_depth);
+
+        nb::class_<DiffractionStateTableAD>(m, "DiffractionStateTableAD")
+            .def(nb::init<>())
+            .def_rw("count", &DiffractionStateTableAD::count)
+            .def_rw("edge_index", &DiffractionStateTableAD::edge_index)
+            .def_rw("edge_pos", &DiffractionStateTableAD::edge_pos)
+            .def_rw("edge_dir", &DiffractionStateTableAD::edge_dir)
+            .def_rw("edge_line_min", &DiffractionStateTableAD::edge_line_min)
+            .def_rw("edge_line_max", &DiffractionStateTableAD::edge_line_max)
+            .def_rw("face0_normal", &DiffractionStateTableAD::face0_normal)
+            .def_rw("face1_normal", &DiffractionStateTableAD::face1_normal)
+            .def_rw("face0_prim_id", &DiffractionStateTableAD::face0_prim_id)
+            .def_rw("face1_prim_id", &DiffractionStateTableAD::face1_prim_id)
+            .def_rw("exterior_angle", &DiffractionStateTableAD::exterior_angle)
+            .def_rw("source_pos", &DiffractionStateTableAD::source_pos)
+            .def_rw("source_power", &DiffractionStateTableAD::source_power)
+            .def_rw("incident_direction",
+                    &DiffractionStateTableAD::incident_direction)
+            .def_rw("initial_direction",
+                    &DiffractionStateTableAD::initial_direction)
+            .def_rw("prefix_reflection_depth",
+                    &DiffractionStateTableAD::prefix_reflection_depth);
+
+        nb::class_<DiffractionAccumResult>(m, "DiffractionAccumResult")
+            .def(nb::init<>())
+            .def_rw("grid_cell_count", &DiffractionAccumResult::grid_cell_count)
+            .def_rw("diffraction_power", &DiffractionAccumResult::diffraction_power)
+            .def_rw("diffraction_field_x",
+                    &DiffractionAccumResult::diffraction_field_x)
+            .def_rw("diffraction_field_y",
+                    &DiffractionAccumResult::diffraction_field_y)
+            .def_rw("diffraction_field_z",
+                    &DiffractionAccumResult::diffraction_field_z)
+            .def_rw("direct_count", &DiffractionAccumResult::direct_count)
+            .def_rw("keller_count", &DiffractionAccumResult::keller_count)
+            .def_rw("suffix_count", &DiffractionAccumResult::suffix_count)
+            .def_rw("visibility_reject_count",
+                    &DiffractionAccumResult::visibility_reject_count)
+            .def_rw("utd_reject_count", &DiffractionAccumResult::utd_reject_count)
+            .def_rw("edge_use_count", &DiffractionAccumResult::edge_use_count);
+
+        nb::class_<DiffractionAccumResultAD>(m, "DiffractionAccumResultAD")
+            .def(nb::init<>())
+            .def_rw("grid_cell_count", &DiffractionAccumResultAD::grid_cell_count)
+            .def_rw("diffraction_power",
+                    &DiffractionAccumResultAD::diffraction_power)
+            .def_rw("diffraction_field_x",
+                    &DiffractionAccumResultAD::diffraction_field_x)
+            .def_rw("diffraction_field_y",
+                    &DiffractionAccumResultAD::diffraction_field_y)
+            .def_rw("diffraction_field_z",
+                    &DiffractionAccumResultAD::diffraction_field_z)
+            .def_rw("direct_count", &DiffractionAccumResultAD::direct_count)
+            .def_rw("keller_count", &DiffractionAccumResultAD::keller_count)
+            .def_rw("suffix_count", &DiffractionAccumResultAD::suffix_count)
+            .def_rw("visibility_reject_count",
+                    &DiffractionAccumResultAD::visibility_reject_count)
+            .def_rw("utd_reject_count", &DiffractionAccumResultAD::utd_reject_count)
+            .def_rw("edge_use_count", &DiffractionAccumResultAD::edge_use_count);
+
         nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
             .def_ro("ray_count", &ReflectionEpcResult::ray_count)
             .def_ro("max_bounces", &ReflectionEpcResult::max_bounces)

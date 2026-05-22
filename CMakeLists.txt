@@ -106,6 +106,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/utils.h
 
     ${RAYD_INCLUDE_DIR}/ray.h
+    ${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_epc.h
     ${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation.h
