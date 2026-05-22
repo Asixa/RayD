@@ -1126,7 +1126,7 @@ Mask launch_segment_visibility_detached(
     params.end_y = end.y().data();
     params.end_z = end.z().data();
     params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
-    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::Segment), params);
+    pipeline.launch(0, params);
     return visible;
 }
 
@@ -1246,7 +1246,7 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     params.end_b_z = end_b.z().data();
     params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
     params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
-    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentPair), params);
+    pipeline.launch(0, params);
 
     if constexpr (!Detached) {
         result.visible_a = MaskAD(visible_a);
@@ -1339,7 +1339,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
         params.sample_fractions[i] = sample_fractions[i];
     }
     params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
-    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::AxialEdge), params);
+    pipeline.launch(0, params);
 
     if constexpr (!Detached) {
         result.any_visible = MaskAD(any_visible);
@@ -1446,7 +1446,7 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     params.out_visible = reinterpret_cast<uint8_t *>(all_visible.data());
     params.out_first_blocked_segment = first_blocked_segment.data();
     params.out_first_blocked_prim = first_blocked_prim.data();
-    pipeline.launch(static_cast<int>(SegmentVisibilityLaunchKind::SegmentChain), params);
+    pipeline.launch(0, params);
 
     if constexpr (!Detached) {
         result.all_visible = MaskAD(all_visible);
@@ -1578,6 +1578,36 @@ int face_opposite_vertex(const std::array<int, 3> &face_vertices, int v0, int v1
 
 } // namespace
 
+void Scene::reset_multipath_pipelines() {
+    reflection_pipeline_.reset();
+    reflection_accumulation_pipeline_.reset();
+    diffraction_accumulation_pipeline_.reset();
+    diffraction_paths_pipeline_.reset();
+    reflection_epc_pipeline_.reset();
+    reflection_epc_geometry_ready_ = false;
+    segment_visibility_pipeline_.reset();
+    segment_pair_visibility_pipeline_.reset();
+    axial_edge_visibility_pipeline_.reset();
+    segment_chain_visibility_pipeline_.reset();
+}
+
+void Scene::prewarm_path_multipath_pipelines(int hitgroup_record_count) {
+    const int record_count = std::max(1, hitgroup_record_count);
+    OptixDeviceContext context = jit_optix_context();
+    ensure_pipeline(segment_visibility_pipeline_, context,
+                    record_count, segment_visibility_pipeline_config());
+    ensure_pipeline(segment_pair_visibility_pipeline_, context,
+                    record_count, segment_pair_visibility_pipeline_config());
+    ensure_pipeline(axial_edge_visibility_pipeline_, context,
+                    record_count, axial_edge_visibility_pipeline_config());
+    ensure_pipeline(segment_chain_visibility_pipeline_, context,
+                    record_count, segment_chain_visibility_pipeline_config());
+    ensure_pipeline(reflection_epc_pipeline_, context,
+                    record_count, reflection_epc_pipeline_config());
+    ensure_pipeline(diffraction_paths_pipeline_, context,
+                    record_count, diffraction_paths_pipeline_config());
+}
+
 Scene::Scene(const std::string &edge_bvh_backend)
     : optix_scene_(std::make_unique<OptixScene>()),
       optix_static_scene_(std::make_unique<OptixScene>()),
@@ -1626,10 +1656,7 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     optix_static_mesh_indices_.clear();
     optix_dynamic_mesh_indices_.clear();
     optix_dynamic_mesh_local_index_.clear();
-    reflection_pipeline_.reset();
-    reflection_epc_pipeline_.reset();
-    reflection_epc_geometry_ready_ = false;
-    segment_visibility_pipeline_.reset();
+    reset_multipath_pipelines();
     return mesh_count_ - 1;
 }
 
@@ -2054,6 +2081,9 @@ void Scene::build() {
     optix_static_mesh_indices_.clear();
     optix_dynamic_mesh_indices_.clear();
     optix_dynamic_mesh_local_index_.assign(mesh_records_.size(), -1);
+    reset_multipath_pipelines();
+    prewarm_path_multipath_pipelines(
+        optix_split_active_ ? std::max(static_mesh_count, dynamic_mesh_count) : mesh_count_);
 
     if (optix_split_active_) {
         std::vector<OptixSceneMeshDesc> static_mesh_descs;
@@ -2085,10 +2115,6 @@ void Scene::build() {
         optix_dynamic_scene_ = std::make_unique<OptixScene>();
         optix_scene_->build(mesh_descs);
     }
-    reflection_pipeline_.reset();
-    reflection_epc_pipeline_.reset();
-    reflection_epc_geometry_ready_ = false;
-    segment_visibility_pipeline_.reset();
     mask_dirty_ = false;
     edge_bvh_ = std::make_unique<SceneEdge>();
     edge_optix_ = std::make_unique<SceneEdgeOptix>();
@@ -3430,6 +3456,8 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
             drjit::eval(options.final_ignore_group_ids);
         }
 
+        ensure_pipeline(segment_pair_visibility_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, segment_pair_visibility_pipeline_config());
         ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
                         hitgroup_record_count, reflection_epc_pipeline_config());
 
@@ -3818,6 +3846,8 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
             drjit::eval(options.final_ignore_group_ids);
         }
 
+        ensure_pipeline(segment_pair_visibility_pipeline_, primary_scene->context(),
+                        hitgroup_record_count, segment_pair_visibility_pipeline_config());
         ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
                         hitgroup_record_count, reflection_epc_pipeline_config());
 
@@ -4986,11 +5016,11 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
         start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
     drjit::eval(end_a_detached, end_b_detached);
 
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
+    ensure_pipeline(segment_pair_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_pair_visibility_pipeline_config());
     return trace_segment_pair_visibility_native<Detached>(
         *optix_scene_,
-        *segment_visibility_pipeline_,
+        *segment_pair_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
         start_detached,
@@ -5078,11 +5108,11 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
             active_detached);
     }
 
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
+    ensure_pipeline(axial_edge_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, axial_edge_visibility_pipeline_config());
     return trace_axial_edge_visibility_native<Detached>(
         *optix_scene_,
-        *segment_visibility_pipeline_,
+        *axial_edge_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
         source_detached,
@@ -5160,11 +5190,11 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
         points_detached, face_offsets_, ignore_prim_per_segment, ignore_k, active_detached);
     drjit::eval(chain_length);
 
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
+    ensure_pipeline(segment_chain_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_chain_visibility_pipeline_config());
     return trace_segment_chain_visibility_native<Detached>(
         *optix_scene_,
-        *segment_visibility_pipeline_,
+        *segment_chain_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
         points_detached,

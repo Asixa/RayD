@@ -24,7 +24,13 @@ namespace rayd {
 
 namespace {
 
-using PipelineCacheKey = std::tuple<OptixDeviceContext, const char *, int, int, size_t>;
+using PipelineCacheKey = std::tuple<
+    OptixDeviceContext,
+    const char *,
+    const char *,
+    int,
+    int,
+    size_t>;
 
 std::mutex &pipeline_cache_mutex() {
     static std::mutex *mutex = new std::mutex();
@@ -173,6 +179,28 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
                hitgroup_records.data(),
                sizeof(EmptySbtRecord) * hitgroup_records.size());
 
+    for (OptixProgramGroup &pg : pg_raygens_) {
+        if (pg != nullptr) {
+            check_optix(optixProgramGroupDestroy(pg),
+                        "optixProgramGroupDestroy(raygen)");
+            pg = nullptr;
+        }
+    }
+    if (pg_hitgroup_ != nullptr) {
+        check_optix(optixProgramGroupDestroy(pg_hitgroup_),
+                    "optixProgramGroupDestroy(hitgroup)");
+        pg_hitgroup_ = nullptr;
+    }
+    if (pg_miss_ != nullptr) {
+        check_optix(optixProgramGroupDestroy(pg_miss_),
+                    "optixProgramGroupDestroy(miss)");
+        pg_miss_ = nullptr;
+    }
+    if (module_ != nullptr) {
+        check_optix(optixModuleDestroy(module_), "optixModuleDestroy(multipath)");
+        module_ = nullptr;
+    }
+
     params_size_ = config.params_size;
     params_buffer_ = jit_malloc(AllocType::Device, params_size_);
     hitgroup_record_count_ = hitgroup_record_count;
@@ -187,6 +215,7 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
     PipelineCacheKey key{
         context,
         config.ptx,
+        config.raygen_entries.empty() ? nullptr : config.raygen_entries.front(),
         hitgroup_capacity,
         config.num_payload_values,
         config.params_size,
@@ -306,15 +335,30 @@ OptixPipelineConfig segment_visibility_pipeline_config() {
     OptixPipelineConfig config;
     config.ptx = segment_visibility_ptx;
     config.ptx_size = segment_visibility_ptx_size;
-    config.raygen_entries = {"__raygen__segment_visibility",
-                             "__raygen__segment_pair_visibility",
-                             "__raygen__axial_edge_visibility",
-                             "__raygen__segment_chain_visibility"};
+    config.raygen_entries = {"__raygen__segment_visibility"};
     config.miss_entry = "__miss__segment_visibility";
     config.closesthit_entry = "__closesthit__segment_visibility";
     config.anyhit_entry = "__anyhit__segment_visibility";
     config.num_payload_values = 3;
     config.params_size = sizeof(SegmentVisibilityParams);
+    return config;
+}
+
+OptixPipelineConfig segment_pair_visibility_pipeline_config() {
+    OptixPipelineConfig config = segment_visibility_pipeline_config();
+    config.raygen_entries = {"__raygen__segment_pair_visibility"};
+    return config;
+}
+
+OptixPipelineConfig axial_edge_visibility_pipeline_config() {
+    OptixPipelineConfig config = segment_visibility_pipeline_config();
+    config.raygen_entries = {"__raygen__axial_edge_visibility"};
+    return config;
+}
+
+OptixPipelineConfig segment_chain_visibility_pipeline_config() {
+    OptixPipelineConfig config = segment_visibility_pipeline_config();
+    config.raygen_entries = {"__raygen__segment_chain_visibility"};
     return config;
 }
 

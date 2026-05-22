@@ -304,6 +304,8 @@ private:
     };
 
     OptixSceneSelection select_optix_scenes() const;
+    void reset_multipath_pipelines();
+    void prewarm_path_multipath_pipelines(int hitgroup_record_count);
     SceneMeshRecord &mesh_record(int mesh_id);
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);
@@ -352,6 +354,9 @@ private:
     mutable std::shared_ptr<OptixLaunchPipeline> diffraction_paths_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> segment_pair_visibility_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> axial_edge_visibility_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> segment_chain_visibility_pipeline_;
     mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;

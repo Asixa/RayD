@@ -73,15 +73,6 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
     int hitgroup_record_count,
     const OptixPipelineConfig &config);
 
-/// Selects which raygen entry of the segment-visibility pipeline to launch; passed
-/// as the raygen index to OptixLaunchPipeline::launch().
-enum class SegmentVisibilityLaunchKind {
-    Segment = 0,
-    SegmentPair = 1,
-    AxialEdge = 2,
-    SegmentChain = 3
-};
-
 // Pre-filled pipeline configs (PTX blob, entry points, payload/params sizes) for
 // each multipath pipeline; pass to OptixLaunchPipeline::build().
 OptixPipelineConfig reflection_trace_pipeline_config();
@@ -90,5 +81,8 @@ OptixPipelineConfig reflection_accumulation_pipeline_config();
 OptixPipelineConfig diffraction_accumulation_pipeline_config();
 OptixPipelineConfig diffraction_paths_pipeline_config();
 OptixPipelineConfig segment_visibility_pipeline_config();
+OptixPipelineConfig segment_pair_visibility_pipeline_config();
+OptixPipelineConfig axial_edge_visibility_pipeline_config();
+OptixPipelineConfig segment_chain_visibility_pipeline_config();
 
 } // namespace rayd

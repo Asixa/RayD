@@ -7,8 +7,8 @@ namespace rayd {
 /// Maximum edge samples per axial-edge visibility query.
 constexpr int SegmentVisibilityMaxSamples = 16;
 
-/// Launch parameters shared by all four segment-visibility kinds (see
-/// SegmentVisibilityLaunchKind); only the fields relevant to the chosen kind are read.
+/// Launch parameters shared by the split segment-visibility pipelines; only the
+/// fields relevant to the selected raygen entry are read.
 struct SegmentVisibilityParams {
     uint64_t handle = 0;       ///< Traversable handle of the scene IAS.
 

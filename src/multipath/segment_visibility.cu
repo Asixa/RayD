@@ -109,9 +109,8 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
 
 } // namespace
 
-// OptiX programs for the native segment-visibility pipeline. The four raygen entries
-// (one per SegmentVisibilityLaunchKind) share the anyhit/closesthit/miss programs;
-// each raygen launch handles one query (or chain).
+// OptiX programs for the native segment-visibility pipelines. Each split pipeline
+// links one raygen entry and shares the anyhit/closesthit/miss programs.
 
 /// Anyhit: skip occluders whose global primitive id is on this query's ignore list.
 extern "C" __global__ void __anyhit__segment_visibility() {
