@@ -652,6 +652,57 @@ NB_MODULE(rayd, m) {
             .def_rw("utd_reject_count", &DiffractionAccumResultAD::utd_reject_count)
             .def_rw("edge_use_count", &DiffractionAccumResultAD::edge_use_count);
 
+        nb::class_<DiffractionPathOptions>(m, "DiffractionPathOptions")
+            .def(nb::init<>())
+            .def_rw("wavelength", &DiffractionPathOptions::wavelength)
+            .def_rw("k", &DiffractionPathOptions::k)
+            .def_rw("seed", &DiffractionPathOptions::seed)
+            .def_rw("max_order", &DiffractionPathOptions::max_order)
+            .def_rw("max_paths", &DiffractionPathOptions::max_paths)
+            .def_rw("max_receivers", &DiffractionPathOptions::max_receivers)
+            .def_rw("strategy_mask", &DiffractionPathOptions::strategy_mask)
+            .def_rw("sample_count", &DiffractionPathOptions::sample_count)
+            .def_rw("return_geometry", &DiffractionPathOptions::return_geometry)
+            .def_rw("receiver_model", &DiffractionPathOptions::receiver_model);
+
+        nb::class_<DiffractionPathResult>(m, "DiffractionPathResult")
+            .def(nb::init<>())
+            .def_rw("capacity", &DiffractionPathResult::capacity)
+            .def_rw("count", &DiffractionPathResult::count)
+            .def_rw("valid", &DiffractionPathResult::valid)
+            .def_rw("tx_index", &DiffractionPathResult::tx_index)
+            .def_rw("rx_index", &DiffractionPathResult::rx_index)
+            .def_rw("order", &DiffractionPathResult::order)
+            .def_rw("edge_index_0", &DiffractionPathResult::edge_index_0)
+            .def_rw("edge_index_1", &DiffractionPathResult::edge_index_1)
+            .def_rw("edge_index_2", &DiffractionPathResult::edge_index_2)
+            .def_rw("delay", &DiffractionPathResult::delay)
+            .def_rw("field_x", &DiffractionPathResult::field_x)
+            .def_rw("field_y", &DiffractionPathResult::field_y)
+            .def_rw("field_z", &DiffractionPathResult::field_z)
+            .def_rw("point_0", &DiffractionPathResult::point_0)
+            .def_rw("point_1", &DiffractionPathResult::point_1)
+            .def_rw("point_2", &DiffractionPathResult::point_2);
+
+        nb::class_<DiffractionPathResultAD>(m, "DiffractionPathResultAD")
+            .def(nb::init<>())
+            .def_rw("capacity", &DiffractionPathResultAD::capacity)
+            .def_rw("count", &DiffractionPathResultAD::count)
+            .def_rw("valid", &DiffractionPathResultAD::valid)
+            .def_rw("tx_index", &DiffractionPathResultAD::tx_index)
+            .def_rw("rx_index", &DiffractionPathResultAD::rx_index)
+            .def_rw("order", &DiffractionPathResultAD::order)
+            .def_rw("edge_index_0", &DiffractionPathResultAD::edge_index_0)
+            .def_rw("edge_index_1", &DiffractionPathResultAD::edge_index_1)
+            .def_rw("edge_index_2", &DiffractionPathResultAD::edge_index_2)
+            .def_rw("delay", &DiffractionPathResultAD::delay)
+            .def_rw("field_x", &DiffractionPathResultAD::field_x)
+            .def_rw("field_y", &DiffractionPathResultAD::field_y)
+            .def_rw("field_z", &DiffractionPathResultAD::field_z)
+            .def_rw("point_0", &DiffractionPathResultAD::point_0)
+            .def_rw("point_1", &DiffractionPathResultAD::point_1)
+            .def_rw("point_2", &DiffractionPathResultAD::point_2);
+
         nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
             .def_ro("ray_count", &ReflectionEpcResult::ray_count)
             .def_ro("max_bounces", &ReflectionEpcResult::max_bounces)
@@ -1389,6 +1440,40 @@ NB_MODULE(rayd, m) {
                  "grid"_a,
                  "material"_a,
                  "options"_a = DiffractionAccumOptions(),
+                 "active"_a = true)
+            .def("trace_diffraction_paths",
+                 [](const Scene &scene,
+                    const Vector3f &tx_positions,
+                    const Vector3f &rx_positions,
+                    const DiffractionStateTable &states,
+                    const DiffractionMaterial &material,
+                    const DiffractionPathOptions &options,
+                    rayd::Mask active) {
+                     return scene.trace_diffraction_paths<true>(
+                         tx_positions, rx_positions, states, material, options, active);
+                 },
+                 "tx_positions"_a,
+                 "rx_positions"_a,
+                 "states"_a,
+                 "material"_a,
+                 "options"_a = DiffractionPathOptions(),
+                 "active"_a = true)
+            .def("trace_diffraction_paths",
+                 [](const Scene &scene,
+                    const Vector3fAD &tx_positions,
+                    const Vector3fAD &rx_positions,
+                    const DiffractionStateTableAD &states,
+                    const DiffractionMaterialAD &material,
+                    const DiffractionPathOptions &options,
+                    rayd::MaskAD active) {
+                     return scene.trace_diffraction_paths<false>(
+                         tx_positions, rx_positions, states, material, options, active);
+                 },
+                 "tx_positions"_a,
+                 "rx_positions"_a,
+                 "states"_a,
+                 "material"_a,
+                 "options"_a = DiffractionPathOptions(),
                  "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const Ray &ray, rayd::Mask active) {

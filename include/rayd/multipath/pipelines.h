@@ -10,6 +10,7 @@
 #include <rayd/multipath/reflection_epc_params.h>
 #include <rayd/multipath/reflection_accumulation_params.h>
 #include <rayd/multipath/diffraction_accumulation_params.h>
+#include <rayd/multipath/diffraction_paths_params.h>
 #include <rayd/multipath/segment_visibility_params.h>
 
 namespace rayd {
@@ -87,6 +88,7 @@ OptixPipelineConfig reflection_trace_pipeline_config();
 OptixPipelineConfig reflection_epc_pipeline_config();
 OptixPipelineConfig reflection_accumulation_pipeline_config();
 OptixPipelineConfig diffraction_accumulation_pipeline_config();
+OptixPipelineConfig diffraction_paths_pipeline_config();
 OptixPipelineConfig segment_visibility_pipeline_config();
 
 } // namespace rayd

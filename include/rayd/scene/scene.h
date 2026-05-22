@@ -10,6 +10,7 @@
 #include <rayd/ray.h>
 #include <rayd/mesh.h>
 #include <rayd/multipath/diffraction_accumulation.h>
+#include <rayd/multipath/diffraction_paths.h>
 #include <rayd/multipath/reflection_accumulation.h>
 #include <rayd/multipath/reflection_epc.h>
 #include <rayd/multipath/reflection.h>
@@ -160,6 +161,15 @@ public:
         const DiffractionGrid &grid,
         const DiffractionMaterialT<Detached> &material,
         const DiffractionAccumOptions &options,
+        MaskT<Detached> active) const;
+    /// Native compact first-order diffraction path export (non-AD fast path).
+    template <bool Detached>
+    DiffractionPathResultT<Detached> trace_diffraction_paths(
+        const Vector3fT<Detached> &tx_positions,
+        const Vector3fT<Detached> &rx_positions,
+        const DiffractionStateTableT<Detached> &states,
+        const DiffractionMaterialT<Detached> &material,
+        const DiffractionPathOptions &options,
         MaskT<Detached> active) const;
     /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
@@ -339,6 +349,7 @@ private:
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> diffraction_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_paths_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
     mutable bool reflection_epc_geometry_ready_ = false;

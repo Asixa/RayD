@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import subprocess
 import sys
@@ -158,6 +159,67 @@ class DiffractionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["direct0"], 4)
         self.assertEqual(data["edge_use1"], 15)
 
+    def test_diffraction_path_export_abi_fields_are_bound(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            options = pj.DiffractionPathOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 19
+            options.max_order = 1
+            options.max_paths = 8
+            options.max_receivers = 3
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.sample_count = 64
+            options.return_geometry = 1
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+
+            result = pj.DiffractionPathResult()
+            result.capacity = 2
+            result.count = cuda.Int([1])
+            result.valid = cuda.Bool([True, False])
+            result.tx_index = cuda.Int([0, -1])
+            result.rx_index = cuda.Int([1, -1])
+            result.order = cuda.Int([1, 0])
+            result.edge_index_0 = cuda.Int([7, -1])
+            result.edge_index_1 = cuda.Int([-1, -1])
+            result.edge_index_2 = cuda.Int([-1, -1])
+            result.delay = cuda.Float([2.0e-9, 0.0])
+            result.field_x = cuda.Complex2f([1.0, 0.0], [0.25, 0.0])
+            result.field_y = cuda.Complex2f([0.0, 0.0], [0.0, 0.0])
+            result.field_z = cuda.Complex2f([0.0, 0.0], [0.0, 0.0])
+            result.point_0 = cuda.Array3f([1.0, 0.0], [2.0, 0.0], [3.0, 0.0])
+            result.point_1 = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
+            result.point_2 = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
+            dr.eval(result.count, result.valid, result.field_x.real, result.point_0.z)
+
+            print(json.dumps({
+                "max_paths": options.max_paths,
+                "return_geometry": options.return_geometry,
+                "capacity": result.capacity,
+                "count": int(result.count[0]),
+                "rx0": int(result.rx_index[0]),
+                "edge0": int(result.edge_index_0[0]),
+                "field_x_im0": float(result.field_x.imag[0]),
+                "point_0_z0": float(result.point_0.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["max_paths"], 8)
+        self.assertEqual(data["return_geometry"], 1)
+        self.assertEqual(data["capacity"], 2)
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["rx0"], 1)
+        self.assertEqual(data["edge0"], 7)
+        self.assertAlmostEqual(data["field_x_im0"], 0.25, places=6)
+        self.assertAlmostEqual(data["point_0_z0"], 3.0, places=6)
+
     def test_accumulate_diffraction_order1_writes_grid(self):
         data = run_json(
             """
@@ -313,6 +375,104 @@ class DiffractionAccumulationTests(unittest.TestCase):
         )
         self.assertEqual(data["keller_edge_use_count"], data["keller_path_count"])
         self.assertEqual(data["keller_launches"], 1)
+
+    def test_trace_diffraction_paths_order1_exports_compact_paths(self):
+        data = run_json(
+            """
+            import json
+            import math
+            import numpy as np
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DiffractionStateTable()
+            states.count = 1
+            states.edge_index = cuda.Int([0])
+            states.edge_pos = cuda.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            states.edge_line_min = cuda.Float([-0.5])
+            states.edge_line_max = cuda.Float([0.5])
+            states.face0_normal = cuda.Array3f([0.0], [1.0], [0.0])
+            states.face1_normal = cuda.Array3f([0.0], [-1.0], [0.0])
+            states.face0_prim_id = cuda.Int([-1])
+            states.face1_prim_id = cuda.Int([-1])
+            states.exterior_angle = cuda.Float([1.5 * math.pi])
+            states.source_pos = cuda.Array3f([0.0], [0.0], [1.0])
+            states.source_power = cuda.Float([1.0])
+            states.incident_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.initial_direction = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_reflection_depth = cuda.Int([0])
+
+            material = pj.DiffractionMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DiffractionPathOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.max_order = 1
+            options.max_paths = 4
+            options.max_receivers = 1
+            options.strategy_mask = pj.RAYD_DIFF_DIRECT
+            options.sample_count = 4
+            options.return_geometry = 1
+            options.receiver_model = pj.RAYD_DIFF_MATCHED_ISOTROPIC
+
+            result = scene.trace_diffraction_paths(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                states,
+                material,
+                options,
+                cuda.Bool([True]),
+            )
+            dr.eval(
+                result.count,
+                result.valid,
+                result.rx_index,
+                result.edge_index_0,
+                result.delay,
+                result.field_x.real,
+                result.field_x.imag,
+                result.point_0.x,
+            )
+
+            print(json.dumps({
+                "capacity": result.capacity,
+                "count": int(np.asarray(result.count, dtype=np.int32)[0]),
+                "valid0": bool(np.asarray(result.valid, dtype=np.bool_)[0]),
+                "rx0": int(np.asarray(result.rx_index, dtype=np.int32)[0]),
+                "edge0": int(np.asarray(result.edge_index_0, dtype=np.int32)[0]),
+                "delay0": float(np.asarray(result.delay, dtype=np.float32)[0]),
+                "field_x_re0": float(np.asarray(result.field_x.real, dtype=np.float32)[0]),
+                "field_x_im0": float(np.asarray(result.field_x.imag, dtype=np.float32)[0]),
+                "point_0_x0": float(np.asarray(result.point_0.x, dtype=np.float32)[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["capacity"], 1)
+        self.assertEqual(data["count"], 1)
+        self.assertTrue(data["valid0"])
+        self.assertEqual(data["rx0"], 0)
+        self.assertEqual(data["edge0"], 0)
+        self.assertTrue(math.isfinite(data["delay0"]))
+        self.assertGreater(data["delay0"], 0.0)
+        self.assertTrue(math.isfinite(data["field_x_re0"]))
+        self.assertTrue(math.isfinite(data["field_x_im0"]))
+        self.assertAlmostEqual(data["point_0_x0"], 0.0, places=5)
 
     def test_accumulate_diffraction_order1_accepts_vector_active_mask(self):
         data = run_json(

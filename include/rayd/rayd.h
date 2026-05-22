@@ -84,6 +84,7 @@ using AccumResult = AccumResultT<true>;
 
 struct DiffractionGrid;
 struct DiffractionAccumOptions;
+struct DiffractionPathOptions;
 
 template <typename> struct DiffractionMaterialData;
 template <bool Detached>
@@ -102,6 +103,12 @@ template <bool Detached>
 using DiffractionAccumResultT = DiffractionAccumResultData<FloatT<Detached>>;
 using DiffractionAccumResultAD = DiffractionAccumResultT<false>;
 using DiffractionAccumResult = DiffractionAccumResultT<true>;
+
+template <typename> struct DiffractionPathResultData;
+template <bool Detached>
+using DiffractionPathResultT = DiffractionPathResultData<FloatT<Detached>>;
+using DiffractionPathResultAD = DiffractionPathResultT<false>;
+using DiffractionPathResult = DiffractionPathResultT<true>;
 
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>
