@@ -4218,8 +4218,8 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
             "Scene::accumulate_diffraction_chains(): grid.cell_area must be positive.");
     require(options.wavelength > 0.f,
             "Scene::accumulate_diffraction_chains(): wavelength must be positive.");
-    require(options.max_order == 2,
-            "Scene::accumulate_diffraction_chains(): only max_order == 2 is supported.");
+    require(options.max_order == 2 || options.max_order == 3,
+            "Scene::accumulate_diffraction_chains(): only max_order 2 or 3 is supported.");
 
     DiffractionAccumResultT<Detached> result;
     const int grid_cell_count = grid.resolution0 * grid.resolution1;

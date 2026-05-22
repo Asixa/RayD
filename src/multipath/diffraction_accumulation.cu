@@ -431,7 +431,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         params.recursive_state_count <= 0 ||
         params.grid_resolution0 <= 0 ||
         params.grid_resolution1 <= 0 ||
-        params.max_order != 2 ||
+        (params.max_order != 2 && params.max_order != 3) ||
         (params.strategy_mask & RAYD_DIFF_DIRECT) == 0) {
         return;
     }
@@ -447,6 +447,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         lane ^ (static_cast<unsigned int>(params.seed) * 0x9e3779b9u) ^ 0x51ed270bu);
     const int second_idx = static_cast<int>(
         second_hash % static_cast<unsigned int>(params.recursive_state_count));
+    int third_idx = -1;
     if (params.active_mask != nullptr && params.active_mask[first_idx] == 0u) {
         return;
     }
@@ -454,7 +455,24 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         params.recursive_active_mask[second_idx] == 0u) {
         return;
     }
-    if (params.state_edge_index[first_idx] == params.recursive_state_edge_index[second_idx]) {
+    if (params.max_order == 3) {
+        const unsigned int third_hash = hash_u32(
+            lane ^ (static_cast<unsigned int>(params.seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
+        third_idx = static_cast<int>(
+            third_hash % static_cast<unsigned int>(params.recursive_state_count));
+        if (params.recursive_active_mask != nullptr &&
+            params.recursive_active_mask[third_idx] == 0u) {
+            return;
+        }
+    }
+
+    const int first_edge_index = params.state_edge_index[first_idx];
+    const int second_edge_index = params.recursive_state_edge_index[second_idx];
+    const int third_edge_index =
+        params.max_order == 3 ? params.recursive_state_edge_index[third_idx] : -1;
+    if (first_edge_index == second_edge_index ||
+        (params.max_order == 3 &&
+         (first_edge_index == third_edge_index || second_edge_index == third_edge_index))) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_reject_count, 1);
         }
@@ -498,16 +516,37 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     const float3 source =
         state_vec(params.state_source_x, params.state_source_y, params.state_source_z, first_idx);
     const float3 target = grid_cell_center(cell);
+    float3 third_point = second_point;
+    if (params.max_order == 3) {
+        const float third_u = uniform01(lane, 4u, static_cast<unsigned int>(params.seed));
+        const float3 third_edge_pos =
+            recursive_state_vec(params.recursive_state_edge_pos_x,
+                                params.recursive_state_edge_pos_y,
+                                params.recursive_state_edge_pos_z,
+                                third_idx);
+        const float3 third_edge_dir =
+            normalize3(recursive_state_vec(params.recursive_state_edge_dir_x,
+                                           params.recursive_state_edge_dir_y,
+                                           params.recursive_state_edge_dir_z,
+                                           third_idx));
+        const float third_t = params.recursive_state_edge_line_min[third_idx] +
+                              third_u * (params.recursive_state_edge_line_max[third_idx] -
+                                         params.recursive_state_edge_line_min[third_idx]);
+        third_point = third_edge_pos + third_t * third_edge_dir;
+    }
+    const float3 terminal_point = params.max_order == 3 ? third_point : second_point;
     const bool source_visible = visible_segment(source, first_point);
-    const bool inter_edge_visible = visible_segment(first_point, second_point);
-    const bool target_visible = visible_segment(second_point, target);
+    const bool first_inter_edge_visible = visible_segment(first_point, second_point);
+    const bool second_inter_edge_visible =
+        params.max_order == 3 ? visible_segment(second_point, third_point) : true;
+    const bool target_visible = visible_segment(terminal_point, target);
     if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_visibility_reject_count, 1);
         }
         return;
     }
-    if (!inter_edge_visible) {
+    if (!first_inter_edge_visible || !second_inter_edge_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_inter_edge_visibility_reject_count, 1);
         }
@@ -524,6 +563,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         source,
         first_point,
         second_point);
+    const float3 second_target = params.max_order == 3 ? third_point : target;
     const float second_weight = chain_event_weight(
         1.f,
         params.recursive_state_face0_prim_id[second_idx],
@@ -533,13 +573,30 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         params.recursive_state_exterior_angle[second_idx],
         first_point,
         second_point,
-        target);
-    const float wave_gain =
+        second_target);
+    float chain_weight = first_weight * second_weight;
+    if (params.max_order == 3) {
+        const float third_weight = chain_event_weight(
+            1.f,
+            params.recursive_state_face0_prim_id[third_idx],
+            params.recursive_state_face1_prim_id[third_idx],
+            params.recursive_state_edge_line_min[third_idx],
+            params.recursive_state_edge_line_max[third_idx],
+            params.recursive_state_exterior_angle[third_idx],
+            second_point,
+            third_point,
+            target);
+        chain_weight *= third_weight;
+    }
+    const float wave_gain_per_event =
         (params.wavelength * (1.f / (4.f * kPi))) *
         (params.wavelength * (1.f / (4.f * kPi)));
+    const float wave_gain =
+        params.max_order == 3 ? wave_gain_per_event * wave_gain_per_event
+                              : wave_gain_per_event;
     const float sample_norm = 1.f / fmaxf(static_cast<float>(direct_limit), 1.f);
     const float contribution =
-        first_weight * second_weight * wave_gain * params.grid_cell_area * sample_norm;
+        chain_weight * wave_gain * params.grid_cell_area * sample_norm;
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_reject_count, 1);
