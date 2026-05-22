@@ -976,29 +976,6 @@ ArrayD prefix_array(const ArrayD &value, int count) {
     return gather<ArrayD>(value, arange<Int>(count));
 }
 
-struct DiffractionSuffixCandidateTable {
-    UInt prim_ids;
-    int count = 0;
-};
-
-DiffractionSuffixCandidateTable build_diffraction_suffix_candidates(
-    const DiffractionMaterial &material,
-    int material_count,
-    int triangle_count) {
-    DiffractionSuffixCandidateTable table;
-    if (material_count <= 0 || triangle_count <= 0) {
-        table.prim_ids = zeros<UInt>(0);
-        return table;
-    }
-    const int candidate_width = std::min(material_count, triangle_count);
-    const Int prim_i32 = arange<Int>(candidate_width);
-    const Mask valid_material =
-        gather<Mask>(material.valid, prim_i32, full<Mask>(true, candidate_width));
-    table.prim_ids = compress(valid_material);
-    table.count = static_cast<int>(slices(table.prim_ids));
-    return table;
-}
-
 template <typename ArrayD>
 ArrayD concat_array_sequence(const std::vector<ArrayD> &parts) {
     require(!parts.empty(),
@@ -4043,6 +4020,8 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             "Scene::accumulate_reflections(): solid_angle_per_ray must be non-negative.");
     require(options.wedge_capacity >= 0,
             "Scene::accumulate_reflections(): wedge_capacity must be non-negative.");
+    require(options.wedge_sample_stride >= 1,
+            "Scene::accumulate_reflections(): wedge_sample_stride must be >= 1.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
@@ -4235,6 +4214,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         params.collect_wedges = options.collect_wedges ? 1 : 0;
         params.collect_wedge_prefixes = options.collect_wedge_prefixes ? 1 : 0;
         params.wedge_capacity = options.wedge_capacity;
+        params.wedge_sample_stride = options.wedge_sample_stride;
         params.out_reflection_power = raw.reflection_power.data();
         params.out_field_x_re = raw.field_x_re.data();
         params.out_field_x_im = raw.field_x_im.data();
@@ -4431,16 +4411,6 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
                         hitgroup_record_count,
                         diffraction_accumulation_pipeline_config());
 
-        DiffractionSuffixCandidateTable suffix_candidates;
-        if (suffix_samples > 0) {
-            suffix_candidates = build_diffraction_suffix_candidates(
-                material,
-                material_count,
-                triangle_count);
-            require(suffix_candidates.count > 0,
-                    "Scene::accumulate_diffraction_order1(): suffix reflection candidate table is empty.");
-        }
-
         drjit::eval(states.edge_index,
                     states.edge_pos,
                     states.edge_dir,
@@ -4467,8 +4437,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
                         triangle_info_detached_.e1,
                         triangle_info_detached_.e2,
                         triangle_info_detached_.face_normal,
-                        face_offsets_,
-                        suffix_candidates.prim_ids);
+                        face_offsets_);
         }
 
         DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
@@ -4535,10 +4504,8 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.face_offsets = suffix_samples > 0 ? face_offsets_.data() : nullptr;
         params.n_meshes = mesh_count_;
         params.n_triangles = triangle_count;
-        params.suffix_candidate_prim_id =
-            suffix_samples > 0 ? suffix_candidates.prim_ids.data() : nullptr;
-        params.suffix_candidate_count =
-            suffix_samples > 0 ? suffix_candidates.count : 0;
+        params.suffix_candidate_prim_id = nullptr;
+        params.suffix_candidate_count = 0;
         params.material_eta_r = material.eta_r.data();
         params.material_sigma = material.sigma.data();
         params.material_mu_r = material.mu_r.data();
@@ -4728,16 +4695,6 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
                         hitgroup_record_count,
                         diffraction_accumulation_pipeline_config());
 
-        DiffractionSuffixCandidateTable suffix_candidates;
-        if (suffix_samples > 0) {
-            suffix_candidates = build_diffraction_suffix_candidates(
-                material,
-                material_count,
-                triangle_count);
-            require(suffix_candidates.count > 0,
-                    "Scene::accumulate_diffraction_chains(): suffix reflection candidate table is empty.");
-        }
-
         drjit::eval(initial_states.edge_index,
                     initial_states.edge_pos,
                     initial_states.edge_dir,
@@ -4768,8 +4725,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
                         triangle_info_detached_.e1,
                         triangle_info_detached_.e2,
                         triangle_info_detached_.face_normal,
-                        face_offsets_,
-                        suffix_candidates.prim_ids);
+                        face_offsets_);
         }
 
         DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
@@ -4840,10 +4796,8 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.face_offsets = suffix_samples > 0 ? face_offsets_.data() : nullptr;
         params.n_meshes = mesh_count_;
         params.n_triangles = triangle_count;
-        params.suffix_candidate_prim_id =
-            suffix_samples > 0 ? suffix_candidates.prim_ids.data() : nullptr;
-        params.suffix_candidate_count =
-            suffix_samples > 0 ? suffix_candidates.count : 0;
+        params.suffix_candidate_prim_id = nullptr;
+        params.suffix_candidate_count = 0;
         params.material_eta_r = material.eta_r.data();
         params.material_sigma = material.sigma.data();
         params.material_mu_r = material.mu_r.data();

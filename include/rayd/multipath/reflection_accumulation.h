@@ -34,6 +34,7 @@ struct AccumOptions {
     bool collect_wedges = false;         ///< Record diffraction-wedge events.
     bool collect_wedge_prefixes = false; ///< Also record the reflection prefix of each wedge event.
     int wedge_capacity = 0;          ///< Maximum wedge events to store.
+    int wedge_sample_stride = 1;     ///< Prefix wedge event sampling stride.
 };
 
 /// Per-primitive material used by reflection accumulation (electromagnetic surface parameters).

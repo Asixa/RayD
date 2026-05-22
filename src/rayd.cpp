@@ -445,7 +445,8 @@ NB_MODULE(rayd, m) {
             .def_rw("stop_threshold", &AccumOptions::stop_threshold)
             .def_rw("collect_wedges", &AccumOptions::collect_wedges)
             .def_rw("collect_wedge_prefixes", &AccumOptions::collect_wedge_prefixes)
-            .def_rw("wedge_capacity", &AccumOptions::wedge_capacity);
+            .def_rw("wedge_capacity", &AccumOptions::wedge_capacity)
+            .def_rw("wedge_sample_stride", &AccumOptions::wedge_sample_stride);
 
         nb::class_<Material>(m, "Material")
             .def(nb::init<>())

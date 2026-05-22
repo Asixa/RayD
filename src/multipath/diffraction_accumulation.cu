@@ -331,6 +331,39 @@ static __forceinline__ __device__ float material_gain_for_prim(int prim) {
     return fmaxf(params.material_gain[prim], 0.f);
 }
 
+static __forceinline__ __device__ bool suffix_candidate_valid(int prim) {
+    return prim >= 0 &&
+           prim < params.n_triangles &&
+           prim < params.material_count &&
+           params.material_valid != nullptr &&
+           params.material_valid[prim] != 0u;
+}
+
+static __forceinline__ __device__ bool select_local_suffix_candidate(int face0_prim,
+                                                                     int face1_prim,
+                                                                     unsigned int lane,
+                                                                     unsigned int stream,
+                                                                     int &prim,
+                                                                     float &candidate_count) {
+    const bool face0_valid = suffix_candidate_valid(face0_prim);
+    const bool face1_valid =
+        suffix_candidate_valid(face1_prim) && face1_prim != face0_prim;
+    const int count = (face0_valid ? 1 : 0) + (face1_valid ? 1 : 0);
+    if (count <= 0) {
+        return false;
+    }
+    const unsigned int candidate_hash = hash_u32(
+        lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
+    const int slot = static_cast<int>(candidate_hash % static_cast<unsigned int>(count));
+    if (face0_valid && slot == 0) {
+        prim = face0_prim;
+    } else {
+        prim = face1_prim;
+    }
+    candidate_count = static_cast<float>(count);
+    return true;
+}
+
 static __forceinline__ __device__ bool load_triangle(int prim,
                                                      float3 &p0,
                                                      float3 &e1,
@@ -398,22 +431,23 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(float3 imag
 
 static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_point,
                                                                     float3 target,
+                                                                    int face0_prim,
+                                                                    int face1_prim,
                                                                     unsigned int lane,
                                                                     unsigned int stream,
                                                                     float3 &reflection_point,
                                                                     int &prim,
                                                                     float &reflection_gain,
-                                                                    float &suffix_fspl) {
-    if (params.suffix_candidate_prim_id == nullptr ||
-        params.suffix_candidate_count <= 0) {
+                                                                    float &suffix_fspl,
+                                                                    float &candidate_count) {
+    if (!select_local_suffix_candidate(face0_prim,
+                                       face1_prim,
+                                       lane,
+                                       stream,
+                                       prim,
+                                       candidate_count)) {
         return false;
     }
-    const unsigned int candidate_hash = hash_u32(
-        lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
-    const int candidate_slot = static_cast<int>(
-        candidate_hash % static_cast<unsigned int>(params.suffix_candidate_count));
-    prim = static_cast<int>(params.suffix_candidate_prim_id[candidate_slot]);
-
     float3 p0;
     float3 e1;
     float3 e2;
@@ -449,7 +483,10 @@ static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_
     suffix_fspl = (params.wavelength * (1.f / (4.f * kPi))) *
                   (params.wavelength * (1.f / (4.f * kPi))) /
                   fmaxf(outgoing_dist * outgoing_dist, kSmallEps);
-    return isfinite(reflection_gain) && isfinite(suffix_fspl);
+    if (!(isfinite(reflection_gain) && isfinite(suffix_fspl))) {
+        return false;
+    }
+    return true;
 }
 
 static __forceinline__ __device__ float diffraction_weight(int state_idx,
@@ -575,17 +612,21 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
 
     float suffix_reflection_gain = 1.f;
     float suffix_fspl = 1.f;
+    float suffix_candidate_count = 1.f;
     int suffix_prim = -1;
     float3 connection_target = target;
     if (is_suffix) {
         if (!suffix_reflection_connection(edge_point,
                                           target,
+                                          params.state_face0_prim_id[state_idx],
+                                          params.state_face1_prim_id[state_idx],
                                           lane,
                                           17u,
                                           connection_target,
                                           suffix_prim,
                                           suffix_reflection_gain,
-                                          suffix_fspl)) {
+                                          suffix_fspl,
+                                          suffix_candidate_count)) {
             if (params.collect_debug_counts != 0) {
                 atomicAdd(params.out_utd_reject_count, 1);
             }
@@ -612,7 +653,7 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     if (is_suffix) {
         contribution *= suffix_reflection_gain *
                         suffix_fspl *
-                        fmaxf(static_cast<float>(params.suffix_candidate_count), 1.f);
+                        fmaxf(suffix_candidate_count, 1.f);
     }
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
@@ -779,16 +820,28 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     }
     float suffix_reflection_gain = 1.f;
     float suffix_fspl = 1.f;
+    float suffix_candidate_count = 1.f;
     int suffix_prim = -1;
     if (is_suffix) {
+        const int suffix_face0_prim =
+            params.max_order == 3
+                ? params.recursive_state_face0_prim_id[third_idx]
+                : params.recursive_state_face0_prim_id[second_idx];
+        const int suffix_face1_prim =
+            params.max_order == 3
+                ? params.recursive_state_face1_prim_id[third_idx]
+                : params.recursive_state_face1_prim_id[second_idx];
         if (!suffix_reflection_connection(terminal_point,
                                           target,
+                                          suffix_face0_prim,
+                                          suffix_face1_prim,
                                           lane,
                                           23u + static_cast<unsigned int>(params.max_order),
                                           final_target,
                                           suffix_prim,
                                           suffix_reflection_gain,
-                                          suffix_fspl)) {
+                                          suffix_fspl,
+                                          suffix_candidate_count)) {
             if (params.collect_debug_counts != 0) {
                 atomicAdd(params.out_utd_reject_count, 1);
             }
@@ -865,7 +918,7 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     if (is_suffix) {
         contribution *= suffix_reflection_gain *
                         suffix_fspl *
-                        fmaxf(static_cast<float>(params.suffix_candidate_count), 1.f);
+                        fmaxf(suffix_candidate_count, 1.f);
     }
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {

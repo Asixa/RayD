@@ -412,6 +412,20 @@ static __forceinline__ __device__ void store_wedge_event(unsigned int ray_index,
     if (depth > 0 && params.collect_wedge_prefixes == 0) {
         return;
     }
+    float stored_source_power = source_power;
+    const int sample_stride = max(params.wedge_sample_stride, 1);
+    if (params.collect_wedge_prefixes != 0 && sample_stride > 1) {
+        const unsigned int max_prefix_depth =
+            static_cast<unsigned int>(max(params.max_bounces, 1));
+        const unsigned int ordinal =
+            ray_index * max_prefix_depth + static_cast<unsigned int>(depth);
+        const unsigned int phase =
+            static_cast<unsigned int>(params.seed) % static_cast<unsigned int>(sample_stride);
+        if ((ordinal + phase) % static_cast<unsigned int>(sample_stride) != 0u) {
+            return;
+        }
+        stored_source_power *= static_cast<float>(sample_stride);
+    }
 
     const int slot = atomicAdd(params.out_wedge_count, 1);
     if (slot < 0 || slot >= params.wedge_capacity) {
@@ -432,7 +446,7 @@ static __forceinline__ __device__ void store_wedge_event(unsigned int ray_index,
     params.out_wedge_source_x[slot] = source_point.x;
     params.out_wedge_source_y[slot] = source_point.y;
     params.out_wedge_source_z[slot] = source_point.z;
-    params.out_wedge_source_power[slot] = source_power;
+    params.out_wedge_source_power[slot] = stored_source_power;
     params.out_wedge_initial_dir_x[slot] = initial_direction.x;
     params.out_wedge_initial_dir_y[slot] = initial_direction.y;
     params.out_wedge_initial_dir_z[slot] = initial_direction.z;

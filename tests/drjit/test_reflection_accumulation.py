@@ -241,6 +241,85 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertGreater(data["power"], 0.0)
         self.assertEqual(data["accumulate_reflections_launches"], 1)
 
+    def test_accumulate_reflections_samples_prefix_wedges_with_power_scale(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            n = 8
+            zero = dr.full(cuda.Float, 0.0, n)
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, -1.0, n)),
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, 1.0, n)),
+            )
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0 / n
+            options.cell_area = 1.0
+            options.seed = 17
+            options.collect_wedges = True
+            options.collect_wedge_prefixes = True
+            options.wedge_capacity = 4
+            options.wedge_sample_stride = 2
+
+            result = scene.accumulate_reflections(
+                ray, tx, grid, material, 1, options
+            )
+            dr.eval(result.wedge_events.count,
+                    result.wedge_events.source_power,
+                    result.wedge_events.ray_index)
+
+            print(json.dumps({
+                "wedge_capacity": result.wedge_events.capacity,
+                "wedge_count": int(result.wedge_events.count[0]),
+                "source_power": [
+                    float(result.wedge_events.source_power[i])
+                    for i in range(result.wedge_events.capacity)
+                ],
+                "ray_index": [
+                    int(result.wedge_events.ray_index[i])
+                    for i in range(result.wedge_events.capacity)
+                ],
+            }))
+            """
+        )
+
+        self.assertEqual(data["wedge_capacity"], 4)
+        self.assertEqual(data["wedge_count"], 4)
+        self.assertTrue(all(ray >= 0 for ray in data["ray_index"]))
+        for value in data["source_power"]:
+            self.assertAlmostEqual(value, 0.25, places=6)
+
     def test_accumulate_reflections_rejects_ad_inputs(self):
         result = run_script(
             """

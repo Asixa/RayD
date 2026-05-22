@@ -83,6 +83,7 @@ struct AccumParams {
     int collect_wedges;          ///< Record diffraction-wedge events when nonzero.
     int collect_wedge_prefixes;  ///< Also record each wedge's reflection prefix.
     int wedge_capacity;          ///< Capacity of the wedge-event output buffers.
+    int wedge_sample_stride;     ///< Prefix wedge sampling stride.
 
     // Outputs: per-grid-cell power/field, total reflection count, and the wedge-event buffers.
     float *out_reflection_power;
