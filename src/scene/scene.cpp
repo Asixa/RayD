@@ -135,12 +135,13 @@ std::string normalize_edge_backend_value(const std::string &value) {
 /// Map a backend name ("drjit"/"optix"/"hybrid" and aliases) to EdgeBVHBackend; throws on unknown.
 EdgeBVHBackend parse_edge_backend(const std::string &value) {
     const std::string normalized = normalize_edge_backend_value(value);
-    if (normalized.empty() || normalized == "drjit" ||
-        normalized == "dr_jit" || normalized == "software") {
-        return EdgeBVHBackend::DrJit;
-    }
-    if (normalized == "optix" || normalized == "custom_aabb") {
+    if (normalized.empty() || normalized == "optix" ||
+        normalized == "custom_aabb") {
         return EdgeBVHBackend::Optix;
+    }
+    if (normalized == "drjit" || normalized == "dr_jit" ||
+        normalized == "software") {
+        return EdgeBVHBackend::DrJit;
     }
     if (normalized == "hybrid" || normalized == "mixed" ||
         normalized == "optix_ray" || normalized == "ray_optix") {

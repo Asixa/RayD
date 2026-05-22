@@ -901,7 +901,7 @@ NB_MODULE(rayd, m) {
 
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
-            .def(nb::init<const std::string &>(), "edge_bvh_backend"_a = "drjit")
+            .def(nb::init<const std::string &>(), "edge_bvh_backend"_a = "optix")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
