@@ -307,7 +307,6 @@ private:
 
     OptixSceneSelection select_optix_scenes() const;
     void reset_multipath_pipelines();
-    void prewarm_path_multipath_pipelines(int hitgroup_record_count);
     SceneMeshRecord &mesh_record(int mesh_id);
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);

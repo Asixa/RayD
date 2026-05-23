@@ -144,7 +144,11 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h
 
     ${RAYD_INCLUDE_DIR}/scene/scene.h
+    ${RAYD_SOURCE_DIR}/scene/scene_internal.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_intersect.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_custom_op.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
     ${RAYD_INCLUDE_DIR}/native_launch_audit.h
