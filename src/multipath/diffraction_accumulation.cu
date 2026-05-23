@@ -425,7 +425,7 @@ static __forceinline__ __device__ bool coherent_selected_visibility_point(utd::P
                                     edge_origin.z + parameter * edge_dir.z);
     selected.edgeLineMin = -parameter;
     selected.edgeLineMax = edge_length - parameter;
-    return true;
+    return parameter > 0.f && parameter < edge_length;
 }
 
 static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int cell) {
