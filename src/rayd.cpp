@@ -622,7 +622,9 @@ NB_MODULE(rayd, m) {
             .def_rw("higher_probe_radius_min",
                     &DfrCoherentOptions::higher_probe_radius_min)
             .def_rw("higher_probe_radius_max",
-                    &DfrCoherentOptions::higher_probe_radius_max);
+                    &DfrCoherentOptions::higher_probe_radius_max)
+            .def_rw("higher_filter_visibility",
+                    &DfrCoherentOptions::higher_filter_visibility);
 
         nb::class_<DfrMaterial>(m, "DfrMaterial")
             .def(nb::init<>())
@@ -795,12 +797,14 @@ NB_MODULE(rayd, m) {
         nb::class_<DfrCoherentCandidatePairs>(m, "DfrCoherentCandidatePairs")
             .def(nb::init<>())
             .def_rw("count", &DfrCoherentCandidatePairs::count)
+            .def_rw("visibility_filtered", &DfrCoherentCandidatePairs::visibility_filtered)
             .def_rw("prev_index", &DfrCoherentCandidatePairs::prev_index)
             .def_rw("edge_index", &DfrCoherentCandidatePairs::edge_index);
 
         nb::class_<DfrCoherentCandidatePairsAD>(m, "DfrCoherentCandidatePairsAD")
             .def(nb::init<>())
             .def_rw("count", &DfrCoherentCandidatePairsAD::count)
+            .def_rw("visibility_filtered", &DfrCoherentCandidatePairsAD::visibility_filtered)
             .def_rw("prev_index", &DfrCoherentCandidatePairsAD::prev_index)
             .def_rw("edge_index", &DfrCoherentCandidatePairsAD::edge_index);
 

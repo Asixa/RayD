@@ -938,6 +938,22 @@ Int interleave_two_ignore_slots(const Int &slot0, const Int &slot1, int width) {
     return gather<Int>(slot_major, src_idx);
 }
 
+Int interleave_four_ignore_slots(const Int &slot0,
+                                 const Int &slot1,
+                                 const Int &slot2,
+                                 const Int &slot3,
+                                 int width) {
+    if (width <= 0) {
+        return zeros<Int>(0);
+    }
+    const Int slot_major = concat(concat(slot0, slot1), concat(slot2, slot3));
+    const UInt dst_idx = arange<UInt>(width * 4);
+    const UInt ray_idx = dst_idx / UInt(4);
+    const UInt slot_idx = dst_idx - ray_idx * UInt(4);
+    const UInt src_idx = slot_idx * UInt(width) + ray_idx;
+    return gather<Int>(slot_major, src_idx);
+}
+
 Float gather_material_float(const Float &values,
                             const Int &face,
                             const Mask &valid,
@@ -5351,6 +5367,48 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
             gather<Int>(global_to_local_edge_index, UInt(safe_global_edge), valid);
         valid &= local_edge_idx >= Int(0);
         valid &= prev_edge_idx != local_edge_idx;
+        valid &= probe_active;
+
+        if (options.higher_filter_visibility) {
+            require(static_cast<int>(slices(edges.edge_pos)) >= edge_count &&
+                        static_cast<int>(slices(edges.adjacent_face0)) >= edge_count &&
+                        static_cast<int>(slices(edges.adjacent_face1)) >= edge_count &&
+                        static_cast<int>(slices(prev_states.adjacent_face0)) >= prev_count &&
+                        static_cast<int>(slices(prev_states.adjacent_face1)) >= prev_count,
+                    "Scene::build_dfr_coherent_higher_candidates(): visibility filtering requires edge positions and adjacent faces.");
+            require(optix_scene_ != nullptr && optix_scene_->is_ready(),
+                    "Scene::build_dfr_coherent_higher_candidates(): OptiX scene is not ready.");
+            const UInt safe_local_edge = UInt(select(valid, local_edge_idx, Int(0)));
+            const Vector3f next_edge_pos = gather<Vector3f>(edges.edge_pos, safe_local_edge, valid);
+            const Int prev_adjacent_face0 = gather<Int>(prev_states.adjacent_face0, prev_idx_all, valid);
+            const Int prev_adjacent_face1 = gather<Int>(prev_states.adjacent_face1, prev_idx_all, valid);
+            const Int next_adjacent_face0 = gather<Int>(edges.adjacent_face0, safe_local_edge, valid);
+            const Int next_adjacent_face1 = gather<Int>(edges.adjacent_face1, safe_local_edge, valid);
+            const Int ignore_prim_ids = interleave_four_ignore_slots(
+                prev_adjacent_face0,
+                prev_adjacent_face1,
+                next_adjacent_face0,
+                next_adjacent_face1,
+                probe_lane_count);
+            drjit::eval(edge_pos, next_edge_pos, ignore_prim_ids, valid);
+            ensure_pipeline(segment_pair_visibility_pipeline_,
+                            optix_scene_->context(),
+                            mesh_count_,
+                            segment_pair_visibility_pipeline_config());
+            const SegmentPairVisibility visibility_result =
+                trace_segment_pair_visibility_native<true>(*optix_scene_,
+                                                           *segment_pair_visibility_pipeline_,
+                                                           face_offsets_,
+                                                           mesh_count_,
+                                                           edge_pos,
+                                                           next_edge_pos,
+                                                           next_edge_pos,
+                                                           ignore_prim_ids,
+                                                           4,
+                                                           valid);
+            valid &= visibility_result.visible_a;
+            result.visibility_filtered = 1;
+        }
 
         const UInt keep = compress(valid);
         const int candidate_count = static_cast<int>(slices(keep));

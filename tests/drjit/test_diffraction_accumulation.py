@@ -312,6 +312,7 @@ class DfrAccumulationTests(unittest.TestCase):
             edges = pj.DfrCoherentEdge()
             edges.count = 0
             options = pj.DfrCoherentOptions()
+            options.higher_filter_visibility = True
             pairs = scene.build_dfr_coherent_higher_candidates(
                 prev,
                 edges,
@@ -319,11 +320,13 @@ class DfrAccumulationTests(unittest.TestCase):
                 options,
                 True,
             )
-            print(json.dumps({"count": pairs.count}))
+            print(json.dumps({"count": pairs.count, "visibility_filtered": pairs.visibility_filtered, "option_filter": options.higher_filter_visibility}))
             """
         )
 
         self.assertEqual(data["count"], 0)
+        self.assertEqual(data["visibility_filtered"], 0)
+        self.assertTrue(data["option_filter"])
 
     def test_accum_dfr_coherent_direct_rejects_empty_states(self):
         result = run_script(

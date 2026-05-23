@@ -69,6 +69,7 @@ struct DfrCoherentOptions {
     float higher_probe_radius_scale = 0.6f;
     float higher_probe_radius_min = 0.5f;
     float higher_probe_radius_max = 4.0f;
+    bool higher_filter_visibility = false;
 };
 
 /// Per-primitive electromagnetic material payload used by diffraction kernels.
@@ -306,6 +307,7 @@ struct DfrCoherentCandidatePairsData {
     using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     int count = 0;
+    int visibility_filtered = 0;
     Int_ prev_index = full<Int_>(-1, 1);
     Int_ edge_index = full<Int_>(-1, 1);
 
