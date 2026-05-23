@@ -147,29 +147,29 @@ public:
         const Vector3fT<Detached> &tx_polarization) const;
     /// Native order-1 diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
-    DiffractionAccumResultT<Detached> accumulate_diffraction_order1(
-        const DiffractionStateTableT<Detached> &states,
-        const DiffractionGrid &grid,
-        const DiffractionMaterialT<Detached> &material,
-        const DiffractionAccumOptions &options,
+    DfrAccumT<Detached> accum_dfr1(
+        const DfrStatesT<Detached> &states,
+        const DfrGrid &grid,
+        const DfrMaterialT<Detached> &material,
+        const DfrOptions &options,
         MaskT<Detached> active) const;
     /// Native higher-order direct-chain diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
-    DiffractionAccumResultT<Detached> accumulate_diffraction_chains(
-        const DiffractionStateTableT<Detached> &initial_states,
-        const DiffractionStateTableT<Detached> &recursive_states,
-        const DiffractionGrid &grid,
-        const DiffractionMaterialT<Detached> &material,
-        const DiffractionAccumOptions &options,
+    DfrAccumT<Detached> accum_dfr(
+        const DfrStatesT<Detached> &initial_states,
+        const DfrStatesT<Detached> &recursive_states,
+        const DfrGrid &grid,
+        const DfrMaterialT<Detached> &material,
+        const DfrOptions &options,
         MaskT<Detached> active) const;
     /// Native compact first-order diffraction path export (non-AD fast path).
     template <bool Detached>
-    DiffractionPathResultT<Detached> trace_diffraction_paths(
+    DfrPathsT<Detached> trace_dfr_paths(
         const Vector3fT<Detached> &tx_positions,
         const Vector3fT<Detached> &rx_positions,
-        const DiffractionStateTableT<Detached> &states,
-        const DiffractionMaterialT<Detached> &material,
-        const DiffractionPathOptions &options,
+        const DfrStatesT<Detached> &states,
+        const DfrMaterialT<Detached> &material,
+        const DfrPathOptions &options,
         MaskT<Detached> active) const;
     /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
@@ -241,17 +241,17 @@ public:
         const Vector3fT<Detached> &end_b,
         const Int &ignore_prim_ids = Int(),
         MaskT<Detached> active = true) const;
-    /// \brief Whether \p source_pos sees any sample point along an edge segment.
+    /// \brief Whether \p src sees any sample point along an edge segment.
     ///
-    /// Samples the edge at \p sample_fractions of [edge_line_min, edge_line_max] along
+    /// Samples the edge at \p sample_fractions of [edge_t_min, edge_t_max] along
     /// \p edge_dir from \p edge_pos and reports whether any sample is visible.
     template <bool Detached>
-    AxialEdgeVisibilityT<Detached> visible_axial_edge(
-        const Vector3fT<Detached> &source_pos,
+    AxialEdgeVisibilityT<Detached> visible_edge(
+        const Vector3fT<Detached> &src,
         const Vector3fT<Detached> &edge_pos,
         const Vector3fT<Detached> &edge_dir,
-        const FloatT<Detached> &edge_line_min,
-        const FloatT<Detached> &edge_line_max,
+        const FloatT<Detached> &edge_t_min,
+        const FloatT<Detached> &edge_t_max,
         const std::vector<float> &sample_fractions,
         MaskT<Detached> active = true) const;
     /// \brief Per-segment visibility along polyline chains.
@@ -274,7 +274,7 @@ public:
                                            MaskT<Detached> active = true) const;
     /// The \p k nearest scene edges to each query point (k <= 16).
     template <bool Detached>
-    NearestEdgesTopKT<Detached> nearest_edges_topk(const Vector3fT<Detached> &point,
+    NearestEdgesTopKT<Detached> nearest_edges(const Vector3fT<Detached> &point,
                                                    int k,
                                                    MaskT<Detached> active = true) const;
 

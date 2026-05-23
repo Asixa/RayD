@@ -2433,7 +2433,7 @@ ClosestEdgeCandidate SceneEdge::nearest_edge_point_detached(const Vector3f &poin
     return result;
 }
 
-ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk_point_detached(
+ClosestEdgeTopKCandidate SceneEdge::nearest_edges_point_detached(
     const Vector3f &point,
     int k,
     const Mask &active) const {
@@ -2561,7 +2561,7 @@ ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk_point_detached(
             next_node = select(only_right, right, next_node);
             current_node = select(lane_active, next_node, current_node);
         },
-        "nearest_edges_topk_point_bvh");
+        "nearest_edges_point_bvh");
 
     const Int top_base = query_index * k;
     auto distance_slots = topk_distance_slots(topk);
@@ -2869,12 +2869,12 @@ ClosestEdgeCandidate SceneEdge::nearest_edge(const Vector3fT<Detached> &point,
 }
 
 template <bool Detached>
-ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk(const Vector3fT<Detached> &point,
+ClosestEdgeTopKCandidate SceneEdge::nearest_edges(const Vector3fT<Detached> &point,
                                                        int k,
                                                        MaskT<Detached> &active) const {
-    require(ready_, "SceneEdge::nearest_edges_topk(point): BVH is not built.");
-    require(k > 0, "SceneEdge::nearest_edges_topk(point): k must be positive.");
-    require(k <= 16, "SceneEdge::nearest_edges_topk(point): k must be <= 16.");
+    require(ready_, "SceneEdge::nearest_edges(point): BVH is not built.");
+    require(k > 0, "SceneEdge::nearest_edges(point): k must be positive.");
+    require(k <= 16, "SceneEdge::nearest_edges(point): k must be <= 16.");
     drjit::scoped_set_flag symbolic_loops_scope(JitFlag::SymbolicLoops, false);
 
     const int query_count = static_cast<int>(slices(point));
@@ -2894,7 +2894,7 @@ ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk(const Vector3fT<Detached>
     }
 
     const Mask active_detached = detach<false>(active);
-    result = nearest_edges_topk_point_detached(detach<false>(point), k, active_detached);
+    result = nearest_edges_point_detached(detach<false>(point), k, active_detached);
     const Int first_slot = arange<Int>(query_count) * k;
     const Mask has_any =
         gather<Mask>(result.is_valid, first_slot, active_detached);
@@ -2962,11 +2962,11 @@ template ClosestEdgeCandidate SceneEdge::nearest_edge<true>(const Vector3f &poin
                                                                  Mask &active) const;
 template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const Vector3fAD &point,
                                                                   MaskAD &active) const;
-template ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk<true>(
+template ClosestEdgeTopKCandidate SceneEdge::nearest_edges<true>(
     const Vector3f &point,
     int k,
     Mask &active) const;
-template ClosestEdgeTopKCandidate SceneEdge::nearest_edges_topk<false>(
+template ClosestEdgeTopKCandidate SceneEdge::nearest_edges<false>(
     const Vector3fAD &point,
     int k,
     MaskAD &active) const;

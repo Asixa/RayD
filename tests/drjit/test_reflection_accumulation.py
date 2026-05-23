@@ -107,7 +107,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                     result.wedge_events.prim_id,
                     result.wedge_events.directions.z,
                     result.wedge_events.source_points.z,
-                    result.wedge_events.source_power,
+                    result.wedge_events.src_power,
                     result.wedge_events.initial_directions.z,
                     result.wedge_events.bounce_depth)
             audit = pj.native_launch_audit()
@@ -130,7 +130,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 "wedge_depth0": int(result.wedge_events.bounce_depth[0]),
                 "wedge_dir_z0": float(result.wedge_events.directions.z[0]),
                 "wedge_source_z0": float(result.wedge_events.source_points.z[0]),
-                "wedge_source_power0": float(result.wedge_events.source_power[0]),
+                "wedge_src_power0": float(result.wedge_events.src_power[0]),
                 "wedge_initial_dir_z0": float(result.wedge_events.initial_directions.z[0]),
                 "trace_reflections_launches": audit["trace_reflections"]["optix_launch"],
                 "accumulate_reflections_launches": (
@@ -154,7 +154,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["wedge_depth0"], 0)
         self.assertGreater(data["wedge_dir_z0"], 0.0)
         self.assertAlmostEqual(data["wedge_source_z0"], -1.0)
-        self.assertGreater(data["wedge_source_power0"], 0.0)
+        self.assertGreater(data["wedge_src_power0"], 0.0)
         self.assertGreater(data["wedge_initial_dir_z0"], 0.0)
         self.assertEqual(data["trace_reflections_launches"], 0)
         self.assertEqual(data["accumulate_reflections_launches"], 1)
@@ -296,14 +296,14 @@ class ReflectionAccumulationTests(unittest.TestCase):
                 ray, tx, grid, material, 1, options
             )
             dr.eval(result.wedge_events.count,
-                    result.wedge_events.source_power,
+                    result.wedge_events.src_power,
                     result.wedge_events.ray_index)
 
             print(json.dumps({
                 "wedge_capacity": result.wedge_events.capacity,
                 "wedge_count": int(result.wedge_events.count[0]),
-                "source_power": [
-                    float(result.wedge_events.source_power[i])
+                "src_power": [
+                    float(result.wedge_events.src_power[i])
                     for i in range(result.wedge_events.capacity)
                 ],
                 "ray_index": [
@@ -317,7 +317,7 @@ class ReflectionAccumulationTests(unittest.TestCase):
         self.assertEqual(data["wedge_capacity"], 4)
         self.assertEqual(data["wedge_count"], 4)
         self.assertTrue(all(ray >= 0 for ray in data["ray_index"]))
-        for value in data["source_power"]:
+        for value in data["src_power"]:
             self.assertAlmostEqual(value, 0.25, places=6)
 
     def test_accumulate_reflections_rejects_ad_inputs(self):

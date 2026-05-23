@@ -1573,9 +1573,9 @@ class GeometryCoreTests(unittest.TestCase):
             optix_ray = optix_scene.nearest_edge(rays)
             hybrid_ray = hybrid_scene.nearest_edge(rays)
             topk_query = cuda.Array3f([0.35], [0.2], [0.0])
-            drjit_topk = drjit_scene.nearest_edges_topk(topk_query, 3)
-            optix_topk = optix_scene.nearest_edges_topk(topk_query, 3)
-            hybrid_topk = hybrid_scene.nearest_edges_topk(topk_query, 3)
+            drjit_topk = drjit_scene.nearest_edges(topk_query, 3)
+            optix_topk = optix_scene.nearest_edges(topk_query, 3)
+            hybrid_topk = hybrid_scene.nearest_edges(topk_query, 3)
 
             mask = cuda.Bool([False, True, False])
             drjit_scene.set_edge_mask(mask)
@@ -1770,8 +1770,8 @@ class GeometryCoreTests(unittest.TestCase):
             hybrid_scene = make_tiled_scene("hybrid")
             drjit_point = drjit_scene.nearest_edge(query_points)
             hybrid_point = hybrid_scene.nearest_edge(query_points)
-            drjit_topk = drjit_scene.nearest_edges_topk(query_points, 4)
-            hybrid_topk = hybrid_scene.nearest_edges_topk(query_points, 4)
+            drjit_topk = drjit_scene.nearest_edges(query_points, 4)
+            hybrid_topk = hybrid_scene.nearest_edges(query_points, 4)
             dr.eval(
                 drjit_point.global_edge_id,
                 hybrid_point.global_edge_id,

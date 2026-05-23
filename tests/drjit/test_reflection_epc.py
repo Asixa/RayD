@@ -524,7 +524,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
             options.omega = 2.0 * math.pi * 299792458.0 / 2.0
             options.wavelength = 2.0
-            options.return_geometry = True
+            options.return_geom = True
             options.return_endpoints = True
 
             expected_field, expected_path = reflect_reference(
@@ -647,7 +647,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
             options.omega = 2.0 * math.pi * 299792458.0 / 2.0
             options.wavelength = 2.0
-            options.return_geometry = False
+            options.return_geom = False
             options.return_endpoints = False
 
             result = scene.trace_reflection_epc_field(ray, rx, max_bounces=1, options=options)
@@ -741,7 +741,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
             options.omega = 2.0 * math.pi * 3.5e9
             options.wavelength = 299792458.0 / 3.5e9
-            options.return_geometry = True
+            options.return_geom = True
             options.return_endpoints = True
 
             pj.native_launch_audit_clear()
@@ -824,7 +824,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
             options.omega = 2.0 * math.pi * 3.5e9
             options.wavelength = 299792458.0 / 3.5e9
-            options.return_geometry = True
+            options.return_geom = True
             options.return_endpoints = False
             options.return_hit_points = True
             options.return_normals = True

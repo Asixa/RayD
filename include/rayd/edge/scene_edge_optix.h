@@ -45,7 +45,7 @@ public:
 
     /// The \p k nearest active edges to each query point.
     template <bool Detached>
-    ClosestEdgeTopKCandidate nearest_edges_topk(const Vector3fT<Detached> &point,
+    ClosestEdgeTopKCandidate nearest_edges(const Vector3fT<Detached> &point,
                                                 int k,
                                                 MaskT<Detached> &active) const;
 

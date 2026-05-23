@@ -222,8 +222,8 @@ NB_MODULE(rayd, m) {
               result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
               result["accumulate_reflections"] =
                   native_stage_dict(snapshot.accumulate_reflections);
-              result["accumulate_diffraction"] =
-                  native_stage_dict(snapshot.accumulate_diffraction);
+              result["accum_dfr"] =
+                  native_stage_dict(snapshot.accum_dfr);
               return result;
           },
           "Return grouped native launch audit counters.");
@@ -343,7 +343,7 @@ NB_MODULE(rayd, m) {
             .def_rw("tx_polarization", &ReflectionEpcFieldOptions::tx_polarization)
             .def_rw("omega", &ReflectionEpcFieldOptions::omega)
             .def_rw("wavelength", &ReflectionEpcFieldOptions::wavelength)
-            .def_rw("return_geometry", &ReflectionEpcFieldOptions::return_geometry)
+            .def_rw("return_geom", &ReflectionEpcFieldOptions::return_geom)
             .def_rw("return_endpoints", &ReflectionEpcFieldOptions::return_endpoints)
             .def_rw("return_hit_points", &ReflectionEpcFieldOptions::return_hit_points)
             .def_rw("return_normals", &ReflectionEpcFieldOptions::return_normals)
@@ -473,7 +473,7 @@ NB_MODULE(rayd, m) {
             .def_ro("prim_id", &WedgeEvents::prim_id)
             .def_ro("directions", &WedgeEvents::directions)
             .def_ro("source_points", &WedgeEvents::source_points)
-            .def_ro("source_power", &WedgeEvents::source_power)
+            .def_ro("src_power", &WedgeEvents::src_power)
             .def_ro("initial_directions", &WedgeEvents::initial_directions)
             .def_ro("bounce_depth", &WedgeEvents::bounce_depth);
 
@@ -486,7 +486,7 @@ NB_MODULE(rayd, m) {
             .def_ro("prim_id", &WedgeEventsAD::prim_id)
             .def_ro("directions", &WedgeEventsAD::directions)
             .def_ro("source_points", &WedgeEventsAD::source_points)
-            .def_ro("source_power", &WedgeEventsAD::source_power)
+            .def_ro("src_power", &WedgeEventsAD::src_power)
             .def_ro("initial_directions", &WedgeEventsAD::initial_directions)
             .def_ro("bounce_depth", &WedgeEventsAD::bounce_depth);
 
@@ -512,197 +512,197 @@ NB_MODULE(rayd, m) {
             .def_ro("reflection_count", &AccumResultAD::reflection_count)
             .def_ro("wedge_events", &AccumResultAD::wedge_events);
 
-        m.attr("RAYD_DIFF_DIRECT") =
-            nb::int_(static_cast<int>(RAYD_DIFF_DIRECT));
-        m.attr("RAYD_DIFF_KELLER") =
-            nb::int_(static_cast<int>(RAYD_DIFF_KELLER));
-        m.attr("RAYD_DIFF_SUFFIX_REFLECTION") =
-            nb::int_(static_cast<int>(RAYD_DIFF_SUFFIX_REFLECTION));
-        m.attr("RAYD_DIFF_HASH") = nb::int_(static_cast<int>(RAYD_DIFF_HASH));
-        m.attr("RAYD_DIFF_SOBOL") = nb::int_(static_cast<int>(RAYD_DIFF_SOBOL));
-        m.attr("RAYD_DIFF_MATCHED_ISOTROPIC") =
-            nb::int_(static_cast<int>(RAYD_DIFF_MATCHED_ISOTROPIC));
+        m.attr("RAYD_DFR_DIRECT") =
+            nb::int_(static_cast<int>(RAYD_DFR_DIRECT));
+        m.attr("RAYD_DFR_KELLER") =
+            nb::int_(static_cast<int>(RAYD_DFR_KELLER));
+        m.attr("RAYD_DFR_SUFFIX_REFL") =
+            nb::int_(static_cast<int>(RAYD_DFR_SUFFIX_REFL));
+        m.attr("RAYD_DFR_HASH") = nb::int_(static_cast<int>(RAYD_DFR_HASH));
+        m.attr("RAYD_DFR_SOBOL") = nb::int_(static_cast<int>(RAYD_DFR_SOBOL));
+        m.attr("RAYD_DFR_MATCHED_ISO") =
+            nb::int_(static_cast<int>(RAYD_DFR_MATCHED_ISO));
 
-        nb::class_<DiffractionGrid>(m, "DiffractionGrid")
+        nb::class_<DfrGrid>(m, "DfrGrid")
             .def(nb::init<>())
-            .def_rw("axis", &DiffractionGrid::axis)
-            .def_rw("position", &DiffractionGrid::position)
-            .def_rw("coord0_min", &DiffractionGrid::coord0_min)
-            .def_rw("coord0_max", &DiffractionGrid::coord0_max)
-            .def_rw("coord1_min", &DiffractionGrid::coord1_min)
-            .def_rw("coord1_max", &DiffractionGrid::coord1_max)
-            .def_rw("resolution0", &DiffractionGrid::resolution0)
-            .def_rw("resolution1", &DiffractionGrid::resolution1)
-            .def_rw("cell_area", &DiffractionGrid::cell_area);
+            .def_rw("axis", &DfrGrid::axis)
+            .def_rw("position", &DfrGrid::position)
+            .def_rw("coord0_min", &DfrGrid::coord0_min)
+            .def_rw("coord0_max", &DfrGrid::coord0_max)
+            .def_rw("coord1_min", &DfrGrid::coord1_min)
+            .def_rw("coord1_max", &DfrGrid::coord1_max)
+            .def_rw("resolution0", &DfrGrid::resolution0)
+            .def_rw("resolution1", &DfrGrid::resolution1)
+            .def_rw("cell_area", &DfrGrid::cell_area);
 
-        nb::class_<DiffractionAccumOptions>(m, "DiffractionAccumOptions")
+        nb::class_<DfrOptions>(m, "DfrOptions")
             .def(nb::init<>())
-            .def_rw("wavelength", &DiffractionAccumOptions::wavelength)
-            .def_rw("k", &DiffractionAccumOptions::k)
-            .def_rw("seed", &DiffractionAccumOptions::seed)
-            .def_rw("samples", &DiffractionAccumOptions::samples)
-            .def_rw("max_order", &DiffractionAccumOptions::max_order)
-            .def_rw("direct_samples", &DiffractionAccumOptions::direct_samples)
-            .def_rw("keller_samples", &DiffractionAccumOptions::keller_samples)
-            .def_rw("suffix_samples", &DiffractionAccumOptions::suffix_samples)
-            .def_rw("strategy_mask", &DiffractionAccumOptions::strategy_mask)
-            .def_rw("sample_sequence", &DiffractionAccumOptions::sample_sequence)
-            .def_rw("receiver_model", &DiffractionAccumOptions::receiver_model)
-            .def_rw("collect_edge_use", &DiffractionAccumOptions::collect_edge_use)
+            .def_rw("wavelength", &DfrOptions::wavelength)
+            .def_rw("k", &DfrOptions::k)
+            .def_rw("seed", &DfrOptions::seed)
+            .def_rw("samples", &DfrOptions::samples)
+            .def_rw("max_order", &DfrOptions::max_order)
+            .def_rw("direct_samples", &DfrOptions::direct_samples)
+            .def_rw("keller_samples", &DfrOptions::keller_samples)
+            .def_rw("suffix_samples", &DfrOptions::suffix_samples)
+            .def_rw("strategy_mask", &DfrOptions::strategy_mask)
+            .def_rw("sample_sequence", &DfrOptions::sample_sequence)
+            .def_rw("receiver_model", &DfrOptions::receiver_model)
+            .def_rw("collect_edge_use", &DfrOptions::collect_edge_use)
             .def_rw("collect_debug_counts",
-                    &DiffractionAccumOptions::collect_debug_counts);
+                    &DfrOptions::collect_debug_counts);
 
-        nb::class_<DiffractionMaterial>(m, "DiffractionMaterial")
+        nb::class_<DfrMaterial>(m, "DfrMaterial")
             .def(nb::init<>())
-            .def_rw("eta_r", &DiffractionMaterial::eta_r)
-            .def_rw("sigma", &DiffractionMaterial::sigma)
-            .def_rw("mu_r", &DiffractionMaterial::mu_r)
-            .def_rw("gain", &DiffractionMaterial::gain)
-            .def_rw("valid", &DiffractionMaterial::valid);
+            .def_rw("eta_r", &DfrMaterial::eta_r)
+            .def_rw("sigma", &DfrMaterial::sigma)
+            .def_rw("mu_r", &DfrMaterial::mu_r)
+            .def_rw("gain", &DfrMaterial::gain)
+            .def_rw("valid", &DfrMaterial::valid);
 
-        nb::class_<DiffractionMaterialAD>(m, "DiffractionMaterialAD")
+        nb::class_<DfrMaterialAD>(m, "DfrMaterialAD")
             .def(nb::init<>())
-            .def_rw("eta_r", &DiffractionMaterialAD::eta_r)
-            .def_rw("sigma", &DiffractionMaterialAD::sigma)
-            .def_rw("mu_r", &DiffractionMaterialAD::mu_r)
-            .def_rw("gain", &DiffractionMaterialAD::gain)
-            .def_rw("valid", &DiffractionMaterialAD::valid);
+            .def_rw("eta_r", &DfrMaterialAD::eta_r)
+            .def_rw("sigma", &DfrMaterialAD::sigma)
+            .def_rw("mu_r", &DfrMaterialAD::mu_r)
+            .def_rw("gain", &DfrMaterialAD::gain)
+            .def_rw("valid", &DfrMaterialAD::valid);
 
-        nb::class_<DiffractionStateTable>(m, "DiffractionStateTable")
+        nb::class_<DfrStates>(m, "DfrStates")
             .def(nb::init<>())
-            .def_rw("count", &DiffractionStateTable::count)
-            .def_rw("edge_index", &DiffractionStateTable::edge_index)
-            .def_rw("edge_pos", &DiffractionStateTable::edge_pos)
-            .def_rw("edge_dir", &DiffractionStateTable::edge_dir)
-            .def_rw("edge_line_min", &DiffractionStateTable::edge_line_min)
-            .def_rw("edge_line_max", &DiffractionStateTable::edge_line_max)
-            .def_rw("face0_normal", &DiffractionStateTable::face0_normal)
-            .def_rw("face1_normal", &DiffractionStateTable::face1_normal)
-            .def_rw("face0_prim_id", &DiffractionStateTable::face0_prim_id)
-            .def_rw("face1_prim_id", &DiffractionStateTable::face1_prim_id)
-            .def_rw("exterior_angle", &DiffractionStateTable::exterior_angle)
-            .def_rw("source_pos", &DiffractionStateTable::source_pos)
-            .def_rw("source_power", &DiffractionStateTable::source_power)
-            .def_rw("incident_direction",
-                    &DiffractionStateTable::incident_direction)
-            .def_rw("initial_direction",
-                    &DiffractionStateTable::initial_direction)
-            .def_rw("prefix_reflection_depth",
-                    &DiffractionStateTable::prefix_reflection_depth);
+            .def_rw("count", &DfrStates::count)
+            .def_rw("edge_index", &DfrStates::edge_index)
+            .def_rw("edge_pos", &DfrStates::edge_pos)
+            .def_rw("edge_dir", &DfrStates::edge_dir)
+            .def_rw("edge_t_min", &DfrStates::edge_t_min)
+            .def_rw("edge_t_max", &DfrStates::edge_t_max)
+            .def_rw("n0", &DfrStates::n0)
+            .def_rw("n1", &DfrStates::n1)
+            .def_rw("prim0", &DfrStates::prim0)
+            .def_rw("prim1", &DfrStates::prim1)
+            .def_rw("exterior_angle", &DfrStates::exterior_angle)
+            .def_rw("src", &DfrStates::src)
+            .def_rw("src_power", &DfrStates::src_power)
+            .def_rw("wi",
+                    &DfrStates::wi)
+            .def_rw("d0",
+                    &DfrStates::d0)
+            .def_rw("prefix_depth",
+                    &DfrStates::prefix_depth);
 
-        nb::class_<DiffractionStateTableAD>(m, "DiffractionStateTableAD")
+        nb::class_<DfrStatesAD>(m, "DfrStatesAD")
             .def(nb::init<>())
-            .def_rw("count", &DiffractionStateTableAD::count)
-            .def_rw("edge_index", &DiffractionStateTableAD::edge_index)
-            .def_rw("edge_pos", &DiffractionStateTableAD::edge_pos)
-            .def_rw("edge_dir", &DiffractionStateTableAD::edge_dir)
-            .def_rw("edge_line_min", &DiffractionStateTableAD::edge_line_min)
-            .def_rw("edge_line_max", &DiffractionStateTableAD::edge_line_max)
-            .def_rw("face0_normal", &DiffractionStateTableAD::face0_normal)
-            .def_rw("face1_normal", &DiffractionStateTableAD::face1_normal)
-            .def_rw("face0_prim_id", &DiffractionStateTableAD::face0_prim_id)
-            .def_rw("face1_prim_id", &DiffractionStateTableAD::face1_prim_id)
-            .def_rw("exterior_angle", &DiffractionStateTableAD::exterior_angle)
-            .def_rw("source_pos", &DiffractionStateTableAD::source_pos)
-            .def_rw("source_power", &DiffractionStateTableAD::source_power)
-            .def_rw("incident_direction",
-                    &DiffractionStateTableAD::incident_direction)
-            .def_rw("initial_direction",
-                    &DiffractionStateTableAD::initial_direction)
-            .def_rw("prefix_reflection_depth",
-                    &DiffractionStateTableAD::prefix_reflection_depth);
+            .def_rw("count", &DfrStatesAD::count)
+            .def_rw("edge_index", &DfrStatesAD::edge_index)
+            .def_rw("edge_pos", &DfrStatesAD::edge_pos)
+            .def_rw("edge_dir", &DfrStatesAD::edge_dir)
+            .def_rw("edge_t_min", &DfrStatesAD::edge_t_min)
+            .def_rw("edge_t_max", &DfrStatesAD::edge_t_max)
+            .def_rw("n0", &DfrStatesAD::n0)
+            .def_rw("n1", &DfrStatesAD::n1)
+            .def_rw("prim0", &DfrStatesAD::prim0)
+            .def_rw("prim1", &DfrStatesAD::prim1)
+            .def_rw("exterior_angle", &DfrStatesAD::exterior_angle)
+            .def_rw("src", &DfrStatesAD::src)
+            .def_rw("src_power", &DfrStatesAD::src_power)
+            .def_rw("wi",
+                    &DfrStatesAD::wi)
+            .def_rw("d0",
+                    &DfrStatesAD::d0)
+            .def_rw("prefix_depth",
+                    &DfrStatesAD::prefix_depth);
 
-        nb::class_<DiffractionAccumResult>(m, "DiffractionAccumResult")
+        nb::class_<DfrAccum>(m, "DfrAccum")
             .def(nb::init<>())
-            .def_rw("grid_cell_count", &DiffractionAccumResult::grid_cell_count)
-            .def_rw("diffraction_power", &DiffractionAccumResult::diffraction_power)
-            .def_rw("diffraction_field_x",
-                    &DiffractionAccumResult::diffraction_field_x)
-            .def_rw("diffraction_field_y",
-                    &DiffractionAccumResult::diffraction_field_y)
-            .def_rw("diffraction_field_z",
-                    &DiffractionAccumResult::diffraction_field_z)
-            .def_rw("direct_count", &DiffractionAccumResult::direct_count)
-            .def_rw("keller_count", &DiffractionAccumResult::keller_count)
-            .def_rw("suffix_count", &DiffractionAccumResult::suffix_count)
-            .def_rw("visibility_reject_count",
-                    &DiffractionAccumResult::visibility_reject_count)
-            .def_rw("inter_edge_visibility_reject_count",
-                    &DiffractionAccumResult::inter_edge_visibility_reject_count)
-            .def_rw("utd_reject_count", &DiffractionAccumResult::utd_reject_count)
-            .def_rw("edge_use_count", &DiffractionAccumResult::edge_use_count);
+            .def_rw("grid_cell_count", &DfrAccum::grid_cell_count)
+            .def_rw("power", &DfrAccum::power)
+            .def_rw("field_x",
+                    &DfrAccum::field_x)
+            .def_rw("field_y",
+                    &DfrAccum::field_y)
+            .def_rw("field_z",
+                    &DfrAccum::field_z)
+            .def_rw("direct_count", &DfrAccum::direct_count)
+            .def_rw("keller_count", &DfrAccum::keller_count)
+            .def_rw("suffix_count", &DfrAccum::suffix_count)
+            .def_rw("vis_rejects",
+                    &DfrAccum::vis_rejects)
+            .def_rw("edge_vis_rejects",
+                    &DfrAccum::edge_vis_rejects)
+            .def_rw("utd_rejects", &DfrAccum::utd_rejects)
+            .def_rw("edge_uses", &DfrAccum::edge_uses);
 
-        nb::class_<DiffractionAccumResultAD>(m, "DiffractionAccumResultAD")
+        nb::class_<DfrAccumAD>(m, "DfrAccumAD")
             .def(nb::init<>())
-            .def_rw("grid_cell_count", &DiffractionAccumResultAD::grid_cell_count)
-            .def_rw("diffraction_power",
-                    &DiffractionAccumResultAD::diffraction_power)
-            .def_rw("diffraction_field_x",
-                    &DiffractionAccumResultAD::diffraction_field_x)
-            .def_rw("diffraction_field_y",
-                    &DiffractionAccumResultAD::diffraction_field_y)
-            .def_rw("diffraction_field_z",
-                    &DiffractionAccumResultAD::diffraction_field_z)
-            .def_rw("direct_count", &DiffractionAccumResultAD::direct_count)
-            .def_rw("keller_count", &DiffractionAccumResultAD::keller_count)
-            .def_rw("suffix_count", &DiffractionAccumResultAD::suffix_count)
-            .def_rw("visibility_reject_count",
-                    &DiffractionAccumResultAD::visibility_reject_count)
-            .def_rw("inter_edge_visibility_reject_count",
-                    &DiffractionAccumResultAD::inter_edge_visibility_reject_count)
-            .def_rw("utd_reject_count", &DiffractionAccumResultAD::utd_reject_count)
-            .def_rw("edge_use_count", &DiffractionAccumResultAD::edge_use_count);
+            .def_rw("grid_cell_count", &DfrAccumAD::grid_cell_count)
+            .def_rw("power",
+                    &DfrAccumAD::power)
+            .def_rw("field_x",
+                    &DfrAccumAD::field_x)
+            .def_rw("field_y",
+                    &DfrAccumAD::field_y)
+            .def_rw("field_z",
+                    &DfrAccumAD::field_z)
+            .def_rw("direct_count", &DfrAccumAD::direct_count)
+            .def_rw("keller_count", &DfrAccumAD::keller_count)
+            .def_rw("suffix_count", &DfrAccumAD::suffix_count)
+            .def_rw("vis_rejects",
+                    &DfrAccumAD::vis_rejects)
+            .def_rw("edge_vis_rejects",
+                    &DfrAccumAD::edge_vis_rejects)
+            .def_rw("utd_rejects", &DfrAccumAD::utd_rejects)
+            .def_rw("edge_uses", &DfrAccumAD::edge_uses);
 
-        nb::class_<DiffractionPathOptions>(m, "DiffractionPathOptions")
+        nb::class_<DfrPathOptions>(m, "DfrPathOptions")
             .def(nb::init<>())
-            .def_rw("wavelength", &DiffractionPathOptions::wavelength)
-            .def_rw("k", &DiffractionPathOptions::k)
-            .def_rw("seed", &DiffractionPathOptions::seed)
-            .def_rw("max_order", &DiffractionPathOptions::max_order)
-            .def_rw("max_paths", &DiffractionPathOptions::max_paths)
-            .def_rw("max_receivers", &DiffractionPathOptions::max_receivers)
-            .def_rw("strategy_mask", &DiffractionPathOptions::strategy_mask)
-            .def_rw("sample_count", &DiffractionPathOptions::sample_count)
-            .def_rw("return_geometry", &DiffractionPathOptions::return_geometry)
-            .def_rw("receiver_model", &DiffractionPathOptions::receiver_model);
+            .def_rw("wavelength", &DfrPathOptions::wavelength)
+            .def_rw("k", &DfrPathOptions::k)
+            .def_rw("seed", &DfrPathOptions::seed)
+            .def_rw("max_order", &DfrPathOptions::max_order)
+            .def_rw("max_paths", &DfrPathOptions::max_paths)
+            .def_rw("max_rx", &DfrPathOptions::max_rx)
+            .def_rw("strategy_mask", &DfrPathOptions::strategy_mask)
+            .def_rw("sample_count", &DfrPathOptions::sample_count)
+            .def_rw("return_geom", &DfrPathOptions::return_geom)
+            .def_rw("receiver_model", &DfrPathOptions::receiver_model);
 
-        nb::class_<DiffractionPathResult>(m, "DiffractionPathResult")
+        nb::class_<DfrPaths>(m, "DfrPaths")
             .def(nb::init<>())
-            .def_rw("capacity", &DiffractionPathResult::capacity)
-            .def_rw("count", &DiffractionPathResult::count)
-            .def_rw("valid", &DiffractionPathResult::valid)
-            .def_rw("tx_index", &DiffractionPathResult::tx_index)
-            .def_rw("rx_index", &DiffractionPathResult::rx_index)
-            .def_rw("order", &DiffractionPathResult::order)
-            .def_rw("edge_index_0", &DiffractionPathResult::edge_index_0)
-            .def_rw("edge_index_1", &DiffractionPathResult::edge_index_1)
-            .def_rw("edge_index_2", &DiffractionPathResult::edge_index_2)
-            .def_rw("delay", &DiffractionPathResult::delay)
-            .def_rw("field_x", &DiffractionPathResult::field_x)
-            .def_rw("field_y", &DiffractionPathResult::field_y)
-            .def_rw("field_z", &DiffractionPathResult::field_z)
-            .def_rw("point_0", &DiffractionPathResult::point_0)
-            .def_rw("point_1", &DiffractionPathResult::point_1)
-            .def_rw("point_2", &DiffractionPathResult::point_2);
+            .def_rw("capacity", &DfrPaths::capacity)
+            .def_rw("count", &DfrPaths::count)
+            .def_rw("valid", &DfrPaths::valid)
+            .def_rw("tx_id", &DfrPaths::tx_id)
+            .def_rw("rx_id", &DfrPaths::rx_id)
+            .def_rw("order", &DfrPaths::order)
+            .def_rw("edge0", &DfrPaths::edge0)
+            .def_rw("edge1", &DfrPaths::edge1)
+            .def_rw("edge2", &DfrPaths::edge2)
+            .def_rw("delay", &DfrPaths::delay)
+            .def_rw("field_x", &DfrPaths::field_x)
+            .def_rw("field_y", &DfrPaths::field_y)
+            .def_rw("field_z", &DfrPaths::field_z)
+            .def_rw("p0", &DfrPaths::p0)
+            .def_rw("p1", &DfrPaths::p1)
+            .def_rw("p2", &DfrPaths::p2);
 
-        nb::class_<DiffractionPathResultAD>(m, "DiffractionPathResultAD")
+        nb::class_<DfrPathsAD>(m, "DfrPathsAD")
             .def(nb::init<>())
-            .def_rw("capacity", &DiffractionPathResultAD::capacity)
-            .def_rw("count", &DiffractionPathResultAD::count)
-            .def_rw("valid", &DiffractionPathResultAD::valid)
-            .def_rw("tx_index", &DiffractionPathResultAD::tx_index)
-            .def_rw("rx_index", &DiffractionPathResultAD::rx_index)
-            .def_rw("order", &DiffractionPathResultAD::order)
-            .def_rw("edge_index_0", &DiffractionPathResultAD::edge_index_0)
-            .def_rw("edge_index_1", &DiffractionPathResultAD::edge_index_1)
-            .def_rw("edge_index_2", &DiffractionPathResultAD::edge_index_2)
-            .def_rw("delay", &DiffractionPathResultAD::delay)
-            .def_rw("field_x", &DiffractionPathResultAD::field_x)
-            .def_rw("field_y", &DiffractionPathResultAD::field_y)
-            .def_rw("field_z", &DiffractionPathResultAD::field_z)
-            .def_rw("point_0", &DiffractionPathResultAD::point_0)
-            .def_rw("point_1", &DiffractionPathResultAD::point_1)
-            .def_rw("point_2", &DiffractionPathResultAD::point_2);
+            .def_rw("capacity", &DfrPathsAD::capacity)
+            .def_rw("count", &DfrPathsAD::count)
+            .def_rw("valid", &DfrPathsAD::valid)
+            .def_rw("tx_id", &DfrPathsAD::tx_id)
+            .def_rw("rx_id", &DfrPathsAD::rx_id)
+            .def_rw("order", &DfrPathsAD::order)
+            .def_rw("edge0", &DfrPathsAD::edge0)
+            .def_rw("edge1", &DfrPathsAD::edge1)
+            .def_rw("edge2", &DfrPathsAD::edge2)
+            .def_rw("delay", &DfrPathsAD::delay)
+            .def_rw("field_x", &DfrPathsAD::field_x)
+            .def_rw("field_y", &DfrPathsAD::field_y)
+            .def_rw("field_z", &DfrPathsAD::field_z)
+            .def_rw("p0", &DfrPathsAD::p0)
+            .def_rw("p1", &DfrPathsAD::p1)
+            .def_rw("p2", &DfrPathsAD::p2);
 
         nb::class_<ReflectionEpcResult>(m, "ReflectionEpcResult")
             .def_ro("ray_count", &ReflectionEpcResult::ray_count)
@@ -1370,30 +1370,30 @@ NB_MODULE(rayd, m) {
                   "options"_a = AccumOptions(),
                   "active"_a = true,
                   "tx_polarization"_a = Vector3f(1.f, 0.f, 0.f))
-            .def("accumulate_diffraction_order1",
+            .def("accum_dfr1",
                  [](const Scene &scene,
                     nb::handle states_obj,
-                    const DiffractionGrid &grid,
+                    const DfrGrid &grid,
                     nb::handle material_obj,
-                    const DiffractionAccumOptions &options,
+                    const DfrOptions &options,
                     nb::handle active_obj) -> nb::object {
-                     if (nb::isinstance<DiffractionStateTable>(states_obj)) {
-                         const DiffractionStateTable states =
-                             nb::cast<DiffractionStateTable>(states_obj);
-                         const DiffractionMaterial material =
-                             nb::cast<DiffractionMaterial>(material_obj);
+                     if (nb::isinstance<DfrStates>(states_obj)) {
+                         const DfrStates states =
+                             nb::cast<DfrStates>(states_obj);
+                         const DfrMaterial material =
+                             nb::cast<DfrMaterial>(material_obj);
                          const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
-                         return nb::cast(scene.accumulate_diffraction_order1<true>(
+                         return nb::cast(scene.accum_dfr1<true>(
                              states, grid, material, options, active));
                      }
-                     if (nb::isinstance<DiffractionStateTableAD>(states_obj)) {
-                         const DiffractionStateTableAD states =
-                             nb::cast<DiffractionStateTableAD>(states_obj);
-                         const DiffractionMaterialAD material =
-                             nb::cast<DiffractionMaterialAD>(material_obj);
+                     if (nb::isinstance<DfrStatesAD>(states_obj)) {
+                         const DfrStatesAD states =
+                             nb::cast<DfrStatesAD>(states_obj);
+                         const DfrMaterialAD material =
+                             nb::cast<DfrMaterialAD>(material_obj);
                          const rayd::MaskAD active =
                              nb::cast<rayd::MaskAD>(active_obj);
-                         return nb::cast(scene.accumulate_diffraction_order1<false>(
+                         return nb::cast(scene.accum_dfr1<false>(
                              states, grid, material, options, active));
                      }
                      throw nb::next_overload();
@@ -1401,37 +1401,37 @@ NB_MODULE(rayd, m) {
                  "states"_a,
                  "grid"_a,
                  "material"_a,
-                 "options"_a = DiffractionAccumOptions(),
+                 "options"_a = DfrOptions(),
                  "active"_a = true)
-            .def("accumulate_diffraction_chains",
+            .def("accum_dfr",
                  [](const Scene &scene,
                     nb::handle initial_states_obj,
                     nb::handle recursive_states_obj,
-                    const DiffractionGrid &grid,
+                    const DfrGrid &grid,
                     nb::handle material_obj,
-                    const DiffractionAccumOptions &options,
+                    const DfrOptions &options,
                     nb::handle active_obj) -> nb::object {
-                     if (nb::isinstance<DiffractionStateTable>(initial_states_obj)) {
-                         const DiffractionStateTable initial_states =
-                             nb::cast<DiffractionStateTable>(initial_states_obj);
-                         const DiffractionStateTable recursive_states =
-                             nb::cast<DiffractionStateTable>(recursive_states_obj);
-                         const DiffractionMaterial material =
-                             nb::cast<DiffractionMaterial>(material_obj);
+                     if (nb::isinstance<DfrStates>(initial_states_obj)) {
+                         const DfrStates initial_states =
+                             nb::cast<DfrStates>(initial_states_obj);
+                         const DfrStates recursive_states =
+                             nb::cast<DfrStates>(recursive_states_obj);
+                         const DfrMaterial material =
+                             nb::cast<DfrMaterial>(material_obj);
                          const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
-                         return nb::cast(scene.accumulate_diffraction_chains<true>(
+                         return nb::cast(scene.accum_dfr<true>(
                              initial_states, recursive_states, grid, material, options, active));
                      }
-                     if (nb::isinstance<DiffractionStateTableAD>(initial_states_obj)) {
-                         const DiffractionStateTableAD initial_states =
-                             nb::cast<DiffractionStateTableAD>(initial_states_obj);
-                         const DiffractionStateTableAD recursive_states =
-                             nb::cast<DiffractionStateTableAD>(recursive_states_obj);
-                         const DiffractionMaterialAD material =
-                             nb::cast<DiffractionMaterialAD>(material_obj);
+                     if (nb::isinstance<DfrStatesAD>(initial_states_obj)) {
+                         const DfrStatesAD initial_states =
+                             nb::cast<DfrStatesAD>(initial_states_obj);
+                         const DfrStatesAD recursive_states =
+                             nb::cast<DfrStatesAD>(recursive_states_obj);
+                         const DfrMaterialAD material =
+                             nb::cast<DfrMaterialAD>(material_obj);
                          const rayd::MaskAD active =
                              nb::cast<rayd::MaskAD>(active_obj);
-                         return nb::cast(scene.accumulate_diffraction_chains<false>(
+                         return nb::cast(scene.accum_dfr<false>(
                              initial_states, recursive_states, grid, material, options, active));
                      }
                      throw nb::next_overload();
@@ -1440,41 +1440,41 @@ NB_MODULE(rayd, m) {
                  "recursive_states"_a,
                  "grid"_a,
                  "material"_a,
-                 "options"_a = DiffractionAccumOptions(),
+                 "options"_a = DfrOptions(),
                  "active"_a = true)
-            .def("trace_diffraction_paths",
+            .def("trace_dfr_paths",
                  [](const Scene &scene,
                     const Vector3f &tx_positions,
                     const Vector3f &rx_positions,
-                    const DiffractionStateTable &states,
-                    const DiffractionMaterial &material,
-                    const DiffractionPathOptions &options,
+                    const DfrStates &states,
+                    const DfrMaterial &material,
+                    const DfrPathOptions &options,
                     rayd::Mask active) {
-                     return scene.trace_diffraction_paths<true>(
+                     return scene.trace_dfr_paths<true>(
                          tx_positions, rx_positions, states, material, options, active);
                  },
                  "tx_positions"_a,
                  "rx_positions"_a,
                  "states"_a,
                  "material"_a,
-                 "options"_a = DiffractionPathOptions(),
+                 "options"_a = DfrPathOptions(),
                  "active"_a = true)
-            .def("trace_diffraction_paths",
+            .def("trace_dfr_paths",
                  [](const Scene &scene,
                     const Vector3fAD &tx_positions,
                     const Vector3fAD &rx_positions,
-                    const DiffractionStateTableAD &states,
-                    const DiffractionMaterialAD &material,
-                    const DiffractionPathOptions &options,
+                    const DfrStatesAD &states,
+                    const DfrMaterialAD &material,
+                    const DfrPathOptions &options,
                     rayd::MaskAD active) {
-                     return scene.trace_diffraction_paths<false>(
+                     return scene.trace_dfr_paths<false>(
                          tx_positions, rx_positions, states, material, options, active);
                  },
                  "tx_positions"_a,
                  "rx_positions"_a,
                  "states"_a,
                  "material"_a,
-                 "options"_a = DiffractionPathOptions(),
+                 "options"_a = DfrPathOptions(),
                  "active"_a = true)
             .def("shadow_test",
                  [](const Scene &scene, const Ray &ray, rayd::Mask active) {
@@ -1554,66 +1554,66 @@ NB_MODULE(rayd, m) {
                  nb::arg("end_b"),
                  "ignore_prim_ids"_a = Int(),
                  "active"_a = true)
-            .def("visible_axial_edge",
+            .def("visible_edge",
                  [](const Scene &scene,
-                    nb::handle source_pos_obj,
+                    nb::handle src_obj,
                     nb::handle edge_pos_obj,
                     nb::handle edge_dir_obj,
-                    nb::handle edge_line_min_obj,
-                    nb::handle edge_line_max_obj,
+                    nb::handle edge_t_min_obj,
+                    nb::handle edge_t_max_obj,
                     const std::vector<float> &sample_fractions,
                     nb::handle active_obj) -> nb::object {
                      const std::string module_name =
-                         nb::cast<std::string>(source_pos_obj.type().attr("__module__"));
+                         nb::cast<std::string>(src_obj.type().attr("__module__"));
                      const std::string type_name =
-                         nb::cast<std::string>(source_pos_obj.type().attr("__name__"));
+                         nb::cast<std::string>(src_obj.type().attr("__name__"));
 
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
-                         Vector3fAD source_pos = nb::cast<Vector3fAD>(source_pos_obj);
+                         Vector3fAD src = nb::cast<Vector3fAD>(src_obj);
                          Vector3fAD edge_pos = nb::cast<Vector3fAD>(edge_pos_obj);
                          Vector3fAD edge_dir = nb::cast<Vector3fAD>(edge_dir_obj);
-                         FloatAD edge_line_min = nb::cast<FloatAD>(edge_line_min_obj);
-                         FloatAD edge_line_max = nb::cast<FloatAD>(edge_line_max_obj);
+                         FloatAD edge_t_min = nb::cast<FloatAD>(edge_t_min_obj);
+                         FloatAD edge_t_max = nb::cast<FloatAD>(edge_t_max_obj);
                          rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                         return nb::cast(scene.visible_axial_edge<false>(
-                             source_pos,
+                         return nb::cast(scene.visible_edge<false>(
+                             src,
                              edge_pos,
                              edge_dir,
-                             edge_line_min,
-                             edge_line_max,
+                             edge_t_min,
+                             edge_t_max,
                              sample_fractions,
                              active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
-                         Vector3f source_pos =
-                             nb::cast<Vector3f>(source_pos_obj);
+                         Vector3f src =
+                             nb::cast<Vector3f>(src_obj);
                          Vector3f edge_pos =
                              nb::cast<Vector3f>(edge_pos_obj);
                          Vector3f edge_dir =
                              nb::cast<Vector3f>(edge_dir_obj);
-                         Float edge_line_min =
-                             nb::cast<Float>(edge_line_min_obj);
-                         Float edge_line_max =
-                             nb::cast<Float>(edge_line_max_obj);
+                         Float edge_t_min =
+                             nb::cast<Float>(edge_t_min_obj);
+                         Float edge_t_max =
+                             nb::cast<Float>(edge_t_max_obj);
                          rayd::Mask active =
                              nb::cast<rayd::Mask>(active_obj);
-                         return nb::cast(scene.visible_axial_edge<true>(
-                             source_pos,
+                         return nb::cast(scene.visible_edge<true>(
+                             src,
                              edge_pos,
                              edge_dir,
-                             edge_line_min,
-                             edge_line_max,
+                             edge_t_min,
+                             edge_t_max,
                              sample_fractions,
                              active));
                      }
                      throw nb::next_overload();
                  },
-                 nb::arg("source_pos"),
+                 nb::arg("src"),
                  nb::arg("edge_pos"),
                  nb::arg("edge_dir"),
-                 "edge_line_min"_a,
-                 "edge_line_max"_a,
+                 "edge_t_min"_a,
+                 "edge_t_max"_a,
                  "sample_fractions"_a = std::vector<float>{ 0.f, 0.25f, 0.5f, 0.75f, 1.f },
                  "active"_a = true)
             .def("visible_chain",
@@ -1678,7 +1678,7 @@ NB_MODULE(rayd, m) {
                      return scene.nearest_edge<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
-            .def("nearest_edges_topk",
+            .def("nearest_edges",
                  [](const Scene &scene, nb::handle point_obj, int k, nb::handle active_obj) -> nb::object {
                      const std::string module_name =
                          nb::cast<std::string>(point_obj.type().attr("__module__"));
@@ -1688,13 +1688,13 @@ NB_MODULE(rayd, m) {
                      if (module_name == "drjit.cuda.ad" && type_name == "Array3f") {
                          Vector3fAD point = nb::cast<Vector3fAD>(point_obj);
                          rayd::MaskAD active = nb::cast<rayd::MaskAD>(active_obj);
-                         return nb::cast(scene.nearest_edges_topk<false>(point, k, active));
+                         return nb::cast(scene.nearest_edges<false>(point, k, active));
                      }
 
                      if (module_name == "drjit.cuda" && type_name == "Array3f") {
                          Vector3f point_detached = nb::cast<Vector3f>(point_obj);
                          rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
-                         return nb::cast(scene.nearest_edges_topk<true>(point_detached, k, active));
+                         return nb::cast(scene.nearest_edges<true>(point_detached, k, active));
                      }
                      throw nb::next_overload();
                  },

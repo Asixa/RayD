@@ -444,10 +444,10 @@ extern "C" __global__ void __raygen__reflection_epc() {
     float3 origin = make_vec3(params.ray_ox[ray_index],
                               params.ray_oy[ray_index],
                               params.ray_oz[ray_index]);
-    const int rx_index = params.rx_count == 1 ? 0 : static_cast<int>(ray_index);
-    const float3 receiver = make_vec3(params.rx_x[rx_index],
-                                      params.rx_y[rx_index],
-                                      params.rx_z[rx_index]);
+    const int rx_id = params.rx_count == 1 ? 0 : static_cast<int>(ray_index);
+    const float3 receiver = make_vec3(params.rx_x[rx_id],
+                                      params.rx_y[rx_id],
+                                      params.rx_z[rx_id]);
 
     float3 plane_points[ReflectionEpcMaxBounces];
     float3 plane_normals[ReflectionEpcMaxBounces];

@@ -82,33 +82,33 @@ using AccumResultT = AccumResultData<FloatT<Detached>>;
 using AccumResultAD = AccumResultT<false>;
 using AccumResult = AccumResultT<true>;
 
-struct DiffractionGrid;
-struct DiffractionAccumOptions;
-struct DiffractionPathOptions;
+struct DfrGrid;
+struct DfrOptions;
+struct DfrPathOptions;
 
-template <typename> struct DiffractionMaterialData;
+template <typename> struct DfrMaterialData;
 template <bool Detached>
-using DiffractionMaterialT = DiffractionMaterialData<FloatT<Detached>>;
-using DiffractionMaterialAD = DiffractionMaterialT<false>;
-using DiffractionMaterial = DiffractionMaterialT<true>;
+using DfrMaterialT = DfrMaterialData<FloatT<Detached>>;
+using DfrMaterialAD = DfrMaterialT<false>;
+using DfrMaterial = DfrMaterialT<true>;
 
-template <typename> struct DiffractionStateTableData;
+template <typename> struct DfrStatesData;
 template <bool Detached>
-using DiffractionStateTableT = DiffractionStateTableData<FloatT<Detached>>;
-using DiffractionStateTableAD = DiffractionStateTableT<false>;
-using DiffractionStateTable = DiffractionStateTableT<true>;
+using DfrStatesT = DfrStatesData<FloatT<Detached>>;
+using DfrStatesAD = DfrStatesT<false>;
+using DfrStates = DfrStatesT<true>;
 
-template <typename> struct DiffractionAccumResultData;
+template <typename> struct DfrAccumData;
 template <bool Detached>
-using DiffractionAccumResultT = DiffractionAccumResultData<FloatT<Detached>>;
-using DiffractionAccumResultAD = DiffractionAccumResultT<false>;
-using DiffractionAccumResult = DiffractionAccumResultT<true>;
+using DfrAccumT = DfrAccumData<FloatT<Detached>>;
+using DfrAccumAD = DfrAccumT<false>;
+using DfrAccum = DfrAccumT<true>;
 
-template <typename> struct DiffractionPathResultData;
+template <typename> struct DfrPathsData;
 template <bool Detached>
-using DiffractionPathResultT = DiffractionPathResultData<FloatT<Detached>>;
-using DiffractionPathResultAD = DiffractionPathResultT<false>;
-using DiffractionPathResult = DiffractionPathResultT<true>;
+using DfrPathsT = DfrPathsData<FloatT<Detached>>;
+using DfrPathsAD = DfrPathsT<false>;
+using DfrPaths = DfrPathsT<true>;
 
 template <typename> struct NearestPointEdgeData;
 template <bool Detached>

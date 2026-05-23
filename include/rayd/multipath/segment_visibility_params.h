@@ -30,8 +30,8 @@ struct SegmentVisibilityParams {
     const float *edge_dir_x = nullptr;
     const float *edge_dir_y = nullptr;
     const float *edge_dir_z = nullptr;
-    const float *edge_line_min = nullptr;
-    const float *edge_line_max = nullptr;
+    const float *edge_t_min = nullptr;
+    const float *edge_t_max = nullptr;
 
     // Chain kind: flattened polyline points and per-chain length.
     const float *chain_point_x = nullptr;

@@ -328,9 +328,9 @@ struct AccumRaw {
     Int wedge_bounce_depth;
 };
 
-struct DiffractionAccumRaw {
+struct DfrAccumRaw {
     int grid_cell_count = 0;
-    Float diffraction_power;
+    Float power;
     Float field_x_re;
     Float field_x_im;
     Float field_y_re;
@@ -340,22 +340,22 @@ struct DiffractionAccumRaw {
     Int direct_count;
     Int keller_count;
     Int suffix_count;
-    Int visibility_reject_count;
-    Int inter_edge_visibility_reject_count;
-    Int utd_reject_count;
-    Int edge_use_count;
+    Int vis_rejects;
+    Int edge_vis_rejects;
+    Int utd_rejects;
+    Int edge_uses;
 };
 
-struct DiffractionPathRaw {
+struct DfrPathsRaw {
     int capacity = 0;
     Int count;
     Mask valid;
-    Int tx_index;
-    Int rx_index;
+    Int tx_id;
+    Int rx_id;
     Int order;
-    Int edge_index_0;
-    Int edge_index_1;
-    Int edge_index_2;
+    Int edge0;
+    Int edge1;
+    Int edge2;
     Float delay;
     Float field_x_re;
     Float field_x_im;
@@ -363,9 +363,9 @@ struct DiffractionPathRaw {
     Float field_y_im;
     Float field_z_re;
     Float field_z_im;
-    Vector3f point_0;
-    Vector3f point_1;
-    Vector3f point_2;
+    Vector3f p0;
+    Vector3f p1;
+    Vector3f p2;
 };
 
 /// Convert per-mesh (shape_id, local primitive id) pairs into scene-global primitive ids;
@@ -443,15 +443,15 @@ ReflectionEpcFieldResultT<Detached> initialize_reflection_epc_field_result(
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
     const int slot_count = ray_count * max_bounces;
-    const bool return_geometry = options.return_geometry;
+    const bool return_geom = options.return_geom;
     const bool return_endpoints = options.return_endpoints;
     const bool return_hit_points =
-        return_geometry && options.return_hit_points;
-    const bool return_normals = return_geometry && options.return_normals;
+        return_geom && options.return_hit_points;
+    const bool return_normals = return_geom && options.return_normals;
     const bool return_resolved_prim_ids =
-        return_geometry && options.return_resolved_prim_ids;
+        return_geom && options.return_resolved_prim_ids;
     const bool return_surface_group_ids =
-        return_geometry && options.return_surface_group_ids;
+        return_geom && options.return_surface_group_ids;
 
     result.valid = empty<MaskT<Detached>>(ray_count);
     result.bounce_count = empty<IntT<Detached>>(ray_count);
@@ -838,10 +838,10 @@ void initialize_reflection_accumulation_raw(AccumRaw &raw) {
                      &minus_one_i);
 }
 
-DiffractionAccumRaw allocate_diffraction_accumulation_raw(int grid_cell_count) {
-    DiffractionAccumRaw raw;
+DfrAccumRaw alloc_dfr_accum_raw(int grid_cell_count) {
+    DfrAccumRaw raw;
     raw.grid_cell_count = grid_cell_count;
-    raw.diffraction_power = empty<Float>(grid_cell_count);
+    raw.power = empty<Float>(grid_cell_count);
     raw.field_x_re = empty<Float>(grid_cell_count);
     raw.field_x_im = empty<Float>(grid_cell_count);
     raw.field_y_re = empty<Float>(grid_cell_count);
@@ -851,18 +851,18 @@ DiffractionAccumRaw allocate_diffraction_accumulation_raw(int grid_cell_count) {
     raw.direct_count = empty<Int>(1);
     raw.keller_count = empty<Int>(1);
     raw.suffix_count = empty<Int>(1);
-    raw.visibility_reject_count = empty<Int>(1);
-    raw.inter_edge_visibility_reject_count = empty<Int>(1);
-    raw.utd_reject_count = empty<Int>(1);
-    raw.edge_use_count = empty<Int>(1);
+    raw.vis_rejects = empty<Int>(1);
+    raw.edge_vis_rejects = empty<Int>(1);
+    raw.utd_rejects = empty<Int>(1);
+    raw.edge_uses = empty<Int>(1);
     return raw;
 }
 
-void initialize_diffraction_accumulation_raw(DiffractionAccumRaw &raw) {
+void init_dfr_accum_raw(DfrAccumRaw &raw) {
     const int zero_i = 0;
     const float zero_f = 0.f;
     jit_memset_async(JitBackend::CUDA,
-                     raw.diffraction_power.data(),
+                     raw.power.data(),
                      raw.grid_cell_count,
                      sizeof(float),
                      &zero_f);
@@ -900,30 +900,30 @@ void initialize_diffraction_accumulation_raw(DiffractionAccumRaw &raw) {
     jit_memset_async(JitBackend::CUDA, raw.keller_count.data(), 1, sizeof(int), &zero_i);
     jit_memset_async(JitBackend::CUDA, raw.suffix_count.data(), 1, sizeof(int), &zero_i);
     jit_memset_async(JitBackend::CUDA,
-                     raw.visibility_reject_count.data(),
+                     raw.vis_rejects.data(),
                      1,
                      sizeof(int),
                      &zero_i);
     jit_memset_async(JitBackend::CUDA,
-                     raw.inter_edge_visibility_reject_count.data(),
+                     raw.edge_vis_rejects.data(),
                      1,
                      sizeof(int),
                      &zero_i);
-    jit_memset_async(JitBackend::CUDA, raw.utd_reject_count.data(), 1, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA, raw.edge_use_count.data(), 1, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA, raw.utd_rejects.data(), 1, sizeof(int), &zero_i);
+    jit_memset_async(JitBackend::CUDA, raw.edge_uses.data(), 1, sizeof(int), &zero_i);
 }
 
-DiffractionPathRaw allocate_diffraction_path_raw(int capacity) {
-    DiffractionPathRaw raw;
+DfrPathsRaw alloc_dfr_paths_raw(int capacity) {
+    DfrPathsRaw raw;
     raw.capacity = capacity;
     raw.count = empty<Int>(1);
     raw.valid = empty<Mask>(capacity);
-    raw.tx_index = empty<Int>(capacity);
-    raw.rx_index = empty<Int>(capacity);
+    raw.tx_id = empty<Int>(capacity);
+    raw.rx_id = empty<Int>(capacity);
     raw.order = empty<Int>(capacity);
-    raw.edge_index_0 = empty<Int>(capacity);
-    raw.edge_index_1 = empty<Int>(capacity);
-    raw.edge_index_2 = empty<Int>(capacity);
+    raw.edge0 = empty<Int>(capacity);
+    raw.edge1 = empty<Int>(capacity);
+    raw.edge2 = empty<Int>(capacity);
     raw.delay = empty<Float>(capacity);
     raw.field_x_re = empty<Float>(capacity);
     raw.field_x_im = empty<Float>(capacity);
@@ -931,28 +931,28 @@ DiffractionPathRaw allocate_diffraction_path_raw(int capacity) {
     raw.field_y_im = empty<Float>(capacity);
     raw.field_z_re = empty<Float>(capacity);
     raw.field_z_im = empty<Float>(capacity);
-    raw.point_0 =
+    raw.p0 =
         Vector3f(empty<Float>(capacity), empty<Float>(capacity), empty<Float>(capacity));
-    raw.point_1 =
+    raw.p1 =
         Vector3f(empty<Float>(capacity), empty<Float>(capacity), empty<Float>(capacity));
-    raw.point_2 =
+    raw.p2 =
         Vector3f(empty<Float>(capacity), empty<Float>(capacity), empty<Float>(capacity));
     return raw;
 }
 
-void initialize_diffraction_path_raw(DiffractionPathRaw &raw) {
+void init_dfr_paths_raw(DfrPathsRaw &raw) {
     const int zero_i = 0;
     const int minus_one_i = -1;
     const uint8_t zero_b = 0u;
     const float zero_f = 0.f;
     jit_memset_async(JitBackend::CUDA, raw.count.data(), 1, sizeof(int), &zero_i);
     jit_memset_async(JitBackend::CUDA, raw.valid.data(), raw.capacity, sizeof(uint8_t), &zero_b);
-    jit_memset_async(JitBackend::CUDA, raw.tx_index.data(), raw.capacity, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.rx_index.data(), raw.capacity, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.tx_id.data(), raw.capacity, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.rx_id.data(), raw.capacity, sizeof(int), &minus_one_i);
     jit_memset_async(JitBackend::CUDA, raw.order.data(), raw.capacity, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA, raw.edge_index_0.data(), raw.capacity, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.edge_index_1.data(), raw.capacity, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.edge_index_2.data(), raw.capacity, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.edge0.data(), raw.capacity, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.edge1.data(), raw.capacity, sizeof(int), &minus_one_i);
+    jit_memset_async(JitBackend::CUDA, raw.edge2.data(), raw.capacity, sizeof(int), &minus_one_i);
     jit_memset_async(JitBackend::CUDA, raw.delay.data(), raw.capacity, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.field_x_re.data(), raw.capacity, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.field_x_im.data(), raw.capacity, sizeof(float), &zero_f);
@@ -960,15 +960,15 @@ void initialize_diffraction_path_raw(DiffractionPathRaw &raw) {
     jit_memset_async(JitBackend::CUDA, raw.field_y_im.data(), raw.capacity, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.field_z_re.data(), raw.capacity, sizeof(float), &zero_f);
     jit_memset_async(JitBackend::CUDA, raw.field_z_im.data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_0.x().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_0.y().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_0.z().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_1.x().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_1.y().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_1.z().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_2.x().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_2.y().data(), raw.capacity, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.point_2.z().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p0.x().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p0.y().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p0.z().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p1.x().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p1.y().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p1.z().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p2.x().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p2.y().data(), raw.capacity, sizeof(float), &zero_f);
+    jit_memset_async(JitBackend::CUDA, raw.p2.z().data(), raw.capacity, sizeof(float), &zero_f);
 }
 
 template <typename ArrayD>
@@ -1261,25 +1261,25 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
 template <bool Detached>
 AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_jit(
     const OptixScene &optix_scene,
-    const Vector3f &source_pos,
+    const Vector3f &src,
     const Vector3f &edge_pos,
     const Vector3f &edge_dir,
-    const Float &edge_line_min,
-    const Float &edge_line_max,
+    const Float &edge_t_min,
+    const Float &edge_t_max,
     const std::vector<float> &sample_fractions,
     const Mask &active_detached) {
-    const int state_count = static_cast<int>(slices(source_pos));
+    const int state_count = static_cast<int>(slices(src));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
 
     Mask any_visible = full<Mask>(false, state_count);
     const Float span =
-        maximum(edge_line_max - edge_line_min, Float(0.f));
+        maximum(edge_t_max - edge_t_min, Float(0.f));
     for (float fraction : sample_fractions) {
-        const Float sample_t = edge_line_min + fraction * span;
+        const Float sample_t = edge_t_min + fraction * span;
         const Vector3f sample_pos = edge_pos + sample_t * edge_dir;
         const OptixSegmentHit hit =
-            optix_scene.segment_hit<true>(source_pos, sample_pos, active_detached);
+            optix_scene.segment_hit<true>(src, sample_pos, active_detached);
         any_visible = any_visible || hit.visible;
     }
 
@@ -1297,23 +1297,23 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     const OptixLaunchPipeline &pipeline,
     const Int &face_offsets,
     int mesh_count,
-    const Vector3f &source_pos,
+    const Vector3f &src,
     const Vector3f &edge_pos,
     const Vector3f &edge_dir,
-    const Float &edge_line_min,
-    const Float &edge_line_max,
+    const Float &edge_t_min,
+    const Float &edge_t_max,
     const std::vector<float> &sample_fractions,
     const Mask &active_detached) {
-    const int state_count = static_cast<int>(slices(source_pos));
+    const int state_count = static_cast<int>(slices(src));
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
 
     Mask any_visible = empty<Mask>(state_count);
-    drjit::eval(source_pos,
+    drjit::eval(src,
                 edge_pos,
                 edge_dir,
-                edge_line_min,
-                edge_line_max,
+                edge_t_min,
+                edge_t_max,
                 face_offsets,
                 active_detached);
 
@@ -1321,7 +1321,7 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
         make_segment_visibility_params(optix_scene,
                                        face_offsets,
                                        mesh_count,
-                                       source_pos,
+                                       src,
                                        Int(),
                                        0,
                                        active_detached,
@@ -1332,8 +1332,8 @@ AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_native(
     params.edge_dir_x = edge_dir.x().data();
     params.edge_dir_y = edge_dir.y().data();
     params.edge_dir_z = edge_dir.z().data();
-    params.edge_line_min = edge_line_min.data();
-    params.edge_line_max = edge_line_max.data();
+    params.edge_t_min = edge_t_min.data();
+    params.edge_t_max = edge_t_max.data();
     params.sample_count = static_cast<int>(sample_fractions.size());
     for (size_t i = 0; i < sample_fractions.size(); ++i) {
         params.sample_fractions[i] = sample_fractions[i];
@@ -3106,37 +3106,37 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
+DfrPathsT<Detached> Scene::trace_dfr_paths(
     const Vector3fT<Detached> &tx_positions,
     const Vector3fT<Detached> &rx_positions,
-    const DiffractionStateTableT<Detached> &states,
-    const DiffractionMaterialT<Detached> &material,
-    const DiffractionPathOptions &options,
+    const DfrStatesT<Detached> &states,
+    const DfrMaterialT<Detached> &material,
+    const DfrPathOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(
-        NativeLaunchStage::AccumulateDiffraction);
-    require(is_ready(), "Scene::trace_diffraction_paths(): scene is not built.");
+        NativeLaunchStage::AccumDfr);
+    require(is_ready(), "Scene::trace_dfr_paths(): scene is not built.");
     require(!pending_updates_,
-            "Scene::trace_diffraction_paths(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::trace_dfr_paths(): scene has pending updates. Call Scene::sync() first.");
     require(options.wavelength > 0.f,
-            "Scene::trace_diffraction_paths(): wavelength must be positive.");
+            "Scene::trace_dfr_paths(): wavelength must be positive.");
     require(options.max_order == 1,
-            "Scene::trace_diffraction_paths(): only max_order == 1 is supported.");
+            "Scene::trace_dfr_paths(): only max_order == 1 is supported.");
     require(options.max_paths > 0,
-            "Scene::trace_diffraction_paths(): max_paths must be positive.");
-    require((options.strategy_mask & RAYD_DIFF_DIRECT) != 0,
-            "Scene::trace_diffraction_paths(): first-order path export requires direct diffraction.");
+            "Scene::trace_dfr_paths(): max_paths must be positive.");
+    require((options.strategy_mask & RAYD_DFR_DIRECT) != 0,
+            "Scene::trace_dfr_paths(): first-order path export requires direct diffraction.");
 
-    DiffractionPathResultT<Detached> result;
+    DfrPathsT<Detached> result;
     if constexpr (!Detached) {
         throw std::runtime_error(
-            "Scene::trace_diffraction_paths(): native path export is a non-AD native fast path. "
+            "Scene::trace_dfr_paths(): native path export is a non-AD native fast path. "
             "Use detached inputs, or use an explicit AD path.");
     } else {
         const int tx_count = static_cast<int>(slices(tx_positions));
         const int rx_width = static_cast<int>(slices(rx_positions));
-        const int rx_count = options.max_receivers > 0
-                                 ? std::min(rx_width, options.max_receivers)
+        const int rx_count = options.max_rx > 0
+                                 ? std::min(rx_width, options.max_rx)
                                  : rx_width;
         const int state_width = static_cast<int>(slices(states.edge_index));
         const int state_count = states.count > 0 ? states.count : state_width;
@@ -3144,46 +3144,46 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
             result.capacity = 0;
             result.count = full<Int>(0, 1);
             result.valid = full<Mask>(false, 0);
-            result.tx_index = full<Int>(-1, 0);
-            result.rx_index = full<Int>(-1, 0);
+            result.tx_id = full<Int>(-1, 0);
+            result.rx_id = full<Int>(-1, 0);
             result.order = full<Int>(0, 0);
-            result.edge_index_0 = full<Int>(-1, 0);
-            result.edge_index_1 = full<Int>(-1, 0);
-            result.edge_index_2 = full<Int>(-1, 0);
+            result.edge0 = full<Int>(-1, 0);
+            result.edge1 = full<Int>(-1, 0);
+            result.edge2 = full<Int>(-1, 0);
             result.delay = zeros<Float>(0);
             result.field_x = drjit::Complex<Float>(zeros<Float>(0), zeros<Float>(0));
             result.field_y = drjit::Complex<Float>(zeros<Float>(0), zeros<Float>(0));
             result.field_z = drjit::Complex<Float>(zeros<Float>(0), zeros<Float>(0));
-            result.point_0 = zeros<Vector3f>(0);
-            result.point_1 = zeros<Vector3f>(0);
-            result.point_2 = zeros<Vector3f>(0);
+            result.p0 = zeros<Vector3f>(0);
+            result.p1 = zeros<Vector3f>(0);
+            result.p2 = zeros<Vector3f>(0);
             return result;
         }
         require(state_count > 0 && state_count <= state_width,
-                "Scene::trace_diffraction_paths(): invalid state count.");
+                "Scene::trace_dfr_paths(): invalid state count.");
         require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
                     static_cast<int>(slices(states.edge_dir)) >= state_count &&
-                    static_cast<int>(slices(states.edge_line_min)) >= state_count &&
-                    static_cast<int>(slices(states.edge_line_max)) >= state_count &&
-                    static_cast<int>(slices(states.face0_normal)) >= state_count &&
-                    static_cast<int>(slices(states.face1_normal)) >= state_count &&
-                    static_cast<int>(slices(states.face0_prim_id)) >= state_count &&
-                    static_cast<int>(slices(states.face1_prim_id)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_max)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n1)) >= state_count &&
+                    static_cast<int>(slices(states.prim0)) >= state_count &&
+                    static_cast<int>(slices(states.prim1)) >= state_count &&
                     static_cast<int>(slices(states.exterior_angle)) >= state_count &&
-                    static_cast<int>(slices(states.source_pos)) >= state_count &&
-                    static_cast<int>(slices(states.source_power)) >= state_count,
-                "Scene::trace_diffraction_paths(): state fields must cover state count.");
+                    static_cast<int>(slices(states.src)) >= state_count &&
+                    static_cast<int>(slices(states.src_power)) >= state_count,
+                "Scene::trace_dfr_paths(): state fields must cover state count.");
         require(rx_count <= rx_width,
-                "Scene::trace_diffraction_paths(): invalid receiver count.");
+                "Scene::trace_dfr_paths(): invalid receiver count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,
-                "Scene::trace_diffraction_paths(): material payload must not be empty.");
+                "Scene::trace_dfr_paths(): material payload must not be empty.");
         require(static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
-                "Scene::trace_diffraction_paths(): material payload fields must have matching widths.");
+                "Scene::trace_dfr_paths(): material payload fields must have matching widths.");
 
         Mask active_detached = active;
         int active_width = static_cast<int>(slices(active_detached));
@@ -3192,15 +3192,15 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
             active_width = state_count;
         } else {
             require(active_width == state_count,
-                    "Scene::trace_diffraction_paths(): active width must be 1 or match state count.");
+                    "Scene::trace_dfr_paths(): active width must be 1 or match state count.");
         }
-        active_detached &= drjit::isfinite(states.source_pos.x()) &&
-                           drjit::isfinite(states.source_pos.y()) &&
-                           drjit::isfinite(states.source_pos.z()) &&
+        active_detached &= drjit::isfinite(states.src.x()) &&
+                           drjit::isfinite(states.src.y()) &&
+                           drjit::isfinite(states.src.z()) &&
                            drjit::isfinite(states.edge_pos.x()) &&
                            drjit::isfinite(states.edge_pos.y()) &&
                            drjit::isfinite(states.edge_pos.z()) &&
-                           drjit::isfinite(states.source_power);
+                           drjit::isfinite(states.src_power);
 
         const int state_limit = std::min(state_count, options.max_paths);
         const int64_t capacity64 =
@@ -3208,7 +3208,7 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
             static_cast<int64_t>(rx_count) *
             static_cast<int64_t>(state_limit);
         require(capacity64 <= static_cast<int64_t>(std::numeric_limits<int>::max()),
-                "Scene::trace_diffraction_paths(): requested path capacity exceeds int range.");
+                "Scene::trace_dfr_paths(): requested path capacity exceeds int range.");
         const int capacity = static_cast<int>(capacity64);
 
         const OptixSceneSelection scenes = select_optix_scenes();
@@ -3217,9 +3217,9 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
         const int split_mode = scenes.split_mode;
         const int hitgroup_record_count = scenes.hitgroup_record_count;
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_diffraction_paths(): OptiX scene is not ready.");
+                "Scene::trace_dfr_paths(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::trace_diffraction_paths(): invalid hitgroup record count.");
+                "Scene::trace_dfr_paths(): invalid hitgroup record count.");
 
         ensure_pipeline(diffraction_paths_pipeline_,
                         primary_scene->context(),
@@ -3231,15 +3231,15 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
                     states.edge_index,
                     states.edge_pos,
                     states.edge_dir,
-                    states.edge_line_min,
-                    states.edge_line_max,
-                    states.face0_normal,
-                    states.face1_normal,
-                    states.face0_prim_id,
-                    states.face1_prim_id,
+                    states.edge_t_min,
+                    states.edge_t_max,
+                    states.n0,
+                    states.n1,
+                    states.prim0,
+                    states.prim1,
                     states.exterior_angle,
-                    states.source_pos,
-                    states.source_power,
+                    states.src,
+                    states.src_power,
                     active_detached,
                     material.eta_r,
                     material.sigma,
@@ -3247,10 +3247,10 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
                     material.gain,
                     material.valid);
 
-        DiffractionPathRaw raw = allocate_diffraction_path_raw(capacity);
-        initialize_diffraction_path_raw(raw);
+        DfrPathsRaw raw = alloc_dfr_paths_raw(capacity);
+        init_dfr_paths_raw(raw);
 
-        DiffractionPathParams params = {};
+        DfrPathParams params = {};
         params.primary_handle = primary_scene->ias_handle();
         params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
@@ -3276,21 +3276,21 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
         params.state_edge_dir_x = states.edge_dir.x().data();
         params.state_edge_dir_y = states.edge_dir.y().data();
         params.state_edge_dir_z = states.edge_dir.z().data();
-        params.state_edge_line_min = states.edge_line_min.data();
-        params.state_edge_line_max = states.edge_line_max.data();
-        params.state_face0_normal_x = states.face0_normal.x().data();
-        params.state_face0_normal_y = states.face0_normal.y().data();
-        params.state_face0_normal_z = states.face0_normal.z().data();
-        params.state_face1_normal_x = states.face1_normal.x().data();
-        params.state_face1_normal_y = states.face1_normal.y().data();
-        params.state_face1_normal_z = states.face1_normal.z().data();
-        params.state_face0_prim_id = states.face0_prim_id.data();
-        params.state_face1_prim_id = states.face1_prim_id.data();
+        params.state_edge_t_min = states.edge_t_min.data();
+        params.state_edge_t_max = states.edge_t_max.data();
+        params.state_n0_x = states.n0.x().data();
+        params.state_n0_y = states.n0.y().data();
+        params.state_n0_z = states.n0.z().data();
+        params.state_n1_x = states.n1.x().data();
+        params.state_n1_y = states.n1.y().data();
+        params.state_n1_z = states.n1.z().data();
+        params.state_prim0 = states.prim0.data();
+        params.state_prim1 = states.prim1.data();
         params.state_exterior_angle = states.exterior_angle.data();
-        params.state_source_x = states.source_pos.x().data();
-        params.state_source_y = states.source_pos.y().data();
-        params.state_source_z = states.source_pos.z().data();
-        params.state_source_power = states.source_power.data();
+        params.state_src_x = states.src.x().data();
+        params.state_src_y = states.src.y().data();
+        params.state_src_z = states.src.z().data();
+        params.state_src_power = states.src_power.data();
         params.material_gain = material.gain.data();
         params.material_valid = reinterpret_cast<const uint8_t *>(material.valid.data());
         params.material_count = material_count;
@@ -3300,16 +3300,16 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
         params.max_order = options.max_order;
         params.strategy_mask = options.strategy_mask;
         params.sample_count = options.sample_count;
-        params.return_geometry = options.return_geometry;
+        params.return_geom = options.return_geom;
         params.receiver_model = options.receiver_model;
         params.out_count = raw.count.data();
         params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
-        params.out_tx_index = raw.tx_index.data();
-        params.out_rx_index = raw.rx_index.data();
+        params.out_tx_id = raw.tx_id.data();
+        params.out_rx_id = raw.rx_id.data();
         params.out_order = raw.order.data();
-        params.out_edge_index_0 = raw.edge_index_0.data();
-        params.out_edge_index_1 = raw.edge_index_1.data();
-        params.out_edge_index_2 = raw.edge_index_2.data();
+        params.out_edge0 = raw.edge0.data();
+        params.out_edge1 = raw.edge1.data();
+        params.out_edge2 = raw.edge2.data();
         params.out_delay = raw.delay.data();
         params.out_field_x_re = raw.field_x_re.data();
         params.out_field_x_im = raw.field_x_im.data();
@@ -3317,34 +3317,34 @@ DiffractionPathResultT<Detached> Scene::trace_diffraction_paths(
         params.out_field_y_im = raw.field_y_im.data();
         params.out_field_z_re = raw.field_z_re.data();
         params.out_field_z_im = raw.field_z_im.data();
-        params.out_point_0_x = raw.point_0.x().data();
-        params.out_point_0_y = raw.point_0.y().data();
-        params.out_point_0_z = raw.point_0.z().data();
-        params.out_point_1_x = raw.point_1.x().data();
-        params.out_point_1_y = raw.point_1.y().data();
-        params.out_point_1_z = raw.point_1.z().data();
-        params.out_point_2_x = raw.point_2.x().data();
-        params.out_point_2_y = raw.point_2.y().data();
-        params.out_point_2_z = raw.point_2.z().data();
+        params.out_p0_x = raw.p0.x().data();
+        params.out_p0_y = raw.p0.y().data();
+        params.out_p0_z = raw.p0.z().data();
+        params.out_p1_x = raw.p1.x().data();
+        params.out_p1_y = raw.p1.y().data();
+        params.out_p1_z = raw.p1.z().data();
+        params.out_p2_x = raw.p2.x().data();
+        params.out_p2_y = raw.p2.y().data();
+        params.out_p2_z = raw.p2.z().data();
 
         diffraction_paths_pipeline_->launch(0, params);
 
         result.capacity = capacity;
         result.count = raw.count;
         result.valid = raw.valid;
-        result.tx_index = raw.tx_index;
-        result.rx_index = raw.rx_index;
+        result.tx_id = raw.tx_id;
+        result.rx_id = raw.rx_id;
         result.order = raw.order;
-        result.edge_index_0 = raw.edge_index_0;
-        result.edge_index_1 = raw.edge_index_1;
-        result.edge_index_2 = raw.edge_index_2;
+        result.edge0 = raw.edge0;
+        result.edge1 = raw.edge1;
+        result.edge2 = raw.edge2;
         result.delay = raw.delay;
         result.field_x = drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
         result.field_y = drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
         result.field_z = drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
-        result.point_0 = raw.point_0;
-        result.point_1 = raw.point_1;
-        result.point_2 = raw.point_2;
+        result.p0 = raw.p0;
+        result.p1 = raw.p1;
+        result.p2 = raw.p2;
         return result;
     }
 }
@@ -3649,9 +3649,9 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         params.epc_normal_y = epc.plane_normals.y().data();
         params.epc_normal_z = epc.plane_normals.z().data();
         const bool return_resolved_prim_ids =
-            options.return_geometry && options.return_resolved_prim_ids;
+            options.return_geom && options.return_resolved_prim_ids;
         const bool return_surface_group_ids =
-            options.return_geometry && options.return_surface_group_ids;
+            options.return_geom && options.return_surface_group_ids;
         params.resolved_prim_ids =
             return_resolved_prim_ids ? epc.resolved_prim_ids.data() : nullptr;
         params.surface_group_ids =
@@ -3690,12 +3690,12 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
             params.out_last_hit_y = result.last_hit.y().data();
             params.out_last_hit_z = result.last_hit.z().data();
         }
-        if (options.return_geometry && options.return_hit_points) {
+        if (options.return_geom && options.return_hit_points) {
             params.out_hit_x = result.hit_points.x().data();
             params.out_hit_y = result.hit_points.y().data();
             params.out_hit_z = result.hit_points.z().data();
         }
-        if (options.return_geometry && options.return_normals) {
+        if (options.return_geom && options.return_normals) {
             params.out_normal_x = result.normals.x().data();
             params.out_normal_y = result.normals.y().data();
             params.out_normal_z = result.normals.z().data();
@@ -3951,9 +3951,9 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         field_params.epc_normal_y = raw.plane_normal_y.data();
         field_params.epc_normal_z = raw.plane_normal_z.data();
         const bool return_resolved_prim_ids =
-            options.return_geometry && options.return_resolved_prim_ids;
+            options.return_geom && options.return_resolved_prim_ids;
         const bool return_surface_group_ids =
-            options.return_geometry && options.return_surface_group_ids;
+            options.return_geom && options.return_surface_group_ids;
         field_params.resolved_prim_ids =
             return_resolved_prim_ids ? raw.resolved_prim_ids.data() : nullptr;
         field_params.surface_group_ids =
@@ -3992,12 +3992,12 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
             field_params.out_last_hit_y = result.last_hit.y().data();
             field_params.out_last_hit_z = result.last_hit.z().data();
         }
-        if (options.return_geometry && options.return_hit_points) {
+        if (options.return_geom && options.return_hit_points) {
             field_params.out_hit_x = result.hit_points.x().data();
             field_params.out_hit_y = result.hit_points.y().data();
             field_params.out_hit_z = result.hit_points.z().data();
         }
-        if (options.return_geometry && options.return_normals) {
+        if (options.return_geom && options.return_normals) {
             field_params.out_normal_x = result.normals.x().data();
             field_params.out_normal_y = result.normals.y().data();
             field_params.out_normal_z = result.normals.z().data();
@@ -4086,7 +4086,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             result.wedge_events.prim_id = full<Int>(-1, event_count);
             result.wedge_events.directions = zeros<Vector3f>(event_count);
             result.wedge_events.source_points = zeros<Vector3f>(event_count);
-            result.wedge_events.source_power = zeros<Float>(event_count);
+            result.wedge_events.src_power = zeros<Float>(event_count);
             result.wedge_events.initial_directions = zeros<Vector3f>(event_count);
             result.wedge_events.bounce_depth = full<Int>(-1, event_count);
         };
@@ -4296,7 +4296,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             Vector3f(raw.wedge_dir_x, raw.wedge_dir_y, raw.wedge_dir_z);
         result.wedge_events.source_points =
             Vector3f(raw.wedge_source_x, raw.wedge_source_y, raw.wedge_source_z);
-        result.wedge_events.source_power = raw.wedge_source_power;
+        result.wedge_events.src_power = raw.wedge_source_power;
         result.wedge_events.initial_directions = Vector3f(
             raw.wedge_initial_dir_x,
             raw.wedge_initial_dir_y,
@@ -4307,55 +4307,55 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 }
 
 template <bool Detached>
-DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
-    const DiffractionStateTableT<Detached> &states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterialT<Detached> &material,
-    const DiffractionAccumOptions &options,
+DfrAccumT<Detached> Scene::accum_dfr1(
+    const DfrStatesT<Detached> &states,
+    const DfrGrid &grid,
+    const DfrMaterialT<Detached> &material,
+    const DfrOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(
-        NativeLaunchStage::AccumulateDiffraction);
-    require(is_ready(), "Scene::accumulate_diffraction_order1(): scene is not built.");
+        NativeLaunchStage::AccumDfr);
+    require(is_ready(), "Scene::accum_dfr1(): scene is not built.");
     require(!pending_updates_,
-            "Scene::accumulate_diffraction_order1(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::accum_dfr1(): scene has pending updates. Call Scene::sync() first.");
     require(grid.axis >= 0 && grid.axis <= 2,
-            "Scene::accumulate_diffraction_order1(): grid.axis must be 0, 1, or 2.");
+            "Scene::accum_dfr1(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
-            "Scene::accumulate_diffraction_order1(): grid resolution must be positive.");
+            "Scene::accum_dfr1(): grid resolution must be positive.");
     require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
-            "Scene::accumulate_diffraction_order1(): grid bounds must be ordered.");
+            "Scene::accum_dfr1(): grid bounds must be ordered.");
     require(grid.cell_area > 0.f,
-            "Scene::accumulate_diffraction_order1(): grid.cell_area must be positive.");
+            "Scene::accum_dfr1(): grid.cell_area must be positive.");
     require(options.wavelength > 0.f,
-            "Scene::accumulate_diffraction_order1(): wavelength must be positive.");
+            "Scene::accum_dfr1(): wavelength must be positive.");
     require(options.max_order == 1,
-            "Scene::accumulate_diffraction_order1(): only max_order == 1 is supported.");
+            "Scene::accum_dfr1(): only max_order == 1 is supported.");
 
-    DiffractionAccumResultT<Detached> result;
+    DfrAccumT<Detached> result;
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         throw std::runtime_error(
-            "Scene::accumulate_diffraction_order1(): native accumulation is a non-AD native fast path. "
+            "Scene::accum_dfr1(): native accumulation is a non-AD native fast path. "
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
-        result.diffraction_power = zeros<Float>(grid_cell_count);
-        result.diffraction_field_x =
+        result.power = zeros<Float>(grid_cell_count);
+        result.field_x =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
-        result.diffraction_field_y =
+        result.field_y =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
-        result.diffraction_field_z =
+        result.field_z =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
         result.direct_count = full<Int>(0, 1);
         result.keller_count = full<Int>(0, 1);
         result.suffix_count = full<Int>(0, 1);
-        result.visibility_reject_count = full<Int>(0, 1);
-        result.inter_edge_visibility_reject_count = full<Int>(0, 1);
-        result.utd_reject_count = full<Int>(0, 1);
-        result.edge_use_count = full<Int>(0, 1);
+        result.vis_rejects = full<Int>(0, 1);
+        result.edge_vis_rejects = full<Int>(0, 1);
+        result.utd_rejects = full<Int>(0, 1);
+        result.edge_uses = full<Int>(0, 1);
 
         const int state_width = static_cast<int>(slices(states.edge_index));
         const int state_count = states.count > 0 ? states.count : state_width;
@@ -4363,40 +4363,40 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
             return result;
         }
         require(state_count > 0 && state_count <= state_width,
-                "Scene::accumulate_diffraction_order1(): invalid state count.");
+                "Scene::accum_dfr1(): invalid state count.");
         require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
                     static_cast<int>(slices(states.edge_dir)) >= state_count &&
-                    static_cast<int>(slices(states.edge_line_min)) >= state_count &&
-                    static_cast<int>(slices(states.edge_line_max)) >= state_count &&
-                    static_cast<int>(slices(states.face0_normal)) >= state_count &&
-                    static_cast<int>(slices(states.face1_normal)) >= state_count &&
-                    static_cast<int>(slices(states.face0_prim_id)) >= state_count &&
-                    static_cast<int>(slices(states.face1_prim_id)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_max)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n1)) >= state_count &&
+                    static_cast<int>(slices(states.prim0)) >= state_count &&
+                    static_cast<int>(slices(states.prim1)) >= state_count &&
                     static_cast<int>(slices(states.exterior_angle)) >= state_count &&
-                    static_cast<int>(slices(states.source_pos)) >= state_count &&
-                    static_cast<int>(slices(states.source_power)) >= state_count &&
-                    static_cast<int>(slices(states.incident_direction)) >= state_count &&
-                    static_cast<int>(slices(states.initial_direction)) >= state_count &&
-                    static_cast<int>(slices(states.prefix_reflection_depth)) >= state_count,
-                "Scene::accumulate_diffraction_order1(): state fields must cover state count.");
+                    static_cast<int>(slices(states.src)) >= state_count &&
+                    static_cast<int>(slices(states.src_power)) >= state_count &&
+                    static_cast<int>(slices(states.wi)) >= state_count &&
+                    static_cast<int>(slices(states.d0)) >= state_count &&
+                    static_cast<int>(slices(states.prefix_depth)) >= state_count,
+                "Scene::accum_dfr1(): state fields must cover state count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,
-                "Scene::accumulate_diffraction_order1(): material payload must not be empty.");
+                "Scene::accum_dfr1(): material payload must not be empty.");
         require(static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
-                "Scene::accumulate_diffraction_order1(): material payload fields must have matching widths.");
+                "Scene::accum_dfr1(): material payload fields must have matching widths.");
 
         const int direct_samples =
-            (options.strategy_mask & RAYD_DIFF_DIRECT) != 0
+            (options.strategy_mask & RAYD_DFR_DIRECT) != 0
                 ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
                 : 0;
         const int keller_samples =
-            (options.strategy_mask & RAYD_DIFF_KELLER) != 0 ? options.keller_samples : 0;
+            (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples =
-            (options.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? options.suffix_samples : 0;
+            (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
         const int launch_count = direct_samples + keller_samples + suffix_samples;
         if (launch_count <= 0) {
             return result;
@@ -4408,15 +4408,15 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
             active_detached = gather<Mask>(active_detached, zeros<Int>(state_count));
         } else {
             require(active_width == state_count,
-                    "Scene::accumulate_diffraction_order1(): active width must be 1 or match state count.");
+                    "Scene::accum_dfr1(): active width must be 1 or match state count.");
         }
-        active_detached &= drjit::isfinite(states.source_pos.x()) &&
-                           drjit::isfinite(states.source_pos.y()) &&
-                           drjit::isfinite(states.source_pos.z()) &&
+        active_detached &= drjit::isfinite(states.src.x()) &&
+                           drjit::isfinite(states.src.y()) &&
+                           drjit::isfinite(states.src.z()) &&
                            drjit::isfinite(states.edge_pos.x()) &&
                            drjit::isfinite(states.edge_pos.y()) &&
                            drjit::isfinite(states.edge_pos.z()) &&
-                           drjit::isfinite(states.source_power);
+                           drjit::isfinite(states.src_power);
 
         const OptixSceneSelection scenes = select_optix_scenes();
         const OptixScene *primary_scene = scenes.primary;
@@ -4426,14 +4426,14 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         const int triangle_count =
             static_cast<int>(slices(triangle_info_detached_.p0));
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accumulate_diffraction_order1(): OptiX scene is not ready.");
+                "Scene::accum_dfr1(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::accumulate_diffraction_order1(): invalid hitgroup record count.");
+                "Scene::accum_dfr1(): invalid hitgroup record count.");
         if (suffix_samples > 0) {
             require(triangle_count > 0,
-                    "Scene::accumulate_diffraction_order1(): suffix reflection requires scene triangles.");
+                    "Scene::accum_dfr1(): suffix reflection requires scene triangles.");
             require(material_count >= triangle_count,
-                    "Scene::accumulate_diffraction_order1(): suffix reflection requires per-triangle materials.");
+                    "Scene::accum_dfr1(): suffix reflection requires per-triangle materials.");
         }
 
         ensure_pipeline(diffraction_accumulation_pipeline_,
@@ -4444,18 +4444,18 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         drjit::eval(states.edge_index,
                     states.edge_pos,
                     states.edge_dir,
-                    states.edge_line_min,
-                    states.edge_line_max,
-                    states.face0_normal,
-                    states.face1_normal,
-                    states.face0_prim_id,
-                    states.face1_prim_id,
+                    states.edge_t_min,
+                    states.edge_t_max,
+                    states.n0,
+                    states.n1,
+                    states.prim0,
+                    states.prim1,
                     states.exterior_angle,
-                    states.source_pos,
-                    states.source_power,
-                    states.incident_direction,
-                    states.initial_direction,
-                    states.prefix_reflection_depth,
+                    states.src,
+                    states.src_power,
+                    states.wi,
+                    states.d0,
+                    states.prefix_depth,
                     active_detached,
                     material.eta_r,
                     material.sigma,
@@ -4470,10 +4470,10 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
                         face_offsets_);
         }
 
-        DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
-        initialize_diffraction_accumulation_raw(raw);
+        DfrAccumRaw raw = alloc_dfr_accum_raw(grid_cell_count);
+        init_dfr_accum_raw(raw);
 
-        DiffractionAccumParams params = {};
+        DfrAccumParams params = {};
         params.primary_handle = primary_scene->ias_handle();
         params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
@@ -4488,28 +4488,28 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.state_edge_dir_x = states.edge_dir.x().data();
         params.state_edge_dir_y = states.edge_dir.y().data();
         params.state_edge_dir_z = states.edge_dir.z().data();
-        params.state_edge_line_min = states.edge_line_min.data();
-        params.state_edge_line_max = states.edge_line_max.data();
-        params.state_face0_normal_x = states.face0_normal.x().data();
-        params.state_face0_normal_y = states.face0_normal.y().data();
-        params.state_face0_normal_z = states.face0_normal.z().data();
-        params.state_face1_normal_x = states.face1_normal.x().data();
-        params.state_face1_normal_y = states.face1_normal.y().data();
-        params.state_face1_normal_z = states.face1_normal.z().data();
-        params.state_face0_prim_id = states.face0_prim_id.data();
-        params.state_face1_prim_id = states.face1_prim_id.data();
+        params.state_edge_t_min = states.edge_t_min.data();
+        params.state_edge_t_max = states.edge_t_max.data();
+        params.state_n0_x = states.n0.x().data();
+        params.state_n0_y = states.n0.y().data();
+        params.state_n0_z = states.n0.z().data();
+        params.state_n1_x = states.n1.x().data();
+        params.state_n1_y = states.n1.y().data();
+        params.state_n1_z = states.n1.z().data();
+        params.state_prim0 = states.prim0.data();
+        params.state_prim1 = states.prim1.data();
         params.state_exterior_angle = states.exterior_angle.data();
-        params.state_source_x = states.source_pos.x().data();
-        params.state_source_y = states.source_pos.y().data();
-        params.state_source_z = states.source_pos.z().data();
-        params.state_source_power = states.source_power.data();
-        params.state_incident_dir_x = states.incident_direction.x().data();
-        params.state_incident_dir_y = states.incident_direction.y().data();
-        params.state_incident_dir_z = states.incident_direction.z().data();
-        params.state_initial_dir_x = states.initial_direction.x().data();
-        params.state_initial_dir_y = states.initial_direction.y().data();
-        params.state_initial_dir_z = states.initial_direction.z().data();
-        params.state_prefix_reflection_depth = states.prefix_reflection_depth.data();
+        params.state_src_x = states.src.x().data();
+        params.state_src_y = states.src.y().data();
+        params.state_src_z = states.src.z().data();
+        params.state_src_power = states.src_power.data();
+        params.state_wi_x = states.wi.x().data();
+        params.state_wi_y = states.wi.y().data();
+        params.state_wi_z = states.wi.z().data();
+        params.state_d0_x = states.d0.x().data();
+        params.state_d0_y = states.d0.y().data();
+        params.state_d0_z = states.d0.z().data();
+        params.state_prefix_depth = states.prefix_depth.data();
         params.grid_axis = grid.axis;
         params.grid_position = grid.position;
         params.grid_coord0_min = grid.coord0_min;
@@ -4555,7 +4555,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.receiver_model = options.receiver_model;
         params.collect_edge_use = options.collect_edge_use ? 1 : 0;
         params.collect_debug_counts = options.collect_debug_counts ? 1 : 0;
-        params.out_diffraction_power = raw.diffraction_power.data();
+        params.out_power = raw.power.data();
         params.out_field_x_re = raw.field_x_re.data();
         params.out_field_x_im = raw.field_x_im.data();
         params.out_field_y_re = raw.field_y_re.data();
@@ -4565,84 +4565,84 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_order1(
         params.out_direct_count = raw.direct_count.data();
         params.out_keller_count = raw.keller_count.data();
         params.out_suffix_count = raw.suffix_count.data();
-        params.out_visibility_reject_count = raw.visibility_reject_count.data();
-        params.out_inter_edge_visibility_reject_count =
-            raw.inter_edge_visibility_reject_count.data();
-        params.out_utd_reject_count = raw.utd_reject_count.data();
-        params.out_edge_use_count = raw.edge_use_count.data();
+        params.out_vis_rejects = raw.vis_rejects.data();
+        params.out_edge_vis_rejects =
+            raw.edge_vis_rejects.data();
+        params.out_utd_rejects = raw.utd_rejects.data();
+        params.out_edge_uses = raw.edge_uses.data();
 
         diffraction_accumulation_pipeline_->launch(0, params);
 
-        result.diffraction_power = raw.diffraction_power;
-        result.diffraction_field_x =
+        result.power = raw.power;
+        result.field_x =
             drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
-        result.diffraction_field_y =
+        result.field_y =
             drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
-        result.diffraction_field_z =
+        result.field_z =
             drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
         result.direct_count = raw.direct_count;
         result.keller_count = raw.keller_count;
         result.suffix_count = raw.suffix_count;
-        result.visibility_reject_count = raw.visibility_reject_count;
-        result.inter_edge_visibility_reject_count =
-            raw.inter_edge_visibility_reject_count;
-        result.utd_reject_count = raw.utd_reject_count;
-        result.edge_use_count = raw.edge_use_count;
+        result.vis_rejects = raw.vis_rejects;
+        result.edge_vis_rejects =
+            raw.edge_vis_rejects;
+        result.utd_rejects = raw.utd_rejects;
+        result.edge_uses = raw.edge_uses;
         return result;
     }
 }
 
 template <bool Detached>
-DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
-    const DiffractionStateTableT<Detached> &initial_states,
-    const DiffractionStateTableT<Detached> &recursive_states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterialT<Detached> &material,
-    const DiffractionAccumOptions &options,
+DfrAccumT<Detached> Scene::accum_dfr(
+    const DfrStatesT<Detached> &initial_states,
+    const DfrStatesT<Detached> &recursive_states,
+    const DfrGrid &grid,
+    const DfrMaterialT<Detached> &material,
+    const DfrOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(
-        NativeLaunchStage::AccumulateDiffraction);
-    require(is_ready(), "Scene::accumulate_diffraction_chains(): scene is not built.");
+        NativeLaunchStage::AccumDfr);
+    require(is_ready(), "Scene::accum_dfr(): scene is not built.");
     require(!pending_updates_,
-            "Scene::accumulate_diffraction_chains(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::accum_dfr(): scene has pending updates. Call Scene::sync() first.");
     require(grid.axis >= 0 && grid.axis <= 2,
-            "Scene::accumulate_diffraction_chains(): grid.axis must be 0, 1, or 2.");
+            "Scene::accum_dfr(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
-            "Scene::accumulate_diffraction_chains(): grid resolution must be positive.");
+            "Scene::accum_dfr(): grid resolution must be positive.");
     require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
-            "Scene::accumulate_diffraction_chains(): grid bounds must be ordered.");
+            "Scene::accum_dfr(): grid bounds must be ordered.");
     require(grid.cell_area > 0.f,
-            "Scene::accumulate_diffraction_chains(): grid.cell_area must be positive.");
+            "Scene::accum_dfr(): grid.cell_area must be positive.");
     require(options.wavelength > 0.f,
-            "Scene::accumulate_diffraction_chains(): wavelength must be positive.");
+            "Scene::accum_dfr(): wavelength must be positive.");
     require(options.max_order == 2 || options.max_order == 3,
-            "Scene::accumulate_diffraction_chains(): only max_order 2 or 3 is supported.");
+            "Scene::accum_dfr(): only max_order 2 or 3 is supported.");
 
-    DiffractionAccumResultT<Detached> result;
+    DfrAccumT<Detached> result;
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         throw std::runtime_error(
-            "Scene::accumulate_diffraction_chains(): native accumulation is a non-AD native fast path. "
+            "Scene::accum_dfr(): native accumulation is a non-AD native fast path. "
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
-        result.diffraction_power = zeros<Float>(grid_cell_count);
-        result.diffraction_field_x =
+        result.power = zeros<Float>(grid_cell_count);
+        result.field_x =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
-        result.diffraction_field_y =
+        result.field_y =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
-        result.diffraction_field_z =
+        result.field_z =
             drjit::Complex<Float>(zeros<Float>(grid_cell_count),
                                   zeros<Float>(grid_cell_count));
         result.direct_count = full<Int>(0, 1);
         result.keller_count = full<Int>(0, 1);
         result.suffix_count = full<Int>(0, 1);
-        result.visibility_reject_count = full<Int>(0, 1);
-        result.inter_edge_visibility_reject_count = full<Int>(0, 1);
-        result.utd_reject_count = full<Int>(0, 1);
-        result.edge_use_count = full<Int>(0, 1);
+        result.vis_rejects = full<Int>(0, 1);
+        result.edge_vis_rejects = full<Int>(0, 1);
+        result.utd_rejects = full<Int>(0, 1);
+        result.edge_uses = full<Int>(0, 1);
 
         const int initial_width = static_cast<int>(slices(initial_states.edge_index));
         const int initial_count =
@@ -4654,27 +4654,27 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
             return result;
         }
         require(initial_count > 0 && initial_count <= initial_width,
-                "Scene::accumulate_diffraction_chains(): invalid initial state count.");
+                "Scene::accum_dfr(): invalid initial state count.");
         require(recursive_count > 0 && recursive_count <= recursive_width,
-                "Scene::accumulate_diffraction_chains(): invalid recursive state count.");
+                "Scene::accum_dfr(): invalid recursive state count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,
-                "Scene::accumulate_diffraction_chains(): material payload must not be empty.");
+                "Scene::accum_dfr(): material payload must not be empty.");
         require(static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
-                "Scene::accumulate_diffraction_chains(): material payload fields must have matching widths.");
+                "Scene::accum_dfr(): material payload fields must have matching widths.");
 
         const int direct_samples =
-            (options.strategy_mask & RAYD_DIFF_DIRECT) != 0
+            (options.strategy_mask & RAYD_DFR_DIRECT) != 0
                 ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
                 : 0;
         const int keller_samples =
-            (options.strategy_mask & RAYD_DIFF_KELLER) != 0 ? options.keller_samples : 0;
+            (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
         const int suffix_samples =
-            (options.strategy_mask & RAYD_DIFF_SUFFIX_REFLECTION) != 0 ? options.suffix_samples : 0;
+            (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
         const int launch_count = direct_samples + keller_samples + suffix_samples;
         if (launch_count <= 0) {
             return result;
@@ -4686,15 +4686,15 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
             active_detached = gather<Mask>(active_detached, zeros<Int>(initial_count));
         } else {
             require(active_width == initial_count,
-                    "Scene::accumulate_diffraction_chains(): active width must be 1 or match initial state count.");
+                    "Scene::accum_dfr(): active width must be 1 or match initial state count.");
         }
-        active_detached &= drjit::isfinite(initial_states.source_pos.x()) &&
-                           drjit::isfinite(initial_states.source_pos.y()) &&
-                           drjit::isfinite(initial_states.source_pos.z()) &&
+        active_detached &= drjit::isfinite(initial_states.src.x()) &&
+                           drjit::isfinite(initial_states.src.y()) &&
+                           drjit::isfinite(initial_states.src.z()) &&
                            drjit::isfinite(initial_states.edge_pos.x()) &&
                            drjit::isfinite(initial_states.edge_pos.y()) &&
                            drjit::isfinite(initial_states.edge_pos.z()) &&
-                           drjit::isfinite(initial_states.source_power);
+                           drjit::isfinite(initial_states.src_power);
         Mask recursive_active = drjit::isfinite(recursive_states.edge_pos.x()) &&
                                 drjit::isfinite(recursive_states.edge_pos.y()) &&
                                 drjit::isfinite(recursive_states.edge_pos.z()) &&
@@ -4710,14 +4710,14 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         const int triangle_count =
             static_cast<int>(slices(triangle_info_detached_.p0));
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accumulate_diffraction_chains(): OptiX scene is not ready.");
+                "Scene::accum_dfr(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::accumulate_diffraction_chains(): invalid hitgroup record count.");
+                "Scene::accum_dfr(): invalid hitgroup record count.");
         if (suffix_samples > 0) {
             require(triangle_count > 0,
-                    "Scene::accumulate_diffraction_chains(): suffix reflection requires scene triangles.");
+                    "Scene::accum_dfr(): suffix reflection requires scene triangles.");
             require(material_count >= triangle_count,
-                    "Scene::accumulate_diffraction_chains(): suffix reflection requires per-triangle materials.");
+                    "Scene::accum_dfr(): suffix reflection requires per-triangle materials.");
         }
 
         ensure_pipeline(diffraction_accumulation_pipeline_,
@@ -4728,20 +4728,20 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         drjit::eval(initial_states.edge_index,
                     initial_states.edge_pos,
                     initial_states.edge_dir,
-                    initial_states.edge_line_min,
-                    initial_states.edge_line_max,
-                    initial_states.face0_prim_id,
-                    initial_states.face1_prim_id,
+                    initial_states.edge_t_min,
+                    initial_states.edge_t_max,
+                    initial_states.prim0,
+                    initial_states.prim1,
                     initial_states.exterior_angle,
-                    initial_states.source_pos,
-                    initial_states.source_power,
+                    initial_states.src,
+                    initial_states.src_power,
                     recursive_states.edge_index,
                     recursive_states.edge_pos,
                     recursive_states.edge_dir,
-                    recursive_states.edge_line_min,
-                    recursive_states.edge_line_max,
-                    recursive_states.face0_prim_id,
-                    recursive_states.face1_prim_id,
+                    recursive_states.edge_t_min,
+                    recursive_states.edge_t_max,
+                    recursive_states.prim0,
+                    recursive_states.prim1,
                     recursive_states.exterior_angle,
                     active_detached,
                     recursive_active,
@@ -4758,10 +4758,10 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
                         face_offsets_);
         }
 
-        DiffractionAccumRaw raw = allocate_diffraction_accumulation_raw(grid_cell_count);
-        initialize_diffraction_accumulation_raw(raw);
+        DfrAccumRaw raw = alloc_dfr_accum_raw(grid_cell_count);
+        init_dfr_accum_raw(raw);
 
-        DiffractionAccumParams params = {};
+        DfrAccumParams params = {};
         params.primary_handle = primary_scene->ias_handle();
         params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
@@ -4776,15 +4776,15 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.state_edge_dir_x = initial_states.edge_dir.x().data();
         params.state_edge_dir_y = initial_states.edge_dir.y().data();
         params.state_edge_dir_z = initial_states.edge_dir.z().data();
-        params.state_edge_line_min = initial_states.edge_line_min.data();
-        params.state_edge_line_max = initial_states.edge_line_max.data();
-        params.state_face0_prim_id = initial_states.face0_prim_id.data();
-        params.state_face1_prim_id = initial_states.face1_prim_id.data();
+        params.state_edge_t_min = initial_states.edge_t_min.data();
+        params.state_edge_t_max = initial_states.edge_t_max.data();
+        params.state_prim0 = initial_states.prim0.data();
+        params.state_prim1 = initial_states.prim1.data();
         params.state_exterior_angle = initial_states.exterior_angle.data();
-        params.state_source_x = initial_states.source_pos.x().data();
-        params.state_source_y = initial_states.source_pos.y().data();
-        params.state_source_z = initial_states.source_pos.z().data();
-        params.state_source_power = initial_states.source_power.data();
+        params.state_src_x = initial_states.src.x().data();
+        params.state_src_y = initial_states.src.y().data();
+        params.state_src_z = initial_states.src.z().data();
+        params.state_src_power = initial_states.src_power.data();
 
         params.recursive_state_count = recursive_count;
         params.recursive_active_mask =
@@ -4796,10 +4796,10 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.recursive_state_edge_dir_x = recursive_states.edge_dir.x().data();
         params.recursive_state_edge_dir_y = recursive_states.edge_dir.y().data();
         params.recursive_state_edge_dir_z = recursive_states.edge_dir.z().data();
-        params.recursive_state_edge_line_min = recursive_states.edge_line_min.data();
-        params.recursive_state_edge_line_max = recursive_states.edge_line_max.data();
-        params.recursive_state_face0_prim_id = recursive_states.face0_prim_id.data();
-        params.recursive_state_face1_prim_id = recursive_states.face1_prim_id.data();
+        params.recursive_state_edge_t_min = recursive_states.edge_t_min.data();
+        params.recursive_state_edge_t_max = recursive_states.edge_t_max.data();
+        params.recursive_state_prim0 = recursive_states.prim0.data();
+        params.recursive_state_prim1 = recursive_states.prim1.data();
         params.recursive_state_exterior_angle = recursive_states.exterior_angle.data();
 
         params.grid_axis = grid.axis;
@@ -4847,7 +4847,7 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.receiver_model = options.receiver_model;
         params.collect_edge_use = options.collect_edge_use ? 1 : 0;
         params.collect_debug_counts = options.collect_debug_counts ? 1 : 0;
-        params.out_diffraction_power = raw.diffraction_power.data();
+        params.out_power = raw.power.data();
         params.out_field_x_re = raw.field_x_re.data();
         params.out_field_x_im = raw.field_x_im.data();
         params.out_field_y_re = raw.field_y_re.data();
@@ -4857,29 +4857,29 @@ DiffractionAccumResultT<Detached> Scene::accumulate_diffraction_chains(
         params.out_direct_count = raw.direct_count.data();
         params.out_keller_count = raw.keller_count.data();
         params.out_suffix_count = raw.suffix_count.data();
-        params.out_visibility_reject_count = raw.visibility_reject_count.data();
-        params.out_inter_edge_visibility_reject_count =
-            raw.inter_edge_visibility_reject_count.data();
-        params.out_utd_reject_count = raw.utd_reject_count.data();
-        params.out_edge_use_count = raw.edge_use_count.data();
+        params.out_vis_rejects = raw.vis_rejects.data();
+        params.out_edge_vis_rejects =
+            raw.edge_vis_rejects.data();
+        params.out_utd_rejects = raw.utd_rejects.data();
+        params.out_edge_uses = raw.edge_uses.data();
 
         diffraction_accumulation_pipeline_->launch(1, params);
 
-        result.diffraction_power = raw.diffraction_power;
-        result.diffraction_field_x =
+        result.power = raw.power;
+        result.field_x =
             drjit::Complex<Float>(raw.field_x_re, raw.field_x_im);
-        result.diffraction_field_y =
+        result.field_y =
             drjit::Complex<Float>(raw.field_y_re, raw.field_y_im);
-        result.diffraction_field_z =
+        result.field_z =
             drjit::Complex<Float>(raw.field_z_re, raw.field_z_im);
         result.direct_count = raw.direct_count;
         result.keller_count = raw.keller_count;
         result.suffix_count = raw.suffix_count;
-        result.visibility_reject_count = raw.visibility_reject_count;
-        result.inter_edge_visibility_reject_count =
-            raw.inter_edge_visibility_reject_count;
-        result.utd_reject_count = raw.utd_reject_count;
-        result.edge_use_count = raw.edge_use_count;
+        result.vis_rejects = raw.vis_rejects;
+        result.edge_vis_rejects =
+            raw.edge_vis_rejects;
+        result.utd_rejects = raw.utd_rejects;
+        result.edge_uses = raw.edge_uses;
         return result;
     }
 }
@@ -5032,28 +5032,28 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
 }
 
 template <bool Detached>
-AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
-    const Vector3fT<Detached> &source_pos,
+AxialEdgeVisibilityT<Detached> Scene::visible_edge(
+    const Vector3fT<Detached> &src,
     const Vector3fT<Detached> &edge_pos,
     const Vector3fT<Detached> &edge_dir,
-    const FloatT<Detached> &edge_line_min,
-    const FloatT<Detached> &edge_line_max,
+    const FloatT<Detached> &edge_t_min,
+    const FloatT<Detached> &edge_t_max,
     const std::vector<float> &sample_fractions,
     MaskT<Detached> active) const {
     require(!sample_fractions.empty(),
-            "Scene::visible_axial_edge(): sample_fractions must not be empty.");
+            "Scene::visible_edge(): sample_fractions must not be empty.");
     require(sample_fractions.size() <= SegmentVisibilityMaxSamples,
-            "Scene::visible_axial_edge(): at most 16 sample fractions are supported.");
-    require(is_ready(), "Scene::visible_axial_edge(): scene is not built.");
+            "Scene::visible_edge(): at most 16 sample fractions are supported.");
+    require(is_ready(), "Scene::visible_edge(): scene is not built.");
     require(!pending_updates_,
-            "Scene::visible_axial_edge(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::visible_edge(): scene has pending updates. Call Scene::sync() first.");
 
-    const int state_count = static_cast<int>(slices(source_pos));
+    const int state_count = static_cast<int>(slices(src));
     require(static_cast<int>(slices(edge_pos)) == state_count &&
                 static_cast<int>(slices(edge_dir)) == state_count &&
-                static_cast<int>(slices(edge_line_min)) == state_count &&
-                static_cast<int>(slices(edge_line_max)) == state_count,
-            "Scene::visible_axial_edge(): all inputs must have the same width.");
+                static_cast<int>(slices(edge_t_min)) == state_count &&
+                static_cast<int>(slices(edge_t_max)) == state_count,
+            "Scene::visible_edge(): all inputs must have the same width.");
 
     AxialEdgeVisibilityT<Detached> result;
     result.state_count = state_count;
@@ -5066,22 +5066,22 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
     Vector3f source_detached;
     Vector3f edge_pos_detached;
     Vector3f edge_dir_detached;
-    Float edge_line_min_detached;
-    Float edge_line_max_detached;
+    Float edge_t_min_detached;
+    Float edge_t_max_detached;
     if constexpr (!Detached) {
         active_detached = detach<false>(active);
-        source_detached = detach<false>(source_pos);
+        source_detached = detach<false>(src);
         edge_pos_detached = detach<false>(edge_pos);
         edge_dir_detached = detach<false>(edge_dir);
-        edge_line_min_detached = detach<false>(edge_line_min);
-        edge_line_max_detached = detach<false>(edge_line_max);
+        edge_t_min_detached = detach<false>(edge_t_min);
+        edge_t_max_detached = detach<false>(edge_t_max);
     } else {
         active_detached = active;
-        source_detached = source_pos;
+        source_detached = src;
         edge_pos_detached = edge_pos;
         edge_dir_detached = edge_dir;
-        edge_line_min_detached = edge_line_min;
-        edge_line_max_detached = edge_line_max;
+        edge_t_min_detached = edge_t_min;
+        edge_t_max_detached = edge_t_max;
     }
 
     active_detached &= drjit::isfinite(source_detached.x()) &&
@@ -5093,8 +5093,8 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
                        drjit::isfinite(edge_dir_detached.x()) &&
                        drjit::isfinite(edge_dir_detached.y()) &&
                        drjit::isfinite(edge_dir_detached.z()) &&
-                       drjit::isfinite(edge_line_min_detached) &&
-                       drjit::isfinite(edge_line_max_detached);
+                       drjit::isfinite(edge_t_min_detached) &&
+                       drjit::isfinite(edge_t_max_detached);
 
     if (active_trace_visibility_backend() != TraceVisibilityBackend::Native) {
         return trace_axial_edge_visibility_jit<Detached>(
@@ -5102,8 +5102,8 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
             source_detached,
             edge_pos_detached,
             edge_dir_detached,
-            edge_line_min_detached,
-            edge_line_max_detached,
+            edge_t_min_detached,
+            edge_t_max_detached,
             sample_fractions,
             active_detached);
     }
@@ -5118,8 +5118,8 @@ AxialEdgeVisibilityT<Detached> Scene::visible_axial_edge(
         source_detached,
         edge_pos_detached,
         edge_dir_detached,
-        edge_line_min_detached,
-        edge_line_max_detached,
+        edge_t_min_detached,
+        edge_t_max_detached,
         sample_fractions,
         active_detached);
 }
@@ -5490,14 +5490,14 @@ NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<D
 }
 
 template <bool Detached>
-NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> &point,
+NearestEdgesTopKT<Detached> Scene::nearest_edges(const Vector3fT<Detached> &point,
                                                        int k,
                                                        MaskT<Detached> active) const {
-    require(is_ready(), "Scene::nearest_edges_topk(point): scene is not built.");
+    require(is_ready(), "Scene::nearest_edges(point): scene is not built.");
     require(!pending_updates_,
-            "Scene::nearest_edges_topk(point): scene has pending updates. Call Scene::sync() first.");
-    require(k > 0, "Scene::nearest_edges_topk(point): k must be positive.");
-    require(k <= 16, "Scene::nearest_edges_topk(point): k must be <= 16.");
+            "Scene::nearest_edges(point): scene has pending updates. Call Scene::sync() first.");
+    require(k > 0, "Scene::nearest_edges(point): k must be positive.");
+    require(k <= 16, "Scene::nearest_edges(point): k must be <= 16.");
 
     const int query_count = static_cast<int>(slices(point));
     const int output_count = query_count * k;
@@ -5542,8 +5542,8 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges_topk(const Vector3fT<Detached> 
     const bool use_optix_candidate = edge_backend_uses_optix_topk(edge_bvh_backend_);
     const ClosestEdgeTopKCandidate candidate =
         use_optix_candidate
-            ? edge_optix_->template nearest_edges_topk<Detached>(point, k, query_mask)
-            : edge_bvh_->template nearest_edges_topk<Detached>(point, k, query_mask);
+            ? edge_optix_->template nearest_edges<Detached>(point, k, query_mask)
+            : edge_bvh_->template nearest_edges<Detached>(point, k, query_mask);
     const Mask valid_detached = candidate.is_valid;
     if (drjit::none(valid_detached)) {
         return result;
@@ -5650,45 +5650,45 @@ template AccumResultAD Scene::accumulate_reflections<false>(
     const AccumOptions &options,
     MaskAD active,
     const Vector3fAD &tx_polarization) const;
-template DiffractionAccumResult Scene::accumulate_diffraction_order1<true>(
-    const DiffractionStateTable &states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterial &material,
-    const DiffractionAccumOptions &options,
+template DfrAccum Scene::accum_dfr1<true>(
+    const DfrStates &states,
+    const DfrGrid &grid,
+    const DfrMaterial &material,
+    const DfrOptions &options,
     Mask active) const;
-template DiffractionAccumResultAD Scene::accumulate_diffraction_order1<false>(
-    const DiffractionStateTableAD &states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterialAD &material,
-    const DiffractionAccumOptions &options,
+template DfrAccumAD Scene::accum_dfr1<false>(
+    const DfrStatesAD &states,
+    const DfrGrid &grid,
+    const DfrMaterialAD &material,
+    const DfrOptions &options,
     MaskAD active) const;
-template DiffractionAccumResult Scene::accumulate_diffraction_chains<true>(
-    const DiffractionStateTable &initial_states,
-    const DiffractionStateTable &recursive_states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterial &material,
-    const DiffractionAccumOptions &options,
+template DfrAccum Scene::accum_dfr<true>(
+    const DfrStates &initial_states,
+    const DfrStates &recursive_states,
+    const DfrGrid &grid,
+    const DfrMaterial &material,
+    const DfrOptions &options,
     Mask active) const;
-template DiffractionAccumResultAD Scene::accumulate_diffraction_chains<false>(
-    const DiffractionStateTableAD &initial_states,
-    const DiffractionStateTableAD &recursive_states,
-    const DiffractionGrid &grid,
-    const DiffractionMaterialAD &material,
-    const DiffractionAccumOptions &options,
+template DfrAccumAD Scene::accum_dfr<false>(
+    const DfrStatesAD &initial_states,
+    const DfrStatesAD &recursive_states,
+    const DfrGrid &grid,
+    const DfrMaterialAD &material,
+    const DfrOptions &options,
     MaskAD active) const;
-template DiffractionPathResult Scene::trace_diffraction_paths<true>(
+template DfrPaths Scene::trace_dfr_paths<true>(
     const Vector3f &tx_positions,
     const Vector3f &rx_positions,
-    const DiffractionStateTable &states,
-    const DiffractionMaterial &material,
-    const DiffractionPathOptions &options,
+    const DfrStates &states,
+    const DfrMaterial &material,
+    const DfrPathOptions &options,
     Mask active) const;
-template DiffractionPathResultAD Scene::trace_diffraction_paths<false>(
+template DfrPathsAD Scene::trace_dfr_paths<false>(
     const Vector3fAD &tx_positions,
     const Vector3fAD &rx_positions,
-    const DiffractionStateTableAD &states,
-    const DiffractionMaterialAD &material,
-    const DiffractionPathOptions &options,
+    const DfrStatesAD &states,
+    const DfrMaterialAD &material,
+    const DfrPathOptions &options,
     MaskAD active) const;
 template ReflectionEpcResult Scene::trace_reflection_epc<true>(
     const Ray &ray,
@@ -5768,20 +5768,20 @@ template SegmentPairVisibilityAD Scene::visible_pair<false>(
     const Vector3fAD &end_b,
     const Int &ignore_prim_ids,
     MaskAD active) const;
-template AxialEdgeVisibility Scene::visible_axial_edge<true>(
-    const Vector3f &source_pos,
+template AxialEdgeVisibility Scene::visible_edge<true>(
+    const Vector3f &src,
     const Vector3f &edge_pos,
     const Vector3f &edge_dir,
-    const Float &edge_line_min,
-    const Float &edge_line_max,
+    const Float &edge_t_min,
+    const Float &edge_t_max,
     const std::vector<float> &sample_fractions,
     Mask active) const;
-template AxialEdgeVisibilityAD Scene::visible_axial_edge<false>(
-    const Vector3fAD &source_pos,
+template AxialEdgeVisibilityAD Scene::visible_edge<false>(
+    const Vector3fAD &src,
     const Vector3fAD &edge_pos,
     const Vector3fAD &edge_dir,
-    const FloatAD &edge_line_min,
-    const FloatAD &edge_line_max,
+    const FloatAD &edge_t_min,
+    const FloatAD &edge_t_max,
     const std::vector<float> &sample_fractions,
     MaskAD active) const;
 template SegmentChainVisibility Scene::visible_chain<true>(
@@ -5798,11 +5798,11 @@ template NearestPointEdge Scene::nearest_edge<true>(const Vector3f &point, Mask 
 template NearestPointEdgeAD Scene::nearest_edge<false>(const Vector3fAD &point, MaskAD active) const;
 template NearestRayEdge Scene::nearest_edge<true>(const Ray &ray, Mask active) const;
 template NearestRayEdgeAD Scene::nearest_edge<false>(const RayAD &ray, MaskAD active) const;
-template NearestEdgesTopK Scene::nearest_edges_topk<true>(
+template NearestEdgesTopK Scene::nearest_edges<true>(
     const Vector3f &point,
     int k,
     Mask active) const;
-template NearestEdgesTopKAD Scene::nearest_edges_topk<false>(
+template NearestEdgesTopKAD Scene::nearest_edges<false>(
     const Vector3fAD &point,
     int k,
     MaskAD active) const;

@@ -7,7 +7,7 @@
 namespace rayd {
 
 extern "C" {
-extern __constant__ DiffractionPathParams params;
+extern __constant__ DfrPathParams params;
 }
 
 namespace {
@@ -165,19 +165,19 @@ static __forceinline__ __device__ float path_weight(int state_idx,
                                                     float3 edge_point,
                                                     float3 receiver) {
     const float3 source =
-        state_vec(params.state_source_x, params.state_source_y, params.state_source_z, state_idx);
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
     const float receiver_distance = fmaxf(norm3(receiver - edge_point), kSmallEps);
     const float edge_length = fmaxf(
-        params.state_edge_line_max[state_idx] - params.state_edge_line_min[state_idx],
+        params.state_edge_t_max[state_idx] - params.state_edge_t_min[state_idx],
         0.f);
     const float exterior_angle =
         fmaxf(params.state_exterior_angle[state_idx], 0.25f * kPi);
     const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
-    const float material_gain = material_gain_for_faces(params.state_face0_prim_id[state_idx],
-                                                       params.state_face1_prim_id[state_idx]);
+    const float material_gain = material_gain_for_faces(params.state_prim0[state_idx],
+                                                       params.state_prim1[state_idx]);
     const float wave_gain = params.wavelength * (1.f / (4.f * kPi));
-    return params.state_source_power[state_idx] *
+    return params.state_src_power[state_idx] *
            material_gain *
            edge_length *
            wedge_scale *
@@ -202,7 +202,7 @@ static __forceinline__ __device__ void write_point(float *x,
 } // namespace
 
 extern "C" {
-__constant__ DiffractionPathParams params;
+__constant__ DfrPathParams params;
 }
 
 extern "C" __global__ void __closesthit__diffraction_paths() {
@@ -227,8 +227,8 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
         params.state_count <= 0 ||
         params.state_limit <= 0 ||
         params.max_order != 1 ||
-        (params.strategy_mask & RAYD_DIFF_DIRECT) == 0 ||
-        params.receiver_model != RAYD_DIFF_MATCHED_ISOTROPIC) {
+        (params.strategy_mask & RAYD_DFR_DIRECT) == 0 ||
+        params.receiver_model != RAYD_DFR_MATCHED_ISO) {
         return;
     }
 
@@ -243,7 +243,7 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
     }
 
     const float3 source =
-        state_vec(params.state_source_x, params.state_source_y, params.state_source_z, state_idx);
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float3 edge_pos =
         state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
     const float3 edge_dir =
@@ -251,8 +251,8 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
                              params.state_edge_dir_y,
                              params.state_edge_dir_z,
                              state_idx));
-    const float mid_t = 0.5f * (params.state_edge_line_min[state_idx] +
-                               params.state_edge_line_max[state_idx]);
+    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
+                               params.state_edge_t_max[state_idx]);
     const float3 edge_point = edge_pos + mid_t * edge_dir;
     const float3 receiver =
         make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
@@ -283,12 +283,12 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
     const float amplitude = sqrtf(fmaxf(contribution, 0.f));
 
     params.out_valid[out_idx] = 1u;
-    params.out_tx_index[out_idx] = tx_idx;
-    params.out_rx_index[out_idx] = rx_idx;
+    params.out_tx_id[out_idx] = tx_idx;
+    params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
-    params.out_edge_index_0[out_idx] = params.state_edge_index[state_idx];
-    params.out_edge_index_1[out_idx] = -1;
-    params.out_edge_index_2[out_idx] = -1;
+    params.out_edge0[out_idx] = params.state_edge_index[state_idx];
+    params.out_edge1[out_idx] = -1;
+    params.out_edge2[out_idx] = -1;
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
@@ -296,11 +296,11 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
     params.out_field_y_im[out_idx] = 0.f;
     params.out_field_z_re[out_idx] = 0.f;
     params.out_field_z_im[out_idx] = 0.f;
-    write_point(params.out_point_0_x, params.out_point_0_y, params.out_point_0_z,
+    write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
-    write_point(params.out_point_1_x, params.out_point_1_y, params.out_point_1_z,
+    write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
                 out_idx, make_vec3(0.f, 0.f, 0.f));
-    write_point(params.out_point_2_x, params.out_point_2_y, params.out_point_2_z,
+    write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
                 out_idx, make_vec3(0.f, 0.f, 0.f));
 }
 

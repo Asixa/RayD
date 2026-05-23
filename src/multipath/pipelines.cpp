@@ -315,7 +315,7 @@ OptixPipelineConfig diffraction_accumulation_pipeline_config() {
     config.miss_entry = "__miss__diffraction_accumulation";
     config.closesthit_entry = "__closesthit__diffraction_accumulation";
     config.num_payload_values = 4;
-    config.params_size = sizeof(DiffractionAccumParams);
+    config.params_size = sizeof(DfrAccumParams);
     return config;
 }
 
@@ -327,7 +327,7 @@ OptixPipelineConfig diffraction_paths_pipeline_config() {
     config.miss_entry = "__miss__diffraction_paths";
     config.closesthit_entry = "__closesthit__diffraction_paths";
     config.num_payload_values = 4;
-    config.params_size = sizeof(DiffractionPathParams);
+    config.params_size = sizeof(DfrPathParams);
     return config;
 }
 

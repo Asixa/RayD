@@ -726,12 +726,12 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const RayT<Detached> &ray,
 }
 
 template <bool Detached>
-ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk(const Vector3fT<Detached> &point,
+ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges(const Vector3fT<Detached> &point,
                                                             int k,
                                                             MaskT<Detached> &active) const {
-    require(ready_, "SceneEdgeOptix::nearest_edges_topk(point): GAS is not built.");
-    require(k > 0, "SceneEdgeOptix::nearest_edges_topk(point): k must be positive.");
-    require(k <= EdgeOptixTopKMax, "SceneEdgeOptix::nearest_edges_topk(point): k must be <= 16.");
+    require(ready_, "SceneEdgeOptix::nearest_edges(point): GAS is not built.");
+    require(k > 0, "SceneEdgeOptix::nearest_edges(point): k must be positive.");
+    require(k <= EdgeOptixTopKMax, "SceneEdgeOptix::nearest_edges(point): k must be <= 16.");
 
     const int query_count = static_cast<int>(slices(point));
     const int output_count = query_count * k;
@@ -825,11 +825,11 @@ template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<true>(const Ray &ray,
                                                                  Mask &active) const;
 template ClosestEdgeCandidate SceneEdgeOptix::nearest_edge<false>(const RayAD &ray,
                                                                   MaskAD &active) const;
-template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk<true>(
+template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges<true>(
     const Vector3f &point,
     int k,
     Mask &active) const;
-template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges_topk<false>(
+template ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges<false>(
     const Vector3fAD &point,
     int k,
     MaskAD &active) const;

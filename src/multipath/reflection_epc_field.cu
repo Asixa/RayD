@@ -416,10 +416,10 @@ __global__ void reflection_epc_field_kernel(ReflectionEpcFieldParams params) {
         previous = hit;
     }
 
-    const int rx_index = params.rx_count == 1 ? 0 : ray_index;
-    const float3 rx = make_vec3(params.rx_x[rx_index],
-                                params.rx_y[rx_index],
-                                params.rx_z[rx_index]);
+    const int rx_id = params.rx_count == 1 ? 0 : ray_index;
+    const float3 rx = make_vec3(params.rx_x[rx_id],
+                                params.rx_y[rx_id],
+                                params.rx_z[rx_id]);
     const float final_segment_length = norm3(rx - previous);
     const float path_length =
         params.epc_path_length != nullptr ? params.epc_path_length[ray_index]

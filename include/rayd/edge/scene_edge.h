@@ -82,7 +82,7 @@ public:
 
     /// The \p k nearest active edges to each query point (results in query_count * k order).
     template <bool Detached>
-    ClosestEdgeTopKCandidate nearest_edges_topk(const Vector3fT<Detached> &point,
+    ClosestEdgeTopKCandidate nearest_edges(const Vector3fT<Detached> &point,
                                                 int k,
                                                 MaskT<Detached> &active) const;
 
@@ -101,7 +101,7 @@ private:
     void refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_chunks);
     ClosestEdgeCandidate nearest_edge_point_detached(const Vector3f &point,
                                                      const Mask &active) const;
-    ClosestEdgeTopKCandidate nearest_edges_topk_point_detached(const Vector3f &point,
+    ClosestEdgeTopKCandidate nearest_edges_point_detached(const Vector3f &point,
                                                                int k,
                                                                const Mask &active) const;
     ClosestEdgeCandidate nearest_edge_finite_ray_detached(const Vector3f &origin,

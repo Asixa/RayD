@@ -120,7 +120,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
                 ignore,
                 active,
             )
-            axial = scene.visible_axial_edge(
+            axial = scene.visible_edge(
                 cuda.Array3f([0.0], [0.0], [-1.0]),
                 cuda.Array3f([-2.0], [0.0], [1.0]),
                 cuda.Array3f([1.0], [0.0], [0.0]),
@@ -235,7 +235,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
                 vis = scene.visible(start, end, active=active)
                 pair = scene.visible_pair(start, end, end_b, active=active)
-                axial = scene.visible_axial_edge(
+                axial = scene.visible_edge(
                     cuda.Array3f([0.0], [0.0], [-1.0]),
                     cuda.Array3f([-2.0], [0.0], [1.0]),
                     cuda.Array3f([1.0], [0.0], [0.0]),
@@ -317,7 +317,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
             rd.native_launch_audit_clear()
             vis = scene.visible(start, end, active=active)
             pair = scene.visible_pair(start, end, end_b, active=active)
-            axial = scene.visible_axial_edge(
+            axial = scene.visible_edge(
                 cuda.Array3f([0.0], [0.0], [-1.0]),
                 cuda.Array3f([-2.0], [0.0], [1.0]),
                 cuda.Array3f([1.0], [0.0], [0.0]),
@@ -395,7 +395,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
         self.assertEqual(data["ignored_first_segment"], [-1, -1])
         self.assertEqual(data["ignored_first_prim"], [-1, -1])
 
-    def test_nearest_edges_topk_point_k2(self):
+    def test_nearest_edges_point_k2(self):
         data = run_json_case(
             """
             import json
@@ -412,7 +412,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
 
             query = cuda.Array3f([0.5, 0.5], [-0.2, 0.5], [0.0, 0.0])
             active = cuda.Bool([True, False])
-            result = scene.nearest_edges_topk(query, 2, active)
+            result = scene.nearest_edges(query, 2, active)
 
             print(json.dumps({
                 "query_count": int(result.query_count),

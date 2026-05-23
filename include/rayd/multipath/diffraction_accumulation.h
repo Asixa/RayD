@@ -9,7 +9,7 @@
 namespace rayd {
 
 /// Axis-aligned 2D accumulation grid for diffraction power/field output.
-struct DiffractionGrid {
+struct DfrGrid {
     int axis = 2;          ///< Plane normal axis (0 = x, 1 = y, 2 = z).
     float position = 0.f;  ///< Plane offset along `axis`.
     float coord0_min = 0.f;
@@ -21,23 +21,23 @@ struct DiffractionGrid {
     float cell_area = 1.f; ///< Area of one grid cell.
 };
 
-enum DiffractionStrategyMask {
-    RAYD_DIFF_DIRECT = 1 << 0,
-    RAYD_DIFF_KELLER = 1 << 1,
-    RAYD_DIFF_SUFFIX_REFLECTION = 1 << 2
+enum DfrStrategyMask {
+    RAYD_DFR_DIRECT = 1 << 0,
+    RAYD_DFR_KELLER = 1 << 1,
+    RAYD_DFR_SUFFIX_REFL = 1 << 2
 };
 
-enum DiffractionSampleSequence {
-    RAYD_DIFF_HASH = 0,
-    RAYD_DIFF_SOBOL = 1
+enum DfrSampleSequence {
+    RAYD_DFR_HASH = 0,
+    RAYD_DFR_SOBOL = 1
 };
 
-enum DiffractionReceiverModel {
-    RAYD_DIFF_MATCHED_ISOTROPIC = 0
+enum DfrReceiverModel {
+    RAYD_DFR_MATCHED_ISO = 0
 };
 
 /// Options for native diffraction accumulation kernels.
-struct DiffractionAccumOptions {
+struct DfrOptions {
     float wavelength = 1.f;
     float k = 0.f;
     int seed = 0;
@@ -46,16 +46,16 @@ struct DiffractionAccumOptions {
     int direct_samples = 0;
     int keller_samples = 0;
     int suffix_samples = 0;
-    int strategy_mask = RAYD_DIFF_DIRECT | RAYD_DIFF_KELLER;
-    int sample_sequence = RAYD_DIFF_HASH;
-    int receiver_model = RAYD_DIFF_MATCHED_ISOTROPIC;
+    int strategy_mask = RAYD_DFR_DIRECT | RAYD_DFR_KELLER;
+    int sample_sequence = RAYD_DFR_HASH;
+    int receiver_model = RAYD_DFR_MATCHED_ISO;
     bool collect_edge_use = false;
     bool collect_debug_counts = false;
 };
 
 /// Per-primitive electromagnetic material payload used by diffraction kernels.
 template <typename Float_>
-struct DiffractionMaterialData {
+struct DfrMaterialData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -66,7 +66,7 @@ struct DiffractionMaterialData {
     Float_ gain = full<Float_>(1.f, 1);
     Mask_ valid = full<Mask_>(false, 1);
 
-    DRJIT_STRUCT(DiffractionMaterialData,
+    DRJIT_STRUCT(DfrMaterialData,
                  eta_r,
                  sigma,
                  mu_r,
@@ -76,7 +76,7 @@ struct DiffractionMaterialData {
 
 /// Sampled diffraction states shared by grid accumulation and path-export kernels.
 template <typename Float_>
-struct DiffractionStateTableData {
+struct DfrStatesData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
@@ -86,73 +86,73 @@ struct DiffractionStateTableData {
     Int_ edge_index = full<Int_>(-1, 1);
     Vec3f edge_pos = zeros<Vec3f>(1);
     Vec3f edge_dir = zeros<Vec3f>(1);
-    Float_ edge_line_min = zeros<Float_>(1);
-    Float_ edge_line_max = zeros<Float_>(1);
-    Vec3f face0_normal = zeros<Vec3f>(1);
-    Vec3f face1_normal = zeros<Vec3f>(1);
-    Int_ face0_prim_id = full<Int_>(-1, 1);
-    Int_ face1_prim_id = full<Int_>(-1, 1);
+    Float_ edge_t_min = zeros<Float_>(1);
+    Float_ edge_t_max = zeros<Float_>(1);
+    Vec3f n0 = zeros<Vec3f>(1);
+    Vec3f n1 = zeros<Vec3f>(1);
+    Int_ prim0 = full<Int_>(-1, 1);
+    Int_ prim1 = full<Int_>(-1, 1);
     Float_ exterior_angle = zeros<Float_>(1);
-    Vec3f source_pos = zeros<Vec3f>(1);
-    Float_ source_power = zeros<Float_>(1);
-    Vec3f incident_direction = zeros<Vec3f>(1);
-    Vec3f initial_direction = zeros<Vec3f>(1);
-    Int_ prefix_reflection_depth = full<Int_>(0, 1);
+    Vec3f src = zeros<Vec3f>(1);
+    Float_ src_power = zeros<Float_>(1);
+    Vec3f wi = zeros<Vec3f>(1);
+    Vec3f d0 = zeros<Vec3f>(1);
+    Int_ prefix_depth = full<Int_>(0, 1);
 
-    DRJIT_STRUCT(DiffractionStateTableData,
+    DRJIT_STRUCT(DfrStatesData,
                  edge_index,
                  edge_pos,
                  edge_dir,
-                 edge_line_min,
-                 edge_line_max,
-                 face0_normal,
-                 face1_normal,
-                 face0_prim_id,
-                 face1_prim_id,
+                 edge_t_min,
+                 edge_t_max,
+                 n0,
+                 n1,
+                 prim0,
+                 prim1,
                  exterior_angle,
-                 source_pos,
-                 source_power,
-                 incident_direction,
-                 initial_direction,
-                 prefix_reflection_depth)
+                 src,
+                 src_power,
+                 wi,
+                 d0,
+                 prefix_depth)
 };
 
 /// Result of native diffraction accumulation. Grid arrays have grid_cell_count entries.
 template <typename Float_>
-struct DiffractionAccumResultData {
+struct DfrAccumData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using ComplexArray = drjit::Complex<Float_>;
     using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     int grid_cell_count = 0;
-    Float_ diffraction_power = zeros<Float_>(1);
-    ComplexArray diffraction_field_x =
+    Float_ power = zeros<Float_>(1);
+    ComplexArray field_x =
         ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
-    ComplexArray diffraction_field_y =
+    ComplexArray field_y =
         ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
-    ComplexArray diffraction_field_z =
+    ComplexArray field_z =
         ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
     Int_ direct_count = full<Int_>(0, 1);
     Int_ keller_count = full<Int_>(0, 1);
     Int_ suffix_count = full<Int_>(0, 1);
-    Int_ visibility_reject_count = full<Int_>(0, 1);
-    Int_ inter_edge_visibility_reject_count = full<Int_>(0, 1);
-    Int_ utd_reject_count = full<Int_>(0, 1);
-    Int_ edge_use_count = full<Int_>(0, 1);
+    Int_ vis_rejects = full<Int_>(0, 1);
+    Int_ edge_vis_rejects = full<Int_>(0, 1);
+    Int_ utd_rejects = full<Int_>(0, 1);
+    Int_ edge_uses = full<Int_>(0, 1);
 
-    DRJIT_STRUCT(DiffractionAccumResultData,
-                 diffraction_power,
-                 diffraction_field_x,
-                 diffraction_field_y,
-                 diffraction_field_z,
+    DRJIT_STRUCT(DfrAccumData,
+                 power,
+                 field_x,
+                 field_y,
+                 field_z,
                  direct_count,
                  keller_count,
                  suffix_count,
-                 visibility_reject_count,
-                 inter_edge_visibility_reject_count,
-                 utd_reject_count,
-                 edge_use_count)
+                 vis_rejects,
+                 edge_vis_rejects,
+                 utd_rejects,
+                 edge_uses)
 };
 
 } // namespace rayd

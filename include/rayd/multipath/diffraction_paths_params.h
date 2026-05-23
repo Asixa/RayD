@@ -11,7 +11,7 @@
 namespace rayd {
 
 /// Launch parameters for compact first-order diffraction path export.
-struct DiffractionPathParams {
+struct DfrPathParams {
     OptixTraversableHandle primary_handle;
     OptixTraversableHandle secondary_handle;
     int split_mode;
@@ -40,21 +40,21 @@ struct DiffractionPathParams {
     const float *state_edge_dir_x;
     const float *state_edge_dir_y;
     const float *state_edge_dir_z;
-    const float *state_edge_line_min;
-    const float *state_edge_line_max;
-    const float *state_face0_normal_x;
-    const float *state_face0_normal_y;
-    const float *state_face0_normal_z;
-    const float *state_face1_normal_x;
-    const float *state_face1_normal_y;
-    const float *state_face1_normal_z;
-    const int *state_face0_prim_id;
-    const int *state_face1_prim_id;
+    const float *state_edge_t_min;
+    const float *state_edge_t_max;
+    const float *state_n0_x;
+    const float *state_n0_y;
+    const float *state_n0_z;
+    const float *state_n1_x;
+    const float *state_n1_y;
+    const float *state_n1_z;
+    const int *state_prim0;
+    const int *state_prim1;
     const float *state_exterior_angle;
-    const float *state_source_x;
-    const float *state_source_y;
-    const float *state_source_z;
-    const float *state_source_power;
+    const float *state_src_x;
+    const float *state_src_y;
+    const float *state_src_z;
+    const float *state_src_power;
 
     const float *material_gain;
     const uint8_t *material_valid;
@@ -66,17 +66,17 @@ struct DiffractionPathParams {
     int max_order;
     int strategy_mask;
     int sample_count;
-    int return_geometry;
+    int return_geom;
     int receiver_model;
 
     int *out_count;
     uint8_t *out_valid;
-    int *out_tx_index;
-    int *out_rx_index;
+    int *out_tx_id;
+    int *out_rx_id;
     int *out_order;
-    int *out_edge_index_0;
-    int *out_edge_index_1;
-    int *out_edge_index_2;
+    int *out_edge0;
+    int *out_edge1;
+    int *out_edge2;
     float *out_delay;
     float *out_field_x_re;
     float *out_field_x_im;
@@ -84,15 +84,15 @@ struct DiffractionPathParams {
     float *out_field_y_im;
     float *out_field_z_re;
     float *out_field_z_im;
-    float *out_point_0_x;
-    float *out_point_0_y;
-    float *out_point_0_z;
-    float *out_point_1_x;
-    float *out_point_1_y;
-    float *out_point_1_z;
-    float *out_point_2_x;
-    float *out_point_2_y;
-    float *out_point_2_z;
+    float *out_p0_x;
+    float *out_p0_y;
+    float *out_p0_z;
+    float *out_p1_x;
+    float *out_p1_y;
+    float *out_p1_z;
+    float *out_p2_x;
+    float *out_p2_y;
+    float *out_p2_z;
 };
 
 } // namespace rayd

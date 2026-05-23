@@ -193,8 +193,8 @@ extern "C" __global__ void __raygen__axial_edge_visibility() {
     const float3 edge_dir = make_vec3(params.edge_dir_x[ray],
                                       params.edge_dir_y[ray],
                                       params.edge_dir_z[ray]);
-    const float line_min = params.edge_line_min[ray];
-    const float line_max = params.edge_line_max[ray];
+    const float line_min = params.edge_t_min[ray];
+    const float line_max = params.edge_t_max[ray];
     const float span = fmaxf(line_max - line_min, 0.0f);
     uint32_t any_visible = 0u;
 

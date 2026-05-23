@@ -35,12 +35,12 @@ struct ReflectionEpcFieldOptions : ReflectionEpcOptions {
                          full<Float>(0.f, 1));
     float omega = 2.f * 3.14159265358979323846f * 299792458.f; ///< Angular frequency (rad/s).
     float wavelength = 1.f;               ///< Wavelength in world units.
-    bool return_geometry = false;         ///< Master switch for the per-slot geometry outputs below.
+    bool return_geom = false;         ///< Master switch for the per-slot geometry outputs below.
     bool return_endpoints = false;        ///< Emit tx/first-hit/last-hit positions.
-    bool return_hit_points = true;        ///< Emit per-slot hit points (requires return_geometry).
-    bool return_normals = true;           ///< Emit per-slot normals (requires return_geometry).
-    bool return_resolved_prim_ids = true; ///< Emit resolved primitive ids (requires return_geometry).
-    bool return_surface_group_ids = true; ///< Emit surface-group ids (requires return_geometry).
+    bool return_hit_points = true;        ///< Emit per-slot hit points (requires return_geom).
+    bool return_normals = true;           ///< Emit per-slot normals (requires return_geom).
+    bool return_resolved_prim_ids = true; ///< Emit resolved primitive ids (requires return_geom).
+    bool return_surface_group_ids = true; ///< Emit surface-group ids (requires return_geom).
 };
 
 /// Result of an EPC reflection trace. Per-slot arrays are ray_count * max_bounces;

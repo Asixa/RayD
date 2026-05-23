@@ -50,31 +50,35 @@ RayD keeps the API surface small: meshes, scenes, rays, intersections, edges, an
 - `scene.trace_reflections(...)`: specular reflection-path tracing
 - `scene.visible(...)`: batched segment visibility queries
 - `scene.trace_reflection_epc(...)`: equivalent-path correction primitives for reflection paths
+- `scene.accum_dfr1(...)` / `scene.accum_dfr(...)`: native diffraction grid accumulation
+- `scene.trace_dfr_paths(...)`: compact native first-order diffraction path export
 
 ## Feature Overview
 
 Each core query, what it computes, its input/output, and how it behaves under Dr.Jit autodiff (AD):
 
-| API | What it computes | Input → Output | AD |
+| API | What it computes | Input -> Output | AD |
 | --- | --- | --- | --- |
-| `scene.intersect(ray)` | Closest-hit ray–mesh intersection | rays → `Intersection` (t, point, normal, uv, ids) | **Diff.** |
-| `scene.shadow_test(ray)` | Any-hit occlusion test | rays → boolean mask | **Boolean** |
-| `scene.nearest_edge(point)` | Nearest scene edge to each point | points → `NearestPointEdge` (distance, points, edge id) | **Diff.** |
-| `scene.nearest_edge(ray)` | Nearest scene edge to each ray (segment on `[0, tmax]` when `tmax` is finite) | rays → `NearestRayEdge` | **Diff.** |
-| `scene.nearest_edges_topk(point, k)` | k nearest scene edges per point (k ≤ 16) | points → `NearestEdgesTopK` | **Diff.** |
-| `scene.visible(start, end)` | Mutual visibility between two segment endpoints | endpoints → `SegmentVisibility` | **Boolean** |
-| `scene.visible_pair / visible_chain / visible_axial_edge` | Shared-origin pair, polyline-chain, and edge-sample visibility | segments → segment/chain/axial-edge visibility | **Boolean** |
-| `scene.trace_reflections(ray, max_bounces)` | Specular reflection paths with image sources | rays → `ReflectionChain` (hit points, normals, image sources, ids) | **Diff.** |
-| `scene.trace_reflection_epc(ray, receiver, ...)` | Equivalent-path-correction reflection toward a receiver | rays + receiver → `ReflectionEpcResult` | **Detached** |
-| `scene.trace_reflection_epc_field(...)` | EPC trace returning the complex reflected field | rays/tx + receiver → `ReflectionEpcFieldResult` (complex E-field) | **Detached** |
-| `scene.accumulate_reflections(...)` | Accumulate reflected field/power onto a grid | rays + grid + material → accumulation result | **Detached** |
+| `scene.intersect(ray)` | Closest-hit ray-mesh intersection | rays -> `Intersection` (t, point, normal, uv, ids) | **AD** |
+| `scene.shadow_test(ray)` | Any-hit occlusion test | rays -> boolean mask | **Boolean** |
+| `scene.nearest_edge(point)` | Nearest scene edge to each point | points -> `NearestPointEdge` (distance, points, edge id) | **AD** |
+| `scene.nearest_edge(ray)` | Nearest scene edge to each ray (segment on `[0, tmax]` when `tmax` is finite) | rays -> `NearestRayEdge` | **AD** |
+| `scene.nearest_edges(point, k)` | k nearest scene edges per point (k <= 16) | points -> `NearestEdgesTopK` | **AD** |
+| `scene.visible(start, end)` | Mutual visibility between two segment endpoints | endpoints -> `SegmentVisibility` | **Boolean** |
+| `scene.visible_pair / visible_chain / visible_edge` | Shared-origin pair, polyline-chain, and edge-sample visibility | segments -> segment/chain/edge visibility | **Boolean** |
+| `scene.trace_reflections(ray, max_bounces)` | Specular reflection paths with image sources | rays -> `ReflectionChain` (hit points, normals, image sources, ids) | **AD** |
+| `scene.trace_reflection_epc(ray, receiver, ...)` | Equivalent-path-correction reflection toward a receiver | rays + receiver -> `ReflectionEpcResult` | **Detached** |
+| `scene.trace_reflection_epc_field(...)` | EPC trace returning the complex reflected field | rays/tx + receiver -> `ReflectionEpcFieldResult` (complex E-field) | **Detached** |
+| `scene.accumulate_reflections(...)` | Accumulate reflected field/power onto a grid | rays + grid + material -> `AccumResult` | **Detached** |
+| `scene.accum_dfr1(...)` | Native first-order diffraction accumulation onto a grid | `DfrStates` + `DfrGrid` + `DfrMaterial` -> `DfrAccum` | **Detached** |
+| `scene.accum_dfr(...)` | Native order-2/3 diffraction-chain accumulation onto a grid | initial/recursive `DfrStates` + grid + material -> `DfrAccum` | **Detached** |
+| `scene.trace_dfr_paths(...)` | Compact first-order diffraction path export | tx/rx + `DfrStates` + `DfrMaterial` -> `DfrPaths` | **Detached** |
 
 AD legend:
 
-- **Diff.** — differentiable: geometric outputs carry gradients with respect to mesh vertices and transforms; the discrete hit/edge/path selection runs detached.
-- **Boolean** — returns occlusion/visibility booleans and is not differentiable.
-- **Detached** — native fast path: runs detached only and rejects AD inputs.
-
+- **AD** - differentiable geometry: geometric outputs carry Dr.Jit gradients with respect to mesh vertices and transforms; the discrete hit/edge/path selection runs detached.
+- **Boolean** - returns occlusion/visibility booleans and is not differentiable.
+- **Detached** - native fast path: runs detached only and rejects AD inputs.
 ## Minimal Example
 
 The example below traces one ray against one triangle and backpropagates the hit distance to the vertex positions.
@@ -134,11 +138,14 @@ This is useful for:
 RayD includes low-level reflection and visibility primitives for custom wave simulators:
 
 - `trace_reflections(...)` for specular reflection chains
-- `visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and `visible_axial_edge(...)` for segment and polyline-chain visibility
+- `visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and `visible_edge(...)` for segment and polyline-chain visibility
 - `trace_reflection_epc(...)` and `trace_reflection_epc_field(...)` for equivalent-path correction workflows
-- `accumulate_reflections(...)` for grid accumulation workloads
+- `accumulate_reflections(...)` for reflection grid accumulation workloads
+- `accum_dfr1(...)`, `accum_dfr(...)`, `trace_dfr_paths(...)` for native diffraction kernels
 
 These APIs expose primitives, not a complete propagation simulator. Callers own the source model, receiver model, material policy, objective, and optimization loop.
+
+Naming rule: use `Dfr` for diffraction (`DfrStates`, `DfrAccum`, `accum_dfr1`) and reserve `AD` for automatic differentiation. See [`API_NAMING_STANDARD.md`](API_NAMING_STANDARD.md).
 
 ## Examples
 

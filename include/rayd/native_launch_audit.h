@@ -18,7 +18,7 @@ enum class NativeLaunchStage {
     Sync,
     TraceReflections,
     AccumulateReflections,
-    AccumulateDiffraction
+    AccumDfr
 };
 
 /// Aggregated launch counts for one named kernel within a stage.
@@ -59,7 +59,7 @@ struct NativeLaunchAuditSnapshot {
     NativeLaunchStageStats sync;
     NativeLaunchStageStats trace_reflections;
     NativeLaunchStageStats accumulate_reflections;
-    NativeLaunchStageStats accumulate_diffraction;
+    NativeLaunchStageStats accum_dfr;
 };
 
 /// RAII guard that sets the current thread's audit stage and restores the previous one on scope exit.

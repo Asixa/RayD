@@ -11,7 +11,7 @@
 namespace rayd {
 
 /// Launch parameters for the native order-1 diffraction accumulation pipeline.
-struct DiffractionAccumParams {
+struct DfrAccumParams {
     OptixTraversableHandle primary_handle;
     OptixTraversableHandle secondary_handle;
     int split_mode;
@@ -27,28 +27,28 @@ struct DiffractionAccumParams {
     const float *state_edge_dir_x;
     const float *state_edge_dir_y;
     const float *state_edge_dir_z;
-    const float *state_edge_line_min;
-    const float *state_edge_line_max;
-    const float *state_face0_normal_x;
-    const float *state_face0_normal_y;
-    const float *state_face0_normal_z;
-    const float *state_face1_normal_x;
-    const float *state_face1_normal_y;
-    const float *state_face1_normal_z;
-    const int *state_face0_prim_id;
-    const int *state_face1_prim_id;
+    const float *state_edge_t_min;
+    const float *state_edge_t_max;
+    const float *state_n0_x;
+    const float *state_n0_y;
+    const float *state_n0_z;
+    const float *state_n1_x;
+    const float *state_n1_y;
+    const float *state_n1_z;
+    const int *state_prim0;
+    const int *state_prim1;
     const float *state_exterior_angle;
-    const float *state_source_x;
-    const float *state_source_y;
-    const float *state_source_z;
-    const float *state_source_power;
-    const float *state_incident_dir_x;
-    const float *state_incident_dir_y;
-    const float *state_incident_dir_z;
-    const float *state_initial_dir_x;
-    const float *state_initial_dir_y;
-    const float *state_initial_dir_z;
-    const int *state_prefix_reflection_depth;
+    const float *state_src_x;
+    const float *state_src_y;
+    const float *state_src_z;
+    const float *state_src_power;
+    const float *state_wi_x;
+    const float *state_wi_y;
+    const float *state_wi_z;
+    const float *state_d0_x;
+    const float *state_d0_y;
+    const float *state_d0_z;
+    const int *state_prefix_depth;
 
     int recursive_state_count;
     const uint8_t *recursive_active_mask;
@@ -59,16 +59,16 @@ struct DiffractionAccumParams {
     const float *recursive_state_edge_dir_x;
     const float *recursive_state_edge_dir_y;
     const float *recursive_state_edge_dir_z;
-    const float *recursive_state_edge_line_min;
-    const float *recursive_state_edge_line_max;
-    const float *recursive_state_face0_normal_x;
-    const float *recursive_state_face0_normal_y;
-    const float *recursive_state_face0_normal_z;
-    const float *recursive_state_face1_normal_x;
-    const float *recursive_state_face1_normal_y;
-    const float *recursive_state_face1_normal_z;
-    const int *recursive_state_face0_prim_id;
-    const int *recursive_state_face1_prim_id;
+    const float *recursive_state_edge_t_min;
+    const float *recursive_state_edge_t_max;
+    const float *recursive_state_n0_x;
+    const float *recursive_state_n0_y;
+    const float *recursive_state_n0_z;
+    const float *recursive_state_n1_x;
+    const float *recursive_state_n1_y;
+    const float *recursive_state_n1_z;
+    const int *recursive_state_prim0;
+    const int *recursive_state_prim1;
     const float *recursive_state_exterior_angle;
 
     int grid_axis;
@@ -120,7 +120,7 @@ struct DiffractionAccumParams {
     int collect_edge_use;
     int collect_debug_counts;
 
-    float *out_diffraction_power;
+    float *out_power;
     float *out_field_x_re;
     float *out_field_x_im;
     float *out_field_y_re;
@@ -130,10 +130,10 @@ struct DiffractionAccumParams {
     int *out_direct_count;
     int *out_keller_count;
     int *out_suffix_count;
-    int *out_visibility_reject_count;
-    int *out_inter_edge_visibility_reject_count;
-    int *out_utd_reject_count;
-    int *out_edge_use_count;
+    int *out_vis_rejects;
+    int *out_edge_vis_rejects;
+    int *out_utd_rejects;
+    int *out_edge_uses;
 };
 
 } // namespace rayd

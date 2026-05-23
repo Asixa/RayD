@@ -75,7 +75,7 @@ struct WedgeEventsData {
     Int_ prim_id = full<Int_>(-1, 1);       ///< Primitive forming the wedge.
     Vec3f directions = zeros<Vec3f>(1);          ///< Incident direction at the wedge.
     Vec3f source_points = zeros<Vec3f>(1);       ///< Virtual source used before the wedge event.
-    Float_ source_power = zeros<Float_>(1);      ///< Source field power carried into the wedge.
+    Float_ src_power = zeros<Float_>(1);      ///< Source field power carried into the wedge.
     Vec3f initial_directions = zeros<Vec3f>(1);  ///< Primary ray direction that produced the event.
     Int_ bounce_depth = full<Int_>(-1, 1);       ///< Reflection depth at which the event occurred.
 
@@ -87,7 +87,7 @@ struct WedgeEventsData {
                  prim_id,
                  directions,
                  source_points,
-                 source_power,
+                 src_power,
                  initial_directions,
                  bounce_depth)
 };

@@ -5,7 +5,7 @@ no functional changes. This document lists every old name and its replacement.
 
 ## 1. Naming convention flip (Python)
 
-The bare class name is now the **non-AD (detached)** variant — the common case.
+The bare class name is now the **non-AD (detached)** variant 鈥?the common case.
 The autodiff variant carries an **`AD`** suffix.
 
 ```python
@@ -61,7 +61,7 @@ Unchanged: `ReflectionTraceOptions`, `ReflectionEpcOptions`, `ReflectionEpcField
 | `trace_segment_visibility(...)` | `visible(...)` |
 | `trace_segment_pair_visibility(...)` | `visible_pair(...)` |
 | `trace_segment_chain_visibility(...)` | `visible_chain(...)` |
-| `trace_axial_edge_visibility(...)` | `visible_axial_edge(...)` |
+| `trace_axial_edge_visibility(...)` | `visible_edge(...)` |
 | `trace_reflections_accumulating(...)` | `accumulate_reflections(...)` |
 | `trace_reflection_epc_field_direct(tx_position, ...)` | `trace_reflection_epc_field(tx_position, ...)` |
 
@@ -93,7 +93,7 @@ Stem trims apply to all variants (`*Data`, `*T`, `*Detached`, and the bare alias
 | `NativeLaunchAuditSnapshot::trace_reflections_accumulating` | `::accumulate_reflections` |
 
 C++ method renames mirror the Python ones (`Scene::visible`, `Scene::visible_pair`,
-`Scene::visible_chain`, `Scene::visible_axial_edge`, `Scene::accumulate_reflections`,
+`Scene::visible_chain`, `Scene::visible_edge`, `Scene::accumulate_reflections`,
 and the merged `Scene::trace_reflection_epc_field` overload).
 
 ## 6. Quick migration (Python)
@@ -127,10 +127,52 @@ METHOD = {
     "trace_segment_pair_visibility": "visible_pair",
     "trace_segment_chain_visibility": "visible_chain",
     "trace_segment_visibility": "visible",
-    "trace_axial_edge_visibility": "visible_axial_edge",
+    "trace_axial_edge_visibility": "visible_edge",
     "trace_reflections_accumulating": "accumulate_reflections",
     "trace_reflection_epc_field_direct": "trace_reflection_epc_field",
 }
 # NOTE: the AD bare names that simply gain an "AD" suffix (Ray->RayAD,
-# Intersection->IntersectionAD, etc.) are context-dependent — review those by hand.
+# Intersection->IntersectionAD, etc.) are context-dependent 鈥?review those by hand.
 ```
+
+## 7. 2026-05-22 Dfr diffraction API
+
+Diffraction now uses the `Dfr` stem so `diff` remains reserved for differentiation/autodiff discussions. No compatibility aliases are kept.
+
+| Old | New |
+|---|---|
+| `DiffractionStateTable` | `DfrStates` |
+| `DiffractionGrid` | `DfrGrid` |
+| `DiffractionMaterial` | `DfrMaterial` |
+| `DiffractionAccumOptions` | `DfrOptions` |
+| `DiffractionPathOptions` | `DfrPathOptions` |
+| `DiffractionAccumResult` | `DfrAccum` |
+| `DiffractionPathResult` | `DfrPaths` |
+| `Scene.accumulate_diffraction_order1(...)` | `Scene.accum_dfr1(...)` |
+| `Scene.accumulate_diffraction_chains(...)` | `Scene.accum_dfr(...)` |
+| `Scene.trace_diffraction_paths(...)` | `Scene.trace_dfr_paths(...)` |
+| `RAYD_DIFF_DIRECT` | `RAYD_DFR_DIRECT` |
+| `RAYD_DIFF_KELLER` | `RAYD_DFR_KELLER` |
+| `RAYD_DIFF_SUFFIX_REFLECTION` | `RAYD_DFR_SUFFIX_REFL` |
+| `RAYD_DIFF_HASH` / `RAYD_DIFF_SOBOL` | `RAYD_DFR_HASH` / `RAYD_DFR_SOBOL` |
+| `RAYD_DIFF_MATCHED_ISOTROPIC` | `RAYD_DFR_MATCHED_ISO` |
+
+Key field renames:
+
+| Old | New |
+|---|---|
+| `edge_line_min` / `edge_line_max` | `edge_t_min` / `edge_t_max` |
+| `face0_normal` / `face1_normal` | `n0` / `n1` |
+| `face0_prim_id` / `face1_prim_id` | `prim0` / `prim1` |
+| `source_pos` / `source_power` | `src` / `src_power` |
+| `incident_direction` / `initial_direction` | `wi` / `d0` |
+| `prefix_reflection_depth` | `prefix_depth` |
+| `diffraction_power` / `diffraction_field_*` | `power` / `field_*` |
+| `visibility_reject_count` / `inter_edge_visibility_reject_count` | `vis_rejects` / `edge_vis_rejects` |
+| `utd_reject_count` / `edge_use_count` | `utd_rejects` / `edge_uses` |
+| `edge_index_0/1/2` | `edge0/1/2` |
+| `point_0/1/2` | `p0/1/2` |
+| `tx_index` / `rx_index` | `tx_id` / `rx_id` |
+| `return_geometry` / `max_receivers` | `return_geom` / `max_rx` |
+
+See [`API_NAMING_STANDARD.md`](API_NAMING_STANDARD.md) for the active naming rules.
