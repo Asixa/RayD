@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rayd"
-version = "0.4.0"
+version = "0.4.1"
 description = "RayD: Dr.Jit-native GPU primitives for differentiable ray geometry and multipath simulation."
 readme = "README.md"
 authors = [{ name = "Xingyu Chen", email = "xic063@ucsd.edu" }]
