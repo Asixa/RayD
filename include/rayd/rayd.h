@@ -107,6 +107,12 @@ using DfrCoherentUtdStatesT = DfrCoherentUtdStatesData<FloatT<Detached>>;
 using DfrCoherentUtdStatesAD = DfrCoherentUtdStatesT<false>;
 using DfrCoherentUtdStates = DfrCoherentUtdStatesT<true>;
 
+template <typename> struct DfrCoherentEdgeData;
+template <bool Detached>
+using DfrCoherentEdgeT = DfrCoherentEdgeData<FloatT<Detached>>;
+using DfrCoherentEdgeAD = DfrCoherentEdgeT<false>;
+using DfrCoherentEdge = DfrCoherentEdgeT<true>;
+
 template <typename> struct DfrAccumData;
 template <bool Detached>
 using DfrAccumT = DfrAccumData<FloatT<Detached>>;

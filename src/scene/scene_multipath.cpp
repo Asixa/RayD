@@ -897,6 +897,60 @@ void init_dfr_coherent_accum_raw(DfrCoherentAccumRaw &raw) {
                      &zero_i);
 }
 
+Vector3f normalize_with_fallback(const Vector3f &value, const Vector3f &fallback) {
+    const Float value_norm = norm(value);
+    const Float fallback_norm = norm(fallback);
+    return select(value_norm > Float(1.0e-8f),
+                  value / (value_norm + Float(1.0e-12f)),
+                  fallback / (fallback_norm + Float(1.0e-12f)));
+}
+
+Vector3f stable_perpendicular_basis_jit(const Vector3f &ray_dir, const Vector3f &preferred) {
+    const Vector3f proj = preferred - dot(preferred, ray_dir) * ray_dir;
+    const Mask use_z = abs(ray_dir.z()) < Float(0.9f);
+    const Vector3f alt_axis = select(use_z,
+                                     Vector3f(Float(0.f), Float(0.f), Float(1.f)),
+                                     Vector3f(Float(0.f), Float(1.f), Float(0.f)));
+    const Vector3f alt_proj = alt_axis - dot(alt_axis, ray_dir) * ray_dir;
+    return normalize_with_fallback(proj, alt_proj);
+}
+
+Mask wedge_exterior_mask_jit(const Vector3f &direction_from_edge,
+                             const Vector3f &edge_dir,
+                             const Vector3f &n0,
+                             const Vector3f &nn) {
+    const Vector3f direction_proj =
+        direction_from_edge - dot(direction_from_edge, edge_dir) * edge_dir;
+    return (norm(direction_proj) > Float(1.0e-8f)) &&
+           ((dot(direction_proj, n0) >= Float(-1.0e-8f)) ||
+            (dot(direction_proj, nn) >= Float(-1.0e-8f)));
+}
+
+Int interleave_two_ignore_slots(const Int &slot0, const Int &slot1, int width) {
+    if (width <= 0) {
+        return zeros<Int>(0);
+    }
+    const Int slot_major = concat(slot0, slot1);
+    const UInt dst_idx = arange<UInt>(width * 2);
+    const UInt ray_idx = dst_idx / UInt(2);
+    const UInt slot_idx = dst_idx - ray_idx * UInt(2);
+    const UInt src_idx = slot_idx * UInt(width) + ray_idx;
+    return gather<Int>(slot_major, src_idx);
+}
+
+Float gather_material_float(const Float &values,
+                            const Int &face,
+                            const Mask &valid,
+                            float fallback) {
+    const UInt safe = UInt(select(valid, face, Int(0)));
+    return select(valid, gather<Float>(values, safe), Float(fallback));
+}
+
+Mask gather_material_mask(const Mask &values, const Int &face, const Mask &valid) {
+    const UInt safe = UInt(select(valid, face, Int(0)));
+    return valid && gather<Mask>(values, safe);
+}
+
 DfrPathsRaw alloc_dfr_paths_raw(int capacity) {
     DfrPathsRaw raw;
     raw.capacity = capacity;
@@ -5002,6 +5056,212 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
 
 
 template <bool Detached>
+DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(
+    const DfrCoherentEdgeT<Detached> &edges,
+    const Vector3fT<Detached> &tx_position,
+    const DfrMaterialT<Detached> &material,
+    const DfrCoherentOptions &options,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::build_dfr_coherent_tx_states(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::build_dfr_coherent_tx_states(): scene has pending updates. Call Scene::sync() first.");
+    require(options.wavelength > 0.f,
+            "Scene::build_dfr_coherent_tx_states(): wavelength must be positive.");
+    require(options.k > 0.f,
+            "Scene::build_dfr_coherent_tx_states(): k must be positive.");
+    if constexpr (!Detached) {
+        (void)edges;
+        (void)tx_position;
+        (void)material;
+        (void)active;
+        throw std::runtime_error(
+            "Scene::build_dfr_coherent_tx_states(): AD inputs are not supported yet.");
+    } else {
+        const int edge_count = edges.count;
+        require(edge_count >= 0,
+                "Scene::build_dfr_coherent_tx_states(): invalid edge count.");
+        DfrCoherentUtdStates result;
+        if (edge_count == 0) {
+            result.count = 0;
+            return result;
+        }
+        require(static_cast<int>(slices(edges.edge_index)) >= edge_count &&
+                    static_cast<int>(slices(edges.edge_pos)) >= edge_count &&
+                    static_cast<int>(slices(edges.edge_dir)) >= edge_count &&
+                    static_cast<int>(slices(edges.n0)) >= edge_count &&
+                    static_cast<int>(slices(edges.n_face_n)) >= edge_count &&
+                    static_cast<int>(slices(edges.wedge_n)) >= edge_count &&
+                    static_cast<int>(slices(edges.edge_line_min)) >= edge_count &&
+                    static_cast<int>(slices(edges.edge_line_max)) >= edge_count &&
+                    static_cast<int>(slices(edges.adjacent_face0)) >= edge_count &&
+                    static_cast<int>(slices(edges.adjacent_face1)) >= edge_count,
+                "Scene::build_dfr_coherent_tx_states(): edge fields must cover edge count.");
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::build_dfr_coherent_tx_states(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::build_dfr_coherent_tx_states(): material payload fields must have matching widths.");
+        const int ignore_count = static_cast<int>(slices(edges.ignore_prim_ids));
+        int ignore_k = edges.ignore_k;
+        if (ignore_count > 0) {
+            require(ignore_k > 0,
+                    "Scene::build_dfr_coherent_tx_states(): ignore_k must be positive when ignore_prim_ids is provided.");
+            require(ignore_count == edge_count * ignore_k,
+                    "Scene::build_dfr_coherent_tx_states(): ignore_prim_ids width must equal edge count * ignore_k.");
+        } else {
+            ignore_k = 0;
+        }
+
+        Vector3f source_pos = tx_position;
+        if (static_cast<int>(slices(source_pos)) == 1 && edge_count > 1) {
+            source_pos = gather<Vector3f>(source_pos, zeros<UInt>(edge_count));
+        } else {
+            require(static_cast<int>(slices(source_pos)) == edge_count,
+                    "Scene::build_dfr_coherent_tx_states(): tx_position width must be 1 or match edge count.");
+        }
+        Mask active_detached = active;
+        const int active_width = static_cast<int>(slices(active_detached));
+        if (active_width == 1 && edge_count > 1) {
+            active_detached = gather<Mask>(active_detached, zeros<UInt>(edge_count));
+        } else {
+            require(active_width == edge_count,
+                    "Scene::build_dfr_coherent_tx_states(): active width must be 1 or match edge count.");
+        }
+
+        const Vector3f edge_dir = normalize_with_fallback(
+            edges.edge_dir, Vector3f(Float(0.f), Float(0.f), Float(1.f)));
+        require(optix_scene_ != nullptr && optix_scene_->is_ready(),
+                "Scene::build_dfr_coherent_tx_states(): OptiX scene is not ready.");
+        if (ignore_k > 0) {
+            drjit::eval(source_pos, edges.edge_pos, edges.ignore_prim_ids, active_detached);
+        } else {
+            drjit::eval(source_pos, edges.edge_pos, active_detached);
+        }
+        ensure_pipeline(segment_pair_visibility_pipeline_,
+                        optix_scene_->context(),
+                        mesh_count_,
+                        segment_pair_visibility_pipeline_config());
+        const SegmentPairVisibility visibility_result =
+            trace_segment_pair_visibility_native<true>(*optix_scene_,
+                                                       *segment_pair_visibility_pipeline_,
+                                                       face_offsets_,
+                                                       mesh_count_,
+                                                       source_pos,
+                                                       edges.edge_pos,
+                                                       edges.edge_pos,
+                                                       edges.ignore_prim_ids,
+                                                       ignore_k,
+                                                       active_detached);
+        const Mask visibility = visibility_result.visible_a;
+        const Mask source_exterior =
+            wedge_exterior_mask_jit(source_pos - edges.edge_pos, edge_dir, edges.n0, edges.n_face_n);
+        const Mask finite_line =
+            (edges.edge_line_max - edges.edge_line_min) > Float(1.0e-8f);
+        const Mask valid = visibility && source_exterior && finite_line && active_detached;
+        const UInt keep = compress(valid);
+        const int state_count = static_cast<int>(slices(keep));
+        result.count = state_count;
+        if (state_count == 0) {
+            return result;
+        }
+
+        result.edge_index = gather<Int>(edges.edge_index, keep);
+        result.edge_pos = gather<Vector3f>(edges.edge_pos, keep);
+        result.edge_dir = gather<Vector3f>(edge_dir, keep);
+        result.n0 = gather<Vector3f>(edges.n0, keep);
+        result.n_face_n = gather<Vector3f>(edges.n_face_n, keep);
+        result.wedge_n = gather<Float>(edges.wedge_n, keep);
+        result.edge_line_min = gather<Float>(edges.edge_line_min, keep);
+        result.edge_line_max = gather<Float>(edges.edge_line_max, keep);
+        result.source_pos = gather<Vector3f>(source_pos, keep);
+        result.adjacent_face0 = gather<Int>(edges.adjacent_face0, keep);
+        result.adjacent_face1 = gather<Int>(edges.adjacent_face1, keep);
+
+        const Vector3f source_to_edge = result.edge_pos - result.source_pos;
+        const Float distance = norm(source_to_edge) + Float(1.0e-12f);
+        const Float source_gain = Float(1.f) / (Float(2.f) * Float(options.k) * distance);
+        const drjit::Complex<Float> phase =
+            exp(drjit::Complex<Float>(zeros<Float>(state_count), -Float(options.k) * distance));
+        result.incident_field = phase * source_gain;
+        result.incident_normal_derivative =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+        const Vector3f ray_dir = source_to_edge / distance;
+        const Vector3f tx_pol(Float(options.tx_pol_x), Float(options.tx_pol_y), Float(options.tx_pol_z));
+        const Vector3f pol_dir = stable_perpendicular_basis_jit(ray_dir, tx_pol);
+        result.incident_vector_x = result.incident_field * pol_dir.x();
+        result.incident_vector_y = result.incident_field * pol_dir.y();
+        result.incident_vector_z = result.incident_field * pol_dir.z();
+        result.incident_normal_derivative_vector_x =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+        result.incident_normal_derivative_vector_y =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+        result.incident_normal_derivative_vector_z =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+
+        result.incident_basis_k = ray_dir;
+        result.incident_basis_u = stable_perpendicular_basis_jit(ray_dir, result.edge_dir);
+        result.incident_basis_v = normalize_with_fallback(
+            cross(ray_dir, result.incident_basis_u),
+            stable_perpendicular_basis_jit(ray_dir, Vector3f(Float(0.f), Float(1.f), Float(0.f))));
+        result.incident_jones_u = result.incident_vector_x * result.incident_basis_u.x() +
+                                  result.incident_vector_y * result.incident_basis_u.y() +
+                                  result.incident_vector_z * result.incident_basis_u.z();
+        result.incident_jones_v = result.incident_vector_x * result.incident_basis_v.x() +
+                                  result.incident_vector_y * result.incident_basis_v.y() +
+                                  result.incident_vector_z * result.incident_basis_v.z();
+        result.incident_derivative_jones_u =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+        result.incident_derivative_jones_v =
+            drjit::Complex<Float>(zeros<Float>(state_count), zeros<Float>(state_count));
+
+        const Mask valid0 = result.adjacent_face0 >= Int(0) &&
+                            result.adjacent_face0 < Int(material_count);
+        const Mask valid1 = result.adjacent_face1 >= Int(0) &&
+                            result.adjacent_face1 < Int(material_count);
+        const Mask mat0 = gather_material_mask(material.valid, result.adjacent_face0, valid0);
+        const Mask mat1 = gather_material_mask(material.valid, result.adjacent_face1, valid1);
+        result.face0_eta_r = gather_material_float(material.eta_r, result.adjacent_face0, mat0, 1.f);
+        result.face0_mu_r = gather_material_float(material.mu_r, result.adjacent_face0, mat0, 1.f);
+        result.face0_sigma = gather_material_float(material.sigma, result.adjacent_face0, mat0, 0.f);
+        result.face0_gain = gather_material_float(material.gain, result.adjacent_face0, mat0, 1.f);
+        result.face0_use_fresnel = Float(mat0);
+        result.face1_eta_r = gather_material_float(material.eta_r, result.adjacent_face1, mat1, 1.f);
+        result.face1_mu_r = gather_material_float(material.mu_r, result.adjacent_face1, mat1, 1.f);
+        result.face1_sigma = gather_material_float(material.sigma, result.adjacent_face1, mat1, 0.f);
+        result.face1_gain = gather_material_float(material.gain, result.adjacent_face1, mat1, 1.f);
+        result.face1_use_fresnel = Float(mat1);
+
+        const drjit::Complex<Float> zero_c(zeros<Float>(state_count), zeros<Float>(state_count));
+        const drjit::Complex<Float> pec_c(full<Float>(-1.f, state_count), zeros<Float>(state_count));
+        result.r_face0 = pec_c;
+        result.r_face_n = pec_c;
+        result.face0_operator_m00 = pec_c;
+        result.face0_operator_m01 = zero_c;
+        result.face0_operator_m10 = zero_c;
+        result.face0_operator_m11 = pec_c;
+        result.face1_operator_m00 = pec_c;
+        result.face1_operator_m01 = zero_c;
+        result.face1_operator_m10 = zero_c;
+        result.face1_operator_m11 = pec_c;
+
+        result.select_stationary_point = full<Float>(1.f, state_count);
+        result.owner_code = zeros<Int>(state_count);
+        result.path_length_prefix = distance;
+        result.first_interaction_pos = result.edge_pos;
+        result.source_type_code = zeros<Int>(state_count);
+        result.prefix_reflection_depth = zeros<Int>(state_count);
+        result.intermediate_reflection_depth = zeros<Int>(state_count);
+        result.suffix_reflection_depth = zeros<Int>(state_count);
+        result.approximation_mode_code = zeros<Int>(state_count);
+        result.order = full<Int>(1, state_count);
+        return result;
+    }
+}
+
+template <bool Detached>
 DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
     const DfrCoherentUtdStatesT<Detached> &states,
     const DfrGrid &grid,
@@ -6695,6 +6955,18 @@ template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(
 template DfrCoherentAccumAD Scene::accum_dfr_coherent_direct<false>(
     const DfrCoherentUtdStatesAD &states,
     const DfrGrid &grid,
+    const DfrCoherentOptions &options,
+    MaskAD active) const;
+template DfrCoherentUtdStates Scene::build_dfr_coherent_tx_states<true>(
+    const DfrCoherentEdge &edges,
+    const Vector3f &tx_position,
+    const DfrMaterial &material,
+    const DfrCoherentOptions &options,
+    Mask active) const;
+template DfrCoherentUtdStatesAD Scene::build_dfr_coherent_tx_states<false>(
+    const DfrCoherentEdgeAD &edges,
+    const Vector3fAD &tx_position,
+    const DfrMaterialAD &material,
     const DfrCoherentOptions &options,
     MaskAD active) const;
 template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(

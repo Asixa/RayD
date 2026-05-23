@@ -143,6 +143,7 @@ struct DfrCoherentUtdStatesData {
     using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     int count = 0;
+    Int_ edge_index = full<Int_>(-1, 1);
     Vec3f edge_pos = zeros<Vec3f>(1);
     Vec3f edge_dir = zeros<Vec3f>(1);
     Vec3f n0 = zeros<Vec3f>(1);
@@ -190,8 +191,17 @@ struct DfrCoherentUtdStatesData {
     Int_ owner_code = full<Int_>(0, 1);
     Int_ adjacent_face0 = full<Int_>(-1, 1);
     Int_ adjacent_face1 = full<Int_>(-1, 1);
+    Float_ path_length_prefix = zeros<Float_>(1);
+    Vec3f first_interaction_pos = zeros<Vec3f>(1);
+    Int_ source_type_code = full<Int_>(0, 1);
+    Int_ prefix_reflection_depth = full<Int_>(0, 1);
+    Int_ intermediate_reflection_depth = full<Int_>(0, 1);
+    Int_ suffix_reflection_depth = full<Int_>(0, 1);
+    Int_ approximation_mode_code = full<Int_>(0, 1);
+    Int_ order = full<Int_>(1, 1);
 
     DRJIT_STRUCT(DfrCoherentUtdStatesData,
+                 edge_index,
                  edge_pos,
                  edge_dir,
                  n0,
@@ -238,7 +248,51 @@ struct DfrCoherentUtdStatesData {
                  select_stationary_point,
                  owner_code,
                  adjacent_face0,
-                 adjacent_face1)
+                 adjacent_face1,
+                 path_length_prefix,
+                 first_interaction_pos,
+                 source_type_code,
+                 prefix_reflection_depth,
+                 intermediate_reflection_depth,
+                 suffix_reflection_depth,
+                 approximation_mode_code,
+                 order)
+};
+
+/// Selected deterministic diffraction edge payload used to build coherent UTD states.
+template <typename Float_>
+struct DfrCoherentEdgeData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
+
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+
+    int count = 0;
+    Int_ edge_index = full<Int_>(-1, 1);
+    Vec3f edge_pos = zeros<Vec3f>(1);
+    Vec3f edge_dir = zeros<Vec3f>(1);
+    Vec3f n0 = zeros<Vec3f>(1);
+    Vec3f n_face_n = zeros<Vec3f>(1);
+    Float_ wedge_n = zeros<Float_>(1);
+    Float_ edge_line_min = zeros<Float_>(1);
+    Float_ edge_line_max = zeros<Float_>(1);
+    Int_ adjacent_face0 = full<Int_>(-1, 1);
+    Int_ adjacent_face1 = full<Int_>(-1, 1);
+    Int_ ignore_prim_ids = full<Int_>(-1, 0);
+    int ignore_k = 0;
+
+    DRJIT_STRUCT(DfrCoherentEdgeData,
+                 edge_index,
+                 edge_pos,
+                 edge_dir,
+                 n0,
+                 n_face_n,
+                 wedge_n,
+                 edge_line_min,
+                 edge_line_max,
+                 adjacent_face0,
+                 adjacent_face1,
+                 ignore_prim_ids)
 };
 
 /// Result of native diffraction accumulation. Grid arrays have grid_cell_count entries.

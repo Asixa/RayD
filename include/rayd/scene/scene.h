@@ -170,6 +170,14 @@ public:
         const DfrGrid &grid,
         const DfrCoherentOptions &options,
         MaskT<Detached> active) const;
+    /// Build compact first-order direct-Tx deterministic UTD states.
+    template <bool Detached>
+    DfrCoherentUtdStatesT<Detached> build_dfr_coherent_tx_states(
+        const DfrCoherentEdgeT<Detached> &edges,
+        const Vector3fT<Detached> &tx_position,
+        const DfrMaterialT<Detached> &material,
+        const DfrCoherentOptions &options,
+        MaskT<Detached> active) const;
     /// Native higher-order direct-chain diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
     DfrAccumT<Detached> accum_dfr(

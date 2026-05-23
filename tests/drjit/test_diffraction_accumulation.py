@@ -222,6 +222,77 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["direct_count0"], 7)
         self.assertEqual(data["utd_reject1"], 14)
 
+    def test_coherent_tx_state_builder_returns_compact_direct_states(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            edges = pj.DfrCoherentEdge()
+            edges.count = 2
+            edges.edge_index = cuda.Int([5, 6])
+            edges.edge_pos = cuda.Array3f([0.0, 0.0], [0.0, 2.0], [0.0, 0.0])
+            edges.edge_dir = cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0])
+            edges.n0 = cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0])
+            edges.n_face_n = cuda.Array3f([0.0, 0.0], [-1.0, -1.0], [0.0, 0.0])
+            edges.wedge_n = cuda.Float([1.5, 1.5])
+            edges.edge_line_min = cuda.Float([-0.5, -0.5])
+            edges.edge_line_max = cuda.Float([0.5, 0.5])
+            edges.adjacent_face0 = cuda.Int([-1, -1])
+            edges.adjacent_face1 = cuda.Int([-1, -1])
+
+            material = pj.DfrMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DfrCoherentOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.omega = 2.0 * 3.141592653589793 * 299792458.0 / options.wavelength
+            options.tx_pol_x = 1.0
+            options.tx_pol_y = 0.0
+            options.tx_pol_z = 0.0
+
+            states = scene.build_dfr_coherent_tx_states(
+                edges,
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                material,
+                options,
+                True,
+            )
+            dr.eval(states.edge_index, states.incident_field.real, states.incident_basis_k.z)
+            print(json.dumps({
+                "count": states.count,
+                "edge0": int(states.edge_index[0]) if states.count else -1,
+                "order0": int(states.order[0]) if states.count else -1,
+                "source_type0": int(states.source_type_code[0]) if states.count else -1,
+                "select0": float(states.select_stationary_point[0]) if states.count else 0.0,
+                "field0_abs": float(dr.abs(states.incident_field)[0]) if states.count else 0.0,
+                "basis_k_z0": float(states.incident_basis_k.z[0]) if states.count else 0.0,
+            }))
+            """
+        )
+
+        self.assertGreaterEqual(data["count"], 1)
+        self.assertEqual(data["edge0"], 5)
+        self.assertEqual(data["order0"], 1)
+        self.assertEqual(data["source_type0"], 0)
+        self.assertAlmostEqual(data["select0"], 1.0, places=6)
+        self.assertGreater(data["field0_abs"], 0.0)
+        self.assertLess(data["basis_k_z0"], 0.0)
+
     def test_accum_dfr_coherent_direct_rejects_empty_states(self):
         result = run_script(
             """

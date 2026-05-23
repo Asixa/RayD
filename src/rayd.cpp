@@ -637,6 +637,7 @@ NB_MODULE(rayd, m) {
         nb::class_<DfrCoherentUtdStates>(m, "DfrCoherentUtdStates")
             .def(nb::init<>())
             .def_rw("count", &DfrCoherentUtdStates::count)
+            .def_rw("edge_index", &DfrCoherentUtdStates::edge_index)
             .def_rw("edge_pos", &DfrCoherentUtdStates::edge_pos)
             .def_rw("edge_dir", &DfrCoherentUtdStates::edge_dir)
             .def_rw("n0", &DfrCoherentUtdStates::n0)
@@ -683,11 +684,20 @@ NB_MODULE(rayd, m) {
             .def_rw("select_stationary_point", &DfrCoherentUtdStates::select_stationary_point)
             .def_rw("owner_code", &DfrCoherentUtdStates::owner_code)
             .def_rw("adjacent_face0", &DfrCoherentUtdStates::adjacent_face0)
-            .def_rw("adjacent_face1", &DfrCoherentUtdStates::adjacent_face1);
+            .def_rw("adjacent_face1", &DfrCoherentUtdStates::adjacent_face1)
+            .def_rw("path_length_prefix", &DfrCoherentUtdStates::path_length_prefix)
+            .def_rw("first_interaction_pos", &DfrCoherentUtdStates::first_interaction_pos)
+            .def_rw("source_type_code", &DfrCoherentUtdStates::source_type_code)
+            .def_rw("prefix_reflection_depth", &DfrCoherentUtdStates::prefix_reflection_depth)
+            .def_rw("intermediate_reflection_depth", &DfrCoherentUtdStates::intermediate_reflection_depth)
+            .def_rw("suffix_reflection_depth", &DfrCoherentUtdStates::suffix_reflection_depth)
+            .def_rw("approximation_mode_code", &DfrCoherentUtdStates::approximation_mode_code)
+            .def_rw("order", &DfrCoherentUtdStates::order);
 
         nb::class_<DfrCoherentUtdStatesAD>(m, "DfrCoherentUtdStatesAD")
             .def(nb::init<>())
             .def_rw("count", &DfrCoherentUtdStatesAD::count)
+            .def_rw("edge_index", &DfrCoherentUtdStatesAD::edge_index)
             .def_rw("edge_pos", &DfrCoherentUtdStatesAD::edge_pos)
             .def_rw("edge_dir", &DfrCoherentUtdStatesAD::edge_dir)
             .def_rw("n0", &DfrCoherentUtdStatesAD::n0)
@@ -734,7 +744,47 @@ NB_MODULE(rayd, m) {
             .def_rw("select_stationary_point", &DfrCoherentUtdStatesAD::select_stationary_point)
             .def_rw("owner_code", &DfrCoherentUtdStatesAD::owner_code)
             .def_rw("adjacent_face0", &DfrCoherentUtdStatesAD::adjacent_face0)
-            .def_rw("adjacent_face1", &DfrCoherentUtdStatesAD::adjacent_face1);
+            .def_rw("adjacent_face1", &DfrCoherentUtdStatesAD::adjacent_face1)
+            .def_rw("path_length_prefix", &DfrCoherentUtdStatesAD::path_length_prefix)
+            .def_rw("first_interaction_pos", &DfrCoherentUtdStatesAD::first_interaction_pos)
+            .def_rw("source_type_code", &DfrCoherentUtdStatesAD::source_type_code)
+            .def_rw("prefix_reflection_depth", &DfrCoherentUtdStatesAD::prefix_reflection_depth)
+            .def_rw("intermediate_reflection_depth", &DfrCoherentUtdStatesAD::intermediate_reflection_depth)
+            .def_rw("suffix_reflection_depth", &DfrCoherentUtdStatesAD::suffix_reflection_depth)
+            .def_rw("approximation_mode_code", &DfrCoherentUtdStatesAD::approximation_mode_code)
+            .def_rw("order", &DfrCoherentUtdStatesAD::order);
+
+        nb::class_<DfrCoherentEdge>(m, "DfrCoherentEdge")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentEdge::count)
+            .def_rw("edge_index", &DfrCoherentEdge::edge_index)
+            .def_rw("edge_pos", &DfrCoherentEdge::edge_pos)
+            .def_rw("edge_dir", &DfrCoherentEdge::edge_dir)
+            .def_rw("n0", &DfrCoherentEdge::n0)
+            .def_rw("n_face_n", &DfrCoherentEdge::n_face_n)
+            .def_rw("wedge_n", &DfrCoherentEdge::wedge_n)
+            .def_rw("edge_line_min", &DfrCoherentEdge::edge_line_min)
+            .def_rw("edge_line_max", &DfrCoherentEdge::edge_line_max)
+            .def_rw("adjacent_face0", &DfrCoherentEdge::adjacent_face0)
+            .def_rw("adjacent_face1", &DfrCoherentEdge::adjacent_face1)
+            .def_rw("ignore_prim_ids", &DfrCoherentEdge::ignore_prim_ids)
+            .def_rw("ignore_k", &DfrCoherentEdge::ignore_k);
+
+        nb::class_<DfrCoherentEdgeAD>(m, "DfrCoherentEdgeAD")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentEdgeAD::count)
+            .def_rw("edge_index", &DfrCoherentEdgeAD::edge_index)
+            .def_rw("edge_pos", &DfrCoherentEdgeAD::edge_pos)
+            .def_rw("edge_dir", &DfrCoherentEdgeAD::edge_dir)
+            .def_rw("n0", &DfrCoherentEdgeAD::n0)
+            .def_rw("n_face_n", &DfrCoherentEdgeAD::n_face_n)
+            .def_rw("wedge_n", &DfrCoherentEdgeAD::wedge_n)
+            .def_rw("edge_line_min", &DfrCoherentEdgeAD::edge_line_min)
+            .def_rw("edge_line_max", &DfrCoherentEdgeAD::edge_line_max)
+            .def_rw("adjacent_face0", &DfrCoherentEdgeAD::adjacent_face0)
+            .def_rw("adjacent_face1", &DfrCoherentEdgeAD::adjacent_face1)
+            .def_rw("ignore_prim_ids", &DfrCoherentEdgeAD::ignore_prim_ids)
+            .def_rw("ignore_k", &DfrCoherentEdgeAD::ignore_k);
 
         nb::class_<DfrStates>(m, "DfrStates")
             .def(nb::init<>())
@@ -1773,7 +1823,44 @@ NB_MODULE(rayd, m) {
                      throw nb::next_overload();
                  },
                  "states"_a,
-                 "grid"_a,
+                  "grid"_a,
+                  "material"_a,
+                  "options"_a = DfrCoherentOptions(),
+                  "active"_a = true)
+            .def("build_dfr_coherent_tx_states",
+                 [](const Scene &scene,
+                    nb::handle edges_obj,
+                    nb::handle tx_position_obj,
+                    nb::handle material_obj,
+                    const DfrCoherentOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DfrCoherentEdge>(edges_obj)) {
+                         const DfrCoherentEdge edges =
+                             nb::cast<DfrCoherentEdge>(edges_obj);
+                         const Vector3f tx_position =
+                             nb::cast<Vector3f>(tx_position_obj);
+                         const DfrMaterial material =
+                             nb::cast<DfrMaterial>(material_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.build_dfr_coherent_tx_states<true>(
+                             edges, tx_position, material, options, active));
+                     }
+                     if (nb::isinstance<DfrCoherentEdgeAD>(edges_obj)) {
+                         const DfrCoherentEdgeAD edges =
+                             nb::cast<DfrCoherentEdgeAD>(edges_obj);
+                         const Vector3fAD tx_position =
+                             nb::cast<Vector3fAD>(tx_position_obj);
+                         const DfrMaterialAD material =
+                             nb::cast<DfrMaterialAD>(material_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.build_dfr_coherent_tx_states<false>(
+                             edges, tx_position, material, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 "edges"_a,
+                 "tx_position"_a,
                  "material"_a,
                  "options"_a = DfrCoherentOptions(),
                  "active"_a = true)
