@@ -954,6 +954,24 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         return;
     }
 
+    if (params.tape_active != nullptr) {
+        params.tape_active[lane] = 1u;
+        if (params.tape_state_idx != nullptr) {
+            params.tape_state_idx[lane] = first_idx;
+        }
+        if (params.tape_cell != nullptr) {
+            params.tape_cell[lane] = cell;
+        }
+        if (params.tape_material_idx != nullptr) {
+            params.tape_material_idx[lane] =
+                material_index_for_faces(params.state_prim0[first_idx],
+                                         params.state_prim1[first_idx]);
+        }
+        if (params.tape_edge_u != nullptr) {
+            params.tape_edge_u[lane] = first_u;
+        }
+    }
+
     atomicAdd(params.out_power + cell, contribution);
     atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {

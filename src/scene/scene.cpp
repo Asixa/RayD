@@ -67,14 +67,23 @@ protected:
 struct DfrDirectAccumOpInput {
     DfrStatesAD states;
     DfrMaterialAD material;
+    Vector3fAD suffix_tri_p0;
+    Vector3fAD suffix_tri_face_normal;
     MaskAD active;
 
-    DRJIT_STRUCT(DfrDirectAccumOpInput, states, material, active)
+    DRJIT_STRUCT(DfrDirectAccumOpInput,
+                 states,
+                 material,
+                 suffix_tri_p0,
+                 suffix_tri_face_normal,
+                 active)
 };
 
 struct DfrDirectAccumOpInputDetached {
     DfrStates states;
     DfrMaterial material;
+    Vector3f suffix_tri_p0;
+    Vector3f suffix_tri_face_normal;
     Mask active;
 };
 
@@ -102,8 +111,31 @@ DfrDirectAccumOpInputDetached detach_dfr_direct_input(
     detached.material.mu_r = detach<false>(input.material.mu_r);
     detached.material.gain = detach<false>(input.material.gain);
     detached.material.valid = detach<false>(input.material.valid);
+    detached.suffix_tri_p0 = detach<false>(input.suffix_tri_p0);
+    detached.suffix_tri_face_normal = detach<false>(input.suffix_tri_face_normal);
     detached.active = detach<false>(input.active);
     detached.states.count = input.states.count;
+    return detached;
+}
+
+DfrStates detach_dfr_states_input(const DfrStatesAD &input) {
+    DfrStates detached;
+    detached.count = input.count;
+    detached.edge_index = detach<false>(input.edge_index);
+    detached.edge_pos = detach<false>(input.edge_pos);
+    detached.edge_dir = detach<false>(input.edge_dir);
+    detached.edge_t_min = detach<false>(input.edge_t_min);
+    detached.edge_t_max = detach<false>(input.edge_t_max);
+    detached.n0 = detach<false>(input.n0);
+    detached.n1 = detach<false>(input.n1);
+    detached.prim0 = detach<false>(input.prim0);
+    detached.prim1 = detach<false>(input.prim1);
+    detached.exterior_angle = detach<false>(input.exterior_angle);
+    detached.src = detach<false>(input.src);
+    detached.src_power = detach<false>(input.src_power);
+    detached.wi = detach<false>(input.wi);
+    detached.d0 = detach<false>(input.d0);
+    detached.prefix_depth = detach<false>(input.prefix_depth);
     return detached;
 }
 
@@ -219,6 +251,14 @@ void require_dfr_direct_custom_ad_supported(const DfrOptions &options) {
             "Scene::accum_dfr_direct(): native AD currently supports max_order == 1.");
 }
 
+void require_dfr_chain_custom_ad_supported(const DfrOptions &options) {
+    require(options.max_order == 2 || options.max_order == 3,
+            "Scene::accum_dfr(): native AD currently supports max_order 2 or 3.");
+    require((options.strategy_mask & RAYD_DFR_SUFFIX_REFL) == 0 ||
+                options.suffix_samples == 0,
+            "Scene::accum_dfr(): native AD currently supports higher-order direct/Keller chain gradients; suffix reflection gradients are supported by accum_dfr_direct().");
+}
+
 template <typename FloatLike>
 Float coerce_float_grad(const FloatLike &value, size_t width) {
     Float detached = detach<false>(value);
@@ -289,6 +329,7 @@ public:
 
         const size_t state_width = slices(m_input_.states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
+        const size_t triangle_width = slices(m_input_.suffix_tri_p0);
 
         const Vector3f dot_edge_pos =
             coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.edge_pos), state_width);
@@ -308,6 +349,11 @@ public:
             coerce_float_grad(drjit::grad<false>(this->registered_input.states.exterior_angle), state_width);
         const Float dot_material_gain =
             coerce_float_grad(drjit::grad<false>(this->registered_input.material.gain), material_width);
+        const Vector3f dot_tri_p0 =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_p0), triangle_width);
+        const Vector3f dot_tri_face_normal =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_face_normal),
+                             triangle_width);
 
         drjit::eval(dot_edge_pos,
                     dot_edge_dir,
@@ -318,6 +364,8 @@ public:
                     dot_src_power,
                     dot_exterior_angle,
                     dot_material_gain,
+                    dot_tri_p0,
+                    dot_tri_face_normal,
                     output.power,
                     output.field_x.x());
 
@@ -339,6 +387,12 @@ public:
         params.dot_state_src_power = dot_src_power.data();
         params.dot_state_exterior_angle = dot_exterior_angle.data();
         params.dot_material_gain = dot_material_gain.data();
+        params.dot_tri_p0_x = dot_tri_p0.x().data();
+        params.dot_tri_p0_y = dot_tri_p0.y().data();
+        params.dot_tri_p0_z = dot_tri_p0.z().data();
+        params.dot_tri_fn_x = dot_tri_face_normal.x().data();
+        params.dot_tri_fn_y = dot_tri_face_normal.y().data();
+        params.dot_tri_fn_z = dot_tri_face_normal.z().data();
         params.dot_out_power = output.power.data();
         params.dot_out_field_x_re = output.field_x.x().data();
         dfr_direct_accum_jvp_gpu(params);
@@ -352,6 +406,7 @@ public:
 
         const size_t state_width = slices(m_input_.states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
+        const size_t triangle_width = slices(m_input_.suffix_tri_p0);
         Vector3f grad_edge_pos = zeros<Vector3f>(state_width);
         Vector3f grad_edge_dir = zeros<Vector3f>(state_width);
         Float grad_edge_t_min = zeros<Float>(state_width);
@@ -361,6 +416,8 @@ public:
         Float grad_src_power = zeros<Float>(state_width);
         Float grad_exterior_angle = zeros<Float>(state_width);
         Float grad_material_gain = zeros<Float>(material_width);
+        Vector3f grad_tri_p0 = zeros<Vector3f>(triangle_width);
+        Vector3f grad_tri_face_normal = zeros<Vector3f>(triangle_width);
         Float grad_power =
             coerce_float_grad(drjit::grad<false>(this->registered_output.power),
                               grid_.resolution0 * grid_.resolution1);
@@ -377,6 +434,8 @@ public:
                     grad_src_power,
                     grad_exterior_angle,
                     grad_material_gain,
+                    grad_tri_p0,
+                    grad_tri_face_normal,
                     grad_power,
                     grad_field_x_re);
 
@@ -400,6 +459,12 @@ public:
         params.grad_state_src_power = grad_src_power.data();
         params.grad_state_exterior_angle = grad_exterior_angle.data();
         params.grad_material_gain = grad_material_gain.data();
+        params.grad_tri_p0_x = grad_tri_p0.x().data();
+        params.grad_tri_p0_y = grad_tri_p0.y().data();
+        params.grad_tri_p0_z = grad_tri_p0.z().data();
+        params.grad_tri_fn_x = grad_tri_face_normal.x().data();
+        params.grad_tri_fn_y = grad_tri_face_normal.y().data();
+        params.grad_tri_fn_z = grad_tri_face_normal.z().data();
         dfr_direct_accum_vjp_gpu(params);
 
         drjit::accum_grad(this->registered_input.states.edge_pos,
@@ -420,6 +485,10 @@ public:
                           drjit::detach<false>(grad_exterior_angle));
         drjit::accum_grad(this->registered_input.material.gain,
                           drjit::detach<false>(grad_material_gain));
+        drjit::accum_grad(this->registered_input.suffix_tri_p0,
+                          drjit::detach<false>(grad_tri_p0));
+        drjit::accum_grad(this->registered_input.suffix_tri_face_normal,
+                          drjit::detach<false>(grad_tri_face_normal));
     }
 
     const char *name() const override { return "DfrDirectAccum"; }
@@ -447,7 +516,7 @@ private:
         const TriangleInfo &triangles = scene_->triangle_info_detached();
         const bool suffix_enabled = params.suffix_samples > 0;
         params.n_triangles = suffix_enabled
-                                 ? static_cast<int>(slices(triangles.p0))
+                                 ? static_cast<int>(slices(m_input_.suffix_tri_p0))
                                  : 0;
         params.tape_active =
             reinterpret_cast<const uint8_t *>(m_tape_.active.data());
@@ -473,18 +542,18 @@ private:
         params.state_exterior_angle = m_input_.states.exterior_angle.data();
         params.state_prim0 = m_input_.states.prim0.data();
         params.state_prim1 = m_input_.states.prim1.data();
-        params.tri_p0_x = suffix_enabled ? triangles.p0.x().data() : nullptr;
-        params.tri_p0_y = suffix_enabled ? triangles.p0.y().data() : nullptr;
-        params.tri_p0_z = suffix_enabled ? triangles.p0.z().data() : nullptr;
+        params.tri_p0_x = suffix_enabled ? m_input_.suffix_tri_p0.x().data() : nullptr;
+        params.tri_p0_y = suffix_enabled ? m_input_.suffix_tri_p0.y().data() : nullptr;
+        params.tri_p0_z = suffix_enabled ? m_input_.suffix_tri_p0.z().data() : nullptr;
         params.tri_e1_x = suffix_enabled ? triangles.e1.x().data() : nullptr;
         params.tri_e1_y = suffix_enabled ? triangles.e1.y().data() : nullptr;
         params.tri_e1_z = suffix_enabled ? triangles.e1.z().data() : nullptr;
         params.tri_e2_x = suffix_enabled ? triangles.e2.x().data() : nullptr;
         params.tri_e2_y = suffix_enabled ? triangles.e2.y().data() : nullptr;
         params.tri_e2_z = suffix_enabled ? triangles.e2.z().data() : nullptr;
-        params.tri_fn_x = suffix_enabled ? triangles.face_normal.x().data() : nullptr;
-        params.tri_fn_y = suffix_enabled ? triangles.face_normal.y().data() : nullptr;
-        params.tri_fn_z = suffix_enabled ? triangles.face_normal.z().data() : nullptr;
+        params.tri_fn_x = suffix_enabled ? m_input_.suffix_tri_face_normal.x().data() : nullptr;
+        params.tri_fn_y = suffix_enabled ? m_input_.suffix_tri_face_normal.y().data() : nullptr;
+        params.tri_fn_z = suffix_enabled ? m_input_.suffix_tri_face_normal.z().data() : nullptr;
         params.material_gain = m_input_.material.gain.data();
         params.material_valid =
             reinterpret_cast<const uint8_t *>(m_input_.material.valid.data());
@@ -503,14 +572,384 @@ DfrAccumAD dfr_direct_accum_custom_op(const Scene *scene,
                                       const DfrGrid &grid,
                                       const DfrMaterialAD &material,
                                       const DfrOptions &options,
+                                      const Vector3fAD &suffix_tri_p0,
+                                      const Vector3fAD &suffix_tri_face_normal,
                                       const MaskAD &active) {
     DfrDirectAccumOpInput input;
     input.states = states;
     input.material = material;
+    input.suffix_tri_p0 = suffix_tri_p0;
+    input.suffix_tri_face_normal = suffix_tri_face_normal;
     input.active = active;
     nb::ref<DfrDirectAccumOp> op =
         new DfrDirectAccumOp(input, scene, grid, options);
     DfrAccumAD output = op->eval(detach_dfr_direct_input(input));
+    drjit::detail::new_grad(output);
+    op->register_output(output);
+    if (!ad_custom_op(op.get())) {
+        drjit::disable_grad(output);
+    }
+    return output;
+}
+
+struct DfrChainAccumOpInput {
+    DfrStatesAD initial_states;
+    DfrStatesAD recursive_states;
+    DfrMaterialAD material;
+    MaskAD active;
+
+    DRJIT_STRUCT(DfrChainAccumOpInput,
+                 initial_states,
+                 recursive_states,
+                 material,
+                 active)
+};
+
+struct DfrChainAccumOpInputDetached {
+    DfrStates initial_states;
+    DfrStates recursive_states;
+    DfrMaterial material;
+    Mask active;
+};
+
+DfrChainAccumOpInputDetached detach_dfr_chain_input(
+    const DfrChainAccumOpInput &input) {
+    DfrChainAccumOpInputDetached detached;
+    detached.initial_states = detach_dfr_states_input(input.initial_states);
+    detached.recursive_states = detach_dfr_states_input(input.recursive_states);
+    detached.material.eta_r = detach<false>(input.material.eta_r);
+    detached.material.sigma = detach<false>(input.material.sigma);
+    detached.material.mu_r = detach<false>(input.material.mu_r);
+    detached.material.gain = detach<false>(input.material.gain);
+    detached.material.valid = detach<false>(input.material.valid);
+    detached.active = detach<false>(input.active);
+    return detached;
+}
+
+class DfrChainAccumOp : public RaydCustomOp<DfrAccumAD, DfrChainAccumOpInput> {
+public:
+    using Base = RaydCustomOp<DfrAccumAD, DfrChainAccumOpInput>;
+    using OutputType = DfrAccumAD;
+
+    DfrChainAccumOp(const DfrChainAccumOpInput &input,
+                    const Scene *scene,
+                    const DfrGrid &grid,
+                    const DfrOptions &options)
+        : Base(input),
+          scene_(scene),
+          grid_(grid),
+          options_(options) {}
+
+    OutputType eval(DfrChainAccumOpInputDetached input) {
+        m_input_ = input;
+        const int launch_count = dfr_direct_custom_ad_sample_count(options_);
+        if (launch_count > 0) {
+            m_tape_.launch_count = launch_count;
+            m_tape_.active = full<Mask>(false, launch_count);
+            m_tape_.state_idx = full<Int>(-1, launch_count);
+            m_tape_.cell = full<Int>(-1, launch_count);
+            m_tape_.material_idx = full<Int>(-1, launch_count);
+            m_tape_.edge_u = zeros<Float>(launch_count);
+            drjit::eval(m_tape_.active,
+                        m_tape_.state_idx,
+                        m_tape_.cell,
+                        m_tape_.material_idx,
+                        m_tape_.edge_u);
+        }
+
+        ScopedDfrDirectTapeCapture tape_scope(
+            launch_count > 0 ? &m_tape_ : nullptr);
+        DfrAccum primal = scene_->accum_dfr<true>(
+            input.initial_states,
+            input.recursive_states,
+            grid_,
+            input.material,
+            options_,
+            input.active);
+        return dfr_accum_to_ad(primal);
+    }
+
+    void forward() override {
+        const int grid_cell_count = grid_.resolution0 * grid_.resolution1;
+        DfrAccum output = zero_dfr_accum_grad(grid_cell_count);
+        if (m_tape_.launch_count <= 0) {
+            set_dfr_accum_output_grad(this->registered_output, output);
+            return;
+        }
+
+        const size_t initial_width = slices(m_input_.initial_states.edge_index);
+        const size_t recursive_width = slices(m_input_.recursive_states.edge_index);
+        const size_t material_width = slices(m_input_.material.gain);
+        const Vector3f dot_initial_edge_pos =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.initial_states.edge_pos),
+                             initial_width);
+        const Vector3f dot_initial_edge_dir =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.initial_states.edge_dir),
+                             initial_width);
+        const Float dot_initial_edge_t_min =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.initial_states.edge_t_min),
+                              initial_width);
+        const Float dot_initial_edge_t_max =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.initial_states.edge_t_max),
+                              initial_width);
+        const Vector3f dot_initial_src =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.initial_states.src),
+                             initial_width);
+        const Float dot_initial_src_power =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.initial_states.src_power),
+                              initial_width);
+        const Float dot_initial_exterior =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.initial_states.exterior_angle),
+                              initial_width);
+        const Vector3f dot_recursive_edge_pos =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.recursive_states.edge_pos),
+                             recursive_width);
+        const Vector3f dot_recursive_edge_dir =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.recursive_states.edge_dir),
+                             recursive_width);
+        const Float dot_recursive_edge_t_min =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.recursive_states.edge_t_min),
+                              recursive_width);
+        const Float dot_recursive_edge_t_max =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.recursive_states.edge_t_max),
+                              recursive_width);
+        const Float dot_recursive_exterior =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.recursive_states.exterior_angle),
+                              recursive_width);
+        const Float dot_material_gain =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.material.gain),
+                              material_width);
+
+        drjit::eval(dot_initial_edge_pos,
+                    dot_initial_edge_dir,
+                    dot_initial_edge_t_min,
+                    dot_initial_edge_t_max,
+                    dot_initial_src,
+                    dot_initial_src_power,
+                    dot_initial_exterior,
+                    dot_recursive_edge_pos,
+                    dot_recursive_edge_dir,
+                    dot_recursive_edge_t_min,
+                    dot_recursive_edge_t_max,
+                    dot_recursive_exterior,
+                    dot_material_gain,
+                    output.power,
+                    output.field_x.x());
+
+        DfrChainAccumADParams params = base_ad_params();
+        params.dot_state_edge_pos_x = dot_initial_edge_pos.x().data();
+        params.dot_state_edge_pos_y = dot_initial_edge_pos.y().data();
+        params.dot_state_edge_pos_z = dot_initial_edge_pos.z().data();
+        params.dot_state_edge_dir_x = dot_initial_edge_dir.x().data();
+        params.dot_state_edge_dir_y = dot_initial_edge_dir.y().data();
+        params.dot_state_edge_dir_z = dot_initial_edge_dir.z().data();
+        params.dot_state_edge_t_min = dot_initial_edge_t_min.data();
+        params.dot_state_edge_t_max = dot_initial_edge_t_max.data();
+        params.dot_state_src_x = dot_initial_src.x().data();
+        params.dot_state_src_y = dot_initial_src.y().data();
+        params.dot_state_src_z = dot_initial_src.z().data();
+        params.dot_state_src_power = dot_initial_src_power.data();
+        params.dot_state_exterior_angle = dot_initial_exterior.data();
+        params.dot_recursive_state_edge_pos_x = dot_recursive_edge_pos.x().data();
+        params.dot_recursive_state_edge_pos_y = dot_recursive_edge_pos.y().data();
+        params.dot_recursive_state_edge_pos_z = dot_recursive_edge_pos.z().data();
+        params.dot_recursive_state_edge_dir_x = dot_recursive_edge_dir.x().data();
+        params.dot_recursive_state_edge_dir_y = dot_recursive_edge_dir.y().data();
+        params.dot_recursive_state_edge_dir_z = dot_recursive_edge_dir.z().data();
+        params.dot_recursive_state_edge_t_min = dot_recursive_edge_t_min.data();
+        params.dot_recursive_state_edge_t_max = dot_recursive_edge_t_max.data();
+        params.dot_recursive_state_exterior_angle = dot_recursive_exterior.data();
+        params.dot_material_gain = dot_material_gain.data();
+        params.dot_out_power = output.power.data();
+        params.dot_out_field_x_re = output.field_x.x().data();
+        dfr_chain_accum_jvp_gpu(params);
+        set_dfr_accum_output_grad(this->registered_output, output);
+    }
+
+    void backward() override {
+        if (m_tape_.launch_count <= 0) {
+            return;
+        }
+
+        const size_t initial_width = slices(m_input_.initial_states.edge_index);
+        const size_t recursive_width = slices(m_input_.recursive_states.edge_index);
+        const size_t material_width = slices(m_input_.material.gain);
+        Vector3f grad_initial_edge_pos = zeros<Vector3f>(initial_width);
+        Vector3f grad_initial_edge_dir = zeros<Vector3f>(initial_width);
+        Float grad_initial_edge_t_min = zeros<Float>(initial_width);
+        Float grad_initial_edge_t_max = zeros<Float>(initial_width);
+        Vector3f grad_initial_src = zeros<Vector3f>(initial_width);
+        Float grad_initial_src_power = zeros<Float>(initial_width);
+        Float grad_initial_exterior = zeros<Float>(initial_width);
+        Vector3f grad_recursive_edge_pos = zeros<Vector3f>(recursive_width);
+        Vector3f grad_recursive_edge_dir = zeros<Vector3f>(recursive_width);
+        Float grad_recursive_edge_t_min = zeros<Float>(recursive_width);
+        Float grad_recursive_edge_t_max = zeros<Float>(recursive_width);
+        Float grad_recursive_exterior = zeros<Float>(recursive_width);
+        Float grad_material_gain = zeros<Float>(material_width);
+        Float grad_power =
+            coerce_float_grad(drjit::grad<false>(this->registered_output.power),
+                              grid_.resolution0 * grid_.resolution1);
+        Float grad_field_x_re =
+            coerce_float_grad(drjit::grad<false>(this->registered_output.field_x.x()),
+                              grid_.resolution0 * grid_.resolution1);
+
+        drjit::eval(grad_initial_edge_pos,
+                    grad_initial_edge_dir,
+                    grad_initial_edge_t_min,
+                    grad_initial_edge_t_max,
+                    grad_initial_src,
+                    grad_initial_src_power,
+                    grad_initial_exterior,
+                    grad_recursive_edge_pos,
+                    grad_recursive_edge_dir,
+                    grad_recursive_edge_t_min,
+                    grad_recursive_edge_t_max,
+                    grad_recursive_exterior,
+                    grad_material_gain,
+                    grad_power,
+                    grad_field_x_re);
+
+        DfrChainAccumADParams params = base_ad_params();
+        params.grad_out_power = grad_power.data();
+        params.grad_out_field_x_re = grad_field_x_re.data();
+        params.grad_state_edge_pos_x = grad_initial_edge_pos.x().data();
+        params.grad_state_edge_pos_y = grad_initial_edge_pos.y().data();
+        params.grad_state_edge_pos_z = grad_initial_edge_pos.z().data();
+        params.grad_state_edge_dir_x = grad_initial_edge_dir.x().data();
+        params.grad_state_edge_dir_y = grad_initial_edge_dir.y().data();
+        params.grad_state_edge_dir_z = grad_initial_edge_dir.z().data();
+        params.grad_state_edge_t_min = grad_initial_edge_t_min.data();
+        params.grad_state_edge_t_max = grad_initial_edge_t_max.data();
+        params.grad_state_src_x = grad_initial_src.x().data();
+        params.grad_state_src_y = grad_initial_src.y().data();
+        params.grad_state_src_z = grad_initial_src.z().data();
+        params.grad_state_src_power = grad_initial_src_power.data();
+        params.grad_state_exterior_angle = grad_initial_exterior.data();
+        params.grad_recursive_state_edge_pos_x = grad_recursive_edge_pos.x().data();
+        params.grad_recursive_state_edge_pos_y = grad_recursive_edge_pos.y().data();
+        params.grad_recursive_state_edge_pos_z = grad_recursive_edge_pos.z().data();
+        params.grad_recursive_state_edge_dir_x = grad_recursive_edge_dir.x().data();
+        params.grad_recursive_state_edge_dir_y = grad_recursive_edge_dir.y().data();
+        params.grad_recursive_state_edge_dir_z = grad_recursive_edge_dir.z().data();
+        params.grad_recursive_state_edge_t_min = grad_recursive_edge_t_min.data();
+        params.grad_recursive_state_edge_t_max = grad_recursive_edge_t_max.data();
+        params.grad_recursive_state_exterior_angle = grad_recursive_exterior.data();
+        params.grad_material_gain = grad_material_gain.data();
+        dfr_chain_accum_vjp_gpu(params);
+
+        drjit::accum_grad(this->registered_input.initial_states.edge_pos,
+                          drjit::detach<false>(grad_initial_edge_pos));
+        drjit::accum_grad(this->registered_input.initial_states.edge_dir,
+                          drjit::detach<false>(grad_initial_edge_dir));
+        drjit::accum_grad(this->registered_input.initial_states.edge_t_min,
+                          drjit::detach<false>(grad_initial_edge_t_min));
+        drjit::accum_grad(this->registered_input.initial_states.edge_t_max,
+                          drjit::detach<false>(grad_initial_edge_t_max));
+        drjit::accum_grad(this->registered_input.initial_states.src,
+                          drjit::detach<false>(grad_initial_src));
+        drjit::accum_grad(this->registered_input.initial_states.src_power,
+                          drjit::detach<false>(grad_initial_src_power));
+        drjit::accum_grad(this->registered_input.initial_states.exterior_angle,
+                          drjit::detach<false>(grad_initial_exterior));
+        drjit::accum_grad(this->registered_input.recursive_states.edge_pos,
+                          drjit::detach<false>(grad_recursive_edge_pos));
+        drjit::accum_grad(this->registered_input.recursive_states.edge_dir,
+                          drjit::detach<false>(grad_recursive_edge_dir));
+        drjit::accum_grad(this->registered_input.recursive_states.edge_t_min,
+                          drjit::detach<false>(grad_recursive_edge_t_min));
+        drjit::accum_grad(this->registered_input.recursive_states.edge_t_max,
+                          drjit::detach<false>(grad_recursive_edge_t_max));
+        drjit::accum_grad(this->registered_input.recursive_states.exterior_angle,
+                          drjit::detach<false>(grad_recursive_exterior));
+        drjit::accum_grad(this->registered_input.material.gain,
+                          drjit::detach<false>(grad_material_gain));
+    }
+
+    const char *name() const override { return "DfrChainAccum"; }
+
+private:
+    DfrChainAccumADParams base_ad_params() const {
+        DfrChainAccumADParams params = {};
+        params.n_rays = m_tape_.launch_count;
+        params.state_count = dfr_state_count_for(m_input_.initial_states);
+        params.recursive_state_count = dfr_state_count_for(m_input_.recursive_states);
+        params.material_count = static_cast<int>(slices(m_input_.material.gain));
+        params.grid_axis = grid_.axis;
+        params.grid_position = grid_.position;
+        params.grid_coord0_min = grid_.coord0_min;
+        params.grid_coord0_max = grid_.coord0_max;
+        params.grid_coord1_min = grid_.coord1_min;
+        params.grid_coord1_max = grid_.coord1_max;
+        params.grid_resolution0 = grid_.resolution0;
+        params.grid_resolution1 = grid_.resolution1;
+        params.grid_cell_area = grid_.cell_area;
+        params.direct_samples = dfr_direct_sample_count(options_);
+        params.keller_samples = dfr_keller_sample_count(options_);
+        params.suffix_samples = dfr_suffix_sample_count(options_);
+        params.max_order = options_.max_order;
+        params.wavelength = options_.wavelength;
+        params.seed = options_.seed;
+        params.tape_active =
+            reinterpret_cast<const uint8_t *>(m_tape_.active.data());
+        params.tape_cell = m_tape_.cell.data();
+        params.state_edge_index = m_input_.initial_states.edge_index.data();
+        params.state_edge_pos_x = m_input_.initial_states.edge_pos.x().data();
+        params.state_edge_pos_y = m_input_.initial_states.edge_pos.y().data();
+        params.state_edge_pos_z = m_input_.initial_states.edge_pos.z().data();
+        params.state_edge_dir_x = m_input_.initial_states.edge_dir.x().data();
+        params.state_edge_dir_y = m_input_.initial_states.edge_dir.y().data();
+        params.state_edge_dir_z = m_input_.initial_states.edge_dir.z().data();
+        params.state_edge_t_min = m_input_.initial_states.edge_t_min.data();
+        params.state_edge_t_max = m_input_.initial_states.edge_t_max.data();
+        params.state_src_x = m_input_.initial_states.src.x().data();
+        params.state_src_y = m_input_.initial_states.src.y().data();
+        params.state_src_z = m_input_.initial_states.src.z().data();
+        params.state_src_power = m_input_.initial_states.src_power.data();
+        params.state_exterior_angle = m_input_.initial_states.exterior_angle.data();
+        params.state_prim0 = m_input_.initial_states.prim0.data();
+        params.state_prim1 = m_input_.initial_states.prim1.data();
+        params.recursive_state_edge_index = m_input_.recursive_states.edge_index.data();
+        params.recursive_state_edge_pos_x = m_input_.recursive_states.edge_pos.x().data();
+        params.recursive_state_edge_pos_y = m_input_.recursive_states.edge_pos.y().data();
+        params.recursive_state_edge_pos_z = m_input_.recursive_states.edge_pos.z().data();
+        params.recursive_state_edge_dir_x = m_input_.recursive_states.edge_dir.x().data();
+        params.recursive_state_edge_dir_y = m_input_.recursive_states.edge_dir.y().data();
+        params.recursive_state_edge_dir_z = m_input_.recursive_states.edge_dir.z().data();
+        params.recursive_state_edge_t_min = m_input_.recursive_states.edge_t_min.data();
+        params.recursive_state_edge_t_max = m_input_.recursive_states.edge_t_max.data();
+        params.recursive_state_exterior_angle =
+            m_input_.recursive_states.exterior_angle.data();
+        params.recursive_state_prim0 = m_input_.recursive_states.prim0.data();
+        params.recursive_state_prim1 = m_input_.recursive_states.prim1.data();
+        params.material_gain = m_input_.material.gain.data();
+        params.material_valid =
+            reinterpret_cast<const uint8_t *>(m_input_.material.valid.data());
+        return params;
+    }
+
+    const Scene *scene_ = nullptr;
+    DfrGrid grid_;
+    DfrOptions options_;
+    DfrChainAccumOpInputDetached m_input_;
+    DfrDirectTapeCapture m_tape_;
+};
+
+DfrAccumAD dfr_chain_accum_custom_op(const Scene *scene,
+                                     const DfrStatesAD &initial_states,
+                                     const DfrStatesAD &recursive_states,
+                                     const DfrGrid &grid,
+                                     const DfrMaterialAD &material,
+                                     const DfrOptions &options,
+                                     const MaskAD &active) {
+    DfrChainAccumOpInput input;
+    input.initial_states = initial_states;
+    input.recursive_states = recursive_states;
+    input.material = material;
+    input.active = active;
+    nb::ref<DfrChainAccumOp> op =
+        new DfrChainAccumOp(input, scene, grid, options);
+    DfrAccumAD output = op->eval(detach_dfr_chain_input(input));
     drjit::detail::new_grad(output);
     op->register_output(output);
     if (!ad_custom_op(op.get())) {
@@ -5935,6 +6374,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             grid,
             material,
             options,
+            triangle_info_.p0,
+            triangle_info_.face_normal,
             active);
 
         result.power = zeros<FloatAD>(grid_cell_count);
@@ -6502,6 +6943,16 @@ DfrAccumT<Detached> Scene::accum_dfr(
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
+        require_dfr_chain_custom_ad_supported(options);
+        return dfr_chain_accum_custom_op(
+            this,
+            initial_states,
+            recursive_states,
+            grid,
+            material,
+            options,
+            active);
+
         result.power = zeros<FloatAD>(grid_cell_count);
         result.field_x =
             drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
@@ -7197,6 +7648,19 @@ DfrAccumT<Detached> Scene::accum_dfr(
             raw.edge_vis_rejects.data();
         params.out_utd_rejects = raw.utd_rejects.data();
         params.out_edge_uses = raw.edge_uses.data();
+        if (active_dfr_direct_tape_capture != nullptr &&
+            active_dfr_direct_tape_capture->launch_count == launch_count) {
+            params.tape_active = reinterpret_cast<uint8_t *>(
+                active_dfr_direct_tape_capture->active.data());
+            params.tape_state_idx =
+                active_dfr_direct_tape_capture->state_idx.data();
+            params.tape_cell =
+                active_dfr_direct_tape_capture->cell.data();
+            params.tape_material_idx =
+                active_dfr_direct_tape_capture->material_idx.data();
+            params.tape_edge_u =
+                active_dfr_direct_tape_capture->edge_u.data();
+        }
 
         diffraction_accumulation_pipeline_->launch(1, params);
 
