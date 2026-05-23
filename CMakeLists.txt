@@ -264,6 +264,45 @@ endif()
 set_source_files_properties("${RAYD_REFLECTION_EPC_FIELD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_FIELD_OBJECT}")
 
+set(RAYD_DIFFRACTION_ACCUMULATION_AD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_accumulation_ad.cu")
+if(WIN32)
+    set(RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_ad.obj")
+    set(RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_accumulation_ad.bat")
+    file(GENERATE OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
+        COMMAND "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}"
+            "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        VERBATIM
+    )
+else()
+    set(RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_ad.o")
+    add_custom_command(
+        OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
+        DEPENDS
+            "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        VERBATIM
+    )
+endif()
+set_source_files_properties("${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}")
+
 set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
 set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_trace_ptx.h")
 set(RAYD_REFLECTION_TRACE_PTX_H_COMMITTED
@@ -879,6 +918,8 @@ target_include_directories(rayd_core
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CUDA_INCLUDE_DIRS}
+    ${Python_INCLUDE_DIRS}
+    ${NB_DIR}/include
 )
 target_compile_definitions(rayd_core PRIVATE
     RAYD_OPTIX_MODULE_OPT_LEVEL=${RAYD_OPTIX_MODULE_OPT_LEVEL}

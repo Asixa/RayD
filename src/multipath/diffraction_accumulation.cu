@@ -299,10 +299,10 @@ static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
     return keller_grid_hit_from_incident(incident, lane, 1u, edge_point, edge_dir, target, cell);
 }
 
-static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
-                                                                int face1_prim) {
+static __forceinline__ __device__ int material_index_for_faces(int face0_prim,
+                                                               int face1_prim) {
     if (params.material_gain == nullptr || params.material_count <= 0) {
-        return 1.f;
+        return -1;
     }
     int prim = face0_prim;
     if (prim < 0 || prim >= params.material_count ||
@@ -311,6 +311,15 @@ static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
     }
     if (prim < 0 || prim >= params.material_count ||
         (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        return -1;
+    }
+    return prim;
+}
+
+static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
+                                                                int face1_prim) {
+    const int prim = material_index_for_faces(face0_prim, face1_prim);
+    if (prim < 0) {
         return 1.f;
     }
     return fmaxf(params.material_gain[prim], 0.f);
@@ -660,6 +669,24 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
             atomicAdd(params.out_utd_rejects, 1);
         }
         return;
+    }
+
+    if (params.tape_active != nullptr) {
+        params.tape_active[lane] = 1u;
+        if (params.tape_state_idx != nullptr) {
+            params.tape_state_idx[lane] = state_idx;
+        }
+        if (params.tape_cell != nullptr) {
+            params.tape_cell[lane] = cell;
+        }
+        if (params.tape_material_idx != nullptr) {
+            params.tape_material_idx[lane] =
+                material_index_for_faces(params.state_prim0[state_idx],
+                                         params.state_prim1[state_idx]);
+        }
+        if (params.tape_edge_u != nullptr) {
+            params.tape_edge_u[lane] = edge_u;
+        }
     }
 
     atomicAdd(params.out_power + cell, contribution);

@@ -120,46 +120,59 @@ class ReflEpcTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            tx = ad.Array3f([0.0], [0.0], [1.0])
-            rx = ad.Array3f([0.5], [0.0], [1.0])
-            dr.enable_grad(rx)
+            def run_case(rx_z, enable_grad=False):
+                tx = ad.Array3f([0.0], [0.0], [1.0])
+                rx = ad.Array3f([0.5], [0.0], [rx_z])
+                if enable_grad:
+                    dr.enable_grad(rx)
 
-            options = pj.ReflEpcFieldOptions()
-            options.expected_prim_ids = cuda.Int([0])
-            options.slot_plane_point = cuda.Array3f([0.0], [0.0], [0.0])
-            options.slot_plane_normal = cuda.Array3f([0.0], [0.0], [1.0])
-            options.slot_eta_r = cuda.Float([4.0])
-            options.slot_mu_r = cuda.Float([1.0])
-            options.slot_sigma = cuda.Float([0.0])
-            options.slot_gain = cuda.Float([1.0])
-            options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
-            options.omega = 2.0 * 3.141592653589793 * 299792458.0
-            options.wavelength = 0.5
-            options.return_geom = True
-            options.return_endpoints = True
-            options.return_hit_points = True
-            options.return_normals = True
-            options.return_resolved_prim_ids = True
+                options = pj.ReflEpcFieldOptions()
+                options.expected_prim_ids = cuda.Int([0])
+                options.slot_plane_point = cuda.Array3f([0.0], [0.0], [0.0])
+                options.slot_plane_normal = cuda.Array3f([0.0], [0.0], [1.0])
+                options.slot_eta_r = cuda.Float([4.0])
+                options.slot_mu_r = cuda.Float([1.0])
+                options.slot_sigma = cuda.Float([0.0])
+                options.slot_gain = cuda.Float([1.0])
+                options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
+                options.omega = 2.0 * 3.141592653589793 * 299792458.0
+                options.wavelength = 0.5
+                options.return_geom = True
+                options.return_endpoints = True
+                options.return_hit_points = True
+                options.return_normals = True
+                options.return_resolved_prim_ids = True
 
-            result = scene.trace_refl_epc_field(
-                tx,
-                rx,
-                1,
-                options,
-                ad.Bool([True]),
-            )
-            dr.eval(result.valid, result.path_length, result.field_x_re, result.hit_points)
-            dr.backward(dr.sum(result.path_length), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
-            grad_rx = dr.grad(rx)
-            dr.eval(grad_rx)
+                result = scene.trace_refl_epc_field(
+                    tx,
+                    rx,
+                    1,
+                    options,
+                    ad.Bool([True]),
+                )
+                loss = dr.sum(result.path_length)
+                if enable_grad:
+                    dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+                    grad_rx = dr.grad(rx)
+                    dr.eval(result.valid, result.path_length, result.field_x_re, result.hit_points, grad_rx)
+                    return {
+                        "result_type": type(result).__name__,
+                        "valid": bool(result.valid[0]),
+                        "bounce_count": int(result.bounce_count[0]),
+                        "path_length": float(result.path_length[0]),
+                        "field_x_re": float(result.field_x_re[0]),
+                        "hit_x": float(result.hit_points.x[0]),
+                        "grad_rx_z": float(grad_rx.z[0]),
+                    }
+                dr.eval(loss)
+                return {"loss": float(loss[0])}
+
+            step = 1.0e-3
+            ad_result = run_case(1.0, enable_grad=True)
+            fd = (run_case(1.0 + step)["loss"] - run_case(1.0 - step)["loss"]) / (2.0 * step)
             print(json.dumps({
-                "result_type": type(result).__name__,
-                "valid": bool(result.valid[0]),
-                "bounce_count": int(result.bounce_count[0]),
-                "path_length": float(result.path_length[0]),
-                "field_x_re": float(result.field_x_re[0]),
-                "hit_x": float(result.hit_points.x[0]),
-                "grad_rx_z": float(grad_rx.z[0]),
+                **ad_result,
+                "fd_rx_z": fd,
             }))
             """
         )
@@ -170,7 +183,7 @@ class ReflEpcTests(unittest.TestCase):
         self.assertGreater(data["path_length"], 0.0)
         self.assertTrue(math.isfinite(data["field_x_re"]))
         self.assertAlmostEqual(data["hit_x"], 0.25, places=5)
-        self.assertNotEqual(data["grad_rx_z"], 0.0)
+        self.assertAlmostEqual(data["grad_rx_z"], data["fd_rx_z"], delta=2.0e-4)
 
     def test_trace_refl_epc_field_supports_ad_options(self):
         data = run_json(
@@ -188,46 +201,79 @@ class ReflEpcTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            tx = ad.Array3f([0.0], [0.0], [1.0])
-            rx = ad.Array3f([0.5], [0.0], [1.0])
-            plane_z = ad.Float([0.0])
-            eta_r = ad.Float([4.0])
-            dr.enable_grad(plane_z, eta_r)
+            def run_case(plane_z_value, eta_r_value, enable_grad=False):
+                tx = ad.Array3f([0.0], [0.0], [1.0])
+                rx = ad.Array3f([0.5], [0.0], [1.0])
+                plane_z = ad.Float([plane_z_value])
+                eta_r = ad.Float([eta_r_value])
+                if enable_grad:
+                    dr.enable_grad(plane_z, eta_r)
 
-            options = pj.ReflEpcFieldOptionsAD()
-            options.expected_prim_ids = cuda.Int([0])
-            options.slot_plane_point = ad.Array3f([0.0], [0.0], plane_z)
-            options.slot_plane_normal = ad.Array3f([0.0], [0.0], [1.0])
-            options.slot_eta_r = eta_r
-            options.slot_mu_r = ad.Float([1.0])
-            options.slot_sigma = ad.Float([0.0])
-            options.slot_gain = ad.Float([1.0])
-            options.tx_polarization = ad.Array3f([1.0], [0.0], [0.0])
-            options.omega = 2.0 * 3.141592653589793 * 299792458.0
-            options.wavelength = 0.5
-            options.return_geom = True
-            options.return_hit_points = True
-            options.return_normals = True
+                options = pj.ReflEpcFieldOptionsAD()
+                options.expected_prim_ids = cuda.Int([0])
+                options.slot_plane_point = ad.Array3f([0.0], [0.0], plane_z)
+                options.slot_plane_normal = ad.Array3f([0.0], [0.0], [1.0])
+                options.slot_eta_r = eta_r
+                options.slot_mu_r = ad.Float([1.0])
+                options.slot_sigma = ad.Float([0.0])
+                options.slot_gain = ad.Float([1.0])
+                options.tx_polarization = ad.Array3f([1.0], [0.0], [0.0])
+                options.omega = 2.0 * 3.141592653589793 * 299792458.0
+                options.wavelength = 0.5
+                options.return_geom = True
+                options.return_hit_points = True
+                options.return_normals = True
 
-            result = scene.trace_refl_epc_field(
-                tx,
-                rx,
-                1,
-                options,
-                ad.Bool([True]),
-            )
-            power = result.field_x_re * result.field_x_re + result.field_x_im * result.field_x_im
-            loss = dr.sum(result.path_length + power)
-            dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
-            grad_plane_z = dr.grad(plane_z)
-            grad_eta_r = dr.grad(eta_r)
-            dr.eval(result.valid, result.field_x_re, grad_plane_z, grad_eta_r)
+                result = scene.trace_refl_epc_field(
+                    tx,
+                    rx,
+                    1,
+                    options,
+                    ad.Bool([True]),
+                )
+                power = (
+                    result.field_x_re * result.field_x_re +
+                    result.field_x_im * result.field_x_im +
+                    result.field_y_re * result.field_y_re +
+                    result.field_y_im * result.field_y_im +
+                    result.field_z_re * result.field_z_re +
+                    result.field_z_im * result.field_z_im
+                )
+                loss = dr.sum(result.path_length + power)
+                if enable_grad:
+                    dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+                    grad_plane_z = dr.grad(plane_z)
+                    grad_eta_r = dr.grad(eta_r)
+                    dr.eval(result.valid, result.field_x_re, loss, grad_plane_z, grad_eta_r)
+                    return {
+                        "result_type": type(result).__name__,
+                        "valid": bool(result.valid[0]),
+                        "field_x_re": float(result.field_x_re[0]),
+                        "loss": float(loss[0]),
+                        "grad_plane_z": float(grad_plane_z[0]),
+                        "grad_eta_r": float(grad_eta_r[0]),
+                    }
+                dr.eval(result.valid, loss)
+                return {
+                    "valid": bool(result.valid[0]),
+                    "loss": float(loss[0]),
+                }
+
+            base_plane_z = 0.0
+            base_eta_r = 4.0
+            step_plane_z = 1.0e-3
+            step_eta_r = 1.0e-3
+            ad_result = run_case(base_plane_z, base_eta_r, enable_grad=True)
+            plane_plus = run_case(base_plane_z + step_plane_z, base_eta_r)
+            plane_minus = run_case(base_plane_z - step_plane_z, base_eta_r)
+            eta_plus = run_case(base_plane_z, base_eta_r + step_eta_r)
+            eta_minus = run_case(base_plane_z, base_eta_r - step_eta_r)
+            fd_plane_z = (plane_plus["loss"] - plane_minus["loss"]) / (2.0 * step_plane_z)
+            fd_eta_r = (eta_plus["loss"] - eta_minus["loss"]) / (2.0 * step_eta_r)
             print(json.dumps({
-                "result_type": type(result).__name__,
-                "valid": bool(result.valid[0]),
-                "field_x_re": float(result.field_x_re[0]),
-                "grad_plane_z": float(grad_plane_z[0]),
-                "grad_eta_r": float(grad_eta_r[0]),
+                **ad_result,
+                "fd_plane_z": fd_plane_z,
+                "fd_eta_r": fd_eta_r,
             }))
             """
         )
@@ -235,8 +281,10 @@ class ReflEpcTests(unittest.TestCase):
         self.assertEqual(data["result_type"], "ReflEpcFieldAD")
         self.assertTrue(data["valid"])
         self.assertTrue(math.isfinite(data["field_x_re"]))
-        self.assertNotEqual(data["grad_plane_z"], 0.0)
-        self.assertNotEqual(data["grad_eta_r"], 0.0)
+        self.assertTrue(math.isfinite(data["grad_plane_z"]))
+        self.assertTrue(math.isfinite(data["grad_eta_r"]))
+        self.assertAlmostEqual(data["grad_plane_z"], data["fd_plane_z"], delta=2.0e-3)
+        self.assertAlmostEqual(data["grad_eta_r"], data["fd_eta_r"], delta=2.0e-5)
 
     def test_one_bounce_path_reports_blocked_receiver_segment(self):
         data = run_json(

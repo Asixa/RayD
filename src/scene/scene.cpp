@@ -8,18 +8,493 @@
 #include <utility>
 #include <vector>
 
+#include <drjit/custom.h>
+#include <nanobind/nanobind.h>
+
 #include <rayd/ray.h>
 #include <rayd/scene/scene.h>
 #include <rayd/edge/scene_edge.h>
 
+#include <rayd/multipath/diffraction_accumulation_ad.h>
 #include <rayd/multipath/reflection_dedup.h>
 #include <rayd/multipath/reflection_epc_field.h>
 #include <rayd/multipath/pipelines.h>
 #include <rayd/native_launch_audit.h>
 
+namespace drjit {
+
+template <typename T>
+struct struct_support {
+    using Traversable = traversable_t<T>;
+
+    template <typename T1, typename F>
+    static void apply_1(T1 &&value, F &&f) {
+        auto fields = Traversable::fields(value);
+        traverse_1(fields, std::forward<F>(f));
+    }
+
+    template <typename T1, typename T2, typename F>
+    static void apply_2(T1 &&value_1, T2 &&value_2, F &&f) {
+        auto fields_1 = Traversable::fields(value_1);
+        auto fields_2 = Traversable::fields(value_2);
+        traverse_2(fields_1, fields_2, std::forward<F>(f));
+    }
+};
+
+} // namespace drjit
+
 namespace rayd {
 
 namespace {
+
+namespace nb = nanobind;
+
+template <typename Output, typename Input>
+class RaydCustomOp : public drjit::detail::CustomOpBase {
+public:
+    explicit RaydCustomOp(const Input &input)
+        : registered_input(drjit::detail::ad_scan(*this, input, true)) {}
+
+    void register_output(const Output &output) {
+        registered_output = drjit::detail::ad_scan(*this, output, false);
+    }
+
+protected:
+    Input registered_input;
+    Output registered_output;
+};
+
+struct DfrDirectAccumOpInput {
+    DfrStatesAD states;
+    DfrMaterialAD material;
+    MaskAD active;
+
+    DRJIT_STRUCT(DfrDirectAccumOpInput, states, material, active)
+};
+
+struct DfrDirectAccumOpInputDetached {
+    DfrStates states;
+    DfrMaterial material;
+    Mask active;
+};
+
+DfrDirectAccumOpInputDetached detach_dfr_direct_input(
+    const DfrDirectAccumOpInput &input) {
+    DfrDirectAccumOpInputDetached detached;
+    detached.states.count = input.states.count;
+    detached.states.edge_index = detach<false>(input.states.edge_index);
+    detached.states.edge_pos = detach<false>(input.states.edge_pos);
+    detached.states.edge_dir = detach<false>(input.states.edge_dir);
+    detached.states.edge_t_min = detach<false>(input.states.edge_t_min);
+    detached.states.edge_t_max = detach<false>(input.states.edge_t_max);
+    detached.states.n0 = detach<false>(input.states.n0);
+    detached.states.n1 = detach<false>(input.states.n1);
+    detached.states.prim0 = detach<false>(input.states.prim0);
+    detached.states.prim1 = detach<false>(input.states.prim1);
+    detached.states.exterior_angle = detach<false>(input.states.exterior_angle);
+    detached.states.src = detach<false>(input.states.src);
+    detached.states.src_power = detach<false>(input.states.src_power);
+    detached.states.wi = detach<false>(input.states.wi);
+    detached.states.d0 = detach<false>(input.states.d0);
+    detached.states.prefix_depth = detach<false>(input.states.prefix_depth);
+    detached.material.eta_r = detach<false>(input.material.eta_r);
+    detached.material.sigma = detach<false>(input.material.sigma);
+    detached.material.mu_r = detach<false>(input.material.mu_r);
+    detached.material.gain = detach<false>(input.material.gain);
+    detached.material.valid = detach<false>(input.material.valid);
+    detached.active = detach<false>(input.active);
+    detached.states.count = input.states.count;
+    return detached;
+}
+
+DfrAccumAD dfr_accum_to_ad(const DfrAccum &input) {
+    DfrAccumAD output;
+    output.grid_cell_count = input.grid_cell_count;
+    output.power = FloatAD(input.power);
+    output.field_x = drjit::Complex<FloatAD>(
+        FloatAD(input.field_x.x()),
+        FloatAD(input.field_x.y()));
+    output.field_y = drjit::Complex<FloatAD>(
+        FloatAD(input.field_y.x()),
+        FloatAD(input.field_y.y()));
+    output.field_z = drjit::Complex<FloatAD>(
+        FloatAD(input.field_z.x()),
+        FloatAD(input.field_z.y()));
+    output.direct_count = IntAD(input.direct_count);
+    output.keller_count = IntAD(input.keller_count);
+    output.suffix_count = IntAD(input.suffix_count);
+    output.vis_rejects = IntAD(input.vis_rejects);
+    output.edge_vis_rejects = IntAD(input.edge_vis_rejects);
+    output.utd_rejects = IntAD(input.utd_rejects);
+    output.edge_uses = IntAD(input.edge_uses);
+    return output;
+}
+
+DfrAccum zero_dfr_accum_grad(int grid_cell_count) {
+    DfrAccum output;
+    output.grid_cell_count = grid_cell_count;
+    output.power = zeros<Float>(grid_cell_count);
+    output.field_x =
+        drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                              zeros<Float>(grid_cell_count));
+    output.field_y =
+        drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                              zeros<Float>(grid_cell_count));
+    output.field_z =
+        drjit::Complex<Float>(zeros<Float>(grid_cell_count),
+                              zeros<Float>(grid_cell_count));
+    output.direct_count = full<Int>(0, 1);
+    output.keller_count = full<Int>(0, 1);
+    output.suffix_count = full<Int>(0, 1);
+    output.vis_rejects = full<Int>(0, 1);
+    output.edge_vis_rejects = full<Int>(0, 1);
+    output.utd_rejects = full<Int>(0, 1);
+    output.edge_uses = full<Int>(0, 1);
+    return output;
+}
+
+void set_dfr_accum_output_grad(DfrAccumAD &registered_output,
+                               const DfrAccum &grad_output) {
+    drjit::set_grad(registered_output.power, grad_output.power);
+    drjit::set_grad(registered_output.field_x.x(), grad_output.field_x.x());
+    drjit::set_grad(registered_output.field_x.y(), grad_output.field_x.y());
+    drjit::set_grad(registered_output.field_y.x(), grad_output.field_y.x());
+    drjit::set_grad(registered_output.field_y.y(), grad_output.field_y.y());
+    drjit::set_grad(registered_output.field_z.x(), grad_output.field_z.x());
+    drjit::set_grad(registered_output.field_z.y(), grad_output.field_z.y());
+}
+
+struct DfrDirectTapeCapture {
+    int launch_count = 0;
+    Mask active;
+    Int state_idx;
+    Int cell;
+    Int material_idx;
+    Float edge_u;
+};
+
+thread_local DfrDirectTapeCapture *active_dfr_direct_tape_capture = nullptr;
+
+class ScopedDfrDirectTapeCapture {
+public:
+    explicit ScopedDfrDirectTapeCapture(DfrDirectTapeCapture *capture)
+        : previous_(active_dfr_direct_tape_capture) {
+        active_dfr_direct_tape_capture = capture;
+    }
+
+    ~ScopedDfrDirectTapeCapture() {
+        active_dfr_direct_tape_capture = previous_;
+    }
+
+private:
+    DfrDirectTapeCapture *previous_ = nullptr;
+};
+
+int dfr_direct_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_DIRECT) != 0
+               ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
+               : 0;
+}
+
+int dfr_keller_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_KELLER) != 0
+               ? options.keller_samples
+               : 0;
+}
+
+int dfr_suffix_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0
+               ? options.suffix_samples
+               : 0;
+}
+
+int dfr_direct_custom_ad_sample_count(const DfrOptions &options) {
+    return dfr_direct_sample_count(options) + dfr_keller_sample_count(options);
+}
+
+void require_dfr_direct_custom_ad_supported(const DfrOptions &options) {
+    require(options.max_order == 1,
+            "Scene::accum_dfr_direct(): native AD currently supports max_order == 1.");
+    require(dfr_suffix_sample_count(options) == 0,
+            "Scene::accum_dfr_direct(): native AD currently supports direct and Keller samples only.");
+}
+
+template <typename FloatLike>
+Float coerce_float_grad(const FloatLike &value, size_t width) {
+    Float detached = detach<false>(value);
+    return detached.size() == width ? detached : zeros<Float>(width);
+}
+
+template <typename VecLike>
+Vector3f coerce_vec3_grad(const VecLike &value, size_t width) {
+    Vector3f detached = detach<false>(value);
+    return slices(detached) == width ? detached : zeros<Vector3f>(width);
+}
+
+template <typename States>
+int dfr_state_count_for(const States &states) {
+    const int state_width = static_cast<int>(slices(states.edge_index));
+    return states.count > 0 ? states.count : state_width;
+}
+
+class DfrDirectAccumOp : public RaydCustomOp<DfrAccumAD, DfrDirectAccumOpInput> {
+public:
+    using Base = RaydCustomOp<DfrAccumAD, DfrDirectAccumOpInput>;
+    using OutputType = DfrAccumAD;
+
+    DfrDirectAccumOp(const DfrDirectAccumOpInput &input,
+                     const Scene *scene,
+                     const DfrGrid &grid,
+                     const DfrOptions &options)
+        : Base(input),
+          scene_(scene),
+          grid_(grid),
+          options_(options) {}
+
+    OutputType eval(DfrDirectAccumOpInputDetached input) {
+        m_input_ = input;
+        const int launch_count = dfr_direct_custom_ad_sample_count(options_);
+        if (launch_count > 0) {
+            m_tape_.launch_count = launch_count;
+            m_tape_.active = full<Mask>(false, launch_count);
+            m_tape_.state_idx = full<Int>(-1, launch_count);
+            m_tape_.cell = full<Int>(-1, launch_count);
+            m_tape_.material_idx = full<Int>(-1, launch_count);
+            m_tape_.edge_u = zeros<Float>(launch_count);
+            drjit::eval(m_tape_.active,
+                        m_tape_.state_idx,
+                        m_tape_.cell,
+                        m_tape_.material_idx,
+                        m_tape_.edge_u);
+        }
+
+        ScopedDfrDirectTapeCapture tape_scope(
+            launch_count > 0 ? &m_tape_ : nullptr);
+        DfrAccum primal = scene_->accum_dfr_direct<true>(
+            input.states,
+            grid_,
+            input.material,
+            options_,
+            input.active);
+        return dfr_accum_to_ad(primal);
+    }
+
+    void forward() override {
+        const int grid_cell_count = grid_.resolution0 * grid_.resolution1;
+        DfrAccum output = zero_dfr_accum_grad(grid_cell_count);
+        if (m_tape_.launch_count <= 0) {
+            set_dfr_accum_output_grad(this->registered_output, output);
+            return;
+        }
+
+        const size_t state_width = slices(m_input_.states.edge_index);
+        const size_t material_width = slices(m_input_.material.gain);
+
+        const Vector3f dot_edge_pos =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.edge_pos), state_width);
+        const Vector3f dot_edge_dir =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.edge_dir), state_width);
+        const Float dot_edge_t_min =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.states.edge_t_min), state_width);
+        const Float dot_edge_t_max =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.states.edge_t_max), state_width);
+        const Vector3f dot_src =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.src), state_width);
+        const Vector3f dot_wi =
+            coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.wi), state_width);
+        const Float dot_src_power =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.states.src_power), state_width);
+        const Float dot_exterior_angle =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.states.exterior_angle), state_width);
+        const Float dot_material_gain =
+            coerce_float_grad(drjit::grad<false>(this->registered_input.material.gain), material_width);
+
+        drjit::eval(dot_edge_pos,
+                    dot_edge_dir,
+                    dot_edge_t_min,
+                    dot_edge_t_max,
+                    dot_src,
+                    dot_wi,
+                    dot_src_power,
+                    dot_exterior_angle,
+                    dot_material_gain,
+                    output.power,
+                    output.field_x.x());
+
+        DfrDirectAccumADParams params = base_ad_params();
+        params.dot_state_edge_pos_x = dot_edge_pos.x().data();
+        params.dot_state_edge_pos_y = dot_edge_pos.y().data();
+        params.dot_state_edge_pos_z = dot_edge_pos.z().data();
+        params.dot_state_edge_dir_x = dot_edge_dir.x().data();
+        params.dot_state_edge_dir_y = dot_edge_dir.y().data();
+        params.dot_state_edge_dir_z = dot_edge_dir.z().data();
+        params.dot_state_edge_t_min = dot_edge_t_min.data();
+        params.dot_state_edge_t_max = dot_edge_t_max.data();
+        params.dot_state_src_x = dot_src.x().data();
+        params.dot_state_src_y = dot_src.y().data();
+        params.dot_state_src_z = dot_src.z().data();
+        params.dot_state_wi_x = dot_wi.x().data();
+        params.dot_state_wi_y = dot_wi.y().data();
+        params.dot_state_wi_z = dot_wi.z().data();
+        params.dot_state_src_power = dot_src_power.data();
+        params.dot_state_exterior_angle = dot_exterior_angle.data();
+        params.dot_material_gain = dot_material_gain.data();
+        params.dot_out_power = output.power.data();
+        params.dot_out_field_x_re = output.field_x.x().data();
+        dfr_direct_accum_jvp_gpu(params);
+        set_dfr_accum_output_grad(this->registered_output, output);
+    }
+
+    void backward() override {
+        if (m_tape_.launch_count <= 0) {
+            return;
+        }
+
+        const size_t state_width = slices(m_input_.states.edge_index);
+        const size_t material_width = slices(m_input_.material.gain);
+        Vector3f grad_edge_pos = zeros<Vector3f>(state_width);
+        Vector3f grad_edge_dir = zeros<Vector3f>(state_width);
+        Float grad_edge_t_min = zeros<Float>(state_width);
+        Float grad_edge_t_max = zeros<Float>(state_width);
+        Vector3f grad_src = zeros<Vector3f>(state_width);
+        Vector3f grad_wi = zeros<Vector3f>(state_width);
+        Float grad_src_power = zeros<Float>(state_width);
+        Float grad_exterior_angle = zeros<Float>(state_width);
+        Float grad_material_gain = zeros<Float>(material_width);
+        Float grad_power =
+            coerce_float_grad(drjit::grad<false>(this->registered_output.power),
+                              grid_.resolution0 * grid_.resolution1);
+        Float grad_field_x_re =
+            coerce_float_grad(drjit::grad<false>(this->registered_output.field_x.x()),
+                              grid_.resolution0 * grid_.resolution1);
+
+        drjit::eval(grad_edge_pos,
+                    grad_edge_dir,
+                    grad_edge_t_min,
+                    grad_edge_t_max,
+                    grad_src,
+                    grad_wi,
+                    grad_src_power,
+                    grad_exterior_angle,
+                    grad_material_gain,
+                    grad_power,
+                    grad_field_x_re);
+
+        DfrDirectAccumADParams params = base_ad_params();
+        params.grad_out_power = grad_power.data();
+        params.grad_out_field_x_re = grad_field_x_re.data();
+        params.grad_state_edge_pos_x = grad_edge_pos.x().data();
+        params.grad_state_edge_pos_y = grad_edge_pos.y().data();
+        params.grad_state_edge_pos_z = grad_edge_pos.z().data();
+        params.grad_state_edge_dir_x = grad_edge_dir.x().data();
+        params.grad_state_edge_dir_y = grad_edge_dir.y().data();
+        params.grad_state_edge_dir_z = grad_edge_dir.z().data();
+        params.grad_state_edge_t_min = grad_edge_t_min.data();
+        params.grad_state_edge_t_max = grad_edge_t_max.data();
+        params.grad_state_src_x = grad_src.x().data();
+        params.grad_state_src_y = grad_src.y().data();
+        params.grad_state_src_z = grad_src.z().data();
+        params.grad_state_wi_x = grad_wi.x().data();
+        params.grad_state_wi_y = grad_wi.y().data();
+        params.grad_state_wi_z = grad_wi.z().data();
+        params.grad_state_src_power = grad_src_power.data();
+        params.grad_state_exterior_angle = grad_exterior_angle.data();
+        params.grad_material_gain = grad_material_gain.data();
+        dfr_direct_accum_vjp_gpu(params);
+
+        drjit::accum_grad(this->registered_input.states.edge_pos,
+                          drjit::detach<false>(grad_edge_pos));
+        drjit::accum_grad(this->registered_input.states.edge_dir,
+                          drjit::detach<false>(grad_edge_dir));
+        drjit::accum_grad(this->registered_input.states.edge_t_min,
+                          drjit::detach<false>(grad_edge_t_min));
+        drjit::accum_grad(this->registered_input.states.edge_t_max,
+                          drjit::detach<false>(grad_edge_t_max));
+        drjit::accum_grad(this->registered_input.states.src,
+                          drjit::detach<false>(grad_src));
+        drjit::accum_grad(this->registered_input.states.wi,
+                          drjit::detach<false>(grad_wi));
+        drjit::accum_grad(this->registered_input.states.src_power,
+                          drjit::detach<false>(grad_src_power));
+        drjit::accum_grad(this->registered_input.states.exterior_angle,
+                          drjit::detach<false>(grad_exterior_angle));
+        drjit::accum_grad(this->registered_input.material.gain,
+                          drjit::detach<false>(grad_material_gain));
+    }
+
+    const char *name() const override { return "DfrDirectAccum"; }
+
+private:
+    DfrDirectAccumADParams base_ad_params() const {
+        DfrDirectAccumADParams params = {};
+        params.n_rays = m_tape_.launch_count;
+        params.state_count = dfr_state_count_for(m_input_.states);
+        params.material_count = static_cast<int>(slices(m_input_.material.gain));
+        params.grid_axis = grid_.axis;
+        params.grid_position = grid_.position;
+        params.grid_coord0_min = grid_.coord0_min;
+        params.grid_coord0_max = grid_.coord0_max;
+        params.grid_coord1_min = grid_.coord1_min;
+        params.grid_coord1_max = grid_.coord1_max;
+        params.grid_resolution0 = grid_.resolution0;
+        params.grid_resolution1 = grid_.resolution1;
+        params.grid_cell_area = grid_.cell_area;
+        params.direct_samples = dfr_direct_sample_count(options_);
+        params.keller_samples = dfr_keller_sample_count(options_);
+        params.seed = options_.seed;
+        params.tape_active =
+            reinterpret_cast<const uint8_t *>(m_tape_.active.data());
+        params.tape_state_idx = m_tape_.state_idx.data();
+        params.tape_cell = m_tape_.cell.data();
+        params.tape_material_idx = m_tape_.material_idx.data();
+        params.tape_edge_u = m_tape_.edge_u.data();
+        params.state_edge_pos_x = m_input_.states.edge_pos.x().data();
+        params.state_edge_pos_y = m_input_.states.edge_pos.y().data();
+        params.state_edge_pos_z = m_input_.states.edge_pos.z().data();
+        params.state_edge_dir_x = m_input_.states.edge_dir.x().data();
+        params.state_edge_dir_y = m_input_.states.edge_dir.y().data();
+        params.state_edge_dir_z = m_input_.states.edge_dir.z().data();
+        params.state_edge_t_min = m_input_.states.edge_t_min.data();
+        params.state_edge_t_max = m_input_.states.edge_t_max.data();
+        params.state_src_x = m_input_.states.src.x().data();
+        params.state_src_y = m_input_.states.src.y().data();
+        params.state_src_z = m_input_.states.src.z().data();
+        params.state_wi_x = m_input_.states.wi.x().data();
+        params.state_wi_y = m_input_.states.wi.y().data();
+        params.state_wi_z = m_input_.states.wi.z().data();
+        params.state_src_power = m_input_.states.src_power.data();
+        params.state_exterior_angle = m_input_.states.exterior_angle.data();
+        params.material_gain = m_input_.material.gain.data();
+        return params;
+    }
+
+    const Scene *scene_ = nullptr;
+    DfrGrid grid_;
+    DfrOptions options_;
+    DfrDirectAccumOpInputDetached m_input_;
+    DfrDirectTapeCapture m_tape_;
+};
+
+DfrAccumAD dfr_direct_accum_custom_op(const Scene *scene,
+                                      const DfrStatesAD &states,
+                                      const DfrGrid &grid,
+                                      const DfrMaterialAD &material,
+                                      const DfrOptions &options,
+                                      const MaskAD &active) {
+    DfrDirectAccumOpInput input;
+    input.states = states;
+    input.material = material;
+    input.active = active;
+    nb::ref<DfrDirectAccumOp> op =
+        new DfrDirectAccumOp(input, scene, grid, options);
+    DfrAccumAD output = op->eval(detach_dfr_direct_input(input));
+    drjit::detail::new_grad(output);
+    op->register_output(output);
+    if (!ad_custom_op(op.get())) {
+        drjit::disable_grad(output);
+    }
+    return output;
+}
 
 /// Whether to split static and dynamic meshes into separate OptiX scenes (env RAYD_OPTIX_SPLIT_MODE).
 enum class OptixSplitMode {
@@ -1603,8 +2078,12 @@ void Scene::prewarm_path_multipath_pipelines(int hitgroup_record_count) {
                     record_count, axial_edge_visibility_pipeline_config());
     ensure_pipeline(segment_chain_visibility_pipeline_, context,
                     record_count, segment_chain_visibility_pipeline_config());
+    ensure_pipeline(reflection_accumulation_pipeline_, context,
+                    record_count, reflection_accumulation_pipeline_config());
     ensure_pipeline(reflection_epc_pipeline_, context,
                     record_count, reflection_epc_pipeline_config());
+    ensure_pipeline(diffraction_accumulation_pipeline_, context,
+                    record_count, diffraction_accumulation_pipeline_config());
     ensure_pipeline(diffraction_paths_pipeline_, context,
                     record_count, diffraction_paths_pipeline_config());
 }
@@ -4654,6 +5133,14 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         if (ray_count <= 0 || grid_cell_count <= 0) {
             return result;
         }
+        const int material_count = static_cast<int>(slices(material.gain));
+        require(material_count > 0,
+                "Scene::accumulate_reflections(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.eta_r)) == material_count &&
+                    static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::accumulate_reflections(): material payload fields must have matching widths.");
 
         auto component = [](const Vector3fAD &value, int axis) -> FloatAD {
             if (axis == 0) {
@@ -4700,6 +5187,186 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             const MaskAD active = full<MaskAD>(true, width);
             return gather<Vector3fAD>(value, zero_index, active);
         };
+        struct ComplexADValue {
+            FloatAD re;
+            FloatAD im;
+        };
+        struct ComplexVectorAD {
+            Vector3fAD re;
+            Vector3fAD im;
+        };
+        auto complex_add = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re + b.re, a.im + b.im};
+        };
+        auto complex_sub = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re - b.re, a.im - b.im};
+        };
+        auto complex_mul = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re * b.re - a.im * b.im,
+                    a.re * b.im + a.im * b.re};
+        };
+        auto complex_scale = [](const ComplexADValue &a,
+                                const FloatAD &scale) -> ComplexADValue {
+            return {a.re * scale, a.im * scale};
+        };
+        auto complex_div = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            const FloatAD denom =
+                maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
+            return {(a.re * b.re + a.im * b.im) / denom,
+                    (a.im * b.re - a.re * b.im) / denom};
+        };
+        auto complex_sqrt = [](const ComplexADValue &a) -> ComplexADValue {
+            const FloatAD mag =
+                sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
+            const MaskAD positive_real_axis =
+                (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
+            const FloatAD real_part =
+                sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
+            const FloatAD imag_abs =
+                sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
+            const FloatAD imag_sign =
+                select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
+            return {
+                select(positive_real_axis, sqrt(a.re), real_part),
+                select(positive_real_axis, FloatAD(0.f), imag_sign * imag_abs),
+            };
+        };
+        auto normalize_safe = [](const Vector3fAD &value,
+                                 const Vector3fAD &fallback) -> Vector3fAD {
+            const FloatAD value_norm = norm(value);
+            return select(value_norm > FloatAD(Epsilon),
+                          value / maximum(value_norm, FloatAD(Epsilon)),
+                          fallback);
+        };
+        auto stable_perpendicular = [&](const Vector3fAD &direction,
+                                        const Vector3fAD &preferred) -> Vector3fAD {
+            const Vector3fAD dir =
+                normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            const Vector3fAD projected = preferred - dot(preferred, dir) * dir;
+            const Vector3fAD axis =
+                select(abs(dir.x()) < FloatAD(0.9f),
+                       Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
+                       Vector3fAD(FloatAD(0.f), FloatAD(1.f), FloatAD(0.f)));
+            const Vector3fAD fallback = axis - dot(axis, dir) * dir;
+            return select(squared_norm(projected) > FloatAD(1e-12f),
+                          normalize_safe(projected, axis),
+                          normalize_safe(fallback,
+                                         Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
+        };
+        auto complex_dot_real = [](const ComplexVectorAD &field,
+                                   const Vector3fAD &basis) -> ComplexADValue {
+            return {dot(field.re, basis), dot(field.im, basis)};
+        };
+        auto complex_vector_power = [](const ComplexVectorAD &field) -> FloatAD {
+            return squared_norm(field.re) + squared_norm(field.im);
+        };
+        auto material_reflection_coefficients =
+            [&](const IntAD &prim,
+                const FloatAD &cos_theta,
+                const MaskAD &slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
+            const MaskAD prim_in_range =
+                slot_active && (prim >= IntAD(0)) && (prim < IntAD(material_count));
+            const IntAD safe_prim = select(prim_in_range, prim, IntAD(0));
+            const MaskAD prim_valid =
+                prim_in_range && gather<MaskAD>(material.valid, safe_prim, prim_in_range);
+            const FloatAD eta_r =
+                maximum(gather<FloatAD>(material.eta_r, safe_prim, prim_valid),
+                        FloatAD(Epsilon));
+            const FloatAD sigma =
+                maximum(gather<FloatAD>(material.sigma, safe_prim, prim_valid),
+                        FloatAD(0.f));
+            const FloatAD gain = gather<FloatAD>(material.gain, safe_prim, prim_valid);
+            const FloatAD mu_r =
+                maximum(gather<FloatAD>(material.mu_r, safe_prim, prim_valid),
+                        FloatAD(Epsilon));
+            const FloatAD omega = maximum(
+                FloatAD(2.f * Pi) * FloatAD(299792458.f) /
+                    maximum(FloatAD(options.wavelength), FloatAD(Epsilon)),
+                FloatAD(Epsilon));
+            const ComplexADValue eta = {
+                eta_r,
+                -sigma / (omega * FloatAD(8.854187817e-12f))
+            };
+            const ComplexADValue mu = {mu_r, FloatAD(0.f)};
+            const FloatAD cos_clamped =
+                minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
+            const FloatAD sin2 =
+                maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
+            const ComplexADValue a =
+                complex_sqrt(complex_sub(complex_mul(mu, eta),
+                                         ComplexADValue{sin2, FloatAD(0.f)}));
+            const ComplexADValue mu_cos = {mu_r * cos_clamped, FloatAD(0.f)};
+            const ComplexADValue eta_cos = {eta.re * cos_clamped,
+                                            eta.im * cos_clamped};
+            const ComplexADValue zero = {FloatAD(0.f), FloatAD(0.f)};
+            const ComplexADValue r_te_raw =
+                complex_scale(
+                    complex_div(complex_sub(mu_cos, a),
+                                complex_add(mu_cos, a)),
+                    gain);
+            const ComplexADValue r_tm_raw =
+                complex_scale(
+                    complex_div(complex_sub(eta_cos, a),
+                                complex_add(eta_cos, a)),
+                    gain);
+            const ComplexADValue r_te = {
+                select(prim_valid, r_te_raw.re, zero.re),
+                select(prim_valid, r_te_raw.im, zero.im),
+            };
+            const ComplexADValue r_tm = {
+                select(prim_valid, r_tm_raw.re, zero.re),
+                select(prim_valid, r_tm_raw.im, zero.im),
+            };
+            return {r_te, r_tm};
+        };
+        auto reflect_field_vector =
+            [&](const ComplexVectorAD &field,
+                const Vector3fAD &incident_dir,
+                const Vector3fAD &slot_normal,
+                const IntAD &prim,
+                const MaskAD &slot_active) -> std::pair<ComplexVectorAD, Vector3fAD> {
+            const Vector3fAD incident_hat =
+                normalize_safe(incident_dir,
+                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            Vector3fAD normal_hat =
+                normalize_safe(slot_normal,
+                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f),
+                                -normal_hat,
+                                normal_hat);
+            const FloatAD dot_dn = dot(incident_hat, normal_hat);
+            const Vector3fAD reflected_dir =
+                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat,
+                               -incident_hat);
+            Vector3fAD s_hat = cross(normal_hat, incident_hat);
+            s_hat = select(squared_norm(s_hat) > FloatAD(1e-12f),
+                           normalize_safe(s_hat, stable_perpendicular(incident_hat, normal_hat)),
+                           stable_perpendicular(incident_hat, normal_hat));
+            Vector3fAD p_in_hat = cross(s_hat, incident_hat);
+            p_in_hat =
+                select(squared_norm(p_in_hat) > FloatAD(1e-12f),
+                       normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
+                       stable_perpendicular(incident_hat, normal_hat));
+            Vector3fAD p_out_hat = cross(s_hat, reflected_dir);
+            p_out_hat =
+                select(squared_norm(p_out_hat) > FloatAD(1e-12f),
+                       normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
+                       stable_perpendicular(reflected_dir, normal_hat));
+            const auto [r_te, r_tm] =
+                material_reflection_coefficients(prim, abs(dot(incident_hat, normal_hat)), slot_active);
+            const ComplexADValue e_s = complex_dot_real(field, s_hat);
+            const ComplexADValue e_p = complex_dot_real(field, p_in_hat);
+            const ComplexADValue out_s = complex_mul(r_te, e_s);
+            const ComplexADValue out_p = complex_mul(r_tm, e_p);
+            return {{
+                s_hat * out_s.re + p_out_hat * out_p.re,
+                s_hat * out_s.im + p_out_hat * out_p.im,
+            }, reflected_dir};
+        };
 
         const UIntAD ray_index = arange<UIntAD>(ray_count);
         const IntAD ray_slot = IntAD(ray_index);
@@ -4708,16 +5375,27 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         Vector3fAD origin = ray.o;
         Vector3fAD direction = normalize(ray.d);
         Vector3fAD image_source = broadcast_vec(tx_position, ray_count);
-        FloatAD field_power = full<FloatAD>(1.f, ray_count);
+        Vector3fAD tx_pol = broadcast_vec(tx_polarization, ray_count);
+        Vector3fAD transverse_pol = tx_pol - dot(tx_pol, direction) * direction;
+        transverse_pol = select(
+            squared_norm(transverse_pol) > FloatAD(1e-12f),
+            normalize_safe(transverse_pol,
+                           stable_perpendicular(direction, tx_pol)),
+            stable_perpendicular(direction, tx_pol));
+        ComplexVectorAD field = {transverse_pol, zeros<Vector3fAD>(ray_count)};
+        FloatAD path_length = zeros<FloatAD>(ray_count);
         MaskAD current_active = active_ad;
 
-        const int material_count = static_cast<int>(slices(material.gain));
         const FloatAD span0 = FloatAD(grid.coord0_max - grid.coord0_min);
         const FloatAD span1 = FloatAD(grid.coord1_max - grid.coord1_min);
         const FloatAD wavelength = FloatAD(options.wavelength);
         const FloatAD wave_gain = wavelength / FloatAD(4.f * Pi);
         const FloatAD solid_angle = FloatAD(options.solid_angle_per_ray);
         const FloatAD cell_area = FloatAD(options.cell_area);
+        const FloatAD wave_k =
+            select(abs(FloatAD(options.k)) > FloatAD(Epsilon),
+                   FloatAD(options.k),
+                   FloatAD(2.f * Pi) / maximum(wavelength, FloatAD(Epsilon)));
 
         for (int bounce = 0; bounce < max_bounces; ++bounce) {
             const IntAD slot = base_slot + IntAD(bounce);
@@ -4735,35 +5413,30 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             normal = select(dot(direction, normal) > FloatAD(0.f), -normal, normal);
             const IntAD prim =
                 gather<IntAD>(chain.global_prim_ids, slot, bounce_active);
-            const MaskAD material_active =
-                bounce_active &&
-                (prim >= IntAD(0)) &&
-                (prim < IntAD(material_count)) &&
-                gather<MaskAD>(material.valid, prim, bounce_active);
-            const FloatAD gain =
-                gather<FloatAD>(material.gain, prim, material_active);
-            const FloatAD safe_gain = select(material_active, maximum(gain, FloatAD(0.f)), FloatAD(0.f));
+            const MaskAD material_active = bounce_active;
 
             const Vector3fAD event_source = image_source;
             const Vector3fAD event_direction = direction;
+            const FloatAD event_source_power = complex_vector_power(field) * solid_angle;
             const FloatAD image_distance = dot(image_source - hit_point, normal);
             image_source = select(
                 material_active,
                 image_source - FloatAD(2.f) * image_distance * normal,
                 image_source);
-            const FloatAD dir_dot_n = dot(direction, normal);
-            direction = select(
-                material_active,
-                normalize(direction - FloatAD(2.f) * dir_dot_n * normal),
-                direction);
+            const auto reflected = reflect_field_vector(field, direction, normal, prim, material_active);
+            direction = select(material_active, reflected.second, direction);
             origin = select(
                 material_active,
                 hit_point + FloatAD(Epsilon) * direction,
                 origin);
-            field_power = select(
+            field = {
+                select(material_active, reflected.first.re, zeros<Vector3fAD>(ray_count)),
+                select(material_active, reflected.first.im, zeros<Vector3fAD>(ray_count)),
+            };
+            path_length = select(
                 material_active,
-                field_power * safe_gain * safe_gain,
-                FloatAD(0.f));
+                path_length + gather<FloatAD>(chain.t, slot, bounce_active),
+                path_length);
 
             if (options.collect_wedges && options.wedge_capacity > 0) {
                 const IntAD event_slot =
@@ -4804,7 +5477,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                     wedge_active);
                 scatter(
                     result.wedge_events.src_power,
-                    field_power,
+                    event_source_power,
                     event_slot,
                     wedge_active);
                 scatter(
@@ -4847,7 +5520,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 
             const MaskAD plane_active =
                 material_active &&
-                (field_power > FloatAD(0.f)) &&
+                (complex_vector_power(field) > FloatAD(0.f)) &&
                 (t_plane > FloatAD(RayEpsilon)) &&
                 (t_plane < blocker_t) &&
                 (coord0 >= FloatAD(grid.coord0_min)) &&
@@ -4867,14 +5540,61 @@ AccumResultT<Detached> Scene::accumulate_reflections(
             const FloatAD unfolded_distance =
                 maximum(norm(target_plane - image_source), FloatAD(Epsilon));
             const FloatAD cos_theta = maximum(abs(axis_dir), FloatAD(Epsilon));
-            const FloatAD contribution_power =
-                field_power *
-                wave_gain * wave_gain /
-                (unfolded_distance * unfolded_distance) *
+            const FloatAD geometry_power_scale =
                 solid_angle / cell_area *
                 unfolded_distance * unfolded_distance / cos_theta;
+            const FloatAD amplitude_scale =
+                wave_gain / unfolded_distance *
+                sqrt(maximum(geometry_power_scale, FloatAD(0.f)));
+            const ComplexADValue phase = {
+                cos(wave_k * unfolded_distance),
+                -sin(wave_k * unfolded_distance)
+            };
+            const ComplexADValue coeff = complex_scale(phase, amplitude_scale);
+            const ComplexVectorAD contribution_field = {
+                field.re * coeff.re - field.im * coeff.im,
+                field.re * coeff.im + field.im * coeff.re,
+            };
+            const FloatAD contribution_power =
+                complex_vector_power(contribution_field);
             const MaskAD contribution_active =
                 plane_active && drjit::isfinite(contribution_power) && (contribution_power > FloatAD(0.f));
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_x.x(),
+                contribution_field.re.x(),
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_x.y(),
+                contribution_field.im.x(),
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_y.x(),
+                contribution_field.re.y(),
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_y.y(),
+                contribution_field.im.y(),
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_z.x(),
+                contribution_field.re.z(),
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_field_z.y(),
+                contribution_field.im.z(),
+                cell,
+                contribution_active);
             scatter_reduce(
                 ReduceOp::Add,
                 result.reflection_power,
@@ -4888,7 +5608,28 @@ AccumResultT<Detached> Scene::accumulate_reflections(
                 zeros<IntAD>(ray_count),
                 contribution_active);
 
-            current_active = material_active;
+            const int next_depth = bounce + 1;
+            MaskAD continue_active = material_active;
+            if (options.rr_depth > 0 && options.rr_prob < 1.f && next_depth >= options.rr_depth) {
+                const FloatAD rr_field_power = complex_vector_power(field);
+                const FloatAD continue_prob =
+                    minimum(maximum(rr_field_power, FloatAD(1e-8f)),
+                            maximum(FloatAD(options.rr_prob), FloatAD(1e-8f)));
+                const FloatAD rr_scale =
+                    FloatAD(1.f) / sqrt(maximum(continue_prob, FloatAD(1e-8f)));
+                field = {
+                    select(continue_active, field.re * rr_scale, field.re),
+                    select(continue_active, field.im * rr_scale, field.im),
+                };
+            }
+            if (options.stop_threshold > 0.f) {
+                const FloatAD fspl =
+                    wavelength / (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
+                continue_active =
+                    continue_active &&
+                    (complex_vector_power(field) * fspl * fspl > FloatAD(options.stop_threshold));
+            }
+            current_active = continue_active;
         }
         return result;
     } else {
@@ -5164,6 +5905,15 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
+        require_dfr_direct_custom_ad_supported(options);
+        return dfr_direct_accum_custom_op(
+            this,
+            states,
+            grid,
+            material,
+            options,
+            active);
+
         result.power = zeros<FloatAD>(grid_cell_count);
         result.field_x =
             drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
@@ -5213,6 +5963,18 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
                 "Scene::accum_dfr_direct(): material payload fields must have matching widths.");
+        {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            const OptixScene *primary_scene = scenes.primary;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr_direct(): OptiX scene is not ready.");
+            require(scenes.hitgroup_record_count > 0,
+                    "Scene::accum_dfr_direct(): invalid hitgroup record count.");
+            ensure_pipeline(diffraction_accumulation_pipeline_,
+                            primary_scene->context(),
+                            scenes.hitgroup_record_count,
+                            diffraction_accumulation_pipeline_config());
+        }
 
         const int direct_samples =
             (options.strategy_mask & RAYD_DFR_DIRECT) != 0
@@ -5260,6 +6022,20 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             }
             return Vector3fAD(c0, c1, FloatAD(grid_desc.position));
         };
+        auto hash_u32 = [](UIntAD value) -> UIntAD {
+            value ^= value >> 16u;
+            value *= UIntAD(0x7feb352du);
+            value ^= value >> 15u;
+            value *= UIntAD(0x846ca68bu);
+            value ^= value >> 16u;
+            return value;
+        };
+        auto uniform01 = [&](const UIntAD &sample_lane, unsigned int stream) -> FloatAD {
+            const UIntAD h =
+                hash_u32(sample_lane ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
+                         UIntAD(static_cast<unsigned int>(options.seed)));
+            return FloatAD(h & UIntAD(0x00ffffffu)) * FloatAD(1.f / 16777216.f);
+        };
         auto material_gain_for_faces = [&](const IntAD &prim0,
                                            const IntAD &prim1,
                                            const MaskAD &sample_active) -> FloatAD {
@@ -5302,7 +6078,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             gather<FloatAD>(states.edge_t_min, state_idx, state_active);
         const FloatAD edge_t_max =
             gather<FloatAD>(states.edge_t_max, state_idx, state_active);
-        const FloatAD edge_t = FloatAD(0.5f) * (edge_t_min + edge_t_max);
+        const FloatAD edge_t =
+            edge_t_min + uniform01(lane, 0u) * (edge_t_max - edge_t_min);
         const Vector3fAD edge_point = edge_pos + edge_t * edge_dir;
         const Vector3fAD source =
             gather<Vector3fAD>(states.src, state_idx, state_active);
@@ -5637,6 +6414,19 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             raw.edge_vis_rejects.data();
         params.out_utd_rejects = raw.utd_rejects.data();
         params.out_edge_uses = raw.edge_uses.data();
+        if (active_dfr_direct_tape_capture != nullptr &&
+            active_dfr_direct_tape_capture->launch_count == launch_count) {
+            params.tape_active = reinterpret_cast<uint8_t *>(
+                active_dfr_direct_tape_capture->active.data());
+            params.tape_state_idx =
+                active_dfr_direct_tape_capture->state_idx.data();
+            params.tape_cell =
+                active_dfr_direct_tape_capture->cell.data();
+            params.tape_material_idx =
+                active_dfr_direct_tape_capture->material_idx.data();
+            params.tape_edge_u =
+                active_dfr_direct_tape_capture->edge_u.data();
+        }
 
         diffraction_accumulation_pipeline_->launch(0, params);
 
@@ -5748,6 +6538,18 @@ DfrAccumT<Detached> Scene::accum_dfr(
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
                 "Scene::accum_dfr(): material payload fields must have matching widths.");
+        {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            const OptixScene *primary_scene = scenes.primary;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr(): OptiX scene is not ready.");
+            require(scenes.hitgroup_record_count > 0,
+                    "Scene::accum_dfr(): invalid hitgroup record count.");
+            ensure_pipeline(diffraction_accumulation_pipeline_,
+                            primary_scene->context(),
+                            scenes.hitgroup_record_count,
+                            diffraction_accumulation_pipeline_config());
+        }
 
         const int direct_samples =
             (options.strategy_mask & RAYD_DFR_DIRECT) != 0
@@ -5794,6 +6596,20 @@ DfrAccumT<Detached> Scene::accum_dfr(
                 return Vector3fAD(c0, FloatAD(grid_desc.position), c1);
             }
             return Vector3fAD(c0, c1, FloatAD(grid_desc.position));
+        };
+        auto hash_u32 = [](UIntAD value) -> UIntAD {
+            value ^= value >> 16u;
+            value *= UIntAD(0x7feb352du);
+            value ^= value >> 15u;
+            value *= UIntAD(0x846ca68bu);
+            value ^= value >> 16u;
+            return value;
+        };
+        auto uniform01 = [&](const UIntAD &sample_lane, unsigned int stream) -> FloatAD {
+            const UIntAD h =
+                hash_u32(sample_lane ^ (UIntAD(stream) * UIntAD(0x9e3779b9u)) ^
+                         UIntAD(static_cast<unsigned int>(options.seed)));
+            return FloatAD(h & UIntAD(0x00ffffffu)) * FloatAD(1.f / 16777216.f);
         };
 
         auto material_gain_for_faces = [&](const IntAD &prim0,
@@ -5853,11 +6669,15 @@ DfrAccumT<Detached> Scene::accum_dfr(
         const MaskAD is_suffix =
             !is_direct && !is_keller && (lane_i < IntAD(launch_count));
         const IntAD first_idx = IntAD(lane % UIntAD(initial_count));
-        const IntAD second_idx =
-            IntAD((lane / UIntAD(initial_count)) % UIntAD(recursive_count));
+        const UIntAD second_hash = hash_u32(
+            lane ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x9e3779b9u)) ^
+            UIntAD(0x51ed270bu));
+        const IntAD second_idx = IntAD(second_hash % UIntAD(recursive_count));
+        const UIntAD third_hash = hash_u32(
+            lane ^ (UIntAD(static_cast<unsigned int>(options.seed)) * UIntAD(0x85ebca6bu)) ^
+            UIntAD(0xc2b2ae35u));
         const IntAD third_idx =
-            IntAD((lane / UIntAD(std::max(1, initial_count * recursive_count))) %
-                  UIntAD(recursive_count));
+            IntAD(third_hash % UIntAD(recursive_count));
         const IntAD cell =
             IntAD((lane / UIntAD(initial_count)) % UIntAD(grid_cell_count));
         const MaskAD lane_active = full<MaskAD>(true, launch_count);
@@ -5883,7 +6703,8 @@ DfrAccumT<Detached> Scene::accum_dfr(
             gather<FloatAD>(initial_states.edge_t_min, first_idx, first_active);
         const FloatAD first_t_max =
             gather<FloatAD>(initial_states.edge_t_max, first_idx, first_active);
-        const FloatAD first_t = FloatAD(0.5f) * (first_t_min + first_t_max);
+        const FloatAD first_t =
+            first_t_min + uniform01(lane, 0u) * (first_t_max - first_t_min);
         const Vector3fAD first_point = first_edge_pos + first_t * first_edge_dir;
 
         const Vector3fAD second_edge_pos =
@@ -5894,7 +6715,8 @@ DfrAccumT<Detached> Scene::accum_dfr(
             gather<FloatAD>(recursive_states.edge_t_min, second_idx, first_active);
         const FloatAD second_t_max =
             gather<FloatAD>(recursive_states.edge_t_max, second_idx, first_active);
-        const FloatAD second_t = FloatAD(0.5f) * (second_t_min + second_t_max);
+        const FloatAD second_t =
+            second_t_min + uniform01(lane, 2u) * (second_t_max - second_t_min);
         const Vector3fAD second_point = second_edge_pos + second_t * second_edge_dir;
 
         const Vector3fAD third_edge_pos =
@@ -5905,7 +6727,8 @@ DfrAccumT<Detached> Scene::accum_dfr(
             gather<FloatAD>(recursive_states.edge_t_min, third_idx, first_active);
         const FloatAD third_t_max =
             gather<FloatAD>(recursive_states.edge_t_max, third_idx, first_active);
-        const FloatAD third_t = FloatAD(0.5f) * (third_t_min + third_t_max);
+        const FloatAD third_t =
+            third_t_min + uniform01(lane, 4u) * (third_t_max - third_t_min);
         const Vector3fAD third_point = third_edge_pos + third_t * third_edge_dir;
 
         const Vector3fAD source =

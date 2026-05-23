@@ -134,6 +134,12 @@ struct DfrAccumParams {
     int *out_edge_vis_rejects;
     int *out_utd_rejects;
     int *out_edge_uses;
+
+    uint8_t *tape_active;
+    int *tape_state_idx;
+    int *tape_cell;
+    int *tape_material_idx;
+    float *tape_edge_u;
 };
 
 } // namespace rayd

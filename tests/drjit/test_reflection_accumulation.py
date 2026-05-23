@@ -329,16 +329,90 @@ class ReflectionAccumulationTests(unittest.TestCase):
             import drjit.cuda.ad as ad
             import rayd as pj
 
-            vertices = ad.Array3f([-1.0, 1.0, -1.0],
-                                  [-1.0, -1.0, 1.0],
-                                  [0.0, 0.0, 0.0])
-            dr.enable_grad(vertices)
+            def run_case(z_shift, enable_grad=False):
+                vertices = ad.Array3f([-1.0, 1.0, -1.0],
+                                      [-1.0, -1.0, 1.0],
+                                      [z_shift, z_shift, z_shift])
+                if enable_grad:
+                    dr.enable_grad(vertices)
+                scene = pj.Scene()
+                scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+                scene.build()
+
+                ray = pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
+                              ad.Array3f([0.0], [0.0], [1.0]))
+
+                grid = pj.AccumGrid()
+                grid.axis = 2
+                grid.position = -2.0
+                grid.coord0_min = -1.0
+                grid.coord0_max = 1.0
+                grid.coord1_min = -1.0
+                grid.coord1_max = 1.0
+                grid.resolution0 = 1
+                grid.resolution1 = 1
+
+                material = pj.MaterialAD()
+                material.eta_r = ad.Float([4.0])
+                material.sigma = ad.Float([0.0])
+                material.gain = ad.Float([1.0])
+                material.mu_r = ad.Float([1.0])
+                material.valid = ad.Bool([True])
+
+                options = pj.AccumOptions()
+                options.wavelength = 12.566370614359172
+                options.k = 0.5
+                options.solid_angle_per_ray = 1.0
+                options.cell_area = 1.0
+
+                result = scene.accumulate_reflections(
+                    ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
+                )
+                loss = dr.sum(result.reflection_power)
+                if enable_grad:
+                    dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+                    grad = dr.grad(vertices)
+                    dr.eval(result.reflection_power, result.reflection_count, grad)
+                    return {
+                        "result_type": type(result).__name__,
+                        "power": float(result.reflection_power[0]),
+                        "reflection_count": int(result.reflection_count[0]),
+                        "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+                    }
+                dr.eval(loss)
+                return {"loss": float(loss[0])}
+
+            step = 1.0e-3
+            ad_result = run_case(0.0, enable_grad=True)
+            fd = (run_case(step)["loss"] - run_case(-step)["loss"]) / (2.0 * step)
+
+            print(json.dumps({
+                **ad_result,
+                "fd_z_shift": fd,
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "AccumResultAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["reflection_count"], 1)
+        self.assertAlmostEqual(data["grad_z_sum"], data["fd_z_shift"], delta=1.0e-3)
+
+    def test_accumulate_reflections_ad_matches_detached_native_primal(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
             scene = pj.Scene()
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
-
-            ray = pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
-                          ad.Array3f([0.0], [0.0], [1.0]))
 
             grid = pj.AccumGrid()
             grid.axis = 2
@@ -350,38 +424,64 @@ class ReflectionAccumulationTests(unittest.TestCase):
             grid.resolution0 = 1
             grid.resolution1 = 1
 
-            material = pj.MaterialAD()
-            material.eta_r = ad.Float([4.0])
-            material.sigma = ad.Float([0.0])
-            material.gain = ad.Float([1.0])
-            material.mu_r = ad.Float([1.0])
-            material.valid = ad.Bool([True])
-
             options = pj.AccumOptions()
             options.wavelength = 12.566370614359172
             options.k = 0.5
             options.solid_angle_per_ray = 1.0
             options.cell_area = 1.0
 
-            result = scene.accumulate_reflections(
-                ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
-            )
-            dr.backward(dr.sum(result.reflection_power), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
-            grad = dr.grad(vertices)
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
 
+            material_ad = pj.MaterialAD()
+            material_ad.eta_r = ad.Float([4.0])
+            material_ad.sigma = ad.Float([0.0])
+            material_ad.gain = ad.Float([1.0])
+            material_ad.mu_r = ad.Float([1.0])
+            material_ad.valid = ad.Bool([True])
+
+            detached = scene.accumulate_reflections(
+                pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
+                       cuda.Array3f([0.0], [0.0], [1.0])),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                grid,
+                material,
+                1,
+                options,
+                True,
+            )
+            differentiable = scene.accumulate_reflections(
+                pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
+                         ad.Array3f([0.0], [0.0], [1.0])),
+                ad.Array3f([0.0], [0.0], [-1.0]),
+                grid,
+                material_ad,
+                1,
+                options,
+                True,
+            )
+            dr.eval(
+                detached.reflection_power,
+                differentiable.reflection_power,
+                detached.reflection_count,
+                differentiable.reflection_count,
+            )
             print(json.dumps({
-                "result_type": type(result).__name__,
-                "power": float(result.reflection_power[0]),
-                "reflection_count": int(result.reflection_count[0]),
-                "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+                "detached_power": float(detached.reflection_power[0]),
+                "ad_power": float(differentiable.reflection_power[0]),
+                "detached_count": int(detached.reflection_count[0]),
+                "ad_count": int(differentiable.reflection_count[0]),
             }))
             """
         )
 
-        self.assertEqual(data["result_type"], "AccumResultAD")
-        self.assertGreater(data["power"], 0.0)
-        self.assertEqual(data["reflection_count"], 1)
-        self.assertGreater(data["grad_z_sum"], 0.0)
+        self.assertEqual(data["detached_count"], 1)
+        self.assertEqual(data["ad_count"], 1)
+        self.assertAlmostEqual(data["ad_power"], data["detached_power"], delta=1.0e-6)
 
     def test_accumulate_reflections_accepts_tx_polarization(self):
         data = run_json(

@@ -1,5 +1,6 @@
 #include <rayd/multipath/pipelines.h>
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <tuple>
@@ -202,7 +203,8 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     }
 
     params_size_ = config.params_size;
-    params_buffer_ = jit_malloc(AllocType::Device, params_size_);
+    params_buffer_size_ = std::max<size_t>(params_size_, 1024);
+    params_buffer_ = jit_malloc(AllocType::Device, params_buffer_size_);
     hitgroup_record_count_ = hitgroup_record_count;
     ready_ = true;
 }
@@ -236,15 +238,20 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
 
 /// Upload \p params and launch the pipeline with the \p raygen_index'th raygen entry over n_rays threads.
 void OptixLaunchPipeline::launch_impl(int raygen_index,
-                                      const void *params,
-                                      unsigned int n_rays) const {
+                                       const void *params,
+                                       size_t actual_params_size,
+                                       unsigned int n_rays) const {
     require(ready_, "OptixLaunchPipeline::launch(): pipeline is not ready.");
     require(raygen_index >= 0 &&
                 raygen_index < static_cast<int>(sbt_raygen_records_.size()),
             "OptixLaunchPipeline::launch(): raygen index out of range.");
 
+    const size_t launch_params_size = std::max(params_size_, actual_params_size);
+    require(launch_params_size <= params_buffer_size_,
+            "OptixLaunchPipeline::launch(): params buffer is too small.");
+
     audit_jit_memcpy_async();
-    jit_memcpy_async(JitBackend::CUDA, params_buffer_, params, params_size_);
+    jit_memcpy_async(JitBackend::CUDA, params_buffer_, params, launch_params_size);
 
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(sbt_raygen_records_[raygen_index]);
@@ -259,7 +266,7 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
     check_optix(optixLaunch(pipeline_,
                             jit_cuda_stream(),
                             reinterpret_cast<CUdeviceptr>(params_buffer_),
-                            params_size_,
+                            launch_params_size,
                             &sbt,
                             n_rays,
                             1,
