@@ -114,7 +114,7 @@ scene = rd.Scene()
 scene.add_mesh(mesh)
 scene.build()
 
-ray = rd.Ray(
+ray = rd.RayAD(
     dr.cuda.ad.Array3f([0.25], [0.25], [-1.0]),
     dr.cuda.ad.Array3f([0.0], [0.0], [1.0]),
 )

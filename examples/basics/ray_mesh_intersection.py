@@ -21,7 +21,7 @@ def make_scene() -> rd.Scene:
 def main() -> None:
     scene = make_scene()
 
-    rays = rd.RayDetached(
+    rays = rd.Ray(
         dr.cuda.Array3f(
             [0.0, 0.75, 1.5, -0.5],
             [0.0, 0.75, 0.0, -0.5],

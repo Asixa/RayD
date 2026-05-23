@@ -49,14 +49,14 @@ class ExampleCamera:
                 dr.full(dr.cuda.Float, 1.0, count),
             )
         )
-        return rd.RayDetached(dr.zeros(dr.cuda.Array3f, count), direction)
+        return rd.Ray(dr.zeros(dr.cuda.Array3f, count), direction)
 
     def sample_edge(self, sample1):
         count = dr.width(sample1)
         invalid = dr.full(dr.cuda.Int, -1, count)
         zero = dr.zeros(dr.cuda.Float, count)
         zero_ad = dr.zeros(dr.cuda.ad.Float, count)
-        empty_ray = rd.RayDetached(dr.zeros(dr.cuda.Array3f, count), dr.zeros(dr.cuda.Array3f, count))
+        empty_ray = rd.Ray(dr.zeros(dr.cuda.Array3f, count), dr.zeros(dr.cuda.Array3f, count))
 
         if self._edge_info is None:
             raise RuntimeError("ExampleCamera.sample_edge(): call prepare_edges(scene) first.")

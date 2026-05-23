@@ -914,10 +914,10 @@ class DfrAccumulationTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            def run_case(src_z_value, gain_value, enable_grad=False):
+            def run_case(src_z_value, gain_value, mode=None):
                 src_z = ad.Float([src_z_value])
                 gain = ad.Float([gain_value])
-                if enable_grad:
+                if mode is not None:
                     dr.enable_grad(src_z, gain)
 
                 states = pj.DfrStatesAD()
@@ -971,7 +971,7 @@ class DfrAccumulationTests(unittest.TestCase):
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
-                if enable_grad:
+                if mode == "backward":
                     dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
                     grad_src = dr.grad(src_z)
                     grad_gain = dr.grad(gain)
@@ -983,12 +983,21 @@ class DfrAccumulationTests(unittest.TestCase):
                         "grad_src_z": float(grad_src[0]),
                         "grad_gain": float(grad_gain[0]),
                     }
+                if mode == "forward_gain":
+                    dr.set_grad(gain, ad.Float([1.0]))
+                    dr.forward(gain)
+                    jvp_gain = dr.grad(loss)
+                    dr.eval(result.power, result.suffix_count, jvp_gain)
+                    return {
+                        "jvp_gain": float(jvp_gain[0]),
+                    }
                 dr.eval(loss)
                 return {"loss": float(loss[0])}
 
             src_step = 1.0e-3
             gain_step = 1.0e-3
-            ad_result = run_case(1.0, 1.0, enable_grad=True)
+            backward_result = run_case(1.0, 1.0, mode="backward")
+            forward_gain_result = run_case(1.0, 1.0, mode="forward_gain")
             fd_src = (
                 run_case(1.0 + src_step, 1.0)["loss"] -
                 run_case(1.0 - src_step, 1.0)["loss"]
@@ -998,7 +1007,8 @@ class DfrAccumulationTests(unittest.TestCase):
                 run_case(1.0, 1.0 - gain_step)["loss"]
             ) / (2.0 * gain_step)
             print(json.dumps({
-                **ad_result,
+                **backward_result,
+                **forward_gain_result,
                 "fd_src_z": fd_src,
                 "fd_gain": fd_gain,
             }))
@@ -1010,6 +1020,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["suffix_count"], 0)
         self.assertAlmostEqual(data["grad_src_z"], data["fd_src_z"], delta=2.0e-3)
         self.assertAlmostEqual(data["grad_gain"], data["fd_gain"], delta=2.0e-3)
+        self.assertAlmostEqual(data["jvp_gain"], data["fd_gain"], delta=2.0e-3)
 
     def test_accum_dfr_direct_suffix_forward_jvp_matches_finite_difference(self):
         data = run_json(
@@ -1807,9 +1818,9 @@ class DfrAccumulationTests(unittest.TestCase):
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
-            def run_case(src_z, enable_grad=False):
-                src = ad.Array3f([0.0], [0.0], [src_z])
-                if enable_grad:
+            def run_case(src_z_value, mode=None):
+                src = ad.Array3f([0.0], [0.0], [src_z_value])
+                if mode is not None:
                     dr.enable_grad(src)
 
                 initial = pj.DfrStatesAD()
@@ -1882,7 +1893,7 @@ class DfrAccumulationTests(unittest.TestCase):
 
                 result = scene.accum_dfr(initial, recursive, grid, material, options, True)
                 loss = dr.sum(result.power)
-                if enable_grad:
+                if mode == "backward":
                     dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
                     grad_src = dr.grad(src)
                     dr.eval(result.power, result.direct_count, result.keller_count, grad_src)
@@ -1893,14 +1904,24 @@ class DfrAccumulationTests(unittest.TestCase):
                         "keller_count": int(result.keller_count[0]),
                         "grad_src_z": float(grad_src.z[0]),
                     }
+                if mode == "forward":
+                    dr.set_grad(src.z, ad.Float([1.0]))
+                    dr.forward(src.z)
+                    jvp_src_z = dr.grad(loss)
+                    dr.eval(result.power, result.direct_count, result.keller_count, jvp_src_z)
+                    return {
+                        "jvp_src_z": float(jvp_src_z[0]),
+                    }
                 dr.eval(loss)
                 return {"loss": float(loss[0])}
 
             step = 1.0e-3
-            ad_result = run_case(1.0, enable_grad=True)
+            backward_result = run_case(1.0, mode="backward")
+            forward_result = run_case(1.0, mode="forward")
             fd = (run_case(1.0 + step)["loss"] - run_case(1.0 - step)["loss"]) / (2.0 * step)
             print(json.dumps({
-                **ad_result,
+                **backward_result,
+                **forward_result,
                 "fd_src_z": fd,
             }))
             """
@@ -1911,6 +1932,137 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["direct_count"], 0)
         self.assertGreater(data["keller_count"], 0)
         self.assertAlmostEqual(data["grad_src_z"], data["fd_src_z"], delta=3.0e-3)
+        self.assertAlmostEqual(data["jvp_src_z"], data["fd_src_z"], delta=3.0e-3)
+
+    def test_accum_dfr_order2_material_gain_ad_matches_finite_difference(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            def run_case(gain_value, mode=None):
+                gain = ad.Float([gain_value])
+                if mode is not None:
+                    dr.enable_grad(gain)
+
+                initial = pj.DfrStatesAD()
+                initial.count = 1
+                initial.edge_index = ad.Int([0])
+                initial.edge_pos = ad.Array3f([0.0], [0.0], [0.0])
+                initial.edge_dir = ad.Array3f([1.0], [0.0], [0.0])
+                initial.edge_t_min = ad.Float([-0.5])
+                initial.edge_t_max = ad.Float([0.5])
+                initial.n0 = ad.Array3f([0.0], [1.0], [0.0])
+                initial.n1 = ad.Array3f([0.0], [-1.0], [0.0])
+                initial.prim0 = ad.Int([0])
+                initial.prim1 = ad.Int([-1])
+                initial.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+                initial.src = ad.Array3f([0.0], [0.0], [1.0])
+                initial.src_power = ad.Float([2.0])
+                initial.wi = ad.Array3f([0.0], [0.0], [-1.0])
+                initial.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+                initial.prefix_depth = ad.Int([0])
+
+                recursive = pj.DfrStatesAD()
+                recursive.count = 1
+                recursive.edge_index = ad.Int([1])
+                recursive.edge_pos = ad.Array3f([0.0], [0.0], [-0.75])
+                recursive.edge_dir = ad.Array3f([0.0], [1.0], [0.0])
+                recursive.edge_t_min = ad.Float([-0.5])
+                recursive.edge_t_max = ad.Float([0.5])
+                recursive.n0 = ad.Array3f([1.0], [0.0], [0.0])
+                recursive.n1 = ad.Array3f([-1.0], [0.0], [0.0])
+                recursive.prim0 = ad.Int([0])
+                recursive.prim1 = ad.Int([-1])
+                recursive.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+                recursive.src = ad.Array3f([0.0], [0.0], [0.0])
+                recursive.src_power = ad.Float([1.0])
+                recursive.wi = ad.Array3f([0.0], [0.0], [-1.0])
+                recursive.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+                recursive.prefix_depth = ad.Int([0])
+
+                grid = pj.DfrGrid()
+                grid.axis = 2
+                grid.position = -1.5
+                grid.coord0_min = -1.0
+                grid.coord0_max = 1.0
+                grid.coord1_min = -1.0
+                grid.coord1_max = 1.0
+                grid.resolution0 = 1
+                grid.resolution1 = 1
+                grid.cell_area = 4.0
+
+                material = pj.DfrMaterialAD()
+                material.eta_r = ad.Float([4.0])
+                material.sigma = ad.Float([0.0])
+                material.mu_r = ad.Float([1.0])
+                material.gain = gain
+                material.valid = ad.Bool([True])
+
+                options = pj.DfrOptions()
+                options.wavelength = 0.125
+                options.k = 50.26548245743669
+                options.seed = 17
+                options.samples = 64
+                options.max_order = 2
+                options.direct_samples = 64
+                options.keller_samples = 0
+                options.suffix_samples = 0
+                options.strategy_mask = pj.RAYD_DFR_DIRECT
+                options.sample_sequence = pj.RAYD_DFR_HASH
+                options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+                options.collect_debug_counts = True
+
+                result = scene.accum_dfr(initial, recursive, grid, material, options, True)
+                loss = dr.sum(result.power)
+                if mode == "backward":
+                    dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+                    grad_gain = dr.grad(gain)
+                    dr.eval(result.power, result.direct_count, grad_gain)
+                    return {
+                        "result_type": type(result).__name__,
+                        "power": float(result.power[0]),
+                        "direct_count": int(result.direct_count[0]),
+                        "grad_gain": float(grad_gain[0]),
+                    }
+                if mode == "forward":
+                    dr.set_grad(gain, ad.Float([1.0]))
+                    dr.forward(gain)
+                    jvp_gain = dr.grad(loss)
+                    dr.eval(result.power, result.direct_count, jvp_gain)
+                    return {
+                        "jvp_gain": float(jvp_gain[0]),
+                    }
+                dr.eval(loss)
+                return {"loss": float(loss[0])}
+
+            step = 1.0e-3
+            backward_result = run_case(1.0, mode="backward")
+            forward_result = run_case(1.0, mode="forward")
+            fd = (run_case(1.0 + step)["loss"] - run_case(1.0 - step)["loss"]) / (2.0 * step)
+            print(json.dumps({
+                **backward_result,
+                **forward_result,
+                "fd_gain": fd,
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "DfrAccumAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["direct_count"], 0)
+        self.assertAlmostEqual(data["grad_gain"], data["fd_gain"], delta=2.0e-5)
+        self.assertAlmostEqual(data["jvp_gain"], data["fd_gain"], delta=2.0e-5)
 
     def test_accum_dfr_order2_suffix_supports_ad_inputs(self):
         data = run_json(

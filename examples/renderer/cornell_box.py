@@ -58,10 +58,10 @@ def cosine_hemisphere(n, rng):
 def trace(scene, alb, emi, light_id, primary_ray, rng, max_depth=4, diff=False):
     n = dr.width(primary_ray.o[0])
     if diff:
-        F3, B, MkR = dr.cuda.ad.Array3f, dr.cuda.ad.Bool, rd.Ray
-        ray = rd.Ray(dr.cuda.ad.Array3f(primary_ray.o), dr.cuda.ad.Array3f(primary_ray.d))
+        F3, B, MkR = dr.cuda.ad.Array3f, dr.cuda.ad.Bool, rd.RayAD
+        ray = rd.RayAD(dr.cuda.ad.Array3f(primary_ray.o), dr.cuda.ad.Array3f(primary_ray.d))
     else:
-        F3, B, MkR = dr.cuda.Array3f, dr.cuda.Bool, rd.RayDetached; ray = primary_ray
+        F3, B, MkR = dr.cuda.Array3f, dr.cuda.Bool, rd.Ray; ray = primary_ray
     beta, L, active = dr.full(F3, 1, n), dr.zeros(F3, n), dr.full(B, True, n)
 
     for depth in range(max_depth):
@@ -80,7 +80,7 @@ def trace(scene, alb, emi, light_id, primary_ray, rng, max_depth=4, diff=False):
         cos_s = dr.maximum(dr.dot(sn, wi), 0.0)
         cos_l = dr.maximum(dr.dot(F3(*(-LIGHT_N).tolist()), wi), 0.0)
         can_shade = surf & (cos_s > 0) & (cos_l > 0)
-        sh = rd.RayDetached(dr.detach(its.p)+dr.detach(gn)*1e-3, dr.detach(wi))
+        sh = rd.Ray(dr.detach(its.p)+dr.detach(gn)*1e-3, dr.detach(wi))
         sh.tmax = dr.maximum(dr.sqrt(dr.detach(d2))-2e-3, 1e-3)
         vis = dr.select(~scene.intersect(sh, dr.detach(can_shade)).is_valid(), 1.0, 0.0)
         L = dr.select(surf, L + beta*kd*(F3(*LIGHT_E.tolist())*(LIGHT_AREA*cos_s*cos_l*dr.rcp(PI*dr.maximum(d2,1e-5))*vis)), L)
@@ -108,7 +108,12 @@ def _pixel_uv(w, h, spp, rng):
 
 def _forward_grad(tx, image):
     dr.set_grad(tx, 0.0); dr.set_grad(tx, 1.0)
-    dr.forward_to(image); g = dr.grad(image); dr.eval(g); return g
+    # Keep AD edges (clear only interior tangents): interior and edge gradients
+    # are two separate forward passes from the same tx that share the
+    # tx -> transform -> vertices subgraph. The default forward_to would clear
+    # those edges in the first pass and zero out the second.
+    dr.forward_to(image, flags=dr.ADFlag.Default & ~dr.ADFlag.ClearEdges)
+    g = dr.grad(image); dr.eval(g); return g
 
 def render_interior_ad(scene, camera, alb, emi, lid, tx, seed=7, spp=64, md=3):
     w, h, sc = camera.width, camera.height, camera.width*camera.height*spp
