@@ -288,7 +288,7 @@ OptixPipelineConfig reflection_epc_pipeline_config() {
     config.closesthit_entry = "__closesthit__reflection_epc";
     config.anyhit_entry = "__anyhit__reflection_epc";
     config.num_payload_values = 6;
-    config.params_size = sizeof(ReflectionEpcParams);
+    config.params_size = sizeof(ReflEpcParams);
     return config;
 }
 

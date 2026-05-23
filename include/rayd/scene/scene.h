@@ -145,9 +145,9 @@ public:
         const AccumOptions &options,
         MaskT<Detached> active,
         const Vector3fT<Detached> &tx_polarization) const;
-    /// Native order-1 diffraction accumulation onto a grid (non-AD fast path).
+    /// Native direct diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
-    DfrAccumT<Detached> accum_dfr1(
+    DfrAccumT<Detached> accum_dfr_direct(
         const DfrStatesT<Detached> &states,
         const DfrGrid &grid,
         const DfrMaterialT<Detached> &material,
@@ -162,7 +162,7 @@ public:
         const DfrMaterialT<Detached> &material,
         const DfrOptions &options,
         MaskT<Detached> active) const;
-    /// Native compact first-order diffraction path export (non-AD fast path).
+    /// Native compact direct diffraction path export (non-AD fast path).
     template <bool Detached>
     DfrPathsT<Detached> trace_dfr_paths(
         const Vector3fT<Detached> &tx_positions,
@@ -173,40 +173,40 @@ public:
         MaskT<Detached> active) const;
     /// Equivalent-path-correction reflection trace toward \p receiver with default options.
     template <bool Detached>
-    ReflectionEpcResultT<Detached> trace_reflection_epc(
+    ReflEpcT<Detached> trace_refl_epc(
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
         MaskT<Detached> active = true) const {
-        return trace_reflection_epc(ray,
+        return trace_refl_epc(ray,
                                     receiver,
                                     max_bounces,
-                                    ReflectionEpcOptions(),
+                                    ReflEpcOptions(),
                                     active);
     }
     /// Equivalent-path-correction reflection trace toward \p receiver (see multipath/reflection_epc.h).
     template <bool Detached>
-    ReflectionEpcResultT<Detached> trace_reflection_epc(
+    ReflEpcT<Detached> trace_refl_epc(
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
-        const ReflectionEpcOptions &options,
+        const ReflEpcOptions &options,
         MaskT<Detached> active = true) const;
     /// EPC reflection trace returning accumulated field, seeded from a ray (see multipath/reflection_epc_field.h).
     template <bool Detached>
-    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
+    ReflEpcFieldT<Detached> trace_refl_epc_field(
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
-        const ReflectionEpcFieldOptions &options,
+        const ReflEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
     /// EPC reflection field trace seeded from a transmitter position rather than a ray.
     template <bool Detached>
-    ReflectionEpcFieldResultT<Detached> trace_reflection_epc_field(
+    ReflEpcFieldT<Detached> trace_refl_epc_field(
         const Vector3fT<Detached> &tx_position,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
-        const ReflectionEpcFieldOptions &options,
+        const ReflEpcFieldOptions &options,
         MaskT<Detached> active = true) const;
     /// Trace per-bounce reflection records with explicit options (see multipath/reflection.h).
     template <bool Detached>

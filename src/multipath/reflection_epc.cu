@@ -6,7 +6,7 @@
 namespace rayd {
 
 extern "C" {
-extern __constant__ ReflectionEpcParams params;
+extern __constant__ ReflEpcParams params;
 }
 
 namespace {
@@ -355,7 +355,7 @@ static __forceinline__ __device__ void store_invalid(unsigned int ray_index,
 } // namespace
 
 extern "C" {
-__constant__ ReflectionEpcParams params;
+__constant__ ReflEpcParams params;
 }
 
 // OptiX programs for the native EPC pipeline; one raygen launch per ray. The same
@@ -374,7 +374,7 @@ extern "C" __global__ void __anyhit__reflection_epc() {
     const unsigned int ignore1 = optixGetPayload_3();
     const unsigned int ignore2 = optixGetPayload_4();
     const int candidate =
-        params.visibility_ignore_mode == ReflectionEpcVisibilityIgnoreSurfaceGroup
+        params.visibility_ignore_mode == ReflEpcVisibilityIgnoreSurfaceGroup
             ? surface_group_for_prim(global_prim)
             : global_prim;
     if ((ignore0 != kInvalidPrim && candidate == static_cast<int>(ignore0)) ||
@@ -449,13 +449,13 @@ extern "C" __global__ void __raygen__reflection_epc() {
                                       params.rx_y[rx_id],
                                       params.rx_z[rx_id]);
 
-    float3 plane_points[ReflectionEpcMaxBounces];
-    float3 plane_normals[ReflectionEpcMaxBounces];
-    int trace_prim_ids[ReflectionEpcMaxBounces];
-    int resolved_prim_ids[ReflectionEpcMaxBounces];
-    int surface_group_ids[ReflectionEpcMaxBounces];
-    float3 image_sources[ReflectionEpcMaxBounces + 1];
-    float3 reflection_points[ReflectionEpcMaxBounces];
+    float3 plane_points[ReflEpcMaxBounces];
+    float3 plane_normals[ReflEpcMaxBounces];
+    int trace_prim_ids[ReflEpcMaxBounces];
+    int resolved_prim_ids[ReflEpcMaxBounces];
+    int surface_group_ids[ReflEpcMaxBounces];
+    float3 image_sources[ReflEpcMaxBounces + 1];
+    float3 reflection_points[ReflEpcMaxBounces];
     image_sources[0] = origin;
 
     int bounce_count = 0;
@@ -614,7 +614,7 @@ extern "C" __global__ void __raygen__reflection_epc() {
         path_length += length3(end - start);
 
         const bool ignore_surface_group =
-            params.visibility_ignore_mode == ReflectionEpcVisibilityIgnoreSurfaceGroup &&
+            params.visibility_ignore_mode == ReflEpcVisibilityIgnoreSurfaceGroup &&
             has_surface_groups();
         const int ignore0 = segment > 0
                                 ? (ignore_surface_group

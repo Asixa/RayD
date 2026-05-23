@@ -10,7 +10,7 @@ namespace rayd {
 /// Options for equivalent-path-correction (EPC) reflection traces. The expected
 /// reflector sequence and optional surface-group tables steer which primitives a
 /// path is allowed to use and which to ignore during visibility checks.
-struct ReflectionEpcOptions {
+struct ReflEpcOptions {
     Int expected_prim_ids;       ///< Expected reflector per slot (n_rays * max_bounces).
     Int surface_group_id;        ///< Surface-group id per triangle (optional).
     Int surface_group_size;      ///< Member count of each surface group.
@@ -22,7 +22,7 @@ struct ReflectionEpcOptions {
 
 /// EPC options extended with per-slot material/geometry and the field-evaluation
 /// parameters (frequency, polarization) plus output selectors.
-struct ReflectionEpcFieldOptions : ReflectionEpcOptions {
+struct ReflEpcFieldOptions : ReflEpcOptions {
     Vector3f slot_plane_point = zeros<Vector3f>(1);  ///< Override reflecting-plane point per slot.
     Vector3f slot_plane_normal = zeros<Vector3f>(1); ///< Override reflecting-plane normal per slot.
     Float slot_eta_r = full<Float>(1.f, 1);  ///< Relative permittivity per slot.
@@ -46,7 +46,7 @@ struct ReflectionEpcFieldOptions : ReflectionEpcOptions {
 /// Result of an EPC reflection trace. Per-slot arrays are ray_count * max_bounces;
 /// per-ray arrays carry the path validity, length, and first occlusion encountered.
 template <typename Float_>
-struct ReflectionEpcResultData {
+struct ReflEpcData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -69,7 +69,7 @@ struct ReflectionEpcResultData {
     Int_ first_blocked_prim = full<Int_>(-1, 1);      ///< Per-ray primitive that blocked it.
     Int_ first_blocked_group = full<Int_>(-1, 1);     ///< Per-ray surface group that blocked it.
 
-    DRJIT_STRUCT(ReflectionEpcResultData,
+    DRJIT_STRUCT(ReflEpcData,
                  valid,
                  bounce_count,
                  path_length,
@@ -85,16 +85,16 @@ struct ReflectionEpcResultData {
 };
 
 template <bool Detached>
-using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
+using ReflEpcT = ReflEpcData<FloatT<Detached>>;
 
-using ReflectionEpcResultAD = ReflectionEpcResultT<false>;
-using ReflectionEpcResult = ReflectionEpcResultT<true>;
+using ReflEpcAD = ReflEpcT<false>;
+using ReflEpc = ReflEpcT<true>;
 
 /// Result of an EPC reflection trace that also evaluates the complex field per ray.
 /// The field is the per-component (x, y, z) complex phasor; geometry/endpoint arrays
-/// are present only when the corresponding ReflectionEpcFieldOptions flags are set.
+/// are present only when the corresponding ReflEpcFieldOptions flags are set.
 template <typename Float_>
-struct ReflectionEpcFieldResultData {
+struct ReflEpcFieldData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
@@ -124,7 +124,7 @@ struct ReflectionEpcFieldResultData {
     Int_ resolved_prim_ids = full<Int_>(-1, 1); ///< Per-slot resolved primitive ids (if requested).
     Int_ surface_group_ids = full<Int_>(-1, 1); ///< Per-slot surface-group ids (if requested).
 
-    DRJIT_STRUCT(ReflectionEpcFieldResultData,
+    DRJIT_STRUCT(ReflEpcFieldData,
                  valid,
                  bounce_count,
                  path_length,
@@ -144,10 +144,10 @@ struct ReflectionEpcFieldResultData {
 };
 
 template <bool Detached>
-using ReflectionEpcFieldResultT =
-    ReflectionEpcFieldResultData<FloatT<Detached>>;
+using ReflEpcFieldT =
+    ReflEpcFieldData<FloatT<Detached>>;
 
-using ReflectionEpcFieldResultAD = ReflectionEpcFieldResultT<false>;
-using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<true>;
+using ReflEpcFieldAD = ReflEpcFieldT<false>;
+using ReflEpcField = ReflEpcFieldT<true>;
 
 } // namespace rayd

@@ -11,14 +11,14 @@
 namespace rayd {
 
 /// Maximum reflection depth supported by the native EPC kernel.
-constexpr int ReflectionEpcMaxBounces = 8;
+constexpr int ReflEpcMaxBounces = 8;
 /// visibility_ignore_mode value: ignore the exact reflector primitive on each segment.
-constexpr int ReflectionEpcVisibilityIgnorePrimitive = 0;
+constexpr int ReflEpcVisibilityIgnorePrimitive = 0;
 /// visibility_ignore_mode value: ignore the reflector's whole surface group.
-constexpr int ReflectionEpcVisibilityIgnoreSurfaceGroup = 1;
+constexpr int ReflEpcVisibilityIgnoreSurfaceGroup = 1;
 
 /// Launch parameters for the native EPC pipeline (flat SoA device pointers).
-struct ReflectionEpcParams {
+struct ReflEpcParams {
     OptixTraversableHandle primary_handle;   ///< Primary scene IAS handle.
     OptixTraversableHandle secondary_handle; ///< Secondary IAS handle (split scene).
     int split_mode;                          ///< 0 = single scene, nonzero = traverse both handles.
@@ -41,7 +41,7 @@ struct ReflectionEpcParams {
     int n_meshes;
     int n_triangles;
 
-    // Expected reflector sequence and optional surface-group tables (see ReflectionEpcOptions).
+    // Expected reflector sequence and optional surface-group tables (see ReflEpcOptions).
     const int *expected_prim_ids;
     int expected_prim_count;
     const int *surface_group_id;
@@ -50,7 +50,7 @@ struct ReflectionEpcParams {
     int surface_group_count;
     const int *surface_group_members;
     int surface_max_group_size;
-    int visibility_ignore_mode;  ///< One of the ReflectionEpcVisibilityIgnore* constants.
+    int visibility_ignore_mode;  ///< One of the ReflEpcVisibilityIgnore* constants.
     const int *final_ignore_group_ids;
     int final_ignore_group_count;
 

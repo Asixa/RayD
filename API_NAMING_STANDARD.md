@@ -4,16 +4,18 @@ RayD public APIs use short, unambiguous stems. New public names must follow thes
 
 ## Domain Stems
 
-- Use `Dfr` for diffraction: `DfrStates`, `DfrGrid`, `DfrMaterial`, `DfrAccum`, `DfrPaths`, `accum_dfr1`, `accum_dfr`, `trace_dfr_paths`.
+- Use `Dfr` for diffraction: `DfrStates`, `DfrGrid`, `DfrMaterial`, `DfrAccum`, `DfrPaths`, `accum_dfr_direct`, `accum_dfr`, `trace_dfr_paths`.
+- Use `Refl` for reflection-specific compact names, and keep `Epc` in equivalent-path-correction APIs: `ReflEpc`, `ReflEpcField`, `ReflEpcOptions`, `trace_refl_epc`, `trace_refl_epc_field`.
 - Do not use `Diff` for diffraction. In RayD, `diff` reads as differentiation/autodiff and conflicts with `AD` naming.
 - Use `AD` only for automatic differentiation variants: `RayAD`, `DfrStatesAD`, `DfrAccumAD`.
 - Keep full words where they avoid ambiguity: `Reflection`, `Segment`, `Material`, `Visibility`.
 
 ## Function Names
 
-- Prefer verb plus compact domain stem: `accum_dfr1`, `accum_dfr`, `trace_dfr_paths`, `visible_edge`.
-- Avoid repeating the domain inside every word. Use `accum_dfr1`, not `accumulate_diffraction_order1`.
+- Prefer verb plus compact domain stem: `accum_dfr_direct`, `accum_dfr`, `trace_dfr_paths`, `trace_refl_epc_field`, `visible_edge`.
+- Avoid repeating the domain inside every word. Use `accum_dfr_direct`, not `accumulate_diffraction_order1`.
 - Keep native fast-path methods strict. Do not add compatibility aliases for renamed public methods.
+- Use `trace_*` for path or geometry export, and `accum_*` for kernels that reduce contributions into aggregate outputs such as grids.
 
 ## Field Names
 

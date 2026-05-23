@@ -51,18 +51,18 @@ using ReflectionTraceT = ReflectionTraceData<FloatT<Detached>>;
 using ReflectionTraceAD = ReflectionTraceT<false>;
 using ReflectionTrace = ReflectionTraceT<true>;
 
-template <typename> struct ReflectionEpcResultData;
+template <typename> struct ReflEpcData;
 template <bool Detached>
-using ReflectionEpcResultT = ReflectionEpcResultData<FloatT<Detached>>;
-using ReflectionEpcResultAD = ReflectionEpcResultT<false>;
-using ReflectionEpcResult = ReflectionEpcResultT<true>;
-struct ReflectionEpcOptions;
-struct ReflectionEpcFieldOptions;
-template <typename> struct ReflectionEpcFieldResultData;
+using ReflEpcT = ReflEpcData<FloatT<Detached>>;
+using ReflEpcAD = ReflEpcT<false>;
+using ReflEpc = ReflEpcT<true>;
+struct ReflEpcOptions;
+struct ReflEpcFieldOptions;
+template <typename> struct ReflEpcFieldData;
 template <bool Detached>
-using ReflectionEpcFieldResultT = ReflectionEpcFieldResultData<FloatT<Detached>>;
-using ReflectionEpcFieldResultAD = ReflectionEpcFieldResultT<false>;
-using ReflectionEpcFieldResult = ReflectionEpcFieldResultT<true>;
+using ReflEpcFieldT = ReflEpcFieldData<FloatT<Detached>>;
+using ReflEpcFieldAD = ReflEpcFieldT<false>;
+using ReflEpcField = ReflEpcFieldT<true>;
 
 template <typename> struct MaterialData;
 template <bool Detached>

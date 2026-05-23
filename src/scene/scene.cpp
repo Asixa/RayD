@@ -35,7 +35,7 @@ enum class TraceVisibilityBackend {
 };
 
 /// How EPC visibility decides which primitives to ignore: exact primitive ids vs. surface groups.
-enum class ReflectionEpcVisibilityIgnoreMode {
+enum class ReflEpcVisibilityIgnoreMode {
     Primitive,
     SurfaceGroup
 };
@@ -91,19 +91,19 @@ TraceVisibilityBackend active_trace_visibility_backend() {
     return value;
 }
 
-ReflectionEpcVisibilityIgnoreMode parse_reflection_epc_visibility_ignore_mode(
+ReflEpcVisibilityIgnoreMode parse_refl_epc_vis_ignore(
     const std::string &value) {
     const std::string normalized = normalize_optix_split_mode_value(value.c_str());
     if (normalized.empty() || normalized == "primitive" ||
         normalized == "prim" || normalized == "exact") {
-        return ReflectionEpcVisibilityIgnoreMode::Primitive;
+        return ReflEpcVisibilityIgnoreMode::Primitive;
     }
     if (normalized == "surface_group" || normalized == "surface-group" ||
         normalized == "group") {
-        return ReflectionEpcVisibilityIgnoreMode::SurfaceGroup;
+        return ReflEpcVisibilityIgnoreMode::SurfaceGroup;
     }
     throw std::runtime_error(
-        "Invalid ReflectionEpcOptions.visibility_ignore_mode. "
+        "Invalid ReflEpcOptions.visibility_ignore_mode. "
         "Expected one of: 'primitive', 'surface_group'.");
 }
 
@@ -273,7 +273,7 @@ struct ReflectionTraceRaw {
     Float trailing_origin_z;
 };
 
-struct ReflectionEpcRaw {
+struct ReflEpcRaw {
     int ray_count = 0;
     int max_bounces = 0;
     Mask valid;
@@ -390,9 +390,9 @@ Int globalize_primitive_ids(const Int &local_prim_ids,
 }
 
 template <bool Detached>
-ReflectionEpcResultT<Detached> initialize_reflection_epc_result(int ray_count,
+ReflEpcT<Detached> init_refl_epc(int ray_count,
                                                                 int max_bounces) {
-    ReflectionEpcResultT<Detached> result;
+    ReflEpcT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
     const int slot_count = ray_count * max_bounces;
@@ -411,9 +411,9 @@ ReflectionEpcResultT<Detached> initialize_reflection_epc_result(int ray_count,
     return result;
 }
 
-ReflectionEpcRaw allocate_reflection_epc_raw(int ray_count, int max_bounces) {
+ReflEpcRaw alloc_refl_epc_raw(int ray_count, int max_bounces) {
     const int slot_count = ray_count * max_bounces;
-    ReflectionEpcRaw raw;
+    ReflEpcRaw raw;
     raw.ray_count = ray_count;
     raw.max_bounces = max_bounces;
     raw.valid = empty<Mask>(ray_count);
@@ -435,11 +435,11 @@ ReflectionEpcRaw allocate_reflection_epc_raw(int ray_count, int max_bounces) {
 }
 
 template <bool Detached>
-ReflectionEpcFieldResultT<Detached> initialize_reflection_epc_field_result(
+ReflEpcFieldT<Detached> init_refl_epc_field(
     int ray_count,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options) {
-    ReflectionEpcFieldResultT<Detached> result;
+    const ReflEpcFieldOptions &options) {
+    ReflEpcFieldT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
     const int slot_count = ray_count * max_bounces;
@@ -512,9 +512,9 @@ ReflectionEpcFieldResultT<Detached> initialize_reflection_epc_field_result(
     return result;
 }
 
-ReflectionEpcOptions epc_options_from_field_options(
-    const ReflectionEpcFieldOptions &options) {
-    ReflectionEpcOptions epc_options;
+ReflEpcOptions epc_options_from_field_options(
+    const ReflEpcFieldOptions &options) {
+    ReflEpcOptions epc_options;
     epc_options.expected_prim_ids = options.expected_prim_ids;
     epc_options.surface_group_id = options.surface_group_id;
     epc_options.surface_group_size = options.surface_group_size;
@@ -3350,41 +3350,41 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
 }
 
 template <bool Detached>
-ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
+ReflEpcT<Detached> Scene::trace_refl_epc(
     const RayT<Detached> &ray,
     const Vector3fT<Detached> &receiver,
     int max_bounces,
-    const ReflectionEpcOptions &options,
+    const ReflEpcOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
-    require(is_ready(), "Scene::trace_reflection_epc(): scene is not built.");
+    require(is_ready(), "Scene::trace_refl_epc(): scene is not built.");
     require(!pending_updates_,
-            "Scene::trace_reflection_epc(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::trace_refl_epc(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0,
-            "Scene::trace_reflection_epc(): max_bounces must be positive.");
-    require(max_bounces <= ReflectionEpcMaxBounces,
-            "Scene::trace_reflection_epc(): max_bounces exceeds the native EPC limit.");
+            "Scene::trace_refl_epc(): max_bounces must be positive.");
+    require(max_bounces <= ReflEpcMaxBounces,
+            "Scene::trace_refl_epc(): max_bounces exceeds the native EPC limit.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflectionEpcResultT<Detached> result =
-        initialize_reflection_epc_result<Detached>(ray_count, max_bounces);
+    ReflEpcT<Detached> result =
+        init_refl_epc<Detached>(ray_count, max_bounces);
     if (ray_count == 0) {
         return result;
     }
 
     if constexpr (!Detached) {
         require(false,
-                "Scene::trace_reflection_epc(): native EPC is a non-AD native fast path. "
+                "Scene::trace_refl_epc(): native EPC is a non-AD native fast path. "
                 "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
-                "Scene::trace_reflection_epc(): receiver width must be 1 or match ray count.");
-        const ReflectionEpcVisibilityIgnoreMode visibility_ignore_mode =
-            parse_reflection_epc_visibility_ignore_mode(options.visibility_ignore_mode);
+                "Scene::trace_refl_epc(): receiver width must be 1 or match ray count.");
+        const ReflEpcVisibilityIgnoreMode visibility_ignore_mode =
+            parse_refl_epc_vis_ignore(options.visibility_ignore_mode);
         const bool surface_group_ignore =
-            visibility_ignore_mode == ReflectionEpcVisibilityIgnoreMode::SurfaceGroup;
+            visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
         const int slot_count = ray_count * max_bounces;
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         const int surface_group_id_count = static_cast<int>(slices(options.surface_group_id));
@@ -3399,28 +3399,28 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
             surface_group_member_count > 0 ||
             options.surface_max_group_size > 0;
         require(expected_prim_count == 0 || expected_prim_count == slot_count,
-                "Scene::trace_reflection_epc(): expected_prim_ids width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc(): expected_prim_ids width must be n_rays * max_bounces.");
         require(final_ignore_group_count == 0 ||
                     final_ignore_group_count == 1 ||
                     final_ignore_group_count == ray_count,
-                "Scene::trace_reflection_epc(): final_ignore_group_ids width must be 1 or match ray count.");
+                "Scene::trace_refl_epc(): final_ignore_group_ids width must be 1 or match ray count.");
         if (has_surface_groups) {
             const int triangle_count =
                 static_cast<int>(slices(triangle_info_detached_.p0));
             require(surface_group_id_count == triangle_count,
-                    "Scene::trace_reflection_epc(): surface_group_id width must match triangle count.");
+                    "Scene::trace_refl_epc(): surface_group_id width must match triangle count.");
             require(surface_group_count > 0,
-                    "Scene::trace_reflection_epc(): surface_group_size must be non-empty when surface groups are provided.");
+                    "Scene::trace_refl_epc(): surface_group_size must be non-empty when surface groups are provided.");
             require(options.surface_max_group_size > 0,
-                    "Scene::trace_reflection_epc(): surface_max_group_size must be positive when surface groups are provided.");
+                    "Scene::trace_refl_epc(): surface_max_group_size must be positive when surface groups are provided.");
             require(surface_group_member_count >=
                         surface_group_count * options.surface_max_group_size,
-                    "Scene::trace_reflection_epc(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
+                    "Scene::trace_refl_epc(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
         }
         require(!surface_group_ignore || has_surface_groups,
-                "Scene::trace_reflection_epc(): visibility_ignore_mode='surface_group' requires surface group tables.");
+                "Scene::trace_refl_epc(): visibility_ignore_mode='surface_group' requires surface group tables.");
         require(final_ignore_group_count == 0 || surface_group_ignore,
-                "Scene::trace_reflection_epc(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
+                "Scene::trace_refl_epc(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
         const Mask active_detached =
             sanitize_reflection_active<Detached>(ray, active);
@@ -3435,9 +3435,9 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         int hitgroup_record_count = scenes.hitgroup_record_count;
 
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_reflection_epc(): OptiX scene is not ready.");
+                "Scene::trace_refl_epc(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::trace_reflection_epc(): invalid hitgroup record count.");
+                "Scene::trace_refl_epc(): invalid hitgroup record count.");
 
         drjit::eval(ray.o,
                     ray.d,
@@ -3463,9 +3463,9 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
 
         ensure_reflection_epc_geometry_ready();
 
-        ReflectionEpcRaw raw = allocate_reflection_epc_raw(ray_count, max_bounces);
+        ReflEpcRaw raw = alloc_refl_epc_raw(ray_count, max_bounces);
 
-        ReflectionEpcParams params = {};
+        ReflEpcParams params = {};
         params.primary_handle = primary_scene->ias_handle();
         params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready()
@@ -3501,8 +3501,8 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
         params.surface_max_group_size =
             has_surface_groups ? options.surface_max_group_size : 0;
         params.visibility_ignore_mode =
-            surface_group_ignore ? ReflectionEpcVisibilityIgnoreSurfaceGroup
-                                 : ReflectionEpcVisibilityIgnorePrimitive;
+            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup
+                                 : ReflEpcVisibilityIgnorePrimitive;
         params.final_ignore_group_ids =
             final_ignore_group_count > 0 ? options.final_ignore_group_ids.data() : nullptr;
         params.final_ignore_group_count = final_ignore_group_count;
@@ -3559,28 +3559,28 @@ ReflectionEpcResultT<Detached> Scene::trace_reflection_epc(
 }
 
 template <bool Detached>
-ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
+ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     const RayT<Detached> &ray,
     const Vector3fT<Detached> &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
-    require(is_ready(), "Scene::trace_reflection_epc_field(): scene is not built.");
+    require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
     require(!pending_updates_,
-            "Scene::trace_reflection_epc_field(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0,
-            "Scene::trace_reflection_epc_field(): max_bounces must be positive.");
-    require(max_bounces <= ReflectionEpcMaxBounces,
-            "Scene::trace_reflection_epc_field(): max_bounces exceeds the native EPC limit.");
+            "Scene::trace_refl_epc_field(): max_bounces must be positive.");
+    require(max_bounces <= ReflEpcMaxBounces,
+            "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
     require(options.omega > 0.f,
-            "Scene::trace_reflection_epc_field(): omega must be positive.");
+            "Scene::trace_refl_epc_field(): omega must be positive.");
     require(options.wavelength > 0.f,
-            "Scene::trace_reflection_epc_field(): wavelength must be positive.");
+            "Scene::trace_refl_epc_field(): wavelength must be positive.");
 
     const int ray_count = static_cast<int>(slices(ray.o));
-    ReflectionEpcFieldResultT<Detached> result =
-        initialize_reflection_epc_field_result<Detached>(
+    ReflEpcFieldT<Detached> result =
+        init_refl_epc_field<Detached>(
             ray_count,
             max_bounces,
             options);
@@ -3590,27 +3590,27 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
 
     if constexpr (!Detached) {
         require(false,
-                "Scene::trace_reflection_epc_field(): native EPC field is a non-AD native fast path. "
+                "Scene::trace_refl_epc_field(): native EPC field is a non-AD native fast path. "
                 "Pass a non-AD Ray and detached receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
-                "Scene::trace_reflection_epc_field(): receiver width must be 1 or match ray count.");
+                "Scene::trace_refl_epc_field(): receiver width must be 1 or match ray count.");
         const int slot_count = ray_count * max_bounces;
         require(static_cast<int>(slices(options.slot_plane_normal)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_eta_r)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_eta_r width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_eta_r width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_mu_r)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_mu_r width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_mu_r width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_sigma)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_sigma width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_sigma width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_gain)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_gain width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_gain width must be n_rays * max_bounces.");
         const int tx_pol_count = static_cast<int>(slices(options.tx_polarization));
         require(tx_pol_count == 1 || tx_pol_count == ray_count,
-                "Scene::trace_reflection_epc_field(): tx_polarization width must be 1 or match ray count.");
+                "Scene::trace_refl_epc_field(): tx_polarization width must be 1 or match ray count.");
 
         drjit::eval(options.slot_plane_normal,
                     options.slot_eta_r,
@@ -3619,17 +3619,17 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
                     options.slot_gain,
                     options.tx_polarization);
 
-        const ReflectionEpcOptions epc_options =
+        const ReflEpcOptions epc_options =
             epc_options_from_field_options(options);
-        const ReflectionEpcResult epc =
-            trace_reflection_epc<true>(
+        const ReflEpc epc =
+            trace_refl_epc<true>(
                 ray,
                 receiver,
                 max_bounces,
                 epc_options,
                 active);
 
-        ReflectionEpcFieldParams params = {};
+        ReflEpcFieldParams params = {};
         params.n_rays = ray_count;
         params.max_bounces = max_bounces;
         params.epc_valid = reinterpret_cast<const uint8_t *>(epc.valid.data());
@@ -3713,28 +3713,28 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
 }
 
 template <bool Detached>
-ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
+ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     const Vector3fT<Detached> &tx_position,
     const Vector3fT<Detached> &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
-    require(is_ready(), "Scene::trace_reflection_epc_field(): scene is not built.");
+    require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
     require(!pending_updates_,
-            "Scene::trace_reflection_epc_field(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::trace_refl_epc_field(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0,
-            "Scene::trace_reflection_epc_field(): max_bounces must be positive.");
-    require(max_bounces <= ReflectionEpcMaxBounces,
-            "Scene::trace_reflection_epc_field(): max_bounces exceeds the native EPC limit.");
+            "Scene::trace_refl_epc_field(): max_bounces must be positive.");
+    require(max_bounces <= ReflEpcMaxBounces,
+            "Scene::trace_refl_epc_field(): max_bounces exceeds the native EPC limit.");
     require(options.omega > 0.f,
-            "Scene::trace_reflection_epc_field(): omega must be positive.");
+            "Scene::trace_refl_epc_field(): omega must be positive.");
     require(options.wavelength > 0.f,
-            "Scene::trace_reflection_epc_field(): wavelength must be positive.");
+            "Scene::trace_refl_epc_field(): wavelength must be positive.");
 
     const int ray_count = static_cast<int>(slices(tx_position));
-    ReflectionEpcFieldResultT<Detached> result =
-        initialize_reflection_epc_field_result<Detached>(
+    ReflEpcFieldT<Detached> result =
+        init_refl_epc_field<Detached>(
             ray_count,
             max_bounces,
             options);
@@ -3744,37 +3744,37 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
 
     if constexpr (!Detached) {
         require(false,
-                "Scene::trace_reflection_epc_field(): native EPC field is a non-AD native fast path. "
+                "Scene::trace_refl_epc_field(): native EPC field is a non-AD native fast path. "
                 "Pass detached transmitter and receiver positions.");
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
         require(receiver_count == 1 || receiver_count == ray_count,
-                "Scene::trace_reflection_epc_field(): receiver width must be 1 or match transmitter count.");
+                "Scene::trace_refl_epc_field(): receiver width must be 1 or match transmitter count.");
         const int slot_count = ray_count * max_bounces;
         const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
         require(expected_prim_count == slot_count,
-                "Scene::trace_reflection_epc_field(): expected_prim_ids width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): expected_prim_ids width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_plane_point)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_plane_point width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_plane_point width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_plane_normal)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_eta_r)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_eta_r width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_eta_r width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_mu_r)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_mu_r width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_mu_r width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_sigma)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_sigma width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_sigma width must be n_rays * max_bounces.");
         require(static_cast<int>(slices(options.slot_gain)) == slot_count,
-                "Scene::trace_reflection_epc_field(): slot_gain width must be n_rays * max_bounces.");
+                "Scene::trace_refl_epc_field(): slot_gain width must be n_rays * max_bounces.");
         const int tx_pol_count = static_cast<int>(slices(options.tx_polarization));
         require(tx_pol_count == 1 || tx_pol_count == ray_count,
-                "Scene::trace_reflection_epc_field(): tx_polarization width must be 1 or match transmitter count.");
+                "Scene::trace_refl_epc_field(): tx_polarization width must be 1 or match transmitter count.");
 
-        const ReflectionEpcVisibilityIgnoreMode visibility_ignore_mode =
-            parse_reflection_epc_visibility_ignore_mode(options.visibility_ignore_mode);
+        const ReflEpcVisibilityIgnoreMode visibility_ignore_mode =
+            parse_refl_epc_vis_ignore(options.visibility_ignore_mode);
         const bool surface_group_ignore =
-            visibility_ignore_mode == ReflectionEpcVisibilityIgnoreMode::SurfaceGroup;
+            visibility_ignore_mode == ReflEpcVisibilityIgnoreMode::SurfaceGroup;
         const int surface_group_id_count = static_cast<int>(slices(options.surface_group_id));
         const int surface_group_count = static_cast<int>(slices(options.surface_group_size));
         const int surface_group_member_count =
@@ -3789,24 +3789,24 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         require(final_ignore_group_count == 0 ||
                     final_ignore_group_count == 1 ||
                     final_ignore_group_count == ray_count,
-                "Scene::trace_reflection_epc_field(): final_ignore_group_ids width must be 1 or match transmitter count.");
+                "Scene::trace_refl_epc_field(): final_ignore_group_ids width must be 1 or match transmitter count.");
         if (has_surface_groups) {
             const int triangle_count =
                 static_cast<int>(slices(triangle_info_detached_.p0));
             require(surface_group_id_count == triangle_count,
-                    "Scene::trace_reflection_epc_field(): surface_group_id width must match triangle count.");
+                    "Scene::trace_refl_epc_field(): surface_group_id width must match triangle count.");
             require(surface_group_count > 0,
-                    "Scene::trace_reflection_epc_field(): surface_group_size must be non-empty when surface groups are provided.");
+                    "Scene::trace_refl_epc_field(): surface_group_size must be non-empty when surface groups are provided.");
             require(options.surface_max_group_size > 0,
-                    "Scene::trace_reflection_epc_field(): surface_max_group_size must be positive when surface groups are provided.");
+                    "Scene::trace_refl_epc_field(): surface_max_group_size must be positive when surface groups are provided.");
             require(surface_group_member_count >=
                         surface_group_count * options.surface_max_group_size,
-                    "Scene::trace_reflection_epc_field(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
+                    "Scene::trace_refl_epc_field(): surface_group_members must contain surface_group_size * surface_max_group_size entries.");
         }
         require(!surface_group_ignore || has_surface_groups,
-                "Scene::trace_reflection_epc_field(): visibility_ignore_mode='surface_group' requires surface group tables.");
+                "Scene::trace_refl_epc_field(): visibility_ignore_mode='surface_group' requires surface group tables.");
         require(final_ignore_group_count == 0 || surface_group_ignore,
-                "Scene::trace_reflection_epc_field(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
+                "Scene::trace_refl_epc_field(): final_ignore_group_ids require visibility_ignore_mode='surface_group'.");
 
         Mask active_detached = sanitize_segment_active<Detached>(
             tx_position,
@@ -3822,9 +3822,9 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         int split_mode = scenes.split_mode;
         int hitgroup_record_count = scenes.hitgroup_record_count;
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_reflection_epc_field(): OptiX scene is not ready.");
+                "Scene::trace_refl_epc_field(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::trace_reflection_epc_field(): invalid hitgroup record count.");
+                "Scene::trace_refl_epc_field(): invalid hitgroup record count.");
 
         drjit::eval(tx_position,
                     receiver,
@@ -3853,8 +3853,8 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
 
         ensure_reflection_epc_geometry_ready();
 
-        ReflectionEpcRaw raw = allocate_reflection_epc_raw(ray_count, max_bounces);
-        ReflectionEpcParams epc_params = {};
+        ReflEpcRaw raw = alloc_refl_epc_raw(ray_count, max_bounces);
+        ReflEpcParams epc_params = {};
         epc_params.primary_handle = primary_scene->ias_handle();
         epc_params.secondary_handle =
             secondary_scene != nullptr && secondary_scene->is_ready()
@@ -3889,8 +3889,8 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         epc_params.surface_max_group_size =
             has_surface_groups ? options.surface_max_group_size : 0;
         epc_params.visibility_ignore_mode =
-            surface_group_ignore ? ReflectionEpcVisibilityIgnoreSurfaceGroup
-                                 : ReflectionEpcVisibilityIgnorePrimitive;
+            surface_group_ignore ? ReflEpcVisibilityIgnoreSurfaceGroup
+                                 : ReflEpcVisibilityIgnorePrimitive;
         epc_params.final_ignore_group_ids =
             final_ignore_group_count > 0 ? options.final_ignore_group_ids.data() : nullptr;
         epc_params.final_ignore_group_count = final_ignore_group_count;
@@ -3931,7 +3931,7 @@ ReflectionEpcFieldResultT<Detached> Scene::trace_reflection_epc_field(
         epc_params.out_first_blocked_group = raw.first_blocked_group.data();
         reflection_epc_pipeline_->launch(0, epc_params);
 
-        ReflectionEpcFieldParams field_params = {};
+        ReflEpcFieldParams field_params = {};
         field_params.n_rays = ray_count;
         field_params.max_bounces = max_bounces;
         field_params.epc_valid = reinterpret_cast<const uint8_t *>(raw.valid.data());
@@ -4307,7 +4307,7 @@ AccumResultT<Detached> Scene::accumulate_reflections(
 }
 
 template <bool Detached>
-DfrAccumT<Detached> Scene::accum_dfr1(
+DfrAccumT<Detached> Scene::accum_dfr_direct(
     const DfrStatesT<Detached> &states,
     const DfrGrid &grid,
     const DfrMaterialT<Detached> &material,
@@ -4315,28 +4315,28 @@ DfrAccumT<Detached> Scene::accum_dfr1(
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(
         NativeLaunchStage::AccumDfr);
-    require(is_ready(), "Scene::accum_dfr1(): scene is not built.");
+    require(is_ready(), "Scene::accum_dfr_direct(): scene is not built.");
     require(!pending_updates_,
-            "Scene::accum_dfr1(): scene has pending updates. Call Scene::sync() first.");
+            "Scene::accum_dfr_direct(): scene has pending updates. Call Scene::sync() first.");
     require(grid.axis >= 0 && grid.axis <= 2,
-            "Scene::accum_dfr1(): grid.axis must be 0, 1, or 2.");
+            "Scene::accum_dfr_direct(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
-            "Scene::accum_dfr1(): grid resolution must be positive.");
+            "Scene::accum_dfr_direct(): grid resolution must be positive.");
     require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
-            "Scene::accum_dfr1(): grid bounds must be ordered.");
+            "Scene::accum_dfr_direct(): grid bounds must be ordered.");
     require(grid.cell_area > 0.f,
-            "Scene::accum_dfr1(): grid.cell_area must be positive.");
+            "Scene::accum_dfr_direct(): grid.cell_area must be positive.");
     require(options.wavelength > 0.f,
-            "Scene::accum_dfr1(): wavelength must be positive.");
+            "Scene::accum_dfr_direct(): wavelength must be positive.");
     require(options.max_order == 1,
-            "Scene::accum_dfr1(): only max_order == 1 is supported.");
+            "Scene::accum_dfr_direct(): only max_order == 1 is supported.");
 
     DfrAccumT<Detached> result;
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         throw std::runtime_error(
-            "Scene::accum_dfr1(): native accumulation is a non-AD native fast path. "
+            "Scene::accum_dfr_direct(): native accumulation is a non-AD native fast path. "
             "Use detached inputs, or use the existing AD tape path explicitly.");
     } else {
         result.power = zeros<Float>(grid_cell_count);
@@ -4363,7 +4363,7 @@ DfrAccumT<Detached> Scene::accum_dfr1(
             return result;
         }
         require(state_count > 0 && state_count <= state_width,
-                "Scene::accum_dfr1(): invalid state count.");
+                "Scene::accum_dfr_direct(): invalid state count.");
         require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
                     static_cast<int>(slices(states.edge_dir)) >= state_count &&
                     static_cast<int>(slices(states.edge_t_min)) >= state_count &&
@@ -4378,16 +4378,16 @@ DfrAccumT<Detached> Scene::accum_dfr1(
                     static_cast<int>(slices(states.wi)) >= state_count &&
                     static_cast<int>(slices(states.d0)) >= state_count &&
                     static_cast<int>(slices(states.prefix_depth)) >= state_count,
-                "Scene::accum_dfr1(): state fields must cover state count.");
+                "Scene::accum_dfr_direct(): state fields must cover state count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,
-                "Scene::accum_dfr1(): material payload must not be empty.");
+                "Scene::accum_dfr_direct(): material payload must not be empty.");
         require(static_cast<int>(slices(material.sigma)) == material_count &&
                     static_cast<int>(slices(material.mu_r)) == material_count &&
                     static_cast<int>(slices(material.gain)) == material_count &&
                     static_cast<int>(slices(material.valid)) == material_count,
-                "Scene::accum_dfr1(): material payload fields must have matching widths.");
+                "Scene::accum_dfr_direct(): material payload fields must have matching widths.");
 
         const int direct_samples =
             (options.strategy_mask & RAYD_DFR_DIRECT) != 0
@@ -4408,7 +4408,7 @@ DfrAccumT<Detached> Scene::accum_dfr1(
             active_detached = gather<Mask>(active_detached, zeros<Int>(state_count));
         } else {
             require(active_width == state_count,
-                    "Scene::accum_dfr1(): active width must be 1 or match state count.");
+                    "Scene::accum_dfr_direct(): active width must be 1 or match state count.");
         }
         active_detached &= drjit::isfinite(states.src.x()) &&
                            drjit::isfinite(states.src.y()) &&
@@ -4426,14 +4426,14 @@ DfrAccumT<Detached> Scene::accum_dfr1(
         const int triangle_count =
             static_cast<int>(slices(triangle_info_detached_.p0));
         require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accum_dfr1(): OptiX scene is not ready.");
+                "Scene::accum_dfr_direct(): OptiX scene is not ready.");
         require(hitgroup_record_count > 0,
-                "Scene::accum_dfr1(): invalid hitgroup record count.");
+                "Scene::accum_dfr_direct(): invalid hitgroup record count.");
         if (suffix_samples > 0) {
             require(triangle_count > 0,
-                    "Scene::accum_dfr1(): suffix reflection requires scene triangles.");
+                    "Scene::accum_dfr_direct(): suffix reflection requires scene triangles.");
             require(material_count >= triangle_count,
-                    "Scene::accum_dfr1(): suffix reflection requires per-triangle materials.");
+                    "Scene::accum_dfr_direct(): suffix reflection requires per-triangle materials.");
         }
 
         ensure_pipeline(diffraction_accumulation_pipeline_,
@@ -5650,13 +5650,13 @@ template AccumResultAD Scene::accumulate_reflections<false>(
     const AccumOptions &options,
     MaskAD active,
     const Vector3fAD &tx_polarization) const;
-template DfrAccum Scene::accum_dfr1<true>(
+template DfrAccum Scene::accum_dfr_direct<true>(
     const DfrStates &states,
     const DfrGrid &grid,
     const DfrMaterial &material,
     const DfrOptions &options,
     Mask active) const;
-template DfrAccumAD Scene::accum_dfr1<false>(
+template DfrAccumAD Scene::accum_dfr_direct<false>(
     const DfrStatesAD &states,
     const DfrGrid &grid,
     const DfrMaterialAD &material,
@@ -5690,41 +5690,41 @@ template DfrPathsAD Scene::trace_dfr_paths<false>(
     const DfrMaterialAD &material,
     const DfrPathOptions &options,
     MaskAD active) const;
-template ReflectionEpcResult Scene::trace_reflection_epc<true>(
+template ReflEpc Scene::trace_refl_epc<true>(
     const Ray &ray,
     const Vector3f &receiver,
     int max_bounces,
-    const ReflectionEpcOptions &options,
+    const ReflEpcOptions &options,
     Mask active) const;
-template ReflectionEpcResultAD Scene::trace_reflection_epc<false>(
+template ReflEpcAD Scene::trace_refl_epc<false>(
     const RayAD &ray,
     const Vector3fAD &receiver,
     int max_bounces,
-    const ReflectionEpcOptions &options,
+    const ReflEpcOptions &options,
     MaskAD active) const;
-template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<true>(
+template ReflEpcField Scene::trace_refl_epc_field<true>(
     const Ray &ray,
     const Vector3f &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     Mask active) const;
-template ReflectionEpcFieldResultAD Scene::trace_reflection_epc_field<false>(
+template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
     const RayAD &ray,
     const Vector3fAD &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     MaskAD active) const;
-template ReflectionEpcFieldResult Scene::trace_reflection_epc_field<true>(
+template ReflEpcField Scene::trace_refl_epc_field<true>(
     const Vector3f &tx_position,
     const Vector3f &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     Mask active) const;
-template ReflectionEpcFieldResultAD Scene::trace_reflection_epc_field<false>(
+template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
     const Vector3fAD &tx_position,
     const Vector3fAD &receiver,
     int max_bounces,
-    const ReflectionEpcFieldOptions &options,
+    const ReflEpcFieldOptions &options,
     MaskAD active) const;
 template ReflectionTrace Scene::trace_bounces<true>(
     const Ray &ray,

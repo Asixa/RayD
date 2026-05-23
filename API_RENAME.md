@@ -30,8 +30,8 @@ the bare name is still the AD type and the detached type still carries a
 | `ReflectionChain` | `ReflectionChainAD` | `ReflectionChainDetached` | `ReflectionChain` |
 | `ReflectionBounce` | `ReflectionBounceAD` | `ReflectionBounceDetached` | `ReflectionBounce` |
 | `ReflectionTrace` | `ReflectionTraceAD` | `ReflectionTraceDetached` | `ReflectionTrace` |
-| `ReflectionEpcResult` | `ReflectionEpcResultAD` | `ReflectionEpcResultDetached` | `ReflectionEpcResult` |
-| `ReflectionEpcFieldResult` | `ReflectionEpcFieldResultAD` | `ReflectionEpcFieldResultDetached` | `ReflectionEpcFieldResult` |
+| `ReflectionEpcResult` | `ReflEpcAD` | `ReflectionEpcResultDetached` | `ReflEpc` |
+| `ReflectionEpcFieldResult` | `ReflEpcFieldAD` | `ReflectionEpcFieldResultDetached` | `ReflEpcField` |
 | `PrimitiveMaterialPayload` | `MaterialAD` | `PrimitiveMaterialPayloadDetached` | `Material` |
 | `ReflectionWedgeEventBuffer` | `WedgeEventsAD` | `ReflectionWedgeEventBufferDetached` | `WedgeEvents` |
 | `ReflectionAccumulationResult` | `AccumResultAD` | `ReflectionAccumulationResultDetached` | `AccumResult` |
@@ -49,9 +49,10 @@ the bare name is still the AD type and the detached type still carries a
 |---|---|
 | `ReflectionAccumulationGrid` | `AccumGrid` |
 | `ReflectionAccumulationOptions` | `AccumOptions` |
+| `ReflectionEpcOptions` | `ReflEpcOptions` |
+| `ReflectionEpcFieldOptions` | `ReflEpcFieldOptions` |
 
-Unchanged: `ReflectionTraceOptions`, `ReflectionEpcOptions`, `ReflectionEpcFieldOptions`,
-`RayFlags`, `SecondaryEdgeInfo`, `SceneEdgeInfo`, `SceneEdgeTopology`, `SceneSyncProfile`,
+Unchanged: `ReflectionTraceOptions`, `RayFlags`, `SecondaryEdgeInfo`, `SceneEdgeInfo`, `SceneEdgeTopology`, `SceneSyncProfile`,
 `SceneEdgeBVHStats`, `Mesh`, `Scene`.
 
 ## 3. Method renames (`Scene`)
@@ -63,9 +64,11 @@ Unchanged: `ReflectionTraceOptions`, `ReflectionEpcOptions`, `ReflectionEpcField
 | `trace_segment_chain_visibility(...)` | `visible_chain(...)` |
 | `trace_axial_edge_visibility(...)` | `visible_edge(...)` |
 | `trace_reflections_accumulating(...)` | `accumulate_reflections(...)` |
-| `trace_reflection_epc_field_direct(tx_position, ...)` | `trace_reflection_epc_field(tx_position, ...)` |
+| `trace_reflection_epc(...)` | `trace_refl_epc(...)` |
+| `trace_reflection_epc_field(...)` | `trace_refl_epc_field(...)` |
+| `trace_reflection_epc_field_direct(tx_position, ...)` | `trace_refl_epc_field(tx_position, ...)` |
 
-`trace_reflection_epc_field_direct` was merged into `trace_reflection_epc_field`
+`trace_reflection_epc_field_direct` was merged into `trace_refl_epc_field`
 as an overload: pass a transmitter position (`Vector3f`) as the first argument for
 the direct form, or a `Ray` for the original form.
 
@@ -89,12 +92,16 @@ Stem trims apply to all variants (`*Data`, `*T`, `*Detached`, and the bare alias
 | `ReflectionAccumulationParams` | `AccumParams` |
 | `SceneGlobalGeometry` | `SceneGeometry` |
 | `ReflectionAccumulationRaw` (file-local) | `AccumRaw` |
+| `ReflectionEpcResult` | `ReflEpc` |
+| `ReflectionEpcFieldResult` | `ReflEpcField` |
+| `ReflectionEpcOptions` | `ReflEpcOptions` |
+| `ReflectionEpcFieldOptions` | `ReflEpcFieldOptions` |
 | enum `NativeLaunchStage::TraceReflectionsAccumulating` | `NativeLaunchStage::AccumulateReflections` |
 | `NativeLaunchAuditSnapshot::trace_reflections_accumulating` | `::accumulate_reflections` |
 
 C++ method renames mirror the Python ones (`Scene::visible`, `Scene::visible_pair`,
 `Scene::visible_chain`, `Scene::visible_edge`, `Scene::accumulate_reflections`,
-and the merged `Scene::trace_reflection_epc_field` overload).
+`Scene::trace_refl_epc`, and the merged `Scene::trace_refl_epc_field` overload).
 
 ## 6. Quick migration (Python)
 
@@ -106,8 +113,8 @@ CLASS = {
     "RayDetached": "Ray", "IntersectionDetached": "Intersection",
     "ReflectionChainDetached": "ReflectionChain", "ReflectionBounceDetached": "ReflectionBounce",
     "ReflectionTraceDetached": "ReflectionTrace",
-    "ReflectionEpcResultDetached": "ReflectionEpcResult",
-    "ReflectionEpcFieldResultDetached": "ReflectionEpcFieldResult",
+    "ReflectionEpcResultDetached": "ReflEpc",
+    "ReflectionEpcFieldResultDetached": "ReflEpcField",
     "PrimitiveMaterialPayloadDetached": "Material",
     "ReflectionWedgeEventBufferDetached": "WedgeEvents",
     "ReflectionAccumulationResultDetached": "AccumResult",
@@ -120,6 +127,8 @@ CLASS = {
     # trims (single)
     "ReflectionAccumulationGrid": "AccumGrid",
     "ReflectionAccumulationOptions": "AccumOptions",
+    "ReflectionEpcOptions": "ReflEpcOptions",
+    "ReflectionEpcFieldOptions": "ReflEpcFieldOptions",
     # AD bare -> AD suffix  (apply AFTER the detached ones above)
     "PrimitiveMaterialPayload": "MaterialAD",
 }
@@ -129,7 +138,9 @@ METHOD = {
     "trace_segment_visibility": "visible",
     "trace_axial_edge_visibility": "visible_edge",
     "trace_reflections_accumulating": "accumulate_reflections",
-    "trace_reflection_epc_field_direct": "trace_reflection_epc_field",
+    "trace_reflection_epc": "trace_refl_epc",
+    "trace_reflection_epc_field": "trace_refl_epc_field",
+    "trace_reflection_epc_field_direct": "trace_refl_epc_field",
 }
 # NOTE: the AD bare names that simply gain an "AD" suffix (Ray->RayAD,
 # Intersection->IntersectionAD, etc.) are context-dependent 鈥?review those by hand.
@@ -148,7 +159,7 @@ Diffraction now uses the `Dfr` stem so `diff` remains reserved for differentiati
 | `DiffractionPathOptions` | `DfrPathOptions` |
 | `DiffractionAccumResult` | `DfrAccum` |
 | `DiffractionPathResult` | `DfrPaths` |
-| `Scene.accumulate_diffraction_order1(...)` | `Scene.accum_dfr1(...)` |
+| `Scene.accumulate_diffraction_order1(...)` | `Scene.accum_dfr_direct(...)` |
 | `Scene.accumulate_diffraction_chains(...)` | `Scene.accum_dfr(...)` |
 | `Scene.trace_diffraction_paths(...)` | `Scene.trace_dfr_paths(...)` |
 | `RAYD_DIFF_DIRECT` | `RAYD_DFR_DIRECT` |

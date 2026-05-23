@@ -195,7 +195,7 @@ static __forceinline__ __device__ bool finite_complex3(Complex3 value) {
 }
 
 static __forceinline__ __device__ bool slot_reflection_coefficients(
-    const ReflectionEpcFieldParams params,
+    const ReflEpcFieldParams params,
     int slot,
     float cos_theta,
     Complex &r_te,
@@ -224,7 +224,7 @@ static __forceinline__ __device__ bool slot_reflection_coefficients(
 }
 
 static __forceinline__ __device__ Complex3 reflect_field_vector(
-    const ReflectionEpcFieldParams params,
+    const ReflEpcFieldParams params,
     int slot,
     Complex3 field,
     float3 incident_dir) {
@@ -277,7 +277,7 @@ static __forceinline__ __device__ Complex3 reflect_field_vector(
 }
 
 static __forceinline__ __device__ void store_zero_field(
-    const ReflectionEpcFieldParams params,
+    const ReflEpcFieldParams params,
     int ray_index) {
     params.out_valid[ray_index] = 0u;
     params.out_field_x_re[ray_index] = 0.f;
@@ -290,7 +290,7 @@ static __forceinline__ __device__ void store_zero_field(
 
 /// One ray per thread (blockIdx.x * blockDim.x + threadIdx.x, bounds-checked); evaluates the
 /// complex reflected field from the ray's precomputed EPC geometry and writes the per-ray outputs.
-__global__ void reflection_epc_field_kernel(ReflectionEpcFieldParams params) {
+__global__ void reflection_epc_field_kernel(ReflEpcFieldParams params) {
     const int ray_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     if (ray_index >= params.n_rays) {
         return;
@@ -460,7 +460,7 @@ void check_cuda_last_error(const char *message) {
 
 } // namespace
 
-void reflection_epc_field_gpu(const ReflectionEpcFieldParams &params) {
+void reflection_epc_field_gpu(const ReflEpcFieldParams &params) {
     require(params.n_rays >= 0,
             "reflection_epc_field_gpu(): n_rays must be non-negative.");
     require(params.max_bounces > 0,

@@ -38,7 +38,7 @@ def run_json(script: str):
     return json.loads(lines[-1])
 
 
-class ReflectionEpcTests(unittest.TestCase):
+class ReflEpcTests(unittest.TestCase):
     def test_one_bounce_method_of_images_path_is_extracted_in_one_launch(self):
         data = run_json(
             """
@@ -68,7 +68,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
 
             pj.native_launch_audit_clear()
-            result = scene.trace_reflection_epc(ray, rx, max_bounces=1)
+            result = scene.trace_refl_epc(ray, rx, max_bounces=1)
             dr.eval(result.valid,
                     result.bounce_count,
                     result.path_length,
@@ -139,7 +139,7 @@ class ReflectionEpcTests(unittest.TestCase):
                 cuda.Array3f([0.5 * inv_len], [0.0], [1.0 * inv_len]),
             )
 
-            result = scene.trace_reflection_epc(ray, rx, max_bounces=1)
+            result = scene.trace_refl_epc(ray, rx, max_bounces=1)
             dr.eval(result.valid,
                     result.bounce_count,
                     result.first_blocked_segment,
@@ -193,7 +193,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
             rx = cuda.Array3f([0.0], [0.0], [1.5])
 
-            result = scene.trace_reflection_epc(ray, rx, max_bounces=2)
+            result = scene.trace_refl_epc(ray, rx, max_bounces=2)
             dr.eval(result.valid,
                     result.bounce_count,
                     result.path_length,
@@ -257,7 +257,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
             rx = cuda.Array3f([0.0], [1.5], [-1.0])
 
-            options = pj.ReflectionEpcOptions()
+            options = pj.ReflEpcOptions()
             options.expected_prim_ids = cuda.Int([1])
             options.surface_group_id = cuda.Int([0, 0])
             options.surface_group_size = cuda.Int([2])
@@ -265,16 +265,16 @@ class ReflectionEpcTests(unittest.TestCase):
             options.surface_max_group_size = 2
             options.visibility_ignore_mode = "surface_group"
 
-            result = scene.trace_reflection_epc(ray, rx, max_bounces=1, options=options)
+            result = scene.trace_refl_epc(ray, rx, max_bounces=1, options=options)
 
-            bad_options = pj.ReflectionEpcOptions()
+            bad_options = pj.ReflEpcOptions()
             bad_options.expected_prim_ids = cuda.Int([1])
             bad_options.surface_group_id = cuda.Int([0, 1])
             bad_options.surface_group_size = cuda.Int([1, 1])
             bad_options.surface_group_members = cuda.Int([0, 1])
             bad_options.surface_max_group_size = 1
             bad_options.visibility_ignore_mode = "surface_group"
-            bad = scene.trace_reflection_epc(ray, rx, max_bounces=1, options=bad_options)
+            bad = scene.trace_refl_epc(ray, rx, max_bounces=1, options=bad_options)
 
             dr.eval(result.valid,
                     result.path_length,
@@ -353,7 +353,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
             rx = cuda.Array3f([0.0], [1.5], [-1.0])
 
-            blocked_options = pj.ReflectionEpcOptions()
+            blocked_options = pj.ReflEpcOptions()
             blocked_options.expected_prim_ids = cuda.Int([1])
             blocked_options.surface_group_id = cuda.Int([0, 0, 1, 1])
             blocked_options.surface_group_size = cuda.Int([2, 2])
@@ -361,7 +361,7 @@ class ReflectionEpcTests(unittest.TestCase):
             blocked_options.surface_max_group_size = 2
             blocked_options.visibility_ignore_mode = "surface_group"
 
-            ignored_options = pj.ReflectionEpcOptions()
+            ignored_options = pj.ReflEpcOptions()
             ignored_options.expected_prim_ids = cuda.Int([1])
             ignored_options.surface_group_id = cuda.Int([0, 0, 1, 1])
             ignored_options.surface_group_size = cuda.Int([2, 2])
@@ -370,8 +370,8 @@ class ReflectionEpcTests(unittest.TestCase):
             ignored_options.visibility_ignore_mode = "surface_group"
             ignored_options.final_ignore_group_ids = cuda.Int([1])
 
-            blocked = scene.trace_reflection_epc(ray, rx, max_bounces=1, options=blocked_options)
-            ignored = scene.trace_reflection_epc(ray, rx, max_bounces=1, options=ignored_options)
+            blocked = scene.trace_refl_epc(ray, rx, max_bounces=1, options=blocked_options)
+            ignored = scene.trace_refl_epc(ray, rx, max_bounces=1, options=ignored_options)
 
             dr.eval(blocked.valid,
                     blocked.first_blocked_segment,
@@ -509,7 +509,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
             rx = cuda.Array3f([rx_tuple[0]], [rx_tuple[1]], [rx_tuple[2]])
 
-            options = pj.ReflectionEpcFieldOptions()
+            options = pj.ReflEpcFieldOptions()
             options.expected_prim_ids = cuda.Int([1])
             options.surface_group_id = cuda.Int([0, 0])
             options.surface_group_size = cuda.Int([2])
@@ -532,7 +532,7 @@ class ReflectionEpcTests(unittest.TestCase):
                 4.0, 1.0, 0.0, 1.0, options.omega, options.wavelength)
 
             pj.native_launch_audit_clear()
-            result = scene.trace_reflection_epc_field(ray, rx, max_bounces=1, options=options)
+            result = scene.trace_refl_epc_field(ray, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.field_x_re,
                     result.field_x_im,
@@ -632,7 +632,7 @@ class ReflectionEpcTests(unittest.TestCase):
             )
             rx = cuda.Array3f([0.0], [1.5], [-1.0])
 
-            options = pj.ReflectionEpcFieldOptions()
+            options = pj.ReflEpcFieldOptions()
             options.expected_prim_ids = cuda.Int([1])
             options.surface_group_id = cuda.Int([0, 0])
             options.surface_group_size = cuda.Int([2])
@@ -650,9 +650,9 @@ class ReflectionEpcTests(unittest.TestCase):
             options.return_geom = False
             options.return_endpoints = False
 
-            result = scene.trace_reflection_epc_field(ray, rx, max_bounces=1, options=options)
+            result = scene.trace_refl_epc_field(ray, rx, max_bounces=1, options=options)
             options.slot_gain = cuda.Float([0.0])
-            zero_gain = scene.trace_reflection_epc_field(
+            zero_gain = scene.trace_refl_epc_field(
                 ray, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.field_x_re,
@@ -730,7 +730,7 @@ class ReflectionEpcTests(unittest.TestCase):
             tx = cuda.Array3f([0.0], [-2.0], [0.0])
             rx = cuda.Array3f([6.0], [-2.0], [0.0])
 
-            options = pj.ReflectionEpcFieldOptions()
+            options = pj.ReflEpcFieldOptions()
             options.expected_prim_ids = cuda.Int([0])
             options.slot_plane_point = cuda.Array3f([-4.0], [0.0], [-1.0])
             options.slot_plane_normal = cuda.Array3f([0.0], [-1.0], [0.0])
@@ -745,7 +745,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.return_endpoints = True
 
             pj.native_launch_audit_clear()
-            result = scene.trace_reflection_epc_field(
+            result = scene.trace_refl_epc_field(
                 tx, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.path_length,
@@ -813,7 +813,7 @@ class ReflectionEpcTests(unittest.TestCase):
             tx = cuda.Array3f([0.0], [-2.0], [0.0])
             rx = cuda.Array3f([6.0], [-2.0], [0.0])
 
-            options = pj.ReflectionEpcFieldOptions()
+            options = pj.ReflEpcFieldOptions()
             options.expected_prim_ids = cuda.Int([0])
             options.slot_plane_point = cuda.Array3f([-4.0], [0.0], [-1.0])
             options.slot_plane_normal = cuda.Array3f([0.0], [-1.0], [0.0])
@@ -831,7 +831,7 @@ class ReflectionEpcTests(unittest.TestCase):
             options.return_resolved_prim_ids = False
             options.return_surface_group_ids = False
 
-            result = scene.trace_reflection_epc_field(
+            result = scene.trace_refl_epc_field(
                 tx, rx, max_bounces=1, options=options)
             dr.eval(result.valid,
                     result.hit_points,

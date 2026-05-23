@@ -220,7 +220,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertAlmostEqual(data["field_x_im0"], 0.25, places=6)
         self.assertAlmostEqual(data["p0_z0"], 3.0, places=6)
 
-    def test_accum_dfr1_writes_grid(self):
+    def test_accum_dfr_direct_writes_grid(self):
         data = run_json(
             """
             import json
@@ -286,7 +286,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.collect_debug_counts = True
 
             pj.native_launch_audit_clear()
-            result = scene.accum_dfr1(
+            result = scene.accum_dfr_direct(
                 states, grid, material, options, True
             )
             dr.eval(
@@ -315,7 +315,7 @@ class DfrAccumulationTests(unittest.TestCase):
             keller_options.collect_debug_counts = True
 
             pj.native_launch_audit_clear()
-            keller_result = scene.accum_dfr1(
+            keller_result = scene.accum_dfr_direct(
                 states, grid, material, keller_options, True
             )
             dr.eval(
@@ -474,7 +474,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["field_x_im0"]))
         self.assertAlmostEqual(data["p0_x0"], 0.0, places=5)
 
-    def test_accum_dfr1_suffix_reflection_writes_grid(self):
+    def test_accum_dfr_direct_suffix_reflection_writes_grid(self):
         data = run_json(
             """
             import json
@@ -541,7 +541,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
             options.collect_debug_counts = True
 
-            result = scene.accum_dfr1(
+            result = scene.accum_dfr_direct(
                 states,
                 grid,
                 material,
@@ -569,7 +569,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["power"]))
         self.assertGreater(data["power"], 0.0)
 
-    def test_accum_dfr1_suffix_ignores_unrelated_global_candidates(self):
+    def test_accum_dfr_direct_suffix_ignores_unrelated_global_candidates(self):
         data = run_json(
             """
             import json
@@ -640,7 +640,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
             options.collect_debug_counts = True
 
-            result = scene.accum_dfr1(
+            result = scene.accum_dfr_direct(
                 states,
                 grid,
                 material,
@@ -658,7 +658,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["suffix"], 0)
         self.assertEqual(data["power"], 0.0)
 
-    def test_accum_dfr1_accepts_vector_active_mask(self):
+    def test_accum_dfr_direct_accepts_vector_active_mask(self):
         data = run_json(
             """
             import json
@@ -723,7 +723,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.collect_edge_use = True
             options.collect_debug_counts = True
 
-            result = scene.accum_dfr1(
+            result = scene.accum_dfr_direct(
                 states, grid, material, options, cuda.Bool([True, False])
             )
             dr.eval(result.power, result.direct_count, result.keller_count)
