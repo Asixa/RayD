@@ -98,6 +98,8 @@ public:
     const Int &mesh_vertex_offsets() const { return vertex_offsets_; }
     /// Flattened scene-global geometry (vertices, faces, normals, ids).
     const SceneGeometry &global_geometry() const;
+    /// Detached scene-global triangle edge-vector data used by native kernels.
+    const TriangleInfo &triangle_info_detached() const { return triangle_info_detached_; }
     /// Monotonic version counter bumped whenever geometry changes; for cache invalidation.
     uint64_t version() const { return scene_version_; }
     /// Monotonic version counter bumped whenever the edge set changes.

@@ -209,14 +209,14 @@ int dfr_suffix_sample_count(const DfrOptions &options) {
 }
 
 int dfr_direct_custom_ad_sample_count(const DfrOptions &options) {
-    return dfr_direct_sample_count(options) + dfr_keller_sample_count(options);
+    return dfr_direct_sample_count(options) +
+           dfr_keller_sample_count(options) +
+           dfr_suffix_sample_count(options);
 }
 
 void require_dfr_direct_custom_ad_supported(const DfrOptions &options) {
     require(options.max_order == 1,
             "Scene::accum_dfr_direct(): native AD currently supports max_order == 1.");
-    require(dfr_suffix_sample_count(options) == 0,
-            "Scene::accum_dfr_direct(): native AD currently supports direct and Keller samples only.");
 }
 
 template <typename FloatLike>
@@ -441,7 +441,14 @@ private:
         params.grid_cell_area = grid_.cell_area;
         params.direct_samples = dfr_direct_sample_count(options_);
         params.keller_samples = dfr_keller_sample_count(options_);
+        params.suffix_samples = dfr_suffix_sample_count(options_);
+        params.wavelength = options_.wavelength;
         params.seed = options_.seed;
+        const TriangleInfo &triangles = scene_->triangle_info_detached();
+        const bool suffix_enabled = params.suffix_samples > 0;
+        params.n_triangles = suffix_enabled
+                                 ? static_cast<int>(slices(triangles.p0))
+                                 : 0;
         params.tape_active =
             reinterpret_cast<const uint8_t *>(m_tape_.active.data());
         params.tape_state_idx = m_tape_.state_idx.data();
@@ -464,7 +471,23 @@ private:
         params.state_wi_z = m_input_.states.wi.z().data();
         params.state_src_power = m_input_.states.src_power.data();
         params.state_exterior_angle = m_input_.states.exterior_angle.data();
+        params.state_prim0 = m_input_.states.prim0.data();
+        params.state_prim1 = m_input_.states.prim1.data();
+        params.tri_p0_x = suffix_enabled ? triangles.p0.x().data() : nullptr;
+        params.tri_p0_y = suffix_enabled ? triangles.p0.y().data() : nullptr;
+        params.tri_p0_z = suffix_enabled ? triangles.p0.z().data() : nullptr;
+        params.tri_e1_x = suffix_enabled ? triangles.e1.x().data() : nullptr;
+        params.tri_e1_y = suffix_enabled ? triangles.e1.y().data() : nullptr;
+        params.tri_e1_z = suffix_enabled ? triangles.e1.z().data() : nullptr;
+        params.tri_e2_x = suffix_enabled ? triangles.e2.x().data() : nullptr;
+        params.tri_e2_y = suffix_enabled ? triangles.e2.y().data() : nullptr;
+        params.tri_e2_z = suffix_enabled ? triangles.e2.z().data() : nullptr;
+        params.tri_fn_x = suffix_enabled ? triangles.face_normal.x().data() : nullptr;
+        params.tri_fn_y = suffix_enabled ? triangles.face_normal.y().data() : nullptr;
+        params.tri_fn_z = suffix_enabled ? triangles.face_normal.z().data() : nullptr;
         params.material_gain = m_input_.material.gain.data();
+        params.material_valid =
+            reinterpret_cast<const uint8_t *>(m_input_.material.valid.data());
         return params;
     }
 

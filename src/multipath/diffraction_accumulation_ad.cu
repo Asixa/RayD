@@ -118,7 +118,9 @@ struct DirectPrimal {
     int state_idx;
     int cell;
     int material_idx;
+    int suffix_material_idx;
     bool is_keller;
+    bool is_suffix;
     int sample_count;
     float edge_u;
     float3 edge_pos;
@@ -137,9 +139,19 @@ struct DirectPrimal {
     float src_power;
     float exterior_angle;
     float material_gain;
+    float suffix_material_gain;
+    float suffix_reflection_gain;
+    float suffix_fspl;
+    float suffix_candidate_count;
+    float suffix_outgoing_dist2;
+    float suffix_ray_t;
     float wedge_scale;
     float3 target;
+    float3 grid_target;
     float3 keller_ko;
+    float3 suffix_normal;
+    float3 suffix_image_source;
+    float3 suffix_ray_dir;
     float keller_ray_t;
     float keller_sin;
     float keller_cos;
@@ -150,6 +162,7 @@ struct DirectPrimal {
     bool edge_length_active;
     bool wedge_active;
     bool material_active;
+    bool suffix_material_active;
 };
 
 struct DfrTangent {
@@ -162,6 +175,7 @@ struct DfrTangent {
     float src_power;
     float exterior_angle;
     float material_gain;
+    float suffix_material_gain;
 };
 
 static __forceinline__ __device__ bool keller_target_from_state(
@@ -282,6 +296,237 @@ static __forceinline__ __device__ float3 keller_target_jvp(
     return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
+static __forceinline__ __device__ bool material_valid_for_prim(
+    const DfrDirectAccumADParams &params,
+    int prim) {
+    return prim >= 0 &&
+           prim < params.material_count &&
+           params.material_gain != nullptr &&
+           (params.material_valid == nullptr || params.material_valid[prim] != 0u);
+}
+
+static __forceinline__ __device__ bool suffix_candidate_valid(
+    const DfrDirectAccumADParams &params,
+    int prim) {
+    return prim >= 0 &&
+           prim < params.n_triangles &&
+           material_valid_for_prim(params, prim);
+}
+
+static __forceinline__ __device__ bool select_local_suffix_candidate(
+    const DfrDirectAccumADParams &params,
+    int face0_prim,
+    int face1_prim,
+    unsigned int lane,
+    unsigned int stream,
+    int &prim,
+    float &candidate_count) {
+    const bool face0_valid = suffix_candidate_valid(params, face0_prim);
+    const bool face1_valid =
+        suffix_candidate_valid(params, face1_prim) && face1_prim != face0_prim;
+    const int count = (face0_valid ? 1 : 0) + (face1_valid ? 1 : 0);
+    if (count <= 0) {
+        return false;
+    }
+    const unsigned int candidate_hash = hash_u32(
+        lane ^ (stream * 0x9e3779b9u) ^ static_cast<unsigned int>(params.seed));
+    const int slot = static_cast<int>(
+        candidate_hash % static_cast<unsigned int>(count));
+    prim = (face0_valid && slot == 0) ? face0_prim : face1_prim;
+    candidate_count = static_cast<float>(count);
+    return true;
+}
+
+static __forceinline__ __device__ bool load_triangle(
+    const DfrDirectAccumADParams &params,
+    int prim,
+    float3 &p0,
+    float3 &e1,
+    float3 &e2,
+    float3 &normal) {
+    if (prim < 0 ||
+        prim >= params.n_triangles ||
+        params.tri_p0_x == nullptr ||
+        params.tri_e1_x == nullptr ||
+        params.tri_e2_x == nullptr ||
+        params.tri_fn_x == nullptr) {
+        return false;
+    }
+    p0 = make_vec3(params.tri_p0_x[prim],
+                   params.tri_p0_y[prim],
+                   params.tri_p0_z[prim]);
+    e1 = make_vec3(params.tri_e1_x[prim],
+                   params.tri_e1_y[prim],
+                   params.tri_e1_z[prim]);
+    e2 = make_vec3(params.tri_e2_x[prim],
+                   params.tri_e2_y[prim],
+                   params.tri_e2_z[prim]);
+    normal = make_vec3(params.tri_fn_x[prim],
+                       params.tri_fn_y[prim],
+                       params.tri_fn_z[prim]);
+    if (dot3(normal, normal) <= 1e-12f) {
+        normal = cross3(e1, e2);
+    }
+    normal = normalize3(normal);
+    return dot3(normal, normal) > 0.f;
+}
+
+static __forceinline__ __device__ bool intersect_reflection_triangle(
+    const DfrDirectAccumADParams &params,
+    float3 image_source,
+    float3 target,
+    int prim,
+    float3 &reflection_point,
+    float3 &normal,
+    float3 &ray_dir,
+    float &ray_t) {
+    float3 p0;
+    float3 e1;
+    float3 e2;
+    if (!load_triangle(params, prim, p0, e1, e2, normal)) {
+        return false;
+    }
+    const float3 delta = target - image_source;
+    const float dist = norm3(delta);
+    if (!(dist > kRayBias) || !isfinite(dist)) {
+        return false;
+    }
+    ray_dir = (1.f / dist) * delta;
+    const float3 h = cross3(ray_dir, e2);
+    const float a = dot3(e1, h);
+    if (fabsf(a) <= 1e-7f) {
+        return false;
+    }
+    const float f = 1.f / a;
+    const float3 s = image_source - p0;
+    const float u = f * dot3(s, h);
+    if (u < -1e-5f || u > 1.f + 1e-5f) {
+        return false;
+    }
+    const float3 q = cross3(s, e1);
+    const float v = f * dot3(ray_dir, q);
+    if (v < -1e-5f || u + v > 1.f + 1e-5f) {
+        return false;
+    }
+    ray_t = f * dot3(e2, q);
+    if (!(ray_t > kRayBias) || !(ray_t < dist - kRayBias) || !isfinite(ray_t)) {
+        return false;
+    }
+    reflection_point = image_source + ray_t * ray_dir;
+    return true;
+}
+
+static __forceinline__ __device__ bool suffix_reflection_connection(
+    const DfrDirectAccumADParams &params,
+    float3 diff_point,
+    float3 target,
+    int face0_prim,
+    int face1_prim,
+    unsigned int lane,
+    float3 &reflection_point,
+    int &prim,
+    float &reflection_gain,
+    float &suffix_fspl,
+    float &candidate_count,
+    float3 &normal,
+    float3 &image_source,
+    float3 &ray_dir,
+    float &ray_t,
+    float &outgoing_dist2,
+    float &material_gain,
+    bool &material_active) {
+    if (!select_local_suffix_candidate(params,
+                                       face0_prim,
+                                       face1_prim,
+                                       lane,
+                                       17u,
+                                       prim,
+                                       candidate_count)) {
+        return false;
+    }
+    float3 p0;
+    float3 e1;
+    float3 e2;
+    if (!load_triangle(params, prim, p0, e1, e2, normal)) {
+        return false;
+    }
+    const float plane_distance = dot3(diff_point - p0, normal);
+    image_source = diff_point - 2.f * plane_distance * normal;
+    if (!intersect_reflection_triangle(params,
+                                       image_source,
+                                       target,
+                                       prim,
+                                       reflection_point,
+                                       normal,
+                                       ray_dir,
+                                       ray_t)) {
+        return false;
+    }
+
+    const float3 incoming = reflection_point - diff_point;
+    const float3 outgoing = target - reflection_point;
+    const float incoming_dist = norm3(incoming);
+    const float outgoing_dist = norm3(outgoing);
+    if (!(incoming_dist > kSmallEps) || !(outgoing_dist > kSmallEps)) {
+        return false;
+    }
+    const float3 incoming_hat = (1.f / incoming_dist) * incoming;
+    const float3 oriented_normal =
+        dot3(incoming_hat, normal) > 0.f ? (-1.f * normal) : normal;
+    const float3 reflected_hat =
+        incoming_hat - 2.f * dot3(incoming_hat, oriented_normal) * oriented_normal;
+    const float3 outgoing_hat = (1.f / outgoing_dist) * outgoing;
+    if (dot3(reflected_hat, outgoing_hat) <= 1.f - 1e-3f) {
+        return false;
+    }
+
+    const float raw_gain = params.material_gain != nullptr ? params.material_gain[prim] : 1.f;
+    material_gain = fmaxf(raw_gain, 0.f);
+    material_active = raw_gain > 0.f && material_valid_for_prim(params, prim);
+    reflection_gain = material_gain * material_gain;
+    const float fspl = params.wavelength * (1.f / (4.f * kPi));
+    outgoing_dist2 = outgoing_dist * outgoing_dist;
+    suffix_fspl = (fspl * fspl) / fmaxf(outgoing_dist2, kSmallEps);
+    return isfinite(reflection_gain) && isfinite(suffix_fspl);
+}
+
+static __forceinline__ __device__ float3 suffix_target_jvp(
+    const DirectPrimal &p,
+    float3 dot_edge_point,
+    float &dot_suffix_fspl) {
+    dot_suffix_fspl = 0.f;
+    if (!p.is_suffix) {
+        return make_vec3(0.f, 0.f, 0.f);
+    }
+
+    const float dot_plane_distance = dot3(dot_edge_point, p.suffix_normal);
+    const float3 dot_image_source =
+        dot_edge_point - 2.f * dot_plane_distance * p.suffix_normal;
+    const float3 ray_delta = p.grid_target - p.suffix_image_source;
+    const float ray_dist = norm3(ray_delta);
+    const float3 dot_ray_delta = -1.f * dot_image_source;
+    const float3 dot_ray_dir =
+        normalize_jvp(p.suffix_ray_dir, ray_dist, dot_ray_delta);
+    const float denom = dot3(p.suffix_ray_dir, p.suffix_normal);
+    const float dot_denom = dot3(dot_ray_dir, p.suffix_normal);
+    const float dot_numerator = -dot3(dot_image_source, p.suffix_normal);
+    const float numerator = p.suffix_ray_t * denom;
+    const float dot_ray_t =
+        (dot_numerator * denom - numerator * dot_denom) /
+        fmaxf(denom * denom, kSmallEps);
+    const float3 dot_reflection_point =
+        dot_image_source + dot_ray_t * p.suffix_ray_dir + p.suffix_ray_t * dot_ray_dir;
+
+    if (p.suffix_outgoing_dist2 > kSmallEps && p.suffix_fspl != 0.f) {
+        const float3 outgoing = p.grid_target - p.target;
+        const float dot_outgoing_dist2 =
+            2.f * dot3(outgoing, -1.f * dot_reflection_point);
+        dot_suffix_fspl =
+            p.suffix_fspl * (-(dot_outgoing_dist2 / p.suffix_outgoing_dist2));
+    }
+    return dot_reflection_point;
+}
+
 static __forceinline__ __device__ bool load_primal(
     const DfrDirectAccumADParams &params,
     int lane,
@@ -306,7 +551,11 @@ static __forceinline__ __device__ bool load_primal(
     }
     p.is_keller = lane >= params.direct_samples &&
                   lane < params.direct_samples + params.keller_samples;
-    p.sample_count = p.is_keller ? params.keller_samples : params.direct_samples;
+    p.is_suffix = lane >= params.direct_samples + params.keller_samples &&
+                  lane < params.direct_samples + params.keller_samples + params.suffix_samples;
+    p.sample_count = p.is_keller
+                         ? params.keller_samples
+                         : (p.is_suffix ? params.suffix_samples : params.direct_samples);
     if (p.sample_count <= 0) {
         return false;
     }
@@ -344,13 +593,23 @@ static __forceinline__ __device__ bool load_primal(
                      exterior_clamped / (2.f * kPi) < 2.f;
     p.material_gain = 1.f;
     p.material_active = false;
-    if (p.material_idx >= 0 &&
-        p.material_idx < params.material_count &&
-        params.material_gain != nullptr) {
+    if (material_valid_for_prim(params, p.material_idx)) {
         const float raw_gain = params.material_gain[p.material_idx];
         p.material_gain = fmaxf(raw_gain, 0.f);
         p.material_active = raw_gain > 0.f;
     }
+    p.suffix_material_idx = -1;
+    p.suffix_material_gain = 1.f;
+    p.suffix_reflection_gain = 1.f;
+    p.suffix_fspl = 1.f;
+    p.suffix_candidate_count = 1.f;
+    p.suffix_outgoing_dist2 = 1.f;
+    p.suffix_ray_t = 0.f;
+    p.suffix_material_active = false;
+    p.grid_target = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_normal = make_vec3(0.f, 0.f, 1.f);
+    p.suffix_image_source = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_ray_dir = make_vec3(0.f, 0.f, 0.f);
     p.keller_ko = make_vec3(0.f, 0.f, 0.f);
     p.keller_ray_t = 0.f;
     p.keller_sin = 0.f;
@@ -371,6 +630,35 @@ static __forceinline__ __device__ bool load_primal(
     } else {
         p.target = grid_cell_center(params, p.cell);
     }
+    p.grid_target = p.target;
+    if (p.is_suffix) {
+        const int prim0 = params.state_prim0 != nullptr
+                              ? params.state_prim0[p.state_idx]
+                              : -1;
+        const int prim1 = params.state_prim1 != nullptr
+                              ? params.state_prim1[p.state_idx]
+                              : -1;
+        if (!suffix_reflection_connection(params,
+                                          p.edge_point,
+                                          p.grid_target,
+                                          prim0,
+                                          prim1,
+                                          static_cast<unsigned int>(lane),
+                                          p.target,
+                                          p.suffix_material_idx,
+                                          p.suffix_reflection_gain,
+                                          p.suffix_fspl,
+                                          p.suffix_candidate_count,
+                                          p.suffix_normal,
+                                          p.suffix_image_source,
+                                          p.suffix_ray_dir,
+                                          p.suffix_ray_t,
+                                          p.suffix_outgoing_dist2,
+                                          p.suffix_material_gain,
+                                          p.suffix_material_active)) {
+            return false;
+        }
+    }
 
     const float source_dist = fmaxf(norm3(p.edge_point - p.source), kSmallEps);
     const float target_dist = fmaxf(norm3(p.target - p.edge_point), kSmallEps);
@@ -378,11 +666,18 @@ static __forceinline__ __device__ bool load_primal(
     p.target_dist2 = target_dist * target_dist;
     const float sample_norm =
         1.f / fmaxf(static_cast<float>(p.sample_count), 1.f);
+    const float suffix_scale =
+        p.is_suffix
+            ? p.suffix_reflection_gain *
+                  p.suffix_fspl *
+                  fmaxf(p.suffix_candidate_count, 1.f)
+            : 1.f;
     p.common_no_src = p.material_gain *
                       p.edge_length *
                       params.grid_cell_area *
                       p.wedge_scale *
-                      sample_norm /
+                      sample_norm *
+                      suffix_scale /
                       (p.source_dist2 * p.target_dist2);
     p.contribution = p.src_power * p.common_no_src;
     return p.contribution > 0.f && isfinite(p.contribution);
@@ -434,12 +729,26 @@ static __forceinline__ __device__ float contribution_jvp(
         normalize_jvp(p.edge_dir, p.edge_dir_norm, tangent.edge_dir_raw);
     const float3 dot_edge_point =
         tangent.edge_pos + dot_edge_t * p.edge_dir + p.edge_t * dot_edge_dir;
+    float dot_suffix_fspl = 0.f;
     const float3 dot_target =
-        keller_target_jvp(params, p, dot_edge_point, dot_edge_dir, tangent.wi_raw);
+        p.is_suffix
+            ? suffix_target_jvp(p, dot_edge_point, dot_suffix_fspl)
+            : keller_target_jvp(params, p, dot_edge_point, dot_edge_dir, tangent.wi_raw);
 
     float dot_contribution = p.common_no_src * tangent.src_power;
     if (p.material_gain != 0.f) {
         dot_contribution += p.contribution * (tangent.material_gain / p.material_gain);
+    }
+    if (p.is_suffix && p.suffix_reflection_gain != 0.f) {
+        const float dot_reflection_gain =
+            p.suffix_material_active
+                ? 2.f * p.suffix_material_gain * tangent.suffix_material_gain
+                : 0.f;
+        dot_contribution +=
+            p.contribution * (dot_reflection_gain / p.suffix_reflection_gain);
+    }
+    if (p.is_suffix && p.suffix_fspl != 0.f) {
+        dot_contribution += p.contribution * (dot_suffix_fspl / p.suffix_fspl);
     }
     if (p.edge_length != 0.f) {
         dot_contribution += p.contribution * (dot_edge_length / p.edge_length);
@@ -494,6 +803,10 @@ static __forceinline__ __device__ float direct_jvp(
         (p.material_active && p.material_idx >= 0)
             ? read_or_zero(params.dot_material_gain, p.material_idx)
             : 0.f;
+    tangent.suffix_material_gain =
+        (p.suffix_material_active && p.suffix_material_idx >= 0)
+            ? read_or_zero(params.dot_material_gain, p.suffix_material_idx)
+            : 0.f;
     return contribution_jvp(params, p, tangent);
 }
 
@@ -510,7 +823,7 @@ static __forceinline__ __device__ void add_unit_vjp(
     }
 }
 
-static __forceinline__ __device__ void keller_vjp_by_unit_jvps(
+static __forceinline__ __device__ void vjp_by_unit_jvps(
     const DfrDirectAccumADParams &params,
     const DirectPrimal &p,
     float grad_contribution) {
@@ -572,6 +885,16 @@ static __forceinline__ __device__ void keller_vjp_by_unit_jvps(
         tangent.material_gain = 1.f;
         add_unit_vjp(params, p, grad_contribution, params.grad_material_gain, p.material_idx, tangent);
     }
+    if (p.suffix_material_active && p.suffix_material_idx >= 0) {
+        tangent = {};
+        tangent.suffix_material_gain = 1.f;
+        add_unit_vjp(params,
+                     p,
+                     grad_contribution,
+                     params.grad_material_gain,
+                     p.suffix_material_idx,
+                     tangent);
+    }
 }
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
@@ -611,8 +934,8 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
         return;
     }
 
-    if (p.is_keller) {
-        keller_vjp_by_unit_jvps(params, p, grad_contribution);
+    if (p.is_keller || p.is_suffix) {
+        vjp_by_unit_jvps(params, p, grad_contribution);
         return;
     }
 

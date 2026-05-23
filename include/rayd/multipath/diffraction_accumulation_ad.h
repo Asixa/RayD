@@ -19,7 +19,10 @@ struct DfrDirectAccumADParams {
     float grid_cell_area;
     int direct_samples;
     int keller_samples;
+    int suffix_samples;
+    float wavelength;
     int seed;
+    int n_triangles;
 
     const uint8_t *tape_active;
     const int *tape_state_idx;
@@ -43,7 +46,22 @@ struct DfrDirectAccumADParams {
     const float *state_wi_z;
     const float *state_src_power;
     const float *state_exterior_angle;
+    const int *state_prim0;
+    const int *state_prim1;
+    const float *tri_p0_x;
+    const float *tri_p0_y;
+    const float *tri_p0_z;
+    const float *tri_e1_x;
+    const float *tri_e1_y;
+    const float *tri_e1_z;
+    const float *tri_e2_x;
+    const float *tri_e2_y;
+    const float *tri_e2_z;
+    const float *tri_fn_x;
+    const float *tri_fn_y;
+    const float *tri_fn_z;
     const float *material_gain;
+    const uint8_t *material_valid;
 
     const float *dot_state_edge_pos_x;
     const float *dot_state_edge_pos_y;
