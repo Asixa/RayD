@@ -1122,7 +1122,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["suffix_count"], 0)
         self.assertAlmostEqual(data["jvp_src_z"], data["fd_src_z"], delta=2.0e-3)
 
-    def test_accum_dfr_direct_suffix_mesh_vertex_backward_matches_finite_difference(self):
+    def test_accum_dfr_direct_suffix_mesh_vertex_ad_matches_finite_difference(self):
         data = run_json(
             """
             import json
@@ -1132,9 +1132,9 @@ class DfrAccumulationTests(unittest.TestCase):
             import drjit.cuda.ad as ad
             import rayd as pj
 
-            def run_case(vertex_y_offset, enable_grad=False):
+            def run_case(vertex_y_offset, mode=None):
                 ty = ad.Float([vertex_y_offset])
-                if enable_grad:
+                if mode is not None:
                     dr.enable_grad(ty)
 
                 mesh = pj.Mesh(cuda.Array3f([-2.0, 2.0, -2.0],
@@ -1143,7 +1143,7 @@ class DfrAccumulationTests(unittest.TestCase):
                                cuda.Array3i([0], [1], [2]))
                 mesh.vertex_positions = ad.Array3f(
                     [-2.0, 2.0, -2.0],
-                    ad.Float([0.0, 0.0, 0.0]) + ty,
+                    ad.Float([1.0, 0.0, 0.0]) * ty,
                     [-2.0, -2.0, 2.0],
                 )
                 scene = pj.Scene()
@@ -1201,7 +1201,7 @@ class DfrAccumulationTests(unittest.TestCase):
 
                 result = scene.accum_dfr_direct(states, grid, material, options, True)
                 loss = dr.sum(result.power)
-                if enable_grad:
+                if mode == "backward":
                     dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
                     grad_ty = dr.grad(ty)
                     dr.eval(result.power, result.suffix_count, grad_ty)
@@ -1210,14 +1210,24 @@ class DfrAccumulationTests(unittest.TestCase):
                         "suffix_count": int(result.suffix_count[0]),
                         "grad_ty": float(grad_ty[0]),
                     }
+                if mode == "forward":
+                    dr.set_grad(ty, ad.Float([1.0]))
+                    dr.forward(ty)
+                    jvp_ty = dr.grad(loss)
+                    dr.eval(result.power, result.suffix_count, jvp_ty)
+                    return {
+                        "jvp_ty": float(jvp_ty[0]),
+                    }
                 dr.eval(loss)
                 return {"loss": float(loss[0])}
 
             step = 1.0e-3
-            ad_result = run_case(0.0, enable_grad=True)
+            backward_result = run_case(0.0, mode="backward")
+            forward_result = run_case(0.0, mode="forward")
             fd = (run_case(step)["loss"] - run_case(-step)["loss"]) / (2.0 * step)
             print(json.dumps({
-                **ad_result,
+                **backward_result,
+                **forward_result,
                 "fd_ty": fd,
             }))
             """
@@ -1226,6 +1236,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["power"], 0.0)
         self.assertGreater(data["suffix_count"], 0)
         self.assertAlmostEqual(data["grad_ty"], data["fd_ty"], delta=2.0e-6)
+        self.assertAlmostEqual(data["jvp_ty"], data["fd_ty"], delta=2.0e-6)
 
     def test_trace_dfr_paths_order1_exports_compact_paths(self):
         data = run_json(
@@ -2195,7 +2206,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertAlmostEqual(data["grad_src_z"], data["fd_src_z"], delta=2.0e-5)
         self.assertAlmostEqual(data["jvp_src_z"], data["fd_src_z"], delta=2.0e-5)
 
-    def test_accum_dfr_order2_suffix_mesh_vertex_backward_matches_finite_difference(self):
+    def test_accum_dfr_order2_suffix_mesh_vertex_ad_matches_finite_difference(self):
         data = run_json(
             """
             import json
@@ -2204,9 +2215,9 @@ class DfrAccumulationTests(unittest.TestCase):
             import drjit.cuda.ad as ad
             import rayd as pj
 
-            def run_case(vertex_y_offset, enable_grad=False):
+            def run_case(vertex_y_offset, mode=None):
                 ty = ad.Float([vertex_y_offset])
-                if enable_grad:
+                if mode is not None:
                     dr.enable_grad(ty)
 
                 mesh = pj.Mesh(cuda.Array3f([-2.0, 2.0, -2.0],
@@ -2215,7 +2226,7 @@ class DfrAccumulationTests(unittest.TestCase):
                                cuda.Array3i([0], [1], [2]))
                 mesh.vertex_positions = ad.Array3f(
                     [-2.0, 2.0, -2.0],
-                    ad.Float([0.0, 0.0, 0.0]) + ty,
+                    ad.Float([1.0, 0.0, 0.0]) * ty,
                     [-2.0, -2.0, 2.0],
                 )
                 scene = pj.Scene()
@@ -2293,7 +2304,7 @@ class DfrAccumulationTests(unittest.TestCase):
 
                 result = scene.accum_dfr(initial, recursive, grid, material, options, True)
                 loss = dr.sum(result.power)
-                if enable_grad:
+                if mode == "backward":
                     dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
                     grad_ty = dr.grad(ty)
                     dr.eval(result.power, result.suffix_count, grad_ty)
@@ -2302,14 +2313,24 @@ class DfrAccumulationTests(unittest.TestCase):
                         "suffix_count": int(result.suffix_count[0]),
                         "grad_ty": float(grad_ty[0]),
                     }
+                if mode == "forward":
+                    dr.set_grad(ty, ad.Float([1.0]))
+                    dr.forward(ty)
+                    jvp_ty = dr.grad(loss)
+                    dr.eval(result.power, result.suffix_count, jvp_ty)
+                    return {
+                        "jvp_ty": float(jvp_ty[0]),
+                    }
                 dr.eval(loss)
                 return {"loss": float(loss[0])}
 
             step = 1.0e-3
-            ad_result = run_case(0.0, enable_grad=True)
+            backward_result = run_case(0.0, mode="backward")
+            forward_result = run_case(0.0, mode="forward")
             fd = (run_case(step)["loss"] - run_case(-step)["loss"]) / (2.0 * step)
             print(json.dumps({
-                **ad_result,
+                **backward_result,
+                **forward_result,
                 "fd_ty": fd,
             }))
             """
@@ -2318,6 +2339,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["power"], 0.0)
         self.assertGreater(data["suffix_count"], 0)
         self.assertAlmostEqual(data["grad_ty"], data["fd_ty"], delta=2.0e-6)
+        self.assertAlmostEqual(data["jvp_ty"], data["fd_ty"], delta=2.0e-6)
 
     def test_accum_dfr_order3_direct_and_keller_writes_grid(self):
         data = run_json(

@@ -69,6 +69,8 @@ struct DfrDirectAccumOpInput {
     DfrMaterialAD material;
     Vector3fAD suffix_tri_p0;
     Vector3fAD suffix_tri_face_normal;
+    Vector3fAD suffix_vertices;
+    Vector3i suffix_faces;
     MaskAD active;
 
     DRJIT_STRUCT(DfrDirectAccumOpInput,
@@ -76,6 +78,7 @@ struct DfrDirectAccumOpInput {
                  material,
                  suffix_tri_p0,
                  suffix_tri_face_normal,
+                 suffix_vertices,
                  active)
 };
 
@@ -84,6 +87,8 @@ struct DfrDirectAccumOpInputDetached {
     DfrMaterial material;
     Vector3f suffix_tri_p0;
     Vector3f suffix_tri_face_normal;
+    Vector3f suffix_vertices;
+    Vector3i suffix_faces;
     Mask active;
 };
 
@@ -113,6 +118,8 @@ DfrDirectAccumOpInputDetached detach_dfr_direct_input(
     detached.material.valid = detach<false>(input.material.valid);
     detached.suffix_tri_p0 = detach<false>(input.suffix_tri_p0);
     detached.suffix_tri_face_normal = detach<false>(input.suffix_tri_face_normal);
+    detached.suffix_vertices = detach<false>(input.suffix_vertices);
+    detached.suffix_faces = input.suffix_faces;
     detached.active = detach<false>(input.active);
     detached.states.count = input.states.count;
     return detached;
@@ -268,6 +275,89 @@ Vector3f coerce_vec3_grad(const VecLike &value, size_t width) {
     return slices(detached) == width ? detached : zeros<Vector3f>(width);
 }
 
+struct DfrSuffixTriangleJvp {
+    Vector3f p0;
+    Vector3f face_normal;
+};
+
+DfrSuffixTriangleJvp dfr_suffix_triangle_jvp_from_vertices(
+    const Vector3f &vertices,
+    const Vector3i &faces,
+    const Vector3f &dot_vertices,
+    size_t triangle_width) {
+    DfrSuffixTriangleJvp result;
+    result.p0 = zeros<Vector3f>(triangle_width);
+    result.face_normal = zeros<Vector3f>(triangle_width);
+    if (triangle_width == 0 || slices(vertices) == 0 || slices(dot_vertices) == 0) {
+        return result;
+    }
+
+    const Vector3f v0 = gather<Vector3f>(vertices, faces[0]);
+    const Vector3f v1 = gather<Vector3f>(vertices, faces[1]);
+    const Vector3f v2 = gather<Vector3f>(vertices, faces[2]);
+    const Vector3f dot_v0 = gather<Vector3f>(dot_vertices, faces[0]);
+    const Vector3f dot_v1 = gather<Vector3f>(dot_vertices, faces[1]);
+    const Vector3f dot_v2 = gather<Vector3f>(dot_vertices, faces[2]);
+
+    const Vector3f e1 = v1 - v0;
+    const Vector3f e2 = v2 - v0;
+    const Vector3f dot_e1 = dot_v1 - dot_v0;
+    const Vector3f dot_e2 = dot_v2 - dot_v0;
+    const Vector3f raw_normal = cross(e1, e2);
+    const Vector3f dot_raw_normal = cross(dot_e1, e2) + cross(e1, dot_e2);
+    const Float raw_normal_norm = norm(raw_normal);
+    const Mask valid = raw_normal_norm > Epsilon;
+    const Vector3f face_normal = select(valid,
+                                        raw_normal / raw_normal_norm,
+                                        Vector3f(0.f, 0.f, 1.f));
+    result.p0 = dot_v0;
+    result.face_normal = select(
+        valid,
+        (dot_raw_normal - face_normal * dot(face_normal, dot_raw_normal)) / raw_normal_norm,
+        zeros<Vector3f>(triangle_width));
+    return result;
+}
+
+Vector3f dfr_suffix_triangle_vertex_vjp(const Vector3f &vertices,
+                                        const Vector3i &faces,
+                                        const Vector3f &grad_tri_p0,
+                                        const Vector3f &grad_tri_face_normal,
+                                        size_t vertex_width) {
+    Vector3f grad_vertices = zeros<Vector3f>(vertex_width);
+    if (vertex_width == 0 || slices(faces[0]) == 0) {
+        return grad_vertices;
+    }
+
+    const Vector3f v0 = gather<Vector3f>(vertices, faces[0]);
+    const Vector3f v1 = gather<Vector3f>(vertices, faces[1]);
+    const Vector3f v2 = gather<Vector3f>(vertices, faces[2]);
+    const Vector3f e1 = v1 - v0;
+    const Vector3f e2 = v2 - v0;
+    const Vector3f raw_normal = cross(e1, e2);
+    const Float raw_normal_norm = norm(raw_normal);
+    const Mask valid = raw_normal_norm > Epsilon;
+    const Vector3f face_normal = select(valid,
+                                        raw_normal / raw_normal_norm,
+                                        Vector3f(0.f, 0.f, 1.f));
+    const Vector3f grad_raw_normal = select(
+        valid,
+        (grad_tri_face_normal -
+         face_normal * dot(face_normal, grad_tri_face_normal)) / raw_normal_norm,
+        zeros<Vector3f>(slices(faces[0])));
+    const Vector3f grad_e1 = cross(e2, grad_raw_normal);
+    const Vector3f grad_e2 = cross(grad_raw_normal, e1);
+    const Vector3f grad_v0 = grad_tri_p0 - grad_e1 - grad_e2;
+    const Vector3f grad_v1 = grad_e1;
+    const Vector3f grad_v2 = grad_e2;
+
+    for (int axis = 0; axis < 3; ++axis) {
+        scatter_reduce(ReduceOp::Add, grad_vertices[axis], grad_v0[axis], faces[0]);
+        scatter_reduce(ReduceOp::Add, grad_vertices[axis], grad_v1[axis], faces[1]);
+        scatter_reduce(ReduceOp::Add, grad_vertices[axis], grad_v2[axis], faces[2]);
+    }
+    return grad_vertices;
+}
+
 template <typename States>
 int dfr_state_count_for(const States &states) {
     const int state_width = static_cast<int>(slices(states.edge_index));
@@ -327,6 +417,7 @@ public:
         const size_t state_width = slices(m_input_.states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
         const size_t triangle_width = slices(m_input_.suffix_tri_p0);
+        const size_t vertex_width = slices(m_input_.suffix_vertices);
 
         const Vector3f dot_edge_pos =
             coerce_vec3_grad(drjit::grad<false>(this->registered_input.states.edge_pos), state_width);
@@ -346,11 +437,15 @@ public:
             coerce_float_grad(drjit::grad<false>(this->registered_input.states.exterior_angle), state_width);
         const Float dot_material_gain =
             coerce_float_grad(drjit::grad<false>(this->registered_input.material.gain), material_width);
-        const Vector3f dot_tri_p0 =
-            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_p0), triangle_width);
-        const Vector3f dot_tri_face_normal =
-            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_face_normal),
-                             triangle_width);
+        const Vector3f dot_suffix_vertices =
+            coerce_vec3_grad(drjit::grad<false>(scene_->global_geometry().vertices), vertex_width);
+        const DfrSuffixTriangleJvp dot_suffix_triangles =
+            dfr_suffix_triangle_jvp_from_vertices(m_input_.suffix_vertices,
+                                                  m_input_.suffix_faces,
+                                                  dot_suffix_vertices,
+                                                  triangle_width);
+        const Vector3f &dot_tri_p0 = dot_suffix_triangles.p0;
+        const Vector3f &dot_tri_face_normal = dot_suffix_triangles.face_normal;
 
         drjit::eval(dot_edge_pos,
                     dot_edge_dir,
@@ -361,6 +456,7 @@ public:
                     dot_src_power,
                     dot_exterior_angle,
                     dot_material_gain,
+                    dot_suffix_vertices,
                     dot_tri_p0,
                     dot_tri_face_normal,
                     output.power,
@@ -404,6 +500,7 @@ public:
         const size_t state_width = slices(m_input_.states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
         const size_t triangle_width = slices(m_input_.suffix_tri_p0);
+        const size_t vertex_width = slices(m_input_.suffix_vertices);
         Vector3f grad_edge_pos = zeros<Vector3f>(state_width);
         Vector3f grad_edge_dir = zeros<Vector3f>(state_width);
         Float grad_edge_t_min = zeros<Float>(state_width);
@@ -415,6 +512,7 @@ public:
         Float grad_material_gain = zeros<Float>(material_width);
         Vector3f grad_tri_p0 = zeros<Vector3f>(triangle_width);
         Vector3f grad_tri_face_normal = zeros<Vector3f>(triangle_width);
+        Vector3f grad_suffix_vertices = zeros<Vector3f>(vertex_width);
         Float grad_power =
             coerce_float_grad(drjit::grad<false>(this->registered_output.power),
                               grid_.resolution0 * grid_.resolution1);
@@ -433,6 +531,7 @@ public:
                     grad_material_gain,
                     grad_tri_p0,
                     grad_tri_face_normal,
+                    grad_suffix_vertices,
                     grad_power,
                     grad_field_x_re);
 
@@ -463,6 +562,12 @@ public:
         params.grad_tri_fn_y = grad_tri_face_normal.y().data();
         params.grad_tri_fn_z = grad_tri_face_normal.z().data();
         dfr_direct_accum_vjp_gpu(params);
+        grad_suffix_vertices = dfr_suffix_triangle_vertex_vjp(m_input_.suffix_vertices,
+                                                              m_input_.suffix_faces,
+                                                              grad_tri_p0,
+                                                              grad_tri_face_normal,
+                                                              vertex_width);
+        drjit::eval(grad_suffix_vertices);
 
         drjit::accum_grad(this->registered_input.states.edge_pos,
                           drjit::detach<false>(grad_edge_pos));
@@ -482,10 +587,8 @@ public:
                           drjit::detach<false>(grad_exterior_angle));
         drjit::accum_grad(this->registered_input.material.gain,
                           drjit::detach<false>(grad_material_gain));
-        drjit::accum_grad(this->registered_input.suffix_tri_p0,
-                          drjit::detach<false>(grad_tri_p0));
-        drjit::accum_grad(this->registered_input.suffix_tri_face_normal,
-                          drjit::detach<false>(grad_tri_face_normal));
+        drjit::accum_grad(this->registered_input.suffix_vertices,
+                          drjit::detach<false>(grad_suffix_vertices));
     }
 
     const char *name() const override { return "DfrDirectAccum"; }
@@ -571,12 +674,16 @@ DfrAccumAD dfr_direct_accum_custom_op(const Scene *scene,
                                       const DfrOptions &options,
                                       const Vector3fAD &suffix_tri_p0,
                                       const Vector3fAD &suffix_tri_face_normal,
+                                      const Vector3fAD &suffix_vertices,
+                                      const Vector3i &suffix_faces,
                                       const MaskAD &active) {
     DfrDirectAccumOpInput input;
     input.states = states;
     input.material = material;
     input.suffix_tri_p0 = suffix_tri_p0;
     input.suffix_tri_face_normal = suffix_tri_face_normal;
+    input.suffix_vertices = suffix_vertices;
+    input.suffix_faces = suffix_faces;
     input.active = active;
     nb::ref<DfrDirectAccumOp> op =
         new DfrDirectAccumOp(input, scene, grid, options);
@@ -596,6 +703,8 @@ struct DfrChainAccumOpInput {
     MaskAD active;
     Vector3fAD suffix_tri_p0;
     Vector3fAD suffix_tri_face_normal;
+    Vector3fAD suffix_vertices;
+    Vector3i suffix_faces;
 
     DRJIT_STRUCT(DfrChainAccumOpInput,
                  initial_states,
@@ -603,7 +712,8 @@ struct DfrChainAccumOpInput {
                  material,
                  active,
                  suffix_tri_p0,
-                 suffix_tri_face_normal)
+                 suffix_tri_face_normal,
+                 suffix_vertices)
 };
 
 struct DfrChainAccumOpInputDetached {
@@ -613,6 +723,8 @@ struct DfrChainAccumOpInputDetached {
     Mask active;
     Vector3f suffix_tri_p0;
     Vector3f suffix_tri_face_normal;
+    Vector3f suffix_vertices;
+    Vector3i suffix_faces;
 };
 
 DfrChainAccumOpInputDetached detach_dfr_chain_input(
@@ -628,6 +740,8 @@ DfrChainAccumOpInputDetached detach_dfr_chain_input(
     detached.active = detach<false>(input.active);
     detached.suffix_tri_p0 = detach<false>(input.suffix_tri_p0);
     detached.suffix_tri_face_normal = detach<false>(input.suffix_tri_face_normal);
+    detached.suffix_vertices = detach<false>(input.suffix_vertices);
+    detached.suffix_faces = input.suffix_faces;
     return detached;
 }
 
@@ -686,6 +800,7 @@ public:
         const size_t recursive_width = slices(m_input_.recursive_states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
         const size_t triangle_width = slices(m_input_.suffix_tri_p0);
+        const size_t vertex_width = slices(m_input_.suffix_vertices);
         const Vector3f dot_initial_edge_pos =
             coerce_vec3_grad(drjit::grad<false>(this->registered_input.initial_states.edge_pos),
                              initial_width);
@@ -725,12 +840,15 @@ public:
         const Float dot_material_gain =
             coerce_float_grad(drjit::grad<false>(this->registered_input.material.gain),
                               material_width);
-        const Vector3f dot_suffix_tri_p0 =
-            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_p0),
-                             triangle_width);
-        const Vector3f dot_suffix_tri_face_normal =
-            coerce_vec3_grad(drjit::grad<false>(this->registered_input.suffix_tri_face_normal),
-                             triangle_width);
+        const Vector3f dot_suffix_vertices =
+            coerce_vec3_grad(drjit::grad<false>(scene_->global_geometry().vertices), vertex_width);
+        const DfrSuffixTriangleJvp dot_suffix_triangles =
+            dfr_suffix_triangle_jvp_from_vertices(m_input_.suffix_vertices,
+                                                  m_input_.suffix_faces,
+                                                  dot_suffix_vertices,
+                                                  triangle_width);
+        const Vector3f &dot_suffix_tri_p0 = dot_suffix_triangles.p0;
+        const Vector3f &dot_suffix_tri_face_normal = dot_suffix_triangles.face_normal;
 
         drjit::eval(dot_initial_edge_pos,
                     dot_initial_edge_dir,
@@ -745,6 +863,7 @@ public:
                     dot_recursive_edge_t_max,
                     dot_recursive_exterior,
                     dot_material_gain,
+                    dot_suffix_vertices,
                     dot_suffix_tri_p0,
                     dot_suffix_tri_face_normal,
                     output.power,
@@ -795,6 +914,7 @@ public:
         const size_t recursive_width = slices(m_input_.recursive_states.edge_index);
         const size_t material_width = slices(m_input_.material.gain);
         const size_t triangle_width = slices(m_input_.suffix_tri_p0);
+        const size_t vertex_width = slices(m_input_.suffix_vertices);
         Vector3f grad_initial_edge_pos = zeros<Vector3f>(initial_width);
         Vector3f grad_initial_edge_dir = zeros<Vector3f>(initial_width);
         Float grad_initial_edge_t_min = zeros<Float>(initial_width);
@@ -810,6 +930,7 @@ public:
         Float grad_material_gain = zeros<Float>(material_width);
         Vector3f grad_suffix_tri_p0 = zeros<Vector3f>(triangle_width);
         Vector3f grad_suffix_tri_face_normal = zeros<Vector3f>(triangle_width);
+        Vector3f grad_suffix_vertices = zeros<Vector3f>(vertex_width);
         Float grad_power =
             coerce_float_grad(drjit::grad<false>(this->registered_output.power),
                               grid_.resolution0 * grid_.resolution1);
@@ -832,6 +953,7 @@ public:
                     grad_material_gain,
                     grad_suffix_tri_p0,
                     grad_suffix_tri_face_normal,
+                    grad_suffix_vertices,
                     grad_power,
                     grad_field_x_re);
 
@@ -868,6 +990,12 @@ public:
         params.grad_tri_fn_y = grad_suffix_tri_face_normal.y().data();
         params.grad_tri_fn_z = grad_suffix_tri_face_normal.z().data();
         dfr_chain_accum_vjp_gpu(params);
+        grad_suffix_vertices = dfr_suffix_triangle_vertex_vjp(m_input_.suffix_vertices,
+                                                              m_input_.suffix_faces,
+                                                              grad_suffix_tri_p0,
+                                                              grad_suffix_tri_face_normal,
+                                                              vertex_width);
+        drjit::eval(grad_suffix_vertices);
 
         drjit::accum_grad(this->registered_input.initial_states.edge_pos,
                           drjit::detach<false>(grad_initial_edge_pos));
@@ -895,10 +1023,8 @@ public:
                           drjit::detach<false>(grad_recursive_exterior));
         drjit::accum_grad(this->registered_input.material.gain,
                           drjit::detach<false>(grad_material_gain));
-        drjit::accum_grad(this->registered_input.suffix_tri_p0,
-                          drjit::detach<false>(grad_suffix_tri_p0));
-        drjit::accum_grad(this->registered_input.suffix_tri_face_normal,
-                          drjit::detach<false>(grad_suffix_tri_face_normal));
+        drjit::accum_grad(this->registered_input.suffix_vertices,
+                          drjit::detach<false>(grad_suffix_vertices));
     }
 
     const char *name() const override { return "DfrChainAccum"; }
@@ -995,6 +1121,8 @@ DfrAccumAD dfr_chain_accum_custom_op(const Scene *scene,
                                      const DfrOptions &options,
                                      const Vector3fAD &suffix_tri_p0,
                                      const Vector3fAD &suffix_tri_face_normal,
+                                     const Vector3fAD &suffix_vertices,
+                                     const Vector3i &suffix_faces,
                                      const MaskAD &active) {
     DfrChainAccumOpInput input;
     input.initial_states = initial_states;
@@ -1003,6 +1131,8 @@ DfrAccumAD dfr_chain_accum_custom_op(const Scene *scene,
     input.active = active;
     input.suffix_tri_p0 = suffix_tri_p0;
     input.suffix_tri_face_normal = suffix_tri_face_normal;
+    input.suffix_vertices = suffix_vertices;
+    input.suffix_faces = suffix_faces;
     nb::ref<DfrChainAccumOp> op =
         new DfrChainAccumOp(input, scene, grid, options);
     DfrAccumAD output = op->eval(detach_dfr_chain_input(input));
@@ -6432,6 +6562,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             options,
             triangle_info_.p0,
             triangle_info_.face_normal,
+            global_geometry_.vertices,
+            global_geometry_.faces,
             active);
 
         result.power = zeros<FloatAD>(grid_cell_count);
@@ -7009,6 +7141,8 @@ DfrAccumT<Detached> Scene::accum_dfr(
             options,
             triangle_info_.p0,
             triangle_info_.face_normal,
+            global_geometry_.vertices,
+            global_geometry_.faces,
             active);
 
         result.power = zeros<FloatAD>(grid_cell_count);
