@@ -293,6 +293,38 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["field0_abs"], 0.0)
         self.assertLess(data["basis_k_z0"], 0.0)
 
+    def test_coherent_higher_candidate_builder_accepts_empty_inputs(self):
+        data = run_json(
+            """
+            import json
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            prev = pj.DfrCoherentUtdStates()
+            prev.count = 0
+            edges = pj.DfrCoherentEdge()
+            edges.count = 0
+            options = pj.DfrCoherentOptions()
+            pairs = scene.build_dfr_coherent_higher_candidates(
+                prev,
+                edges,
+                cuda.Int([0]),
+                options,
+                True,
+            )
+            print(json.dumps({"count": pairs.count}))
+            """
+        )
+
+        self.assertEqual(data["count"], 0)
+
     def test_accum_dfr_coherent_direct_rejects_empty_states(self):
         result = run_script(
             """

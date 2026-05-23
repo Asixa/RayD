@@ -5262,6 +5262,109 @@ DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(
 }
 
 template <bool Detached>
+DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates(
+    const DfrCoherentUtdStatesT<Detached> &prev_states,
+    const DfrCoherentEdgeT<Detached> &edges,
+    const IntT<Detached> &global_to_local_edge_index,
+    const DfrCoherentOptions &options,
+    MaskT<Detached> active) const {
+    require(is_ready(), "Scene::build_dfr_coherent_higher_candidates(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::build_dfr_coherent_higher_candidates(): scene has pending updates. Call Scene::sync() first.");
+    require(options.higher_probe_radius_scale > 0.f,
+            "Scene::build_dfr_coherent_higher_candidates(): probe radius scale must be positive.");
+    require(options.higher_probe_radius_min >= 0.f &&
+                options.higher_probe_radius_min <= options.higher_probe_radius_max,
+            "Scene::build_dfr_coherent_higher_candidates(): probe radius bounds must be ordered.");
+    if constexpr (!Detached) {
+        (void)prev_states;
+        (void)edges;
+        (void)global_to_local_edge_index;
+        (void)active;
+        throw std::runtime_error(
+            "Scene::build_dfr_coherent_higher_candidates(): AD inputs are not supported yet.");
+    } else {
+        const int prev_count = prev_states.count;
+        const int edge_count = edges.count;
+        require(prev_count >= 0 && edge_count >= 0,
+                "Scene::build_dfr_coherent_higher_candidates(): invalid state or edge count.");
+        DfrCoherentCandidatePairs result;
+        if (prev_count == 0 || edge_count == 0) {
+            result.count = 0;
+            return result;
+        }
+        require(static_cast<int>(slices(prev_states.edge_index)) >= prev_count &&
+                    static_cast<int>(slices(prev_states.edge_pos)) >= prev_count &&
+                    static_cast<int>(slices(prev_states.source_pos)) >= prev_count &&
+                    static_cast<int>(slices(prev_states.incident_basis_u)) >= prev_count &&
+                    static_cast<int>(slices(prev_states.incident_basis_v)) >= prev_count &&
+                    static_cast<int>(slices(prev_states.incident_basis_k)) >= prev_count,
+                "Scene::build_dfr_coherent_higher_candidates(): previous state fields must cover state count.");
+        require(static_cast<int>(slices(global_to_local_edge_index)) > 0,
+                "Scene::build_dfr_coherent_higher_candidates(): global-to-local edge index map must not be empty.");
+
+        Mask active_detached = active;
+        const int active_width = static_cast<int>(slices(active_detached));
+        if (active_width == 1 && prev_count > 1) {
+            active_detached = gather<Mask>(active_detached, zeros<UInt>(prev_count));
+        } else {
+            require(active_width == prev_count,
+                    "Scene::build_dfr_coherent_higher_candidates(): active width must be 1 or match previous state count.");
+        }
+
+        constexpr int probe_count = 18;
+        constexpr int probe_grid_count = probe_count / 2;
+        const int probe_lane_count = prev_count * probe_count;
+        const UInt probe_idx = arange<UInt>(probe_lane_count);
+        const UInt prev_idx_all = probe_idx / UInt(probe_count);
+        const UInt probe_slot = probe_idx - prev_idx_all * UInt(probe_count);
+        const UInt probe_grid_slot = probe_slot % UInt(probe_grid_count);
+        const Float probe_u = Float(probe_grid_slot / UInt(3)) - Float(1.f);
+        const Float probe_v = Float(probe_grid_slot % UInt(3)) - Float(1.f);
+        const Float probe_sign = select(probe_slot < UInt(probe_grid_count), Float(1.f), Float(-1.f));
+
+        const Vector3f edge_pos = gather<Vector3f>(prev_states.edge_pos, prev_idx_all);
+        const Vector3f source_pos = gather<Vector3f>(prev_states.source_pos, prev_idx_all);
+        const Vector3f basis_u = gather<Vector3f>(prev_states.incident_basis_u, prev_idx_all);
+        const Vector3f basis_v = gather<Vector3f>(prev_states.incident_basis_v, prev_idx_all);
+        const Vector3f basis_k = gather<Vector3f>(prev_states.incident_basis_k, prev_idx_all);
+        const Int prev_edge_idx = gather<Int>(prev_states.edge_index, prev_idx_all);
+        const Mask probe_active = gather<Mask>(active_detached, prev_idx_all);
+
+        const Float source_distance = norm(edge_pos - source_pos);
+        const Float unclamped_radius = source_distance * Float(options.higher_probe_radius_scale);
+        const Float probe_radius =
+            minimum(maximum(unclamped_radius, Float(options.higher_probe_radius_min)),
+                    Float(options.higher_probe_radius_max));
+        const Vector3f ray_origin = edge_pos +
+                                    basis_u * (probe_radius * probe_u) +
+                                    basis_v * (probe_radius * probe_v);
+        const Vector3f ray_dir = basis_k * probe_sign;
+
+        const NearestRayEdge nearest =
+            this->template nearest_edge<true>(Ray(ray_origin, ray_dir), probe_active);
+        Mask valid = nearest.global_edge_id >= Int(0);
+        const Int safe_global_edge =
+            select(valid, nearest.global_edge_id, Int(0));
+        valid &= safe_global_edge < Int(static_cast<int>(slices(global_to_local_edge_index)));
+        const Int local_edge_idx =
+            gather<Int>(global_to_local_edge_index, UInt(safe_global_edge), valid);
+        valid &= local_edge_idx >= Int(0);
+        valid &= prev_edge_idx != local_edge_idx;
+
+        const UInt keep = compress(valid);
+        const int candidate_count = static_cast<int>(slices(keep));
+        result.count = candidate_count;
+        if (candidate_count == 0) {
+            return result;
+        }
+        result.prev_index = Int(gather<UInt>(prev_idx_all, keep));
+        result.edge_index = gather<Int>(local_edge_idx, keep);
+        return result;
+    }
+}
+
+template <bool Detached>
 DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
     const DfrCoherentUtdStatesT<Detached> &states,
     const DfrGrid &grid,
@@ -6967,6 +7070,18 @@ template DfrCoherentUtdStatesAD Scene::build_dfr_coherent_tx_states<false>(
     const DfrCoherentEdgeAD &edges,
     const Vector3fAD &tx_position,
     const DfrMaterialAD &material,
+    const DfrCoherentOptions &options,
+    MaskAD active) const;
+template DfrCoherentCandidatePairs Scene::build_dfr_coherent_higher_candidates<true>(
+    const DfrCoherentUtdStates &prev_states,
+    const DfrCoherentEdge &edges,
+    const Int &global_to_local_edge_index,
+    const DfrCoherentOptions &options,
+    Mask active) const;
+template DfrCoherentCandidatePairsAD Scene::build_dfr_coherent_higher_candidates<false>(
+    const DfrCoherentUtdStatesAD &prev_states,
+    const DfrCoherentEdgeAD &edges,
+    const IntAD &global_to_local_edge_index,
     const DfrCoherentOptions &options,
     MaskAD active) const;
 template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(

@@ -178,6 +178,14 @@ public:
         const DfrMaterialT<Detached> &material,
         const DfrCoherentOptions &options,
         MaskT<Detached> active) const;
+    /// Build higher-order coherent edge candidate pairs from outgoing state bases.
+    template <bool Detached>
+    DfrCoherentCandidatePairsT<Detached> build_dfr_coherent_higher_candidates(
+        const DfrCoherentUtdStatesT<Detached> &prev_states,
+        const DfrCoherentEdgeT<Detached> &edges,
+        const IntT<Detached> &global_to_local_edge_index,
+        const DfrCoherentOptions &options,
+        MaskT<Detached> active) const;
     /// Native higher-order direct-chain diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
     DfrAccumT<Detached> accum_dfr(

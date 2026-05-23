@@ -113,6 +113,12 @@ using DfrCoherentEdgeT = DfrCoherentEdgeData<FloatT<Detached>>;
 using DfrCoherentEdgeAD = DfrCoherentEdgeT<false>;
 using DfrCoherentEdge = DfrCoherentEdgeT<true>;
 
+template <typename> struct DfrCoherentCandidatePairsData;
+template <bool Detached>
+using DfrCoherentCandidatePairsT = DfrCoherentCandidatePairsData<FloatT<Detached>>;
+using DfrCoherentCandidatePairsAD = DfrCoherentCandidatePairsT<false>;
+using DfrCoherentCandidatePairs = DfrCoherentCandidatePairsT<true>;
+
 template <typename> struct DfrAccumData;
 template <bool Detached>
 using DfrAccumT = DfrAccumData<FloatT<Detached>>;

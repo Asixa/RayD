@@ -66,6 +66,9 @@ struct DfrCoherentOptions {
     float tx_pol_x = 1.f;
     float tx_pol_y = 0.f;
     float tx_pol_z = 0.f;
+    float higher_probe_radius_scale = 0.6f;
+    float higher_probe_radius_min = 0.5f;
+    float higher_probe_radius_max = 4.0f;
 };
 
 /// Per-primitive electromagnetic material payload used by diffraction kernels.
@@ -293,6 +296,22 @@ struct DfrCoherentEdgeData {
                  adjacent_face0,
                  adjacent_face1,
                  ignore_prim_ids)
+};
+
+/// Candidate edge pairs emitted by the higher-order coherent state expansion probe pass.
+template <typename Float_>
+struct DfrCoherentCandidatePairsData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
+
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+
+    int count = 0;
+    Int_ prev_index = full<Int_>(-1, 1);
+    Int_ edge_index = full<Int_>(-1, 1);
+
+    DRJIT_STRUCT(DfrCoherentCandidatePairsData,
+                 prev_index,
+                 edge_index)
 };
 
 /// Result of native diffraction accumulation. Grid arrays have grid_cell_count entries.

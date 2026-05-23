@@ -616,7 +616,13 @@ NB_MODULE(rayd, m) {
             .def_rw("omega", &DfrCoherentOptions::omega)
             .def_rw("tx_pol_x", &DfrCoherentOptions::tx_pol_x)
             .def_rw("tx_pol_y", &DfrCoherentOptions::tx_pol_y)
-            .def_rw("tx_pol_z", &DfrCoherentOptions::tx_pol_z);
+            .def_rw("tx_pol_z", &DfrCoherentOptions::tx_pol_z)
+            .def_rw("higher_probe_radius_scale",
+                    &DfrCoherentOptions::higher_probe_radius_scale)
+            .def_rw("higher_probe_radius_min",
+                    &DfrCoherentOptions::higher_probe_radius_min)
+            .def_rw("higher_probe_radius_max",
+                    &DfrCoherentOptions::higher_probe_radius_max);
 
         nb::class_<DfrMaterial>(m, "DfrMaterial")
             .def(nb::init<>())
@@ -785,6 +791,18 @@ NB_MODULE(rayd, m) {
             .def_rw("adjacent_face1", &DfrCoherentEdgeAD::adjacent_face1)
             .def_rw("ignore_prim_ids", &DfrCoherentEdgeAD::ignore_prim_ids)
             .def_rw("ignore_k", &DfrCoherentEdgeAD::ignore_k);
+
+        nb::class_<DfrCoherentCandidatePairs>(m, "DfrCoherentCandidatePairs")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentCandidatePairs::count)
+            .def_rw("prev_index", &DfrCoherentCandidatePairs::prev_index)
+            .def_rw("edge_index", &DfrCoherentCandidatePairs::edge_index);
+
+        nb::class_<DfrCoherentCandidatePairsAD>(m, "DfrCoherentCandidatePairsAD")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentCandidatePairsAD::count)
+            .def_rw("prev_index", &DfrCoherentCandidatePairsAD::prev_index)
+            .def_rw("edge_index", &DfrCoherentCandidatePairsAD::edge_index);
 
         nb::class_<DfrStates>(m, "DfrStates")
             .def(nb::init<>())
@@ -1862,6 +1880,55 @@ NB_MODULE(rayd, m) {
                  "edges"_a,
                  "tx_position"_a,
                  "material"_a,
+                 "options"_a = DfrCoherentOptions(),
+                  "active"_a = true)
+            .def("build_dfr_coherent_higher_candidates",
+                 [](const Scene &scene,
+                    nb::handle prev_states_obj,
+                    nb::handle edges_obj,
+                    nb::handle global_to_local_edge_index_obj,
+                    const DfrCoherentOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DfrCoherentUtdStates>(prev_states_obj) &&
+                         nb::isinstance<DfrCoherentEdge>(edges_obj)) {
+                         const DfrCoherentUtdStates prev_states =
+                             nb::cast<DfrCoherentUtdStates>(prev_states_obj);
+                         const DfrCoherentEdge edges =
+                             nb::cast<DfrCoherentEdge>(edges_obj);
+                         const Int global_to_local_edge_index =
+                             nb::cast<Int>(global_to_local_edge_index_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(
+                             scene.build_dfr_coherent_higher_candidates<true>(
+                                 prev_states,
+                                 edges,
+                                 global_to_local_edge_index,
+                                 options,
+                                 active));
+                     }
+                     if (nb::isinstance<DfrCoherentUtdStatesAD>(prev_states_obj) &&
+                         nb::isinstance<DfrCoherentEdgeAD>(edges_obj)) {
+                         const DfrCoherentUtdStatesAD prev_states =
+                             nb::cast<DfrCoherentUtdStatesAD>(prev_states_obj);
+                         const DfrCoherentEdgeAD edges =
+                             nb::cast<DfrCoherentEdgeAD>(edges_obj);
+                         const IntAD global_to_local_edge_index =
+                             nb::cast<IntAD>(global_to_local_edge_index_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(
+                             scene.build_dfr_coherent_higher_candidates<false>(
+                                 prev_states,
+                                 edges,
+                                 global_to_local_edge_index,
+                                 options,
+                                 active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 "prev_states"_a,
+                 "edges"_a,
+                 "global_to_local_edge_index"_a,
                  "options"_a = DfrCoherentOptions(),
                  "active"_a = true)
             .def("accum_dfr",
