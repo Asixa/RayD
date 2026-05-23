@@ -155,6 +155,14 @@ public:
         const DfrMaterialT<Detached> &material,
         const DfrOptions &options,
         MaskT<Detached> active) const;
+    /// Native exact coherent first-order diffraction accumulation onto a grid.
+    template <bool Detached>
+    DfrCoherentAccumT<Detached> accum_dfr_coherent_direct(
+        const DfrStatesT<Detached> &states,
+        const DfrGrid &grid,
+        const DfrMaterialT<Detached> &material,
+        const DfrCoherentOptions &options,
+        MaskT<Detached> active) const;
     /// Native higher-order direct-chain diffraction accumulation onto a grid (non-AD fast path).
     template <bool Detached>
     DfrAccumT<Detached> accum_dfr(

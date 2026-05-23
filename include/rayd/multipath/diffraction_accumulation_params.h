@@ -117,6 +117,8 @@ struct DfrAccumParams {
     int strategy_mask;
     int sample_sequence;
     int receiver_model;
+    int select_diffraction_point;
+    int prefilter_visibility;
     int collect_edge_use;
     int collect_debug_counts;
 
@@ -134,6 +136,22 @@ struct DfrAccumParams {
     int *out_edge_vis_rejects;
     int *out_utd_rejects;
     int *out_edge_uses;
+
+    float *out_direct_field_x_re;
+    float *out_direct_field_x_im;
+    float *out_direct_field_y_re;
+    float *out_direct_field_y_im;
+    float *out_direct_field_z_re;
+    float *out_direct_field_z_im;
+    float *out_multi_field_x_re;
+    float *out_multi_field_x_im;
+    float *out_multi_field_y_re;
+    float *out_multi_field_y_im;
+    float *out_multi_field_z_re;
+    float *out_multi_field_z_im;
+    int *out_multi_count;
+    int *out_visibility_reject_count;
+    int *out_utd_reject_count;
 
     uint8_t *tape_active;
     int *tape_state_idx;

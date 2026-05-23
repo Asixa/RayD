@@ -159,6 +159,208 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["direct0"], 4)
         self.assertEqual(data["edge_use1"], 15)
 
+    def test_coherent_diffraction_accumulation_abi_fields_are_bound(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            options = pj.DfrCoherentOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.max_order = 1
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.select_diffraction_point = True
+            options.prefilter_visibility = True
+            options.collect_debug_counts = True
+
+            result = pj.DfrCoherentAccum()
+            result.grid_cell_count = 2
+            result.direct_field_x = cuda.Complex2f([1.0, 0.0], [0.0, 1.0])
+            result.direct_field_y = cuda.Complex2f([2.0, 0.0], [0.0, 2.0])
+            result.direct_field_z = cuda.Complex2f([3.0, 0.0], [0.0, 3.0])
+            result.multi_field_x = cuda.Complex2f([4.0, 0.0], [0.0, 4.0])
+            result.multi_field_y = cuda.Complex2f([5.0, 0.0], [0.0, 5.0])
+            result.multi_field_z = cuda.Complex2f([6.0, 0.0], [0.0, 6.0])
+            result.direct_count = cuda.Int([7, 8])
+            result.multi_count = cuda.Int([9, 10])
+            result.visibility_reject_count = cuda.Int([11, 12])
+            result.utd_reject_count = cuda.Int([13, 14])
+
+            dr.eval(
+                result.direct_field_x.real,
+                result.multi_field_z.imag,
+                result.direct_count,
+                result.utd_reject_count,
+            )
+
+            print(json.dumps({
+                "max_order": options.max_order,
+                "receiver_model": options.receiver_model,
+                "select_diffraction_point": options.select_diffraction_point,
+                "prefilter_visibility": options.prefilter_visibility,
+                "collect_debug_counts": options.collect_debug_counts,
+                "result_cells": result.grid_cell_count,
+                "direct_field_x_real0": float(result.direct_field_x.real[0]),
+                "multi_field_z_imag1": float(result.multi_field_z.imag[1]),
+                "direct_count0": int(result.direct_count[0]),
+                "utd_reject1": int(result.utd_reject_count[1]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["max_order"], 1)
+        self.assertEqual(data["receiver_model"], 0)
+        self.assertTrue(data["select_diffraction_point"])
+        self.assertTrue(data["prefilter_visibility"])
+        self.assertTrue(data["collect_debug_counts"])
+        self.assertEqual(data["result_cells"], 2)
+        self.assertAlmostEqual(data["direct_field_x_real0"], 1.0, places=6)
+        self.assertAlmostEqual(data["multi_field_z_imag1"], 6.0, places=6)
+        self.assertEqual(data["direct_count0"], 7)
+        self.assertEqual(data["utd_reject1"], 14)
+
+    def test_accum_dfr_coherent_direct_rejects_empty_states(self):
+        result = run_script(
+            """
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DfrStates()
+            states.count = 0
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DfrMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DfrCoherentOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.max_order = 1
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+
+            scene.accum_dfr_coherent_direct(states, grid, material, options, True)
+            """,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Scene::accum_dfr_coherent_direct(): invalid state count", result.stderr)
+
+    def test_accum_dfr_coherent_direct_writes_direct_field(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DfrStates()
+            states.count = 1
+            states.edge_index = cuda.Int([0])
+            states.edge_pos = cuda.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = cuda.Array3f([1.0], [0.0], [0.0])
+            states.edge_t_min = cuda.Float([-0.5])
+            states.edge_t_max = cuda.Float([0.5])
+            states.n0 = cuda.Array3f([0.0], [1.0], [0.0])
+            states.n1 = cuda.Array3f([0.0], [-1.0], [0.0])
+            states.prim0 = cuda.Int([-1])
+            states.prim1 = cuda.Int([-1])
+            states.exterior_angle = cuda.Float([1.5 * 3.141592653589793])
+            states.src = cuda.Array3f([0.0], [0.0], [1.0])
+            states.src_power = cuda.Float([2.0])
+            states.wi = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.d0 = cuda.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_depth = cuda.Int([0])
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DfrMaterial()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.mu_r = cuda.Float([1.0])
+            material.gain = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.DfrCoherentOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.max_order = 1
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.select_diffraction_point = True
+            options.prefilter_visibility = True
+            options.collect_debug_counts = True
+
+            pj.native_launch_audit_clear()
+            result = scene.accum_dfr_coherent_direct(states, grid, material, options, True)
+            dr.eval(
+                result.direct_field_x.real,
+                result.direct_field_x.imag,
+                result.direct_count,
+                result.visibility_reject_count,
+                result.utd_reject_count,
+            )
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "cells": result.grid_cell_count,
+                "field_abs": float(dr.sqrt(
+                    dr.sqr(result.direct_field_x.real[0]) +
+                    dr.sqr(result.direct_field_x.imag[0])
+                )),
+                "direct_count": int(result.direct_count[0]),
+                "visibility_reject_count": int(result.visibility_reject_count[0]),
+                "utd_reject_count": int(result.utd_reject_count[0]),
+                "audit": audit,
+            }))
+            """
+        )
+
+        self.assertEqual(data["cells"], 1)
+        self.assertGreater(data["field_abs"], 0.0)
+        self.assertGreater(data["direct_count"], 0)
+        self.assertGreaterEqual(data["visibility_reject_count"], 0)
+        self.assertGreaterEqual(data["utd_reject_count"], 0)
+
     def test_diffraction_path_export_abi_fields_are_bound(self):
         data = run_json(
             """

@@ -203,6 +203,26 @@ struct DfrAccumRaw {
     Int edge_uses;
 };
 
+struct DfrCoherentAccumRaw {
+    int grid_cell_count = 0;
+    Float direct_field_x_re;
+    Float direct_field_x_im;
+    Float direct_field_y_re;
+    Float direct_field_y_im;
+    Float direct_field_z_re;
+    Float direct_field_z_im;
+    Float multi_field_x_re;
+    Float multi_field_x_im;
+    Float multi_field_y_re;
+    Float multi_field_y_im;
+    Float multi_field_z_re;
+    Float multi_field_z_im;
+    Int direct_count;
+    Int multi_count;
+    Int visibility_reject_count;
+    Int utd_reject_count;
+};
+
 struct DfrPathsRaw {
     int capacity = 0;
     Int count;
@@ -768,6 +788,113 @@ void init_dfr_accum_raw(DfrAccumRaw &raw) {
                      &zero_i);
     jit_memset_async(JitBackend::CUDA, raw.utd_rejects.data(), 1, sizeof(int), &zero_i);
     jit_memset_async(JitBackend::CUDA, raw.edge_uses.data(), 1, sizeof(int), &zero_i);
+}
+
+DfrCoherentAccumRaw alloc_dfr_coherent_accum_raw(int grid_cell_count) {
+    DfrCoherentAccumRaw raw;
+    raw.grid_cell_count = grid_cell_count;
+    raw.direct_field_x_re = empty<Float>(grid_cell_count);
+    raw.direct_field_x_im = empty<Float>(grid_cell_count);
+    raw.direct_field_y_re = empty<Float>(grid_cell_count);
+    raw.direct_field_y_im = empty<Float>(grid_cell_count);
+    raw.direct_field_z_re = empty<Float>(grid_cell_count);
+    raw.direct_field_z_im = empty<Float>(grid_cell_count);
+    raw.multi_field_x_re = empty<Float>(grid_cell_count);
+    raw.multi_field_x_im = empty<Float>(grid_cell_count);
+    raw.multi_field_y_re = empty<Float>(grid_cell_count);
+    raw.multi_field_y_im = empty<Float>(grid_cell_count);
+    raw.multi_field_z_re = empty<Float>(grid_cell_count);
+    raw.multi_field_z_im = empty<Float>(grid_cell_count);
+    raw.direct_count = empty<Int>(grid_cell_count);
+    raw.multi_count = empty<Int>(grid_cell_count);
+    raw.visibility_reject_count = empty<Int>(grid_cell_count);
+    raw.utd_reject_count = empty<Int>(grid_cell_count);
+    return raw;
+}
+
+void init_dfr_coherent_accum_raw(DfrCoherentAccumRaw &raw) {
+    const int zero_i = 0;
+    const float zero_f = 0.f;
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_x_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_x_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_y_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_y_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_z_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_field_z_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_x_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_x_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_y_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_y_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_z_re.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_field_z_im.data(),
+                     raw.grid_cell_count,
+                     sizeof(float),
+                     &zero_f);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.direct_count.data(),
+                     raw.grid_cell_count,
+                     sizeof(int),
+                     &zero_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.multi_count.data(),
+                     raw.grid_cell_count,
+                     sizeof(int),
+                     &zero_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.visibility_reject_count.data(),
+                     raw.grid_cell_count,
+                     sizeof(int),
+                     &zero_i);
+    jit_memset_async(JitBackend::CUDA,
+                     raw.utd_reject_count.data(),
+                     raw.grid_cell_count,
+                     sizeof(int),
+                     &zero_i);
 }
 
 DfrPathsRaw alloc_dfr_paths_raw(int capacity) {
@@ -4874,6 +5001,228 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
 }
 
 template <bool Detached>
+DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
+    const DfrStatesT<Detached> &states,
+    const DfrGrid &grid,
+    const DfrMaterialT<Detached> &material,
+    const DfrCoherentOptions &options,
+    MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(
+        NativeLaunchStage::AccumDfr);
+    require(is_ready(), "Scene::accum_dfr_coherent_direct(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::accum_dfr_coherent_direct(): scene has pending updates. Call Scene::sync() first.");
+    require(grid.axis >= 0 && grid.axis <= 2,
+            "Scene::accum_dfr_coherent_direct(): grid.axis must be 0, 1, or 2.");
+    require(grid.resolution0 > 0 && grid.resolution1 > 0,
+            "Scene::accum_dfr_coherent_direct(): grid resolution must be positive.");
+    require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
+            "Scene::accum_dfr_coherent_direct(): grid bounds must be ordered.");
+    require(grid.cell_area > 0.f,
+            "Scene::accum_dfr_coherent_direct(): grid.cell_area must be positive.");
+    require(options.wavelength > 0.f,
+            "Scene::accum_dfr_coherent_direct(): wavelength must be positive.");
+    require(options.max_order == 1,
+            "Scene::accum_dfr_coherent_direct(): only max_order == 1 is supported.");
+    require(options.receiver_model == RAYD_DFR_MATCHED_ISO,
+            "Scene::accum_dfr_coherent_direct(): only matched isotropic receivers are supported.");
+    if constexpr (!Detached) {
+        (void)states;
+        (void)material;
+        (void)active;
+        throw std::runtime_error(
+            "Scene::accum_dfr_coherent_direct(): AD inputs are not supported yet.");
+    } else {
+        const int state_count = states.count;
+        require(state_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid state count.");
+        require(static_cast<int>(slices(states.edge_index)) >= state_count &&
+                    static_cast<int>(slices(states.edge_pos)) >= state_count &&
+                    static_cast<int>(slices(states.edge_dir)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_max)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n1)) >= state_count &&
+                    static_cast<int>(slices(states.prim0)) >= state_count &&
+                    static_cast<int>(slices(states.prim1)) >= state_count &&
+                    static_cast<int>(slices(states.exterior_angle)) >= state_count &&
+                    static_cast<int>(slices(states.src)) >= state_count &&
+                    static_cast<int>(slices(states.src_power)) >= state_count &&
+                    static_cast<int>(slices(states.wi)) >= state_count &&
+                    static_cast<int>(slices(states.d0)) >= state_count &&
+                    static_cast<int>(slices(states.prefix_depth)) >= state_count,
+                "Scene::accum_dfr_coherent_direct(): state fields must cover state count.");
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::accum_dfr_coherent_direct(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::accum_dfr_coherent_direct(): material payload fields must have matching widths.");
+
+        DfrCoherentAccum result;
+        const int grid_cell_count = grid.resolution0 * grid.resolution1;
+        const int launch_count = state_count * grid_cell_count;
+        result.grid_cell_count = grid_cell_count;
+        require(launch_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid launch count.");
+
+        Mask active_detached = active;
+        const int active_width = static_cast<int>(slices(active_detached));
+        if (active_width == 1 && state_count > 1) {
+            active_detached = gather<Mask>(active_detached, zeros<Int>(state_count));
+        } else {
+            require(active_width == state_count,
+                    "Scene::accum_dfr_coherent_direct(): active width must be 1 or match state count.");
+        }
+        active_detached &= drjit::isfinite(states.src.x()) &&
+                           drjit::isfinite(states.src.y()) &&
+                           drjit::isfinite(states.src.z()) &&
+                           drjit::isfinite(states.edge_pos.x()) &&
+                           drjit::isfinite(states.edge_pos.y()) &&
+                           drjit::isfinite(states.edge_pos.z()) &&
+                           drjit::isfinite(states.src_power);
+
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
+        require(scenes.hitgroup_record_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
+
+        ensure_pipeline(diffraction_accumulation_pipeline_,
+                        primary_scene->context(),
+                        scenes.hitgroup_record_count,
+                        diffraction_accumulation_pipeline_config());
+
+        drjit::eval(states.edge_index,
+                    states.edge_pos,
+                    states.edge_dir,
+                    states.edge_t_min,
+                    states.edge_t_max,
+                    states.n0,
+                    states.n1,
+                    states.prim0,
+                    states.prim1,
+                    states.exterior_angle,
+                    states.src,
+                    states.src_power,
+                    states.wi,
+                    states.d0,
+                    states.prefix_depth,
+                    active_detached,
+                    material.eta_r,
+                    material.sigma,
+                    material.mu_r,
+                    material.gain,
+                    material.valid);
+
+        DfrCoherentAccumRaw raw =
+            alloc_dfr_coherent_accum_raw(grid_cell_count);
+        init_dfr_coherent_accum_raw(raw);
+
+        DfrAccumParams params = {};
+        params.primary_handle = primary_scene->ias_handle();
+        params.secondary_handle =
+            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+        params.split_mode = scenes.split_mode;
+        params.n_rays = launch_count;
+        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.state_count = state_count;
+        params.state_edge_index = states.edge_index.data();
+        params.state_edge_pos_x = states.edge_pos.x().data();
+        params.state_edge_pos_y = states.edge_pos.y().data();
+        params.state_edge_pos_z = states.edge_pos.z().data();
+        params.state_edge_dir_x = states.edge_dir.x().data();
+        params.state_edge_dir_y = states.edge_dir.y().data();
+        params.state_edge_dir_z = states.edge_dir.z().data();
+        params.state_edge_t_min = states.edge_t_min.data();
+        params.state_edge_t_max = states.edge_t_max.data();
+        params.state_n0_x = states.n0.x().data();
+        params.state_n0_y = states.n0.y().data();
+        params.state_n0_z = states.n0.z().data();
+        params.state_n1_x = states.n1.x().data();
+        params.state_n1_y = states.n1.y().data();
+        params.state_n1_z = states.n1.z().data();
+        params.state_prim0 = states.prim0.data();
+        params.state_prim1 = states.prim1.data();
+        params.state_exterior_angle = states.exterior_angle.data();
+        params.state_src_x = states.src.x().data();
+        params.state_src_y = states.src.y().data();
+        params.state_src_z = states.src.z().data();
+        params.state_src_power = states.src_power.data();
+        params.state_wi_x = states.wi.x().data();
+        params.state_wi_y = states.wi.y().data();
+        params.state_wi_z = states.wi.z().data();
+        params.state_d0_x = states.d0.x().data();
+        params.state_d0_y = states.d0.y().data();
+        params.state_d0_z = states.d0.z().data();
+        params.state_prefix_depth = states.prefix_depth.data();
+        params.grid_axis = grid.axis;
+        params.grid_position = grid.position;
+        params.grid_coord0_min = grid.coord0_min;
+        params.grid_coord0_max = grid.coord0_max;
+        params.grid_coord1_min = grid.coord1_min;
+        params.grid_coord1_max = grid.coord1_max;
+        params.grid_resolution0 = grid.resolution0;
+        params.grid_resolution1 = grid.resolution1;
+        params.grid_cell_area = grid.cell_area;
+        params.material_eta_r = material.eta_r.data();
+        params.material_sigma = material.sigma.data();
+        params.material_mu_r = material.mu_r.data();
+        params.material_gain = material.gain.data();
+        params.material_valid = reinterpret_cast<const uint8_t *>(material.valid.data());
+        params.material_count = material_count;
+        params.wavelength = options.wavelength;
+        params.k = options.k;
+        params.max_order = options.max_order;
+        params.receiver_model = options.receiver_model;
+        params.select_diffraction_point = options.select_diffraction_point ? 1 : 0;
+        params.prefilter_visibility = options.prefilter_visibility ? 1 : 0;
+        params.collect_debug_counts = options.collect_debug_counts ? 1 : 0;
+        params.out_direct_count = raw.direct_count.data();
+        params.out_direct_field_x_re = raw.direct_field_x_re.data();
+        params.out_direct_field_x_im = raw.direct_field_x_im.data();
+        params.out_direct_field_y_re = raw.direct_field_y_re.data();
+        params.out_direct_field_y_im = raw.direct_field_y_im.data();
+        params.out_direct_field_z_re = raw.direct_field_z_re.data();
+        params.out_direct_field_z_im = raw.direct_field_z_im.data();
+        params.out_multi_field_x_re = raw.multi_field_x_re.data();
+        params.out_multi_field_x_im = raw.multi_field_x_im.data();
+        params.out_multi_field_y_re = raw.multi_field_y_re.data();
+        params.out_multi_field_y_im = raw.multi_field_y_im.data();
+        params.out_multi_field_z_re = raw.multi_field_z_re.data();
+        params.out_multi_field_z_im = raw.multi_field_z_im.data();
+        params.out_multi_count = raw.multi_count.data();
+        params.out_visibility_reject_count =
+            raw.visibility_reject_count.data();
+        params.out_utd_reject_count = raw.utd_reject_count.data();
+
+        diffraction_accumulation_pipeline_->launch(2, params);
+
+        result.direct_field_x =
+            drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
+        result.direct_field_y =
+            drjit::Complex<Float>(raw.direct_field_y_re, raw.direct_field_y_im);
+        result.direct_field_z =
+            drjit::Complex<Float>(raw.direct_field_z_re, raw.direct_field_z_im);
+        result.multi_field_x =
+            drjit::Complex<Float>(raw.multi_field_x_re, raw.multi_field_x_im);
+        result.multi_field_y =
+            drjit::Complex<Float>(raw.multi_field_y_re, raw.multi_field_y_im);
+        result.multi_field_z =
+            drjit::Complex<Float>(raw.multi_field_z_re, raw.multi_field_z_im);
+        result.direct_count = raw.direct_count;
+        result.multi_count = raw.multi_count;
+        result.visibility_reject_count = raw.visibility_reject_count;
+        result.utd_reject_count = raw.utd_reject_count;
+        return result;
+    }
+}
+
+template <bool Detached>
 DfrAccumT<Detached> Scene::accum_dfr(
     const DfrStatesT<Detached> &initial_states,
     const DfrStatesT<Detached> &recursive_states,
@@ -6014,6 +6363,18 @@ template DfrAccumAD Scene::accum_dfr_direct<false>(
     const DfrGrid &grid,
     const DfrMaterialAD &material,
     const DfrOptions &options,
+    MaskAD active) const;
+template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(
+    const DfrStates &states,
+    const DfrGrid &grid,
+    const DfrMaterial &material,
+    const DfrCoherentOptions &options,
+    Mask active) const;
+template DfrCoherentAccumAD Scene::accum_dfr_coherent_direct<false>(
+    const DfrStatesAD &states,
+    const DfrGrid &grid,
+    const DfrMaterialAD &material,
+    const DfrCoherentOptions &options,
     MaskAD active) const;
 template DfrAccum Scene::accum_dfr<true>(
     const DfrStates &initial_states,

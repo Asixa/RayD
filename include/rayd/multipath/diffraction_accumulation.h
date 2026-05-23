@@ -53,6 +53,17 @@ struct DfrOptions {
     bool collect_debug_counts = false;
 };
 
+/// Options for exact coherent deterministic diffraction accumulation.
+struct DfrCoherentOptions {
+    float wavelength = 1.f;
+    float k = 0.f;
+    int max_order = 1;
+    int receiver_model = RAYD_DFR_MATCHED_ISO;
+    bool select_diffraction_point = true;
+    bool prefilter_visibility = true;
+    bool collect_debug_counts = false;
+};
+
 /// Per-primitive electromagnetic material payload used by diffraction kernels.
 template <typename Float_>
 struct DfrMaterialData {
@@ -153,6 +164,45 @@ struct DfrAccumData {
                  edge_vis_rejects,
                  utd_rejects,
                  edge_uses)
+};
+
+/// Exact coherent deterministic diffraction accumulation result.
+template <typename Float_>
+struct DfrCoherentAccumData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
+
+    using ComplexArray = drjit::Complex<Float_>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+
+    int grid_cell_count = 0;
+    ComplexArray direct_field_x =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray direct_field_y =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray direct_field_z =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray multi_field_x =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray multi_field_y =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray multi_field_z =
+        ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    Int_ direct_count = full<Int_>(0, 1);
+    Int_ multi_count = full<Int_>(0, 1);
+    Int_ visibility_reject_count = full<Int_>(0, 1);
+    Int_ utd_reject_count = full<Int_>(0, 1);
+
+    DRJIT_STRUCT(DfrCoherentAccumData,
+                 direct_field_x,
+                 direct_field_y,
+                 direct_field_z,
+                 multi_field_x,
+                 multi_field_y,
+                 multi_field_z,
+                 direct_count,
+                 multi_count,
+                 visibility_reject_count,
+                 utd_reject_count)
 };
 
 } // namespace rayd

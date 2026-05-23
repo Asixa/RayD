@@ -601,6 +601,19 @@ NB_MODULE(rayd, m) {
             .def_rw("collect_debug_counts",
                     &DfrOptions::collect_debug_counts);
 
+        nb::class_<DfrCoherentOptions>(m, "DfrCoherentOptions")
+            .def(nb::init<>())
+            .def_rw("wavelength", &DfrCoherentOptions::wavelength)
+            .def_rw("k", &DfrCoherentOptions::k)
+            .def_rw("max_order", &DfrCoherentOptions::max_order)
+            .def_rw("receiver_model", &DfrCoherentOptions::receiver_model)
+            .def_rw("select_diffraction_point",
+                    &DfrCoherentOptions::select_diffraction_point)
+            .def_rw("prefilter_visibility",
+                    &DfrCoherentOptions::prefilter_visibility)
+            .def_rw("collect_debug_counts",
+                    &DfrCoherentOptions::collect_debug_counts);
+
         nb::class_<DfrMaterial>(m, "DfrMaterial")
             .def(nb::init<>())
             .def_rw("eta_r", &DfrMaterial::eta_r)
@@ -701,6 +714,50 @@ NB_MODULE(rayd, m) {
                     &DfrAccumAD::edge_vis_rejects)
             .def_rw("utd_rejects", &DfrAccumAD::utd_rejects)
             .def_rw("edge_uses", &DfrAccumAD::edge_uses);
+
+        nb::class_<DfrCoherentAccum>(m, "DfrCoherentAccum")
+            .def(nb::init<>())
+            .def_rw("grid_cell_count", &DfrCoherentAccum::grid_cell_count)
+            .def_rw("direct_field_x",
+                    &DfrCoherentAccum::direct_field_x)
+            .def_rw("direct_field_y",
+                    &DfrCoherentAccum::direct_field_y)
+            .def_rw("direct_field_z",
+                    &DfrCoherentAccum::direct_field_z)
+            .def_rw("multi_field_x",
+                    &DfrCoherentAccum::multi_field_x)
+            .def_rw("multi_field_y",
+                    &DfrCoherentAccum::multi_field_y)
+            .def_rw("multi_field_z",
+                    &DfrCoherentAccum::multi_field_z)
+            .def_rw("direct_count", &DfrCoherentAccum::direct_count)
+            .def_rw("multi_count", &DfrCoherentAccum::multi_count)
+            .def_rw("visibility_reject_count",
+                    &DfrCoherentAccum::visibility_reject_count)
+            .def_rw("utd_reject_count",
+                    &DfrCoherentAccum::utd_reject_count);
+
+        nb::class_<DfrCoherentAccumAD>(m, "DfrCoherentAccumAD")
+            .def(nb::init<>())
+            .def_rw("grid_cell_count", &DfrCoherentAccumAD::grid_cell_count)
+            .def_rw("direct_field_x",
+                    &DfrCoherentAccumAD::direct_field_x)
+            .def_rw("direct_field_y",
+                    &DfrCoherentAccumAD::direct_field_y)
+            .def_rw("direct_field_z",
+                    &DfrCoherentAccumAD::direct_field_z)
+            .def_rw("multi_field_x",
+                    &DfrCoherentAccumAD::multi_field_x)
+            .def_rw("multi_field_y",
+                    &DfrCoherentAccumAD::multi_field_y)
+            .def_rw("multi_field_z",
+                    &DfrCoherentAccumAD::multi_field_z)
+            .def_rw("direct_count", &DfrCoherentAccumAD::direct_count)
+            .def_rw("multi_count", &DfrCoherentAccumAD::multi_count)
+            .def_rw("visibility_reject_count",
+                    &DfrCoherentAccumAD::visibility_reject_count)
+            .def_rw("utd_reject_count",
+                    &DfrCoherentAccumAD::utd_reject_count);
 
         nb::class_<DfrPathOptions>(m, "DfrPathOptions")
             .def(nb::init<>())
@@ -1564,7 +1621,40 @@ NB_MODULE(rayd, m) {
                  "states"_a,
                  "grid"_a,
                  "material"_a,
-                 "options"_a = DfrOptions(),
+                  "options"_a = DfrOptions(),
+                  "active"_a = true)
+            .def("accum_dfr_coherent_direct",
+                 [](const Scene &scene,
+                    nb::handle states_obj,
+                    const DfrGrid &grid,
+                    nb::handle material_obj,
+                    const DfrCoherentOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DfrStates>(states_obj)) {
+                         const DfrStates states =
+                             nb::cast<DfrStates>(states_obj);
+                         const DfrMaterial material =
+                             nb::cast<DfrMaterial>(material_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.accum_dfr_coherent_direct<true>(
+                             states, grid, material, options, active));
+                     }
+                     if (nb::isinstance<DfrStatesAD>(states_obj)) {
+                         const DfrStatesAD states =
+                             nb::cast<DfrStatesAD>(states_obj);
+                         const DfrMaterialAD material =
+                             nb::cast<DfrMaterialAD>(material_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.accum_dfr_coherent_direct<false>(
+                             states, grid, material, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 "states"_a,
+                 "grid"_a,
+                 "material"_a,
+                 "options"_a = DfrCoherentOptions(),
                  "active"_a = true)
             .def("accum_dfr",
                  [](const Scene &scene,

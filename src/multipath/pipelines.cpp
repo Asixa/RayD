@@ -318,6 +318,7 @@ OptixPipelineConfig diffraction_accumulation_pipeline_config() {
     config.raygen_entries = {
         "__raygen__diffraction_order1_accumulation",
         "__raygen__diffraction_chain_accumulation",
+        "__raygen__diffraction_order1_coherent_accumulation",
     };
     config.miss_entry = "__miss__diffraction_accumulation";
     config.closesthit_entry = "__closesthit__diffraction_accumulation";

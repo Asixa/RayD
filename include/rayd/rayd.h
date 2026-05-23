@@ -86,6 +86,7 @@ using AccumResult = AccumResultT<true>;
 
 struct DfrGrid;
 struct DfrOptions;
+struct DfrCoherentOptions;
 struct DfrPathOptions;
 
 template <typename> struct DfrMaterialData;
@@ -105,6 +106,12 @@ template <bool Detached>
 using DfrAccumT = DfrAccumData<FloatT<Detached>>;
 using DfrAccumAD = DfrAccumT<false>;
 using DfrAccum = DfrAccumT<true>;
+
+template <typename> struct DfrCoherentAccumData;
+template <bool Detached>
+using DfrCoherentAccumT = DfrCoherentAccumData<FloatT<Detached>>;
+using DfrCoherentAccumAD = DfrCoherentAccumT<false>;
+using DfrCoherentAccum = DfrCoherentAccumT<true>;
 
 template <typename> struct DfrPathsData;
 template <bool Detached>

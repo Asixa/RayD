@@ -498,6 +498,52 @@ static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_
     return true;
 }
 
+static __forceinline__ __device__ float3 rotate_around_axis(float3 value,
+                                                            float3 axis,
+                                                            float angle) {
+    const float c = cosf(angle);
+    const float s = sinf(angle);
+    return c * value + s * cross3(axis, value) +
+           (1.f - c) * dot3(axis, value) * axis;
+}
+
+static __forceinline__ __device__ float first_order_diffraction_parameter(
+    float3 source,
+    float3 target,
+    float3 edge_origin,
+    float3 edge_dir) {
+    const float3 zeta = normalize3(edge_dir);
+    const float3 target_offset = target - edge_origin;
+    const float3 source_offset = source - edge_origin;
+    const float3 target_projection = dot3(target_offset, zeta) * zeta;
+    const float3 source_projection = dot3(source_offset, zeta) * zeta;
+    const float3 target_radial = target_offset - target_projection;
+    const float3 source_radial = source_offset - source_projection;
+    const float target_radial_norm = norm3(target_radial);
+    const float source_radial_norm = norm3(source_radial);
+    const float3 v1 = (1.f / fmaxf(target_radial_norm, kSmallEps)) * target_radial;
+    const float3 v2 = (1.f / fmaxf(source_radial_norm, kSmallEps)) * source_radial;
+    const float theta = kPi - acosf(fminf(fmaxf(dot3(v1, v2), -1.f), 1.f));
+
+    const float3 raw_rotation_axis = cross3(source_radial, target_radial);
+    const float rotation_axis_norm = norm3(raw_rotation_axis);
+    const float3 rotation_axis = rotation_axis_norm > kSmallEps
+        ? (1.f / rotation_axis_norm) * raw_rotation_axis
+        : zeta;
+
+    const float3 coplanar_target =
+        rotate_around_axis(target_offset, rotation_axis, theta);
+    const float3 source_to_target = coplanar_target - source_offset;
+    const float source_to_target_norm = norm3(source_to_target);
+    const float3 u0 =
+        (1.f / fmaxf(source_to_target_norm, kSmallEps)) * source_to_target;
+    const float3 u1 = cross3(source_offset, u0);
+    const float3 u2 = cross3(zeta, u0);
+    const float u2_norm = norm3(u2);
+    const float sign = dot3(u1, u2) < 0.f ? -1.f : 1.f;
+    return sign * norm3(u1) / fmaxf(u2_norm, kSmallEps);
+}
+
 static __forceinline__ __device__ float diffraction_weight(int state_idx,
                                                            float3 edge_point,
                                                            float3 target,
@@ -700,6 +746,104 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     }
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_uses, 1);
+    }
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.grid_resolution0 <= 0 ||
+        params.grid_resolution1 <= 0) {
+        return;
+    }
+
+    const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+    const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
+    const int cell = static_cast<int>(lane / static_cast<unsigned int>(params.state_count));
+    if (cell < 0 || cell >= grid_cell_count) {
+        return;
+    }
+    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        return;
+    }
+
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float edge_t_min = params.state_edge_t_min[state_idx];
+    const float edge_t_max = params.state_edge_t_max[state_idx];
+    const float3 source =
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 target = grid_cell_center(cell);
+    float edge_t = 0.5f * (edge_t_min + edge_t_max);
+    float visibility_edge_t = edge_t;
+    if (params.select_diffraction_point != 0) {
+        const float edge_length = edge_t_max - edge_t_min;
+        const float3 edge_origin = edge_pos + edge_t_min * edge_dir;
+        const float parameter =
+            first_order_diffraction_parameter(source, target, edge_origin, edge_dir);
+        if (!isfinite(parameter) || !(edge_length > kSmallEps)) {
+            if (params.collect_debug_counts != 0 &&
+                params.out_utd_reject_count != nullptr) {
+                atomicAdd(params.out_utd_reject_count + cell, 1);
+            }
+            return;
+        }
+        edge_t = edge_t_min + parameter;
+        visibility_edge_t = edge_t_min + fminf(fmaxf(parameter, 0.f), edge_length);
+    }
+    const float3 edge_point = edge_pos + edge_t * edge_dir;
+    const float3 visibility_edge_point = edge_pos + visibility_edge_t * edge_dir;
+
+    if (params.prefilter_visibility != 0) {
+        const bool source_visible = visible_segment(source, visibility_edge_point);
+        const bool target_visible = visible_segment(visibility_edge_point, target);
+        if (!source_visible || !target_visible) {
+            if (params.collect_debug_counts != 0 &&
+                params.out_visibility_reject_count != nullptr) {
+                atomicAdd(params.out_visibility_reject_count + cell, 1);
+            }
+            return;
+        }
+    }
+
+    const float contribution =
+        diffraction_weight(state_idx, edge_point, target, 1);
+    if (!(contribution > 0.f) || !isfinite(contribution)) {
+        if (params.collect_debug_counts != 0 &&
+            params.out_utd_reject_count != nullptr) {
+            atomicAdd(params.out_utd_reject_count + cell, 1);
+        }
+        return;
+    }
+
+    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
+    const float target_distance = fmaxf(norm3(target - edge_point), kSmallEps);
+    const float phase = -params.k * (source_distance + target_distance);
+    const float amplitude = sqrtf(fmaxf(contribution, 0.f));
+    const float field_re = amplitude * cosf(phase);
+    const float field_im = amplitude * sinf(phase);
+    const bool is_multi = params.state_prefix_depth != nullptr &&
+                          params.state_prefix_depth[state_idx] > 0;
+
+    if (is_multi) {
+        if (params.out_multi_field_x_re != nullptr) {
+            atomicAdd(params.out_multi_field_x_re + cell, field_re);
+            atomicAdd(params.out_multi_field_x_im + cell, field_im);
+        }
+        if (params.out_multi_count != nullptr) {
+            atomicAdd(params.out_multi_count + cell, 1);
+        }
+    } else {
+        if (params.out_direct_field_x_re != nullptr) {
+            atomicAdd(params.out_direct_field_x_re + cell, field_re);
+            atomicAdd(params.out_direct_field_x_im + cell, field_im);
+        }
+        if (params.out_direct_count != nullptr) {
+            atomicAdd(params.out_direct_count + cell, 1);
+        }
     }
 }
 
