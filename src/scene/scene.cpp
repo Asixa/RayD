@@ -5,6 +5,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <rayd/ray.h>
@@ -438,7 +439,7 @@ template <bool Detached>
 ReflEpcFieldT<Detached> init_refl_epc_field(
     int ray_count,
     int max_bounces,
-    const ReflEpcFieldOptions &options) {
+    const ReflEpcFieldOptionsT<Detached> &options) {
     ReflEpcFieldT<Detached> result;
     result.ray_count = ray_count;
     result.max_bounces = max_bounces;
@@ -2741,6 +2742,12 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     if (drjit::none(active_detached)) {
         return result;
     }
+    if constexpr (!Detached) {
+        drjit::eval(triangle_info_.p0,
+                    triangle_info_.e1,
+                    triangle_info_.e2,
+                    triangle_info_.face_normal);
+    }
 
     const OptixSceneSelection scenes = select_optix_scenes();
     const OptixScene *primary_scene = scenes.primary;
@@ -3129,9 +3136,224 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
 
     DfrPathsT<Detached> result;
     if constexpr (!Detached) {
-        throw std::runtime_error(
-            "Scene::trace_dfr_paths(): native path export is a non-AD native fast path. "
-            "Use detached inputs, or use an explicit AD path.");
+        const int tx_count = static_cast<int>(slices(tx_positions));
+        const int rx_width = static_cast<int>(slices(rx_positions));
+        const int rx_count = options.max_rx > 0
+                                 ? std::min(rx_width, options.max_rx)
+                                 : rx_width;
+        const int state_width = static_cast<int>(slices(states.edge_index));
+        const int state_count = states.count > 0 ? states.count : state_width;
+        if (tx_count == 0 || rx_count == 0 || state_count == 0) {
+            result.capacity = 0;
+            result.count = full<IntAD>(0, 1);
+            result.valid = full<MaskAD>(false, 0);
+            result.tx_id = full<IntAD>(-1, 0);
+            result.rx_id = full<IntAD>(-1, 0);
+            result.order = full<IntAD>(0, 0);
+            result.edge0 = full<IntAD>(-1, 0);
+            result.edge1 = full<IntAD>(-1, 0);
+            result.edge2 = full<IntAD>(-1, 0);
+            result.delay = zeros<FloatAD>(0);
+            result.field_x = drjit::Complex<FloatAD>(zeros<FloatAD>(0), zeros<FloatAD>(0));
+            result.field_y = drjit::Complex<FloatAD>(zeros<FloatAD>(0), zeros<FloatAD>(0));
+            result.field_z = drjit::Complex<FloatAD>(zeros<FloatAD>(0), zeros<FloatAD>(0));
+            result.p0 = zeros<Vector3fAD>(0);
+            result.p1 = zeros<Vector3fAD>(0);
+            result.p2 = zeros<Vector3fAD>(0);
+            return result;
+        }
+        require(state_count > 0 && state_count <= state_width,
+                "Scene::trace_dfr_paths(): invalid state count.");
+        require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
+                    static_cast<int>(slices(states.edge_dir)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_max)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n1)) >= state_count &&
+                    static_cast<int>(slices(states.prim0)) >= state_count &&
+                    static_cast<int>(slices(states.prim1)) >= state_count &&
+                    static_cast<int>(slices(states.exterior_angle)) >= state_count &&
+                    static_cast<int>(slices(states.src)) >= state_count &&
+                    static_cast<int>(slices(states.src_power)) >= state_count,
+                "Scene::trace_dfr_paths(): state fields must cover state count.");
+        require(rx_count <= rx_width,
+                "Scene::trace_dfr_paths(): invalid receiver count.");
+
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::trace_dfr_paths(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::trace_dfr_paths(): material payload fields must have matching widths.");
+
+        MaskAD active_ad = active;
+        int active_width = static_cast<int>(slices(active_ad));
+        if (active_width == 1 && state_count > 1) {
+            active_ad = gather<MaskAD>(active_ad, zeros<IntAD>(state_count));
+            active_width = state_count;
+        } else {
+            require(active_width == state_count,
+                    "Scene::trace_dfr_paths(): active width must be 1 or match state count.");
+        }
+
+        const int state_limit = std::min(state_count, options.max_paths);
+        const int64_t capacity64 =
+            static_cast<int64_t>(tx_count) *
+            static_cast<int64_t>(rx_count) *
+            static_cast<int64_t>(state_limit);
+        require(capacity64 <= static_cast<int64_t>(std::numeric_limits<int>::max()),
+                "Scene::trace_dfr_paths(): requested path capacity exceeds int range.");
+        const int capacity = static_cast<int>(capacity64);
+        result.capacity = capacity;
+        result.count = full<IntAD>(0, 1);
+        result.valid = full<MaskAD>(false, capacity);
+        result.tx_id = full<IntAD>(-1, capacity);
+        result.rx_id = full<IntAD>(-1, capacity);
+        result.order = full<IntAD>(0, capacity);
+        result.edge0 = full<IntAD>(-1, capacity);
+        result.edge1 = full<IntAD>(-1, capacity);
+        result.edge2 = full<IntAD>(-1, capacity);
+        result.delay = zeros<FloatAD>(capacity);
+        result.field_x = drjit::Complex<FloatAD>(zeros<FloatAD>(capacity), zeros<FloatAD>(capacity));
+        result.field_y = drjit::Complex<FloatAD>(zeros<FloatAD>(capacity), zeros<FloatAD>(capacity));
+        result.field_z = drjit::Complex<FloatAD>(zeros<FloatAD>(capacity), zeros<FloatAD>(capacity));
+        result.p0 = zeros<Vector3fAD>(capacity);
+        result.p1 = zeros<Vector3fAD>(capacity);
+        result.p2 = zeros<Vector3fAD>(capacity);
+        if (capacity == 0) {
+            return result;
+        }
+
+        auto material_gain_for_faces = [&](const IntAD &prim0,
+                                           const IntAD &prim1,
+                                           const MaskAD &path_active) -> FloatAD {
+            const MaskAD prim0_in_range =
+                path_active && (prim0 >= IntAD(0)) && (prim0 < IntAD(material_count));
+            const IntAD safe0 = select(prim0_in_range, prim0, IntAD(0));
+            const MaskAD prim0_valid =
+                prim0_in_range && gather<MaskAD>(material.valid, safe0, prim0_in_range);
+            const MaskAD prim1_in_range =
+                path_active && (prim1 >= IntAD(0)) && (prim1 < IntAD(material_count));
+            const IntAD safe1 = select(prim1_in_range, prim1, IntAD(0));
+            const MaskAD prim1_valid =
+                prim1_in_range && gather<MaskAD>(material.valid, safe1, prim1_in_range);
+            const IntAD chosen = select(prim0_valid, safe0, safe1);
+            const MaskAD chosen_valid = prim0_valid || prim1_valid;
+            const FloatAD gain =
+                gather<FloatAD>(material.gain, chosen, chosen_valid);
+            return select(chosen_valid, maximum(gain, FloatAD(0.f)), FloatAD(1.f));
+        };
+
+        const UIntAD lane_u = arange<UIntAD>(capacity);
+        const IntAD lane = IntAD(lane_u);
+        const IntAD state_idx = IntAD(lane_u % UIntAD(state_limit));
+        const UIntAD pair_idx = lane_u / UIntAD(state_limit);
+        const IntAD rx_idx = IntAD(pair_idx % UIntAD(rx_count));
+        const IntAD tx_idx = IntAD(pair_idx / UIntAD(rx_count));
+        const MaskAD lane_active = full<MaskAD>(true, capacity);
+        const MaskAD state_active =
+            gather<MaskAD>(active_ad, state_idx, lane_active);
+
+        const Vector3fAD edge_pos =
+            gather<Vector3fAD>(states.edge_pos, state_idx, state_active);
+        const Vector3fAD edge_dir =
+            normalize(gather<Vector3fAD>(states.edge_dir, state_idx, state_active));
+        const FloatAD edge_t_min =
+            gather<FloatAD>(states.edge_t_min, state_idx, state_active);
+        const FloatAD edge_t_max =
+            gather<FloatAD>(states.edge_t_max, state_idx, state_active);
+        const FloatAD edge_t = FloatAD(0.5f) * (edge_t_min + edge_t_max);
+        const Vector3fAD edge_point = edge_pos + edge_t * edge_dir;
+        const Vector3fAD source =
+            gather<Vector3fAD>(states.src, state_idx, state_active);
+        const Vector3fAD receiver =
+            gather<Vector3fAD>(rx_positions, rx_idx, lane_active);
+        const FloatAD src_power =
+            gather<FloatAD>(states.src_power, state_idx, state_active);
+        const IntAD prim0 = gather<IntAD>(states.prim0, state_idx, state_active);
+        const IntAD prim1 = gather<IntAD>(states.prim1, state_idx, state_active);
+        const FloatAD exterior_angle =
+            gather<FloatAD>(states.exterior_angle, state_idx, state_active);
+        const IntAD edge_index =
+            gather<IntAD>(states.edge_index, state_idx, state_active);
+
+        const MaskAD finite_active =
+            state_active &&
+            drjit::isfinite(source.x()) &&
+            drjit::isfinite(source.y()) &&
+            drjit::isfinite(source.z()) &&
+            drjit::isfinite(edge_point.x()) &&
+            drjit::isfinite(edge_point.y()) &&
+            drjit::isfinite(edge_point.z()) &&
+            drjit::isfinite(receiver.x()) &&
+            drjit::isfinite(receiver.y()) &&
+            drjit::isfinite(receiver.z()) &&
+            drjit::isfinite(src_power);
+        const SegmentPairVisibilityAD visibility =
+            this->template visible_pair<false>(
+                edge_point,
+                source,
+                receiver,
+                Int(),
+                finite_active);
+        const MaskAD visible = visibility.visible_a && visibility.visible_b;
+        const FloatAD source_distance =
+            maximum(norm(edge_point - source), FloatAD(Epsilon));
+        const FloatAD receiver_distance =
+            maximum(norm(receiver - edge_point), FloatAD(Epsilon));
+        const FloatAD edge_length =
+            maximum(edge_t_max - edge_t_min, FloatAD(0.f));
+        const FloatAD wedge_scale =
+            minimum(
+                maximum(exterior_angle, FloatAD(0.25f * Pi)) / FloatAD(2.f * Pi),
+                FloatAD(2.f));
+        const FloatAD material_gain =
+            material_gain_for_faces(prim0, prim1, finite_active);
+        const FloatAD wave_gain =
+            FloatAD(options.wavelength) / FloatAD(4.f * Pi);
+        const FloatAD contribution =
+            src_power *
+            material_gain *
+            edge_length *
+            wedge_scale *
+            wave_gain *
+            wave_gain /
+            (source_distance * source_distance * receiver_distance * receiver_distance);
+        const MaskAD path_active =
+            visible && (contribution > FloatAD(0.f)) && drjit::isfinite(contribution);
+        const FloatAD path_length = source_distance + receiver_distance;
+        const FloatAD phase = -FloatAD(options.k) * path_length;
+        const FloatAD amplitude = sqrt(maximum(contribution, FloatAD(0.f)));
+
+        result.valid = path_active;
+        result.tx_id = select(path_active, tx_idx, IntAD(-1));
+        result.rx_id = select(path_active, rx_idx, IntAD(-1));
+        result.order = select(path_active, IntAD(1), IntAD(0));
+        result.edge0 = select(path_active, edge_index, IntAD(-1));
+        result.edge1 = full<IntAD>(-1, capacity);
+        result.edge2 = full<IntAD>(-1, capacity);
+        result.delay =
+            select(path_active, path_length / FloatAD(299792458.f), FloatAD(0.f));
+        result.field_x =
+            drjit::Complex<FloatAD>(
+                select(path_active, amplitude * cos(phase), FloatAD(0.f)),
+                select(path_active, amplitude * sin(phase), FloatAD(0.f)));
+        result.field_y =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(capacity), zeros<FloatAD>(capacity));
+        result.field_z =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(capacity), zeros<FloatAD>(capacity));
+        result.p0 = select(path_active, edge_point, zeros<Vector3fAD>(capacity));
+        result.p1 = zeros<Vector3fAD>(capacity);
+        result.p2 = zeros<Vector3fAD>(capacity);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.count,
+            IntAD(1),
+            zeros<IntAD>(capacity),
+            path_active);
+        return result;
     } else {
         const int tx_count = static_cast<int>(slices(tx_positions));
         const int rx_width = static_cast<int>(slices(rx_positions));
@@ -3563,7 +3785,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     const RayT<Detached> &ray,
     const Vector3fT<Detached> &receiver,
     int max_bounces,
-    const ReflEpcFieldOptions &options,
+    const ReflEpcFieldOptionsT<Detached> &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
@@ -3717,7 +3939,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     const Vector3fT<Detached> &tx_position,
     const Vector3fT<Detached> &receiver,
     int max_bounces,
-    const ReflEpcFieldOptions &options,
+    const ReflEpcFieldOptionsT<Detached> &options,
     MaskT<Detached> active) const {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::TraceReflections);
     require(is_ready(), "Scene::trace_refl_epc_field(): scene is not built.");
@@ -3743,9 +3965,357 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
     }
 
     if constexpr (!Detached) {
-        require(false,
-                "Scene::trace_refl_epc_field(): native EPC field is a non-AD native fast path. "
-                "Pass detached transmitter and receiver positions.");
+        const int receiver_count = static_cast<int>(slices(receiver));
+        require(receiver_count == 1 || receiver_count == ray_count,
+                "Scene::trace_refl_epc_field(): receiver width must be 1 or match transmitter count.");
+        const int slot_count = ray_count * max_bounces;
+        const int expected_prim_count = static_cast<int>(slices(options.expected_prim_ids));
+        require(expected_prim_count == slot_count,
+                "Scene::trace_refl_epc_field(): expected_prim_ids width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_plane_point)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_plane_point width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_plane_normal)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_plane_normal width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_eta_r)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_eta_r width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_mu_r)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_mu_r width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_sigma)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_sigma width must be n_rays * max_bounces.");
+        require(static_cast<int>(slices(options.slot_gain)) == slot_count,
+                "Scene::trace_refl_epc_field(): slot_gain width must be n_rays * max_bounces.");
+        const int tx_pol_count = static_cast<int>(slices(options.tx_polarization));
+        require(tx_pol_count == 1 || tx_pol_count == ray_count,
+                "Scene::trace_refl_epc_field(): tx_polarization width must be 1 or match transmitter count.");
+
+        Mask active_detached = sanitize_segment_active<false>(
+            tx_position,
+            receiver,
+            active);
+        if (drjit::none(active_detached)) {
+            result.valid = full<MaskAD>(false, ray_count);
+            result.bounce_count = full<IntAD>(0, ray_count);
+            result.path_length = full<FloatAD>(Infinity, ray_count);
+            result.field_x_re = zeros<FloatAD>(ray_count);
+            result.field_x_im = zeros<FloatAD>(ray_count);
+            result.field_y_re = zeros<FloatAD>(ray_count);
+            result.field_y_im = zeros<FloatAD>(ray_count);
+            result.field_z_re = zeros<FloatAD>(ray_count);
+            result.field_z_im = zeros<FloatAD>(ray_count);
+            return result;
+        }
+
+        const Int slot_base = arange<Int>(ray_count) * Int(max_bounces);
+        const MaskAD active_ad = MaskAD(active_detached);
+
+        struct ComplexADValue {
+            FloatAD re;
+            FloatAD im;
+        };
+        struct ComplexVectorAD {
+            Vector3fAD re;
+            Vector3fAD im;
+        };
+
+        auto complex_add = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re + b.re, a.im + b.im};
+        };
+        auto complex_sub = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re - b.re, a.im - b.im};
+        };
+        auto complex_mul = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            return {a.re * b.re - a.im * b.im,
+                    a.re * b.im + a.im * b.re};
+        };
+        auto complex_scale = [](const ComplexADValue &a,
+                                const FloatAD &scale) -> ComplexADValue {
+            return {a.re * scale, a.im * scale};
+        };
+        auto complex_div = [](const ComplexADValue &a,
+                              const ComplexADValue &b) -> ComplexADValue {
+            const FloatAD denom =
+                maximum(b.re * b.re + b.im * b.im, FloatAD(Epsilon));
+            return {(a.re * b.re + a.im * b.im) / denom,
+                    (a.im * b.re - a.re * b.im) / denom};
+        };
+        auto complex_sqrt = [](const ComplexADValue &a) -> ComplexADValue {
+            const FloatAD mag =
+                sqrt(maximum(a.re * a.re + a.im * a.im, FloatAD(0.f)));
+            const MaskAD positive_real_axis =
+                (abs(a.im) <= FloatAD(Epsilon)) && (a.re > FloatAD(Epsilon));
+            const FloatAD real_part =
+                sqrt(maximum(FloatAD(0.5f) * (mag + a.re), FloatAD(0.f)));
+            const FloatAD imag_abs =
+                sqrt(maximum(FloatAD(0.5f) * (mag - a.re), FloatAD(1e-20f)));
+            const FloatAD imag_sign =
+                select(a.im < FloatAD(0.f), FloatAD(-1.f), FloatAD(1.f));
+            return {
+                select(positive_real_axis, sqrt(a.re), real_part),
+                select(positive_real_axis, FloatAD(0.f), imag_sign * imag_abs),
+            };
+        };
+        auto normalize_safe = [](const Vector3fAD &value,
+                                 const Vector3fAD &fallback) -> Vector3fAD {
+            const FloatAD value_norm = norm(value);
+            return select(value_norm > FloatAD(Epsilon),
+                          value / maximum(value_norm, FloatAD(Epsilon)),
+                          fallback);
+        };
+        auto stable_perpendicular = [&](const Vector3fAD &direction,
+                                        const Vector3fAD &preferred) -> Vector3fAD {
+            const Vector3fAD dir =
+                normalize_safe(direction, Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            const Vector3fAD projected = preferred - dot(preferred, dir) * dir;
+            const Vector3fAD axis =
+                select(abs(dir.x()) < FloatAD(0.9f),
+                       Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)),
+                       Vector3fAD(FloatAD(0.f), FloatAD(1.f), FloatAD(0.f)));
+            const Vector3fAD fallback = axis - dot(axis, dir) * dir;
+            return select(squared_norm(projected) > FloatAD(1e-12f),
+                          normalize_safe(projected, axis),
+                          normalize_safe(fallback,
+                                         Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f))));
+        };
+        auto complex_dot_real = [](const ComplexVectorAD &field,
+                                   const Vector3fAD &basis) -> ComplexADValue {
+            return {dot(field.re, basis), dot(field.im, basis)};
+        };
+        auto slot_reflection_coefficients =
+            [&](const IntAD &slot,
+                const FloatAD &cos_theta,
+                const MaskAD &slot_active) -> std::pair<ComplexADValue, ComplexADValue> {
+            const FloatAD eta_r =
+                maximum(gather<FloatAD>(options.slot_eta_r, slot, slot_active),
+                        FloatAD(Epsilon));
+            const FloatAD sigma =
+                maximum(gather<FloatAD>(options.slot_sigma, slot, slot_active),
+                        FloatAD(0.f));
+            const FloatAD gain = gather<FloatAD>(options.slot_gain, slot, slot_active);
+            const FloatAD mu_r =
+                maximum(gather<FloatAD>(options.slot_mu_r, slot, slot_active),
+                        FloatAD(Epsilon));
+            const FloatAD omega = maximum(FloatAD(options.omega), FloatAD(Epsilon));
+            const ComplexADValue eta = {
+                eta_r,
+                -sigma / (omega * FloatAD(8.854187817e-12f))
+            };
+            const ComplexADValue mu = {mu_r, FloatAD(0.f)};
+            const FloatAD cos_clamped =
+                minimum(maximum(abs(cos_theta), FloatAD(Epsilon)), FloatAD(1.f));
+            const FloatAD sin2 =
+                maximum(FloatAD(0.f), FloatAD(1.f) - cos_clamped * cos_clamped);
+            const ComplexADValue a =
+                complex_sqrt(complex_sub(complex_mul(mu, eta),
+                                         ComplexADValue{sin2, FloatAD(0.f)}));
+            const ComplexADValue mu_cos = {mu_r * cos_clamped, FloatAD(0.f)};
+            const ComplexADValue eta_cos = {eta.re * cos_clamped,
+                                            eta.im * cos_clamped};
+            const ComplexADValue r_te =
+                complex_scale(
+                    complex_div(complex_sub(mu_cos, a),
+                                complex_add(mu_cos, a)),
+                    gain);
+            const ComplexADValue r_tm =
+                complex_scale(
+                    complex_div(complex_sub(eta_cos, a),
+                                complex_add(eta_cos, a)),
+                    gain);
+            return {r_te, r_tm};
+        };
+        auto reflect_field_vector =
+            [&](const ComplexVectorAD &field,
+                const Vector3fAD &incident_dir,
+                const Vector3fAD &slot_normal,
+                const IntAD &slot,
+                const MaskAD &slot_active) -> ComplexVectorAD {
+            const Vector3fAD incident_hat =
+                normalize_safe(incident_dir,
+                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            Vector3fAD normal_hat =
+                normalize_safe(slot_normal,
+                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            normal_hat = select(dot(incident_hat, normal_hat) > FloatAD(0.f),
+                                -normal_hat,
+                                normal_hat);
+            const FloatAD dot_dn = dot(incident_hat, normal_hat);
+            const Vector3fAD reflected_dir =
+                normalize_safe(incident_hat - FloatAD(2.f) * dot_dn * normal_hat,
+                               -incident_hat);
+            Vector3fAD s_hat = cross(normal_hat, incident_hat);
+            s_hat = select(squared_norm(s_hat) > FloatAD(1e-12f),
+                           normalize_safe(s_hat, stable_perpendicular(incident_hat, normal_hat)),
+                           stable_perpendicular(incident_hat, normal_hat));
+            Vector3fAD p_in_hat = cross(s_hat, incident_hat);
+            p_in_hat =
+                select(squared_norm(p_in_hat) > FloatAD(1e-12f),
+                       normalize_safe(p_in_hat, stable_perpendicular(incident_hat, normal_hat)),
+                       stable_perpendicular(incident_hat, normal_hat));
+            Vector3fAD p_out_hat = cross(s_hat, reflected_dir);
+            p_out_hat =
+                select(squared_norm(p_out_hat) > FloatAD(1e-12f),
+                       normalize_safe(p_out_hat, stable_perpendicular(reflected_dir, normal_hat)),
+                       stable_perpendicular(reflected_dir, normal_hat));
+
+            const auto [r_te, r_tm] =
+                slot_reflection_coefficients(slot, abs(dot(incident_hat, normal_hat)), slot_active);
+            const ComplexADValue e_s = complex_dot_real(field, s_hat);
+            const ComplexADValue e_p = complex_dot_real(field, p_in_hat);
+            const ComplexADValue out_s = complex_mul(r_te, e_s);
+            const ComplexADValue out_p = complex_mul(r_tm, e_p);
+            return {
+                s_hat * out_s.re + p_out_hat * out_p.re,
+                s_hat * out_s.im + p_out_hat * out_p.im,
+            };
+        };
+
+        std::vector<Vector3fAD> images;
+        images.reserve(static_cast<size_t>(max_bounces) + 1);
+        images.push_back(tx_position);
+        MaskAD valid = active_ad;
+
+        for (int bounce = 0; bounce < max_bounces; ++bounce) {
+            const Int slot = slot_base + Int(bounce);
+            const IntAD slot_ad = IntAD(slot);
+            Vector3fAD plane_point =
+                gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
+            Vector3fAD plane_normal =
+                normalize_safe(gather<Vector3fAD>(options.slot_plane_normal, slot_ad, active_ad),
+                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            const Int expected_prim =
+                gather<Int>(options.expected_prim_ids, slot, active_detached);
+            valid = valid && MaskAD(expected_prim >= Int(0)) &&
+                    (squared_norm(plane_normal) > FloatAD(0.f));
+            const FloatAD plane_distance =
+                dot(images.back() - plane_point, plane_normal);
+            images.push_back(
+                select(valid,
+                       images.back() - FloatAD(2.f) * plane_distance * plane_normal,
+                       images.back()));
+        }
+
+        Vector3fAD rx = receiver;
+        if (receiver_count == 1 && ray_count > 1) {
+            rx = gather<Vector3fAD>(receiver, zeros<IntAD>(ray_count), full<MaskAD>(true, ray_count));
+        }
+        Vector3fAD target = rx;
+        std::vector<Vector3fAD> hits(static_cast<size_t>(max_bounces));
+        std::vector<Vector3fAD> normals(static_cast<size_t>(max_bounces));
+        for (int bounce = max_bounces - 1; bounce >= 0; --bounce) {
+            const Int slot = slot_base + Int(bounce);
+            const IntAD slot_ad = IntAD(slot);
+            const Vector3fAD plane_point =
+                gather<Vector3fAD>(options.slot_plane_point, slot_ad, active_ad);
+            const Vector3fAD plane_normal =
+                normalize_safe(gather<Vector3fAD>(options.slot_plane_normal, slot_ad, active_ad),
+                               Vector3fAD(FloatAD(0.f), FloatAD(0.f), FloatAD(1.f)));
+            const Vector3fAD line = target - images[static_cast<size_t>(bounce + 1)];
+            const FloatAD denom = dot(line, plane_normal);
+            const FloatAD t =
+                dot(plane_point - images[static_cast<size_t>(bounce + 1)], plane_normal) /
+                denom;
+            const MaskAD hit_valid =
+                valid &&
+                drjit::isfinite(t) &&
+                (abs(denom) > FloatAD(Epsilon)) &&
+                (t > FloatAD(0.f)) &&
+                (t < FloatAD(1.f));
+            const Vector3fAD hit =
+                images[static_cast<size_t>(bounce + 1)] + t * line;
+            hits[static_cast<size_t>(bounce)] = select(hit_valid, hit, zeros<Vector3fAD>(ray_count));
+            normals[static_cast<size_t>(bounce)] =
+                select(hit_valid, plane_normal, zeros<Vector3fAD>(ray_count));
+            if (options.return_geom && options.return_hit_points) {
+                scatter(result.hit_points, hits[static_cast<size_t>(bounce)], slot_ad, hit_valid);
+            }
+            if (options.return_geom && options.return_normals) {
+                scatter(result.normals, normals[static_cast<size_t>(bounce)], slot_ad, hit_valid);
+            }
+            target = select(hit_valid, hit, target);
+            valid = hit_valid;
+        }
+
+        FloatAD path_length = zeros<FloatAD>(ray_count);
+        Vector3fAD previous = tx_position;
+        for (int bounce = 0; bounce < max_bounces; ++bounce) {
+            const Vector3fAD hit = hits[static_cast<size_t>(bounce)];
+            path_length += norm(hit - previous);
+            previous = hit;
+        }
+        path_length += norm(rx - previous);
+        valid = valid && (path_length > FloatAD(Epsilon)) && drjit::isfinite(path_length);
+
+        const Int pol_idx =
+            tx_pol_count == 1 ? zeros<Int>(ray_count) : arange<Int>(ray_count);
+        const Vector3fAD tx_pol =
+            gather<Vector3fAD>(options.tx_polarization, IntAD(pol_idx), active_ad);
+        const Vector3fAD first_dir =
+            normalize_safe(hits.front() - tx_position,
+                           Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+        const Vector3fAD transverse_pol =
+            stable_perpendicular(first_dir, tx_pol);
+        ComplexVectorAD field = {
+            transverse_pol,
+            zeros<Vector3fAD>(ray_count),
+        };
+        Vector3fAD field_previous = tx_position;
+        for (int bounce = 0; bounce < max_bounces; ++bounce) {
+            const Int slot = slot_base + Int(bounce);
+            const IntAD slot_ad = IntAD(slot);
+            const Vector3fAD hit = hits[static_cast<size_t>(bounce)];
+            const Vector3fAD incident_dir =
+                normalize_safe(hit - field_previous,
+                               Vector3fAD(FloatAD(1.f), FloatAD(0.f), FloatAD(0.f)));
+            field = reflect_field_vector(
+                field,
+                incident_dir,
+                normals[static_cast<size_t>(bounce)],
+                slot_ad,
+                active_ad);
+            field_previous = hit;
+        }
+        const FloatAD wave_k =
+            FloatAD(2.f * Pi) / maximum(FloatAD(options.wavelength), FloatAD(Epsilon));
+        const FloatAD phase = -wave_k * path_length;
+        const FloatAD amplitude =
+            FloatAD(options.wavelength) /
+            (FloatAD(4.f * Pi) * maximum(path_length, FloatAD(Epsilon)));
+        const FloatAD phase_cos = cos(phase);
+        const FloatAD phase_sin = sin(phase);
+        const Vector3fAD out_re =
+            amplitude * (field.re * phase_cos - field.im * phase_sin);
+        const Vector3fAD out_im =
+            amplitude * (field.re * phase_sin + field.im * phase_cos);
+        valid = valid &&
+                drjit::isfinite(out_re.x()) &&
+                drjit::isfinite(out_re.y()) &&
+                drjit::isfinite(out_re.z()) &&
+                drjit::isfinite(out_im.x()) &&
+                drjit::isfinite(out_im.y()) &&
+                drjit::isfinite(out_im.z());
+
+        result.valid = valid;
+        result.bounce_count =
+            select(valid, full<IntAD>(max_bounces, ray_count), full<IntAD>(0, ray_count));
+        result.path_length =
+            select(valid, path_length, full<FloatAD>(Infinity, ray_count));
+        result.field_x_re = select(valid, out_re.x(), FloatAD(0.f));
+        result.field_x_im = select(valid, out_im.x(), FloatAD(0.f));
+        result.field_y_re = select(valid, out_re.y(), FloatAD(0.f));
+        result.field_y_im = select(valid, out_im.y(), FloatAD(0.f));
+        result.field_z_re = select(valid, out_re.z(), FloatAD(0.f));
+        result.field_z_im = select(valid, out_im.z(), FloatAD(0.f));
+
+        if (options.return_endpoints) {
+            result.tx_pos = tx_position;
+            result.first_hit = max_bounces > 0 ? hits.front() : zeros<Vector3fAD>(ray_count);
+            result.last_hit = max_bounces > 0 ? hits.back() : zeros<Vector3fAD>(ray_count);
+        }
+        if (options.return_geom && options.return_resolved_prim_ids) {
+            result.resolved_prim_ids = IntAD(options.expected_prim_ids);
+        }
         return result;
     } else {
         const int receiver_count = static_cast<int>(slices(receiver));
@@ -4024,18 +4594,11 @@ AccumResultT<Detached> Scene::accumulate_reflections(
     const AccumOptions &options,
     MaskT<Detached> active,
     const Vector3fT<Detached> &tx_polarization) const {
-    ScopedNativeLaunchStage native_launch_stage(
-        NativeLaunchStage::AccumulateReflections);
     require(is_ready(), "Scene::accumulate_reflections(): scene is not built.");
     require(!pending_updates_,
             "Scene::accumulate_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0,
             "Scene::accumulate_reflections(): max_bounces must be positive.");
-    if constexpr (!Detached) {
-        throw std::runtime_error(
-            "Scene::accumulate_reflections(): native accumulation is a non-AD native fast path. "
-            "Use detached inputs, or use the existing AD tape path explicitly.");
-    }
     require(grid.axis >= 0 && grid.axis <= 2,
             "Scene::accumulate_reflections(): grid.axis must be 0, 1, or 2.");
     require(grid.resolution0 > 0 && grid.resolution1 > 0,
@@ -4061,10 +4624,276 @@ AccumResultT<Detached> Scene::accumulate_reflections(
     result.grid_cell_count = grid_cell_count;
 
     if constexpr (!Detached) {
-        throw std::runtime_error(
-            "Scene::accumulate_reflections(): native accumulation is a non-AD native fast path. "
-            "Use detached inputs, or use the existing AD tape path explicitly.");
+        const ReflectionChainAD chain =
+            this->template trace_reflections<false>(ray, max_bounces, active);
+
+        result.reflection_power = zeros<FloatAD>(grid_cell_count);
+        result.reflection_field_x =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.reflection_field_y =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.reflection_field_z =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.reflection_count = full<IntAD>(0, 1);
+        result.wedge_events.capacity = options.wedge_capacity;
+        result.wedge_events.count = full<IntAD>(0, 1);
+        const int event_count = std::max(1, options.wedge_capacity);
+        result.wedge_events.ray_index = full<IntAD>(-1, event_count);
+        result.wedge_events.hit_points = zeros<Vector3fAD>(event_count);
+        result.wedge_events.normals = zeros<Vector3fAD>(event_count);
+        result.wedge_events.prim_id = full<IntAD>(-1, event_count);
+        result.wedge_events.directions = zeros<Vector3fAD>(event_count);
+        result.wedge_events.source_points = zeros<Vector3fAD>(event_count);
+        result.wedge_events.src_power = zeros<FloatAD>(event_count);
+        result.wedge_events.initial_directions = zeros<Vector3fAD>(event_count);
+        result.wedge_events.bounce_depth = full<IntAD>(-1, event_count);
+
+        if (ray_count <= 0 || grid_cell_count <= 0) {
+            return result;
+        }
+
+        auto component = [](const Vector3fAD &value, int axis) -> FloatAD {
+            if (axis == 0) {
+                return value.x();
+            }
+            if (axis == 1) {
+                return value.y();
+            }
+            return value.z();
+        };
+        auto plane_point = [](int axis,
+                              const FloatAD &position,
+                              const FloatAD &coord0,
+                              const FloatAD &coord1) -> Vector3fAD {
+            if (axis == 0) {
+                return Vector3fAD(position, coord0, coord1);
+            }
+            if (axis == 1) {
+                return Vector3fAD(coord0, position, coord1);
+            }
+            return Vector3fAD(coord0, coord1, position);
+        };
+        auto coords_from_point = [](const Vector3fAD &point,
+                                    int axis,
+                                    FloatAD &coord0,
+                                    FloatAD &coord1) {
+            if (axis == 0) {
+                coord0 = point.y();
+                coord1 = point.z();
+            } else if (axis == 1) {
+                coord0 = point.x();
+                coord1 = point.z();
+            } else {
+                coord0 = point.x();
+                coord1 = point.y();
+            }
+        };
+        auto broadcast_vec = [](const Vector3fAD &value, int width) -> Vector3fAD {
+            const int value_width = static_cast<int>(slices(value));
+            if (value_width == width) {
+                return value;
+            }
+            const UIntAD zero_index = zeros<UIntAD>(width);
+            const MaskAD active = full<MaskAD>(true, width);
+            return gather<Vector3fAD>(value, zero_index, active);
+        };
+
+        const UIntAD ray_index = arange<UIntAD>(ray_count);
+        const IntAD ray_slot = IntAD(ray_index);
+        const IntAD base_slot = ray_slot * IntAD(max_bounces);
+        const MaskAD active_ad = active;
+        Vector3fAD origin = ray.o;
+        Vector3fAD direction = normalize(ray.d);
+        Vector3fAD image_source = broadcast_vec(tx_position, ray_count);
+        FloatAD field_power = full<FloatAD>(1.f, ray_count);
+        MaskAD current_active = active_ad;
+
+        const int material_count = static_cast<int>(slices(material.gain));
+        const FloatAD span0 = FloatAD(grid.coord0_max - grid.coord0_min);
+        const FloatAD span1 = FloatAD(grid.coord1_max - grid.coord1_min);
+        const FloatAD wavelength = FloatAD(options.wavelength);
+        const FloatAD wave_gain = wavelength / FloatAD(4.f * Pi);
+        const FloatAD solid_angle = FloatAD(options.solid_angle_per_ray);
+        const FloatAD cell_area = FloatAD(options.cell_area);
+
+        for (int bounce = 0; bounce < max_bounces; ++bounce) {
+            const IntAD slot = base_slot + IntAD(bounce);
+            const MaskAD bounce_active =
+                current_active && (chain.bounce_count > IntAD(bounce));
+            if (drjit::none(detach<false>(bounce_active))) {
+                break;
+            }
+
+            const Vector3fAD hit_point =
+                gather<Vector3fAD>(chain.hit_points, slot, bounce_active);
+            Vector3fAD normal =
+                gather<Vector3fAD>(chain.geo_normals, slot, bounce_active);
+            normal = normalize(normal);
+            normal = select(dot(direction, normal) > FloatAD(0.f), -normal, normal);
+            const IntAD prim =
+                gather<IntAD>(chain.global_prim_ids, slot, bounce_active);
+            const MaskAD material_active =
+                bounce_active &&
+                (prim >= IntAD(0)) &&
+                (prim < IntAD(material_count)) &&
+                gather<MaskAD>(material.valid, prim, bounce_active);
+            const FloatAD gain =
+                gather<FloatAD>(material.gain, prim, material_active);
+            const FloatAD safe_gain = select(material_active, maximum(gain, FloatAD(0.f)), FloatAD(0.f));
+
+            const Vector3fAD event_source = image_source;
+            const Vector3fAD event_direction = direction;
+            const FloatAD image_distance = dot(image_source - hit_point, normal);
+            image_source = select(
+                material_active,
+                image_source - FloatAD(2.f) * image_distance * normal,
+                image_source);
+            const FloatAD dir_dot_n = dot(direction, normal);
+            direction = select(
+                material_active,
+                normalize(direction - FloatAD(2.f) * dir_dot_n * normal),
+                direction);
+            origin = select(
+                material_active,
+                hit_point + FloatAD(Epsilon) * direction,
+                origin);
+            field_power = select(
+                material_active,
+                field_power * safe_gain * safe_gain,
+                FloatAD(0.f));
+
+            if (options.collect_wedges && options.wedge_capacity > 0) {
+                const IntAD event_slot =
+                    (ray_slot * IntAD(max_bounces) + IntAD(bounce)) /
+                    IntAD(options.wedge_sample_stride);
+                const MaskAD wedge_active =
+                    material_active && (event_slot >= IntAD(0)) &&
+                    (event_slot < IntAD(options.wedge_capacity));
+                scatter(
+                    result.wedge_events.ray_index,
+                    ray_slot,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.hit_points,
+                    hit_point,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.normals,
+                    normal,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.prim_id,
+                    prim,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.directions,
+                    event_direction,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.source_points,
+                    event_source,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.src_power,
+                    field_power,
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.initial_directions,
+                    normalize(ray.d),
+                    event_slot,
+                    wedge_active);
+                scatter(
+                    result.wedge_events.bounce_depth,
+                    IntAD(bounce),
+                    event_slot,
+                    wedge_active);
+                scatter_reduce(
+                    ReduceOp::Add,
+                    result.wedge_events.count,
+                    IntAD(1),
+                    zeros<IntAD>(ray_count),
+                    wedge_active);
+            }
+
+            FloatAD blocker_t = chain.trailing_t;
+            if (bounce + 1 < max_bounces) {
+                const IntAD next_slot = slot + IntAD(1);
+                const MaskAD next_valid = chain.bounce_count > IntAD(bounce + 1);
+                blocker_t = select(
+                    next_valid,
+                    gather<FloatAD>(chain.t, next_slot, next_valid),
+                    blocker_t);
+            }
+
+            const FloatAD axis_dir = component(direction, grid.axis);
+            const FloatAD safe_axis_dir =
+                axis_dir + select(axis_dir >= FloatAD(0.f), FloatAD(Epsilon), FloatAD(-Epsilon));
+            const FloatAD t_plane =
+                (FloatAD(grid.position) - component(origin, grid.axis)) / safe_axis_dir;
+            const Vector3fAD target = origin + direction * t_plane;
+            FloatAD coord0 = zeros<FloatAD>(ray_count);
+            FloatAD coord1 = zeros<FloatAD>(ray_count);
+            coords_from_point(target, grid.axis, coord0, coord1);
+
+            const MaskAD plane_active =
+                material_active &&
+                (field_power > FloatAD(0.f)) &&
+                (t_plane > FloatAD(RayEpsilon)) &&
+                (t_plane < blocker_t) &&
+                (coord0 >= FloatAD(grid.coord0_min)) &&
+                (coord0 < FloatAD(grid.coord0_max)) &&
+                (coord1 >= FloatAD(grid.coord1_min)) &&
+                (coord1 < FloatAD(grid.coord1_max));
+            const FloatAD u = (coord0 - FloatAD(grid.coord0_min)) / span0;
+            const FloatAD v = (coord1 - FloatAD(grid.coord1_min)) / span1;
+            IntAD ix = IntAD(u * FloatAD(grid.resolution0));
+            IntAD iy = IntAD(v * FloatAD(grid.resolution1));
+            ix = minimum(maximum(ix, IntAD(0)), IntAD(grid.resolution0 - 1));
+            iy = minimum(maximum(iy, IntAD(0)), IntAD(grid.resolution1 - 1));
+            const IntAD cell = iy * IntAD(grid.resolution0) + ix;
+
+            const Vector3fAD target_plane =
+                plane_point(grid.axis, FloatAD(grid.position), coord0, coord1);
+            const FloatAD unfolded_distance =
+                maximum(norm(target_plane - image_source), FloatAD(Epsilon));
+            const FloatAD cos_theta = maximum(abs(axis_dir), FloatAD(Epsilon));
+            const FloatAD contribution_power =
+                field_power *
+                wave_gain * wave_gain /
+                (unfolded_distance * unfolded_distance) *
+                solid_angle / cell_area *
+                unfolded_distance * unfolded_distance / cos_theta;
+            const MaskAD contribution_active =
+                plane_active && drjit::isfinite(contribution_power) && (contribution_power > FloatAD(0.f));
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_power,
+                contribution_power,
+                cell,
+                contribution_active);
+            scatter_reduce(
+                ReduceOp::Add,
+                result.reflection_count,
+                IntAD(1),
+                zeros<IntAD>(ray_count),
+                contribution_active);
+
+            current_active = material_active;
+        }
+        return result;
     } else {
+        ScopedNativeLaunchStage native_launch_stage(
+            NativeLaunchStage::AccumulateReflections);
         auto initialize_result_storage = [&]() {
             result.reflection_power = zeros<Float>(grid_cell_count);
             result.reflection_field_x =
@@ -4335,9 +5164,247 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
-        throw std::runtime_error(
-            "Scene::accum_dfr_direct(): native accumulation is a non-AD native fast path. "
-            "Use detached inputs, or use the existing AD tape path explicitly.");
+        result.power = zeros<FloatAD>(grid_cell_count);
+        result.field_x =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.field_y =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.field_z =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.direct_count = full<IntAD>(0, 1);
+        result.keller_count = full<IntAD>(0, 1);
+        result.suffix_count = full<IntAD>(0, 1);
+        result.vis_rejects = full<IntAD>(0, 1);
+        result.edge_vis_rejects = full<IntAD>(0, 1);
+        result.utd_rejects = full<IntAD>(0, 1);
+        result.edge_uses = full<IntAD>(0, 1);
+
+        const int state_width = static_cast<int>(slices(states.edge_index));
+        const int state_count = states.count > 0 ? states.count : state_width;
+        if (state_count == 0) {
+            return result;
+        }
+        require(state_count > 0 && state_count <= state_width,
+                "Scene::accum_dfr_direct(): invalid state count.");
+        require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
+                    static_cast<int>(slices(states.edge_dir)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_t_max)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n1)) >= state_count &&
+                    static_cast<int>(slices(states.prim0)) >= state_count &&
+                    static_cast<int>(slices(states.prim1)) >= state_count &&
+                    static_cast<int>(slices(states.exterior_angle)) >= state_count &&
+                    static_cast<int>(slices(states.src)) >= state_count &&
+                    static_cast<int>(slices(states.src_power)) >= state_count &&
+                    static_cast<int>(slices(states.wi)) >= state_count &&
+                    static_cast<int>(slices(states.d0)) >= state_count &&
+                    static_cast<int>(slices(states.prefix_depth)) >= state_count,
+                "Scene::accum_dfr_direct(): state fields must cover state count.");
+
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::accum_dfr_direct(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::accum_dfr_direct(): material payload fields must have matching widths.");
+
+        const int direct_samples =
+            (options.strategy_mask & RAYD_DFR_DIRECT) != 0
+                ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
+                : 0;
+        const int keller_samples =
+            (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
+        const int suffix_samples =
+            (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
+        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        if (launch_count <= 0) {
+            return result;
+        }
+
+        MaskAD active_ad = active;
+        const int active_width = static_cast<int>(slices(active_ad));
+        if (active_width == 1 && state_count > 1) {
+            active_ad = gather<MaskAD>(active_ad, zeros<IntAD>(state_count));
+        } else {
+            require(active_width == state_count,
+                    "Scene::accum_dfr_direct(): active width must be 1 or match state count.");
+        }
+
+        auto grid_cell_center = [](const DfrGrid &grid_desc,
+                                   const IntAD &cell) -> Vector3fAD {
+            const IntAD ix = cell % IntAD(grid_desc.resolution0);
+            const IntAD iy = cell / IntAD(grid_desc.resolution0);
+            const FloatAD u =
+                (FloatAD(ix) + FloatAD(0.5f)) /
+                maximum(FloatAD(grid_desc.resolution0), FloatAD(1.f));
+            const FloatAD v =
+                (FloatAD(iy) + FloatAD(0.5f)) /
+                maximum(FloatAD(grid_desc.resolution1), FloatAD(1.f));
+            const FloatAD c0 =
+                FloatAD(grid_desc.coord0_min) +
+                u * FloatAD(grid_desc.coord0_max - grid_desc.coord0_min);
+            const FloatAD c1 =
+                FloatAD(grid_desc.coord1_min) +
+                v * FloatAD(grid_desc.coord1_max - grid_desc.coord1_min);
+            if (grid_desc.axis == 0) {
+                return Vector3fAD(FloatAD(grid_desc.position), c0, c1);
+            }
+            if (grid_desc.axis == 1) {
+                return Vector3fAD(c0, FloatAD(grid_desc.position), c1);
+            }
+            return Vector3fAD(c0, c1, FloatAD(grid_desc.position));
+        };
+        auto material_gain_for_faces = [&](const IntAD &prim0,
+                                           const IntAD &prim1,
+                                           const MaskAD &sample_active) -> FloatAD {
+            const MaskAD prim0_in_range =
+                sample_active && (prim0 >= IntAD(0)) && (prim0 < IntAD(material_count));
+            const IntAD safe0 = select(prim0_in_range, prim0, IntAD(0));
+            const MaskAD prim0_valid =
+                prim0_in_range && gather<MaskAD>(material.valid, safe0, prim0_in_range);
+            const MaskAD prim1_in_range =
+                sample_active && (prim1 >= IntAD(0)) && (prim1 < IntAD(material_count));
+            const IntAD safe1 = select(prim1_in_range, prim1, IntAD(0));
+            const MaskAD prim1_valid =
+                prim1_in_range && gather<MaskAD>(material.valid, safe1, prim1_in_range);
+            const IntAD chosen = select(prim0_valid, safe0, safe1);
+            const MaskAD chosen_valid = prim0_valid || prim1_valid;
+            const FloatAD gain =
+                gather<FloatAD>(material.gain, chosen, chosen_valid);
+            return select(chosen_valid, maximum(gain, FloatAD(0.f)), FloatAD(1.f));
+        };
+
+        const UIntAD lane = arange<UIntAD>(launch_count);
+        const IntAD lane_i = IntAD(lane);
+        const MaskAD is_direct = lane_i < IntAD(direct_samples);
+        const MaskAD is_keller =
+            !is_direct && (lane_i < IntAD(direct_samples + keller_samples));
+        const MaskAD is_suffix =
+            !is_direct && !is_keller && (lane_i < IntAD(launch_count));
+        const IntAD state_idx = IntAD(lane % UIntAD(state_count));
+        const IntAD cell =
+            IntAD((lane / UIntAD(state_count)) % UIntAD(grid_cell_count));
+        const MaskAD lane_active = full<MaskAD>(true, launch_count);
+        const MaskAD state_active =
+            gather<MaskAD>(active_ad, state_idx, lane_active);
+
+        const Vector3fAD edge_pos =
+            gather<Vector3fAD>(states.edge_pos, state_idx, state_active);
+        const Vector3fAD edge_dir =
+            normalize(gather<Vector3fAD>(states.edge_dir, state_idx, state_active));
+        const FloatAD edge_t_min =
+            gather<FloatAD>(states.edge_t_min, state_idx, state_active);
+        const FloatAD edge_t_max =
+            gather<FloatAD>(states.edge_t_max, state_idx, state_active);
+        const FloatAD edge_t = FloatAD(0.5f) * (edge_t_min + edge_t_max);
+        const Vector3fAD edge_point = edge_pos + edge_t * edge_dir;
+        const Vector3fAD source =
+            gather<Vector3fAD>(states.src, state_idx, state_active);
+        const FloatAD src_power =
+            gather<FloatAD>(states.src_power, state_idx, state_active);
+        const IntAD prim0 = gather<IntAD>(states.prim0, state_idx, state_active);
+        const IntAD prim1 = gather<IntAD>(states.prim1, state_idx, state_active);
+        const FloatAD exterior_angle =
+            gather<FloatAD>(states.exterior_angle, state_idx, state_active);
+        const Vector3fAD target = grid_cell_center(grid, cell);
+
+        const MaskAD finite_active =
+            state_active &&
+            drjit::isfinite(source.x()) &&
+            drjit::isfinite(source.y()) &&
+            drjit::isfinite(source.z()) &&
+            drjit::isfinite(edge_point.x()) &&
+            drjit::isfinite(edge_point.y()) &&
+            drjit::isfinite(edge_point.z()) &&
+            drjit::isfinite(src_power);
+        const SegmentPairVisibilityAD visibility =
+            this->template visible_pair<false>(
+                edge_point,
+                source,
+                target,
+                Int(),
+                finite_active);
+        const MaskAD visible = visibility.visible_a && visibility.visible_b;
+
+        const FloatAD source_distance =
+            maximum(norm(edge_point - source), FloatAD(Epsilon));
+        const FloatAD target_distance =
+            maximum(norm(target - edge_point), FloatAD(Epsilon));
+        const FloatAD edge_length =
+            maximum(edge_t_max - edge_t_min, FloatAD(0.f));
+        const FloatAD wedge_scale =
+            minimum(
+                maximum(exterior_angle, FloatAD(0.25f * Pi)) / FloatAD(2.f * Pi),
+                FloatAD(2.f));
+        const FloatAD material_gain =
+            material_gain_for_faces(prim0, prim1, finite_active);
+        const IntAD strategy_samples = select(
+            is_direct,
+            IntAD(std::max(direct_samples, 1)),
+            select(is_keller,
+                   IntAD(std::max(keller_samples, 1)),
+                   IntAD(std::max(suffix_samples, 1))));
+        const FloatAD contribution =
+            src_power *
+            material_gain *
+            edge_length *
+            FloatAD(grid.cell_area) *
+            wedge_scale /
+            FloatAD(strategy_samples) /
+            (source_distance * source_distance * target_distance * target_distance);
+        const MaskAD contribution_active =
+            visible && (contribution > FloatAD(0.f)) && drjit::isfinite(contribution);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.power,
+            contribution,
+            cell,
+            contribution_active);
+        const FloatAD amplitude =
+            sqrt(maximum(contribution, FloatAD(0.f)));
+        scatter_reduce(
+            ReduceOp::Add,
+            result.field_x.x(),
+            amplitude,
+            cell,
+            contribution_active);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.direct_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_direct);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.keller_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_keller);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.suffix_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_suffix);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.edge_uses,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && options.collect_edge_use);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.vis_rejects,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            finite_active && !visible && options.collect_debug_counts);
+        return result;
     } else {
         result.power = zeros<Float>(grid_cell_count);
         result.field_x =
@@ -4622,9 +5689,413 @@ DfrAccumT<Detached> Scene::accum_dfr(
     const int grid_cell_count = grid.resolution0 * grid.resolution1;
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
-        throw std::runtime_error(
-            "Scene::accum_dfr(): native accumulation is a non-AD native fast path. "
-            "Use detached inputs, or use the existing AD tape path explicitly.");
+        result.power = zeros<FloatAD>(grid_cell_count);
+        result.field_x =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.field_y =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.field_z =
+            drjit::Complex<FloatAD>(zeros<FloatAD>(grid_cell_count),
+                                    zeros<FloatAD>(grid_cell_count));
+        result.direct_count = full<IntAD>(0, 1);
+        result.keller_count = full<IntAD>(0, 1);
+        result.suffix_count = full<IntAD>(0, 1);
+        result.vis_rejects = full<IntAD>(0, 1);
+        result.edge_vis_rejects = full<IntAD>(0, 1);
+        result.utd_rejects = full<IntAD>(0, 1);
+        result.edge_uses = full<IntAD>(0, 1);
+
+        const int initial_width = static_cast<int>(slices(initial_states.edge_index));
+        const int initial_count =
+            initial_states.count > 0 ? initial_states.count : initial_width;
+        const int recursive_width = static_cast<int>(slices(recursive_states.edge_index));
+        const int recursive_count =
+            recursive_states.count > 0 ? recursive_states.count : recursive_width;
+        if (initial_count == 0 || recursive_count == 0) {
+            return result;
+        }
+        require(initial_count > 0 && initial_count <= initial_width,
+                "Scene::accum_dfr(): invalid initial state count.");
+        require(recursive_count > 0 && recursive_count <= recursive_width,
+                "Scene::accum_dfr(): invalid recursive state count.");
+        require(static_cast<int>(slices(initial_states.edge_pos)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_dir)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_t_min)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_t_max)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.prim0)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.prim1)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.exterior_angle)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.src)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.src_power)) >= initial_count,
+                "Scene::accum_dfr(): initial state fields must cover state count.");
+        require(static_cast<int>(slices(recursive_states.edge_index)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_pos)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_dir)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_t_min)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_t_max)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.prim0)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.prim1)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.exterior_angle)) >= recursive_count,
+                "Scene::accum_dfr(): recursive state fields must cover state count.");
+
+        const int material_count = static_cast<int>(slices(material.eta_r));
+        require(material_count > 0,
+                "Scene::accum_dfr(): material payload must not be empty.");
+        require(static_cast<int>(slices(material.sigma)) == material_count &&
+                    static_cast<int>(slices(material.mu_r)) == material_count &&
+                    static_cast<int>(slices(material.gain)) == material_count &&
+                    static_cast<int>(slices(material.valid)) == material_count,
+                "Scene::accum_dfr(): material payload fields must have matching widths.");
+
+        const int direct_samples =
+            (options.strategy_mask & RAYD_DFR_DIRECT) != 0
+                ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
+                : 0;
+        const int keller_samples =
+            (options.strategy_mask & RAYD_DFR_KELLER) != 0 ? options.keller_samples : 0;
+        const int suffix_samples =
+            (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? options.suffix_samples : 0;
+        const int launch_count = direct_samples + keller_samples + suffix_samples;
+        if (launch_count <= 0) {
+            return result;
+        }
+
+        MaskAD active_ad = active;
+        const int active_width = static_cast<int>(slices(active_ad));
+        if (active_width == 1 && initial_count > 1) {
+            active_ad = gather<MaskAD>(active_ad, zeros<IntAD>(initial_count));
+        } else {
+            require(active_width == initial_count,
+                    "Scene::accum_dfr(): active width must be 1 or match initial state count.");
+        }
+
+        auto grid_cell_center = [](const DfrGrid &grid_desc,
+                                   const IntAD &cell) -> Vector3fAD {
+            const IntAD ix = cell % IntAD(grid_desc.resolution0);
+            const IntAD iy = cell / IntAD(grid_desc.resolution0);
+            const FloatAD u =
+                (FloatAD(ix) + FloatAD(0.5f)) /
+                maximum(FloatAD(grid_desc.resolution0), FloatAD(1.f));
+            const FloatAD v =
+                (FloatAD(iy) + FloatAD(0.5f)) /
+                maximum(FloatAD(grid_desc.resolution1), FloatAD(1.f));
+            const FloatAD c0 =
+                FloatAD(grid_desc.coord0_min) +
+                u * FloatAD(grid_desc.coord0_max - grid_desc.coord0_min);
+            const FloatAD c1 =
+                FloatAD(grid_desc.coord1_min) +
+                v * FloatAD(grid_desc.coord1_max - grid_desc.coord1_min);
+            if (grid_desc.axis == 0) {
+                return Vector3fAD(FloatAD(grid_desc.position), c0, c1);
+            }
+            if (grid_desc.axis == 1) {
+                return Vector3fAD(c0, FloatAD(grid_desc.position), c1);
+            }
+            return Vector3fAD(c0, c1, FloatAD(grid_desc.position));
+        };
+
+        auto material_gain_for_faces = [&](const IntAD &prim0,
+                                           const IntAD &prim1,
+                                           const MaskAD &sample_active) -> FloatAD {
+            const MaskAD prim0_in_range =
+                sample_active && (prim0 >= IntAD(0)) && (prim0 < IntAD(material_count));
+            const IntAD safe0 = select(prim0_in_range, prim0, IntAD(0));
+            const MaskAD prim0_valid =
+                prim0_in_range && gather<MaskAD>(material.valid, safe0, prim0_in_range);
+            const MaskAD prim1_in_range =
+                sample_active && (prim1 >= IntAD(0)) && (prim1 < IntAD(material_count));
+            const IntAD safe1 = select(prim1_in_range, prim1, IntAD(0));
+            const MaskAD prim1_valid =
+                prim1_in_range && gather<MaskAD>(material.valid, safe1, prim1_in_range);
+            const IntAD chosen = select(prim0_valid, safe0, safe1);
+            const MaskAD chosen_valid = prim0_valid || prim1_valid;
+            const FloatAD gain =
+                gather<FloatAD>(material.gain, chosen, chosen_valid);
+            return select(chosen_valid, maximum(gain, FloatAD(0.f)), FloatAD(1.f));
+        };
+
+        auto chain_event_weight = [&](const FloatAD &src_power,
+                                      const IntAD &face0_prim,
+                                      const IntAD &face1_prim,
+                                      const FloatAD &edge_t_min,
+                                      const FloatAD &edge_t_max,
+                                      const FloatAD &exterior_angle,
+                                      const Vector3fAD &source,
+                                      const Vector3fAD &edge_point,
+                                      const Vector3fAD &target,
+                                      const MaskAD &sample_active) -> FloatAD {
+            const FloatAD source_distance =
+                maximum(norm(edge_point - source), FloatAD(Epsilon));
+            const FloatAD target_distance =
+                maximum(norm(target - edge_point), FloatAD(Epsilon));
+            const FloatAD edge_length =
+                maximum(edge_t_max - edge_t_min, FloatAD(0.f));
+            const FloatAD wedge_scale =
+                minimum(
+                    maximum(exterior_angle, FloatAD(0.25f * Pi)) / FloatAD(2.f * Pi),
+                    FloatAD(2.f));
+            const FloatAD material_gain =
+                material_gain_for_faces(face0_prim, face1_prim, sample_active);
+            return src_power *
+                   material_gain *
+                   edge_length *
+                   wedge_scale /
+                   (source_distance * source_distance * target_distance * target_distance);
+        };
+
+        const UIntAD lane = arange<UIntAD>(launch_count);
+        const IntAD lane_i = IntAD(lane);
+        const MaskAD is_direct = lane_i < IntAD(direct_samples);
+        const MaskAD is_keller =
+            !is_direct && (lane_i < IntAD(direct_samples + keller_samples));
+        const MaskAD is_suffix =
+            !is_direct && !is_keller && (lane_i < IntAD(launch_count));
+        const IntAD first_idx = IntAD(lane % UIntAD(initial_count));
+        const IntAD second_idx =
+            IntAD((lane / UIntAD(initial_count)) % UIntAD(recursive_count));
+        const IntAD third_idx =
+            IntAD((lane / UIntAD(std::max(1, initial_count * recursive_count))) %
+                  UIntAD(recursive_count));
+        const IntAD cell =
+            IntAD((lane / UIntAD(initial_count)) % UIntAD(grid_cell_count));
+        const MaskAD lane_active = full<MaskAD>(true, launch_count);
+        const MaskAD first_active =
+            gather<MaskAD>(active_ad, first_idx, lane_active);
+        const IntAD first_edge_index =
+            gather<IntAD>(initial_states.edge_index, first_idx, first_active);
+        const IntAD second_edge_index =
+            gather<IntAD>(recursive_states.edge_index, second_idx, first_active);
+        const IntAD third_edge_index =
+            gather<IntAD>(recursive_states.edge_index, third_idx, first_active);
+        const MaskAD distinct_edges =
+            (first_edge_index != second_edge_index) &&
+            ((IntAD(options.max_order) == IntAD(2)) ||
+             ((first_edge_index != third_edge_index) &&
+              (second_edge_index != third_edge_index)));
+
+        const Vector3fAD first_edge_pos =
+            gather<Vector3fAD>(initial_states.edge_pos, first_idx, first_active);
+        const Vector3fAD first_edge_dir =
+            normalize(gather<Vector3fAD>(initial_states.edge_dir, first_idx, first_active));
+        const FloatAD first_t_min =
+            gather<FloatAD>(initial_states.edge_t_min, first_idx, first_active);
+        const FloatAD first_t_max =
+            gather<FloatAD>(initial_states.edge_t_max, first_idx, first_active);
+        const FloatAD first_t = FloatAD(0.5f) * (first_t_min + first_t_max);
+        const Vector3fAD first_point = first_edge_pos + first_t * first_edge_dir;
+
+        const Vector3fAD second_edge_pos =
+            gather<Vector3fAD>(recursive_states.edge_pos, second_idx, first_active);
+        const Vector3fAD second_edge_dir =
+            normalize(gather<Vector3fAD>(recursive_states.edge_dir, second_idx, first_active));
+        const FloatAD second_t_min =
+            gather<FloatAD>(recursive_states.edge_t_min, second_idx, first_active);
+        const FloatAD second_t_max =
+            gather<FloatAD>(recursive_states.edge_t_max, second_idx, first_active);
+        const FloatAD second_t = FloatAD(0.5f) * (second_t_min + second_t_max);
+        const Vector3fAD second_point = second_edge_pos + second_t * second_edge_dir;
+
+        const Vector3fAD third_edge_pos =
+            gather<Vector3fAD>(recursive_states.edge_pos, third_idx, first_active);
+        const Vector3fAD third_edge_dir =
+            normalize(gather<Vector3fAD>(recursive_states.edge_dir, third_idx, first_active));
+        const FloatAD third_t_min =
+            gather<FloatAD>(recursive_states.edge_t_min, third_idx, first_active);
+        const FloatAD third_t_max =
+            gather<FloatAD>(recursive_states.edge_t_max, third_idx, first_active);
+        const FloatAD third_t = FloatAD(0.5f) * (third_t_min + third_t_max);
+        const Vector3fAD third_point = third_edge_pos + third_t * third_edge_dir;
+
+        const Vector3fAD source =
+            gather<Vector3fAD>(initial_states.src, first_idx, first_active);
+        const FloatAD src_power =
+            gather<FloatAD>(initial_states.src_power, first_idx, first_active);
+        const Vector3fAD target = grid_cell_center(grid, cell);
+        const Vector3fAD terminal_point =
+            select(IntAD(options.max_order) == IntAD(3), third_point, second_point);
+
+        const MaskAD finite_active =
+            first_active &&
+            distinct_edges &&
+            drjit::isfinite(source.x()) &&
+            drjit::isfinite(source.y()) &&
+            drjit::isfinite(source.z()) &&
+            drjit::isfinite(first_point.x()) &&
+            drjit::isfinite(first_point.y()) &&
+            drjit::isfinite(first_point.z()) &&
+            drjit::isfinite(second_point.x()) &&
+            drjit::isfinite(second_point.y()) &&
+            drjit::isfinite(second_point.z()) &&
+            drjit::isfinite(src_power);
+
+        const SegmentPairVisibilityAD first_visibility =
+            this->template visible_pair<false>(
+                first_point,
+                source,
+                second_point,
+                Int(),
+                finite_active);
+        const SegmentPairVisibilityAD terminal_visibility =
+            this->template visible_pair<false>(
+                terminal_point,
+                select(IntAD(options.max_order) == IntAD(3), second_point, target),
+                target,
+                Int(),
+                finite_active);
+        const MaskAD source_visible = first_visibility.visible_a;
+        const MaskAD first_edge_visible = first_visibility.visible_b;
+        const MaskAD second_edge_visible =
+            select(IntAD(options.max_order) == IntAD(3),
+                   terminal_visibility.visible_a,
+                   full<MaskAD>(true, launch_count));
+        const MaskAD target_visible =
+            select(IntAD(options.max_order) == IntAD(3),
+                   terminal_visibility.visible_b,
+                   terminal_visibility.visible_a);
+        const MaskAD visible =
+            source_visible && first_edge_visible && second_edge_visible && target_visible;
+
+        const IntAD first_prim0 =
+            gather<IntAD>(initial_states.prim0, first_idx, finite_active);
+        const IntAD first_prim1 =
+            gather<IntAD>(initial_states.prim1, first_idx, finite_active);
+        const FloatAD first_exterior =
+            gather<FloatAD>(initial_states.exterior_angle, first_idx, finite_active);
+        const FloatAD first_weight = chain_event_weight(
+            src_power,
+            first_prim0,
+            first_prim1,
+            first_t_min,
+            first_t_max,
+            first_exterior,
+            source,
+            first_point,
+            second_point,
+            finite_active);
+
+        const IntAD second_prim0 =
+            gather<IntAD>(recursive_states.prim0, second_idx, finite_active);
+        const IntAD second_prim1 =
+            gather<IntAD>(recursive_states.prim1, second_idx, finite_active);
+        const FloatAD second_exterior =
+            gather<FloatAD>(recursive_states.exterior_angle, second_idx, finite_active);
+        const Vector3fAD second_target =
+            select(IntAD(options.max_order) == IntAD(3), third_point, target);
+        const FloatAD second_weight = chain_event_weight(
+            FloatAD(1.f),
+            second_prim0,
+            second_prim1,
+            second_t_min,
+            second_t_max,
+            second_exterior,
+            first_point,
+            second_point,
+            second_target,
+            finite_active);
+
+        const IntAD third_prim0 =
+            gather<IntAD>(recursive_states.prim0, third_idx, finite_active);
+        const IntAD third_prim1 =
+            gather<IntAD>(recursive_states.prim1, third_idx, finite_active);
+        const FloatAD third_exterior =
+            gather<FloatAD>(recursive_states.exterior_angle, third_idx, finite_active);
+        const FloatAD third_weight = chain_event_weight(
+            FloatAD(1.f),
+            third_prim0,
+            third_prim1,
+            third_t_min,
+            third_t_max,
+            third_exterior,
+            second_point,
+            third_point,
+            target,
+            finite_active);
+        FloatAD chain_weight = first_weight * second_weight;
+        chain_weight = select(IntAD(options.max_order) == IntAD(3),
+                              chain_weight * third_weight,
+                              chain_weight);
+
+        const FloatAD wave_gain_per_event =
+            (FloatAD(options.wavelength) / FloatAD(4.f * Pi)) *
+            (FloatAD(options.wavelength) / FloatAD(4.f * Pi));
+        const FloatAD wave_gain =
+            select(IntAD(options.max_order) == IntAD(3),
+                   wave_gain_per_event * wave_gain_per_event,
+                   wave_gain_per_event);
+        const IntAD strategy_samples = select(
+            is_direct,
+            IntAD(std::max(direct_samples, 1)),
+            select(is_keller,
+                   IntAD(std::max(keller_samples, 1)),
+                   IntAD(std::max(suffix_samples, 1))));
+        const FloatAD contribution =
+            chain_weight *
+            wave_gain *
+            FloatAD(grid.cell_area) /
+            FloatAD(strategy_samples);
+        const MaskAD contribution_active =
+            visible && (contribution > FloatAD(0.f)) && drjit::isfinite(contribution);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.power,
+            contribution,
+            cell,
+            contribution_active);
+        const FloatAD amplitude =
+            sqrt(maximum(contribution, FloatAD(0.f)));
+        scatter_reduce(
+            ReduceOp::Add,
+            result.field_x.x(),
+            amplitude,
+            cell,
+            contribution_active);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.direct_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_direct);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.keller_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_keller);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.suffix_count,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && is_suffix);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.edge_uses,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            contribution_active && options.collect_edge_use);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.vis_rejects,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            finite_active && !target_visible && options.collect_debug_counts);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.edge_vis_rejects,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            finite_active && target_visible &&
+                (!source_visible || !first_edge_visible || !second_edge_visible) &&
+                options.collect_debug_counts);
+        scatter_reduce(
+            ReduceOp::Add,
+            result.utd_rejects,
+            IntAD(1),
+            zeros<IntAD>(launch_count),
+            first_active && !distinct_edges && options.collect_debug_counts);
+        return result;
     } else {
         result.power = zeros<Float>(grid_cell_count);
         result.field_x =
@@ -5730,7 +7201,7 @@ template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
     const RayAD &ray,
     const Vector3fAD &receiver,
     int max_bounces,
-    const ReflEpcFieldOptions &options,
+    const ReflEpcFieldOptionsAD &options,
     MaskAD active) const;
 template ReflEpcField Scene::trace_refl_epc_field<true>(
     const Vector3f &tx_position,
@@ -5742,7 +7213,7 @@ template ReflEpcFieldAD Scene::trace_refl_epc_field<false>(
     const Vector3fAD &tx_position,
     const Vector3fAD &receiver,
     int max_bounces,
-    const ReflEpcFieldOptions &options,
+    const ReflEpcFieldOptionsAD &options,
     MaskAD active) const;
 template ReflectionTrace Scene::trace_bounces<true>(
     const Ray &ray,

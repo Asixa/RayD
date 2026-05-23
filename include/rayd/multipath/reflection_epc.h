@@ -22,17 +22,21 @@ struct ReflEpcOptions {
 
 /// EPC options extended with per-slot material/geometry and the field-evaluation
 /// parameters (frequency, polarization) plus output selectors.
-struct ReflEpcFieldOptions : ReflEpcOptions {
-    Vector3f slot_plane_point = zeros<Vector3f>(1);  ///< Override reflecting-plane point per slot.
-    Vector3f slot_plane_normal = zeros<Vector3f>(1); ///< Override reflecting-plane normal per slot.
-    Float slot_eta_r = full<Float>(1.f, 1);  ///< Relative permittivity per slot.
-    Float slot_mu_r = full<Float>(1.f, 1);   ///< Relative permeability per slot.
-    Float slot_sigma = full<Float>(0.f, 1);  ///< Conductivity per slot.
-    Float slot_gain = full<Float>(1.f, 1);   ///< Extra gain factor per slot.
-    Vector3f tx_polarization =                       ///< Transmitter polarization vector.
-        Vector3f(full<Float>(1.f, 1),
-                         full<Float>(0.f, 1),
-                         full<Float>(0.f, 1));
+template <bool Detached>
+struct ReflEpcFieldOptionsT : ReflEpcOptions {
+    using Float_ = FloatT<Detached>;
+    using Vec3f = Vector3fT<Detached>;
+
+    Vec3f slot_plane_point = zeros<Vec3f>(1);  ///< Override reflecting-plane point per slot.
+    Vec3f slot_plane_normal = zeros<Vec3f>(1); ///< Override reflecting-plane normal per slot.
+    Float_ slot_eta_r = full<Float_>(1.f, 1);  ///< Relative permittivity per slot.
+    Float_ slot_mu_r = full<Float_>(1.f, 1);   ///< Relative permeability per slot.
+    Float_ slot_sigma = full<Float_>(0.f, 1);  ///< Conductivity per slot.
+    Float_ slot_gain = full<Float_>(1.f, 1);   ///< Extra gain factor per slot.
+    Vec3f tx_polarization =                    ///< Transmitter polarization vector.
+        Vec3f(full<Float_>(1.f, 1),
+              full<Float_>(0.f, 1),
+              full<Float_>(0.f, 1));
     float omega = 2.f * 3.14159265358979323846f * 299792458.f; ///< Angular frequency (rad/s).
     float wavelength = 1.f;               ///< Wavelength in world units.
     bool return_geom = false;         ///< Master switch for the per-slot geometry outputs below.

@@ -320,39 +320,68 @@ class ReflectionAccumulationTests(unittest.TestCase):
         for value in data["src_power"]:
             self.assertAlmostEqual(value, 0.25, places=6)
 
-    def test_accumulate_reflections_rejects_ad_inputs(self):
-        result = run_script(
+    def test_accumulate_reflections_supports_ad_inputs(self):
+        data = run_json(
             """
+            import json
+            import drjit as dr
             import drjit.cuda as cuda
             import drjit.cuda.ad as ad
             import rayd as pj
 
-            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
-                                    [-1.0, -1.0, 1.0],
-                                    [0.0, 0.0, 0.0])
+            vertices = ad.Array3f([-1.0, 1.0, -1.0],
+                                  [-1.0, -1.0, 1.0],
+                                  [0.0, 0.0, 0.0])
+            dr.enable_grad(vertices)
             scene = pj.Scene()
             scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
             scene.build()
 
             ray = pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
-                         ad.Array3f([0.0], [0.0], [1.0]))
+                          ad.Array3f([0.0], [0.0], [1.0]))
+
             grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
             material = pj.MaterialAD()
+            material.eta_r = ad.Float([4.0])
+            material.sigma = ad.Float([0.0])
+            material.gain = ad.Float([1.0])
+            material.mu_r = ad.Float([1.0])
+            material.valid = ad.Bool([True])
+
             options = pj.AccumOptions()
-            try:
-                scene.accumulate_reflections(
-                    ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
-                )
-            except RuntimeError as exc:
-                if "non-AD native fast path" in str(exc):
-                    raise SystemExit(0)
-                raise
-            raise AssertionError("expected AD rejection")
-            """,
-            check=False,
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0
+            options.cell_area = 1.0
+
+            result = scene.accumulate_reflections(
+                ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
+            )
+            dr.backward(dr.sum(result.reflection_power), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad = dr.grad(vertices)
+
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "power": float(result.reflection_power[0]),
+                "reflection_count": int(result.reflection_count[0]),
+                "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+            }))
+            """
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(data["result_type"], "AccumResultAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["reflection_count"], 1)
+        self.assertGreater(data["grad_z_sum"], 0.0)
 
     def test_accumulate_reflections_accepts_tx_polarization(self):
         data = run_json(

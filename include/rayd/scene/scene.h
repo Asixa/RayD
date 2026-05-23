@@ -198,7 +198,7 @@ public:
         const RayT<Detached> &ray,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
-        const ReflEpcFieldOptions &options,
+        const ReflEpcFieldOptionsT<Detached> &options,
         MaskT<Detached> active = true) const;
     /// EPC reflection field trace seeded from a transmitter position rather than a ray.
     template <bool Detached>
@@ -206,7 +206,7 @@ public:
         const Vector3fT<Detached> &tx_position,
         const Vector3fT<Detached> &receiver,
         int max_bounces,
-        const ReflEpcFieldOptions &options,
+        const ReflEpcFieldOptionsT<Detached> &options,
         MaskT<Detached> active = true) const;
     /// Trace per-bounce reflection records with explicit options (see multipath/reflection.h).
     template <bool Detached>

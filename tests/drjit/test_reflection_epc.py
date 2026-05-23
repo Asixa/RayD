@@ -104,6 +104,140 @@ class ReflEpcTests(unittest.TestCase):
         self.assertGreaterEqual(data["prim"], 0)
         self.assertEqual(data["trace_reflections_launches"], 1)
 
+    def test_trace_refl_epc_field_supports_ad_transmitter_receiver(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-2.0, 2.0, -2.0],
+                                    [-2.0, -2.0, 2.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            tx = ad.Array3f([0.0], [0.0], [1.0])
+            rx = ad.Array3f([0.5], [0.0], [1.0])
+            dr.enable_grad(rx)
+
+            options = pj.ReflEpcFieldOptions()
+            options.expected_prim_ids = cuda.Int([0])
+            options.slot_plane_point = cuda.Array3f([0.0], [0.0], [0.0])
+            options.slot_plane_normal = cuda.Array3f([0.0], [0.0], [1.0])
+            options.slot_eta_r = cuda.Float([4.0])
+            options.slot_mu_r = cuda.Float([1.0])
+            options.slot_sigma = cuda.Float([0.0])
+            options.slot_gain = cuda.Float([1.0])
+            options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
+            options.omega = 2.0 * 3.141592653589793 * 299792458.0
+            options.wavelength = 0.5
+            options.return_geom = True
+            options.return_endpoints = True
+            options.return_hit_points = True
+            options.return_normals = True
+            options.return_resolved_prim_ids = True
+
+            result = scene.trace_refl_epc_field(
+                tx,
+                rx,
+                1,
+                options,
+                ad.Bool([True]),
+            )
+            dr.eval(result.valid, result.path_length, result.field_x_re, result.hit_points)
+            dr.backward(dr.sum(result.path_length), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_rx = dr.grad(rx)
+            dr.eval(grad_rx)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "valid": bool(result.valid[0]),
+                "bounce_count": int(result.bounce_count[0]),
+                "path_length": float(result.path_length[0]),
+                "field_x_re": float(result.field_x_re[0]),
+                "hit_x": float(result.hit_points.x[0]),
+                "grad_rx_z": float(grad_rx.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "ReflEpcFieldAD")
+        self.assertTrue(data["valid"])
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertGreater(data["path_length"], 0.0)
+        self.assertTrue(math.isfinite(data["field_x_re"]))
+        self.assertAlmostEqual(data["hit_x"], 0.25, places=5)
+        self.assertNotEqual(data["grad_rx_z"], 0.0)
+
+    def test_trace_refl_epc_field_supports_ad_options(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-2.0, 2.0, -2.0],
+                                    [-2.0, -2.0, 2.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            tx = ad.Array3f([0.0], [0.0], [1.0])
+            rx = ad.Array3f([0.5], [0.0], [1.0])
+            plane_z = ad.Float([0.0])
+            eta_r = ad.Float([4.0])
+            dr.enable_grad(plane_z, eta_r)
+
+            options = pj.ReflEpcFieldOptionsAD()
+            options.expected_prim_ids = cuda.Int([0])
+            options.slot_plane_point = ad.Array3f([0.0], [0.0], plane_z)
+            options.slot_plane_normal = ad.Array3f([0.0], [0.0], [1.0])
+            options.slot_eta_r = eta_r
+            options.slot_mu_r = ad.Float([1.0])
+            options.slot_sigma = ad.Float([0.0])
+            options.slot_gain = ad.Float([1.0])
+            options.tx_polarization = ad.Array3f([1.0], [0.0], [0.0])
+            options.omega = 2.0 * 3.141592653589793 * 299792458.0
+            options.wavelength = 0.5
+            options.return_geom = True
+            options.return_hit_points = True
+            options.return_normals = True
+
+            result = scene.trace_refl_epc_field(
+                tx,
+                rx,
+                1,
+                options,
+                ad.Bool([True]),
+            )
+            power = result.field_x_re * result.field_x_re + result.field_x_im * result.field_x_im
+            loss = dr.sum(result.path_length + power)
+            dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_plane_z = dr.grad(plane_z)
+            grad_eta_r = dr.grad(eta_r)
+            dr.eval(result.valid, result.field_x_re, grad_plane_z, grad_eta_r)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "valid": bool(result.valid[0]),
+                "field_x_re": float(result.field_x_re[0]),
+                "grad_plane_z": float(grad_plane_z[0]),
+                "grad_eta_r": float(grad_eta_r[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "ReflEpcFieldAD")
+        self.assertTrue(data["valid"])
+        self.assertTrue(math.isfinite(data["field_x_re"]))
+        self.assertNotEqual(data["grad_plane_z"], 0.0)
+        self.assertNotEqual(data["grad_eta_r"], 0.0)
+
     def test_one_bounce_path_reports_blocked_receiver_segment(self):
         data = run_json(
             """

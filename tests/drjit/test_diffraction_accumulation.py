@@ -376,6 +376,184 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["keller_edge_uses"], data["keller_path_count"])
         self.assertEqual(data["keller_launches"], 1)
 
+    def test_accum_dfr_direct_supports_ad_inputs(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            src = ad.Array3f([0.0], [0.0], [1.0])
+            dr.enable_grad(src)
+            states = pj.DfrStatesAD()
+            states.count = 1
+            states.edge_index = ad.Int([0])
+            states.edge_pos = ad.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = ad.Array3f([1.0], [0.0], [0.0])
+            states.edge_t_min = ad.Float([-0.5])
+            states.edge_t_max = ad.Float([0.5])
+            states.n0 = ad.Array3f([0.0], [1.0], [0.0])
+            states.n1 = ad.Array3f([0.0], [-1.0], [0.0])
+            states.prim0 = ad.Int([-1])
+            states.prim1 = ad.Int([-1])
+            states.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+            states.src = src
+            states.src_power = ad.Float([2.0])
+            states.wi = ad.Array3f([0.0], [0.0], [-1.0])
+            states.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_depth = ad.Int([0])
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DfrMaterialAD()
+            material.eta_r = ad.Float([4.0])
+            material.sigma = ad.Float([0.0])
+            material.mu_r = ad.Float([1.0])
+            material.gain = ad.Float([1.0])
+            material.valid = ad.Bool([True])
+
+            options = pj.DfrOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.samples = 64
+            options.max_order = 1
+            options.direct_samples = 64
+            options.keller_samples = 0
+            options.strategy_mask = pj.RAYD_DFR_DIRECT
+            options.sample_sequence = pj.RAYD_DFR_HASH
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            result = scene.accum_dfr_direct(states, grid, material, options, True)
+            dr.eval(result.power, result.direct_count)
+            dr.backward(dr.sum(result.power), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_src = dr.grad(src)
+            dr.eval(grad_src)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "grid_cell_count": result.grid_cell_count,
+                "power": float(result.power[0]),
+                "direct_count": int(result.direct_count[0]),
+                "grad_src_z": float(grad_src.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "DfrAccumAD")
+        self.assertEqual(data["grid_cell_count"], 1)
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["direct_count"], 64)
+        self.assertNotEqual(data["grad_src_z"], 0.0)
+
+    def test_accum_dfr_direct_supports_ad_keller_inputs(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            src = ad.Array3f([0.0], [0.0], [1.0])
+            dr.enable_grad(src)
+            states = pj.DfrStatesAD()
+            states.count = 1
+            states.edge_index = ad.Int([0])
+            states.edge_pos = ad.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = ad.Array3f([1.0], [0.0], [0.0])
+            states.edge_t_min = ad.Float([-0.5])
+            states.edge_t_max = ad.Float([0.5])
+            states.n0 = ad.Array3f([0.0], [1.0], [0.0])
+            states.n1 = ad.Array3f([0.0], [-1.0], [0.0])
+            states.prim0 = ad.Int([-1])
+            states.prim1 = ad.Int([-1])
+            states.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+            states.src = src
+            states.src_power = ad.Float([2.0])
+            states.wi = ad.Array3f([0.0], [0.0], [-1.0])
+            states.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_depth = ad.Int([0])
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DfrMaterialAD()
+            material.eta_r = ad.Float([4.0])
+            material.sigma = ad.Float([0.0])
+            material.mu_r = ad.Float([1.0])
+            material.gain = ad.Float([1.0])
+            material.valid = ad.Bool([True])
+
+            options = pj.DfrOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.samples = 64
+            options.max_order = 1
+            options.direct_samples = 0
+            options.keller_samples = 64
+            options.strategy_mask = pj.RAYD_DFR_KELLER
+            options.sample_sequence = pj.RAYD_DFR_HASH
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            result = scene.accum_dfr_direct(states, grid, material, options, True)
+            dr.eval(result.power, result.keller_count)
+            dr.backward(dr.sum(result.power), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_src = dr.grad(src)
+            dr.eval(grad_src)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "power": float(result.power[0]),
+                "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
+                "grad_src_z": float(grad_src.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "DfrAccumAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["direct_count"], 0)
+        self.assertEqual(data["keller_count"], 64)
+        self.assertNotEqual(data["grad_src_z"], 0.0)
+
     def test_trace_dfr_paths_order1_exports_compact_paths(self):
         data = run_json(
             """
@@ -473,6 +651,96 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["field_x_re0"]))
         self.assertTrue(math.isfinite(data["field_x_im0"]))
         self.assertAlmostEqual(data["p0_x0"], 0.0, places=5)
+
+    def test_trace_dfr_paths_order1_supports_ad_inputs(self):
+        data = run_json(
+            """
+            import json
+            import math
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            states = pj.DfrStatesAD()
+            states.count = 1
+            states.edge_index = ad.Int([0])
+            states.edge_pos = ad.Array3f([0.0], [0.0], [0.0])
+            states.edge_dir = ad.Array3f([1.0], [0.0], [0.0])
+            states.edge_t_min = ad.Float([-0.5])
+            states.edge_t_max = ad.Float([0.5])
+            states.n0 = ad.Array3f([0.0], [1.0], [0.0])
+            states.n1 = ad.Array3f([0.0], [-1.0], [0.0])
+            states.prim0 = ad.Int([-1])
+            states.prim1 = ad.Int([-1])
+            states.exterior_angle = ad.Float([1.5 * math.pi])
+            states.src = ad.Array3f([0.0], [0.0], [1.0])
+            states.src_power = ad.Float([1.0])
+            states.wi = ad.Array3f([0.0], [0.0], [-1.0])
+            states.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+            states.prefix_depth = ad.Int([0])
+
+            material = pj.DfrMaterialAD()
+            material.eta_r = ad.Float([4.0])
+            material.sigma = ad.Float([0.0])
+            material.mu_r = ad.Float([1.0])
+            material.gain = ad.Float([1.0])
+            material.valid = ad.Bool([True])
+
+            options = pj.DfrPathOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.max_order = 1
+            options.max_paths = 4
+            options.max_rx = 1
+            options.strategy_mask = pj.RAYD_DFR_DIRECT
+            options.sample_count = 4
+            options.return_geom = 1
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+
+            rx = ad.Array3f([0.0], [0.0], [-1.0])
+            dr.enable_grad(rx)
+            result = scene.trace_dfr_paths(
+                ad.Array3f([0.0], [0.0], [1.0]),
+                rx,
+                states,
+                material,
+                options,
+                ad.Bool([True]),
+            )
+            dr.eval(result.count, result.valid, result.delay, result.field_x.real, result.p0.x)
+            dr.backward(dr.sum(result.delay), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_rx = dr.grad(rx)
+            dr.eval(grad_rx)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "capacity": result.capacity,
+                "count": int(result.count[0]),
+                "valid0": bool(result.valid[0]),
+                "delay0": float(result.delay[0]),
+                "field_x_re0": float(result.field_x.real[0]),
+                "p0_x0": float(result.p0.x[0]),
+                "grad_rx_z": float(grad_rx.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "DfrPathsAD")
+        self.assertEqual(data["capacity"], 1)
+        self.assertEqual(data["count"], 1)
+        self.assertTrue(data["valid0"])
+        self.assertGreater(data["delay0"], 0.0)
+        self.assertTrue(math.isfinite(data["field_x_re0"]))
+        self.assertAlmostEqual(data["p0_x0"], 0.0, places=5)
+        self.assertNotEqual(data["grad_rx_z"], 0.0)
 
     def test_accum_dfr_direct_suffix_reflection_writes_grid(self):
         data = run_json(
@@ -847,6 +1115,114 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertGreater(data["direct_count"], 0)
         self.assertGreater(data["keller_count"], 0)
         self.assertEqual(data["edge_uses"], data["direct_count"] + data["keller_count"])
+
+    def test_accum_dfr_order2_supports_ad_inputs(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [10.0, 10.0, 10.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            src = ad.Array3f([0.0], [0.0], [1.0])
+            dr.enable_grad(src)
+
+            initial = pj.DfrStatesAD()
+            initial.count = 1
+            initial.edge_index = ad.Int([0])
+            initial.edge_pos = ad.Array3f([0.0], [0.0], [0.0])
+            initial.edge_dir = ad.Array3f([1.0], [0.0], [0.0])
+            initial.edge_t_min = ad.Float([-0.5])
+            initial.edge_t_max = ad.Float([0.5])
+            initial.n0 = ad.Array3f([0.0], [1.0], [0.0])
+            initial.n1 = ad.Array3f([0.0], [-1.0], [0.0])
+            initial.prim0 = ad.Int([-1])
+            initial.prim1 = ad.Int([-1])
+            initial.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+            initial.src = src
+            initial.src_power = ad.Float([2.0])
+            initial.wi = ad.Array3f([0.0], [0.0], [-1.0])
+            initial.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+            initial.prefix_depth = ad.Int([0])
+
+            recursive = pj.DfrStatesAD()
+            recursive.count = 1
+            recursive.edge_index = ad.Int([1])
+            recursive.edge_pos = ad.Array3f([0.0], [0.0], [-0.75])
+            recursive.edge_dir = ad.Array3f([0.0], [1.0], [0.0])
+            recursive.edge_t_min = ad.Float([-0.5])
+            recursive.edge_t_max = ad.Float([0.5])
+            recursive.n0 = ad.Array3f([1.0], [0.0], [0.0])
+            recursive.n1 = ad.Array3f([-1.0], [0.0], [0.0])
+            recursive.prim0 = ad.Int([-1])
+            recursive.prim1 = ad.Int([-1])
+            recursive.exterior_angle = ad.Float([1.5 * 3.141592653589793])
+            recursive.src = ad.Array3f([0.0], [0.0], [0.0])
+            recursive.src_power = ad.Float([1.0])
+            recursive.wi = ad.Array3f([0.0], [0.0], [-1.0])
+            recursive.d0 = ad.Array3f([0.0], [0.0], [-1.0])
+            recursive.prefix_depth = ad.Int([0])
+
+            grid = pj.DfrGrid()
+            grid.axis = 2
+            grid.position = -1.5
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+            grid.cell_area = 4.0
+
+            material = pj.DfrMaterialAD()
+            material.eta_r = ad.Float([4.0])
+            material.sigma = ad.Float([0.0])
+            material.mu_r = ad.Float([1.0])
+            material.gain = ad.Float([1.0])
+            material.valid = ad.Bool([True])
+
+            options = pj.DfrOptions()
+            options.wavelength = 0.125
+            options.k = 50.26548245743669
+            options.seed = 17
+            options.samples = 64
+            options.max_order = 2
+            options.direct_samples = 32
+            options.keller_samples = 32
+            options.strategy_mask = pj.RAYD_DFR_DIRECT | pj.RAYD_DFR_KELLER
+            options.sample_sequence = pj.RAYD_DFR_HASH
+            options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
+            options.collect_edge_use = True
+            options.collect_debug_counts = True
+
+            result = scene.accum_dfr(initial, recursive, grid, material, options, True)
+            dr.eval(result.power, result.direct_count, result.keller_count)
+            dr.backward(dr.sum(result.power), flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+            grad_src = dr.grad(src)
+            dr.eval(grad_src)
+            print(json.dumps({
+                "result_type": type(result).__name__,
+                "power": float(result.power[0]),
+                "direct_count": int(result.direct_count[0]),
+                "keller_count": int(result.keller_count[0]),
+                "grad_src_z": float(grad_src.z[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "DfrAccumAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["direct_count"], 0)
+        self.assertGreater(data["keller_count"], 0)
+        self.assertNotEqual(data["grad_src_z"], 0.0)
 
     def test_accum_dfr_order3_direct_and_keller_writes_grid(self):
         data = run_json(

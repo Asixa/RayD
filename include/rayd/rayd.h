@@ -57,7 +57,9 @@ using ReflEpcT = ReflEpcData<FloatT<Detached>>;
 using ReflEpcAD = ReflEpcT<false>;
 using ReflEpc = ReflEpcT<true>;
 struct ReflEpcOptions;
-struct ReflEpcFieldOptions;
+template <bool Detached> struct ReflEpcFieldOptionsT;
+using ReflEpcFieldOptionsAD = ReflEpcFieldOptionsT<false>;
+using ReflEpcFieldOptions = ReflEpcFieldOptionsT<true>;
 template <typename> struct ReflEpcFieldData;
 template <bool Detached>
 using ReflEpcFieldT = ReflEpcFieldData<FloatT<Detached>>;

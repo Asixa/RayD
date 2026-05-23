@@ -99,6 +99,34 @@ bool drjit_try_load(nb::handle src, T &value, bool convert) {
     }
 }
 
+ReflEpcFieldOptionsAD refl_epc_field_options_ad_from_detached(
+        const ReflEpcFieldOptions &options) {
+    ReflEpcFieldOptionsAD out;
+    out.expected_prim_ids = options.expected_prim_ids;
+    out.surface_group_id = options.surface_group_id;
+    out.surface_group_size = options.surface_group_size;
+    out.surface_group_members = options.surface_group_members;
+    out.surface_max_group_size = options.surface_max_group_size;
+    out.visibility_ignore_mode = options.visibility_ignore_mode;
+    out.final_ignore_group_ids = options.final_ignore_group_ids;
+    out.slot_plane_point = Vector3fAD(options.slot_plane_point);
+    out.slot_plane_normal = Vector3fAD(options.slot_plane_normal);
+    out.slot_eta_r = FloatAD(options.slot_eta_r);
+    out.slot_mu_r = FloatAD(options.slot_mu_r);
+    out.slot_sigma = FloatAD(options.slot_sigma);
+    out.slot_gain = FloatAD(options.slot_gain);
+    out.tx_polarization = Vector3fAD(options.tx_polarization);
+    out.omega = options.omega;
+    out.wavelength = options.wavelength;
+    out.return_geom = options.return_geom;
+    out.return_endpoints = options.return_endpoints;
+    out.return_hit_points = options.return_hit_points;
+    out.return_normals = options.return_normals;
+    out.return_resolved_prim_ids = options.return_resolved_prim_ids;
+    out.return_surface_group_ids = options.return_surface_group_ids;
+    return out;
+}
+
 /// Wrap a C++ Dr.Jit array \p value in a new Python object of the matching type.
 template <typename T>
 nb::handle drjit_from_cpp(const T &value) {
@@ -351,6 +379,27 @@ NB_MODULE(rayd, m) {
                     &ReflEpcFieldOptions::return_resolved_prim_ids)
             .def_rw("return_surface_group_ids",
                     &ReflEpcFieldOptions::return_surface_group_ids);
+
+        nb::class_<ReflEpcFieldOptionsAD, ReflEpcOptions>(
+                m, "ReflEpcFieldOptionsAD")
+            .def(nb::init<>())
+            .def_rw("slot_plane_point", &ReflEpcFieldOptionsAD::slot_plane_point)
+            .def_rw("slot_plane_normal", &ReflEpcFieldOptionsAD::slot_plane_normal)
+            .def_rw("slot_eta_r", &ReflEpcFieldOptionsAD::slot_eta_r)
+            .def_rw("slot_mu_r", &ReflEpcFieldOptionsAD::slot_mu_r)
+            .def_rw("slot_sigma", &ReflEpcFieldOptionsAD::slot_sigma)
+            .def_rw("slot_gain", &ReflEpcFieldOptionsAD::slot_gain)
+            .def_rw("tx_polarization", &ReflEpcFieldOptionsAD::tx_polarization)
+            .def_rw("omega", &ReflEpcFieldOptionsAD::omega)
+            .def_rw("wavelength", &ReflEpcFieldOptionsAD::wavelength)
+            .def_rw("return_geom", &ReflEpcFieldOptionsAD::return_geom)
+            .def_rw("return_endpoints", &ReflEpcFieldOptionsAD::return_endpoints)
+            .def_rw("return_hit_points", &ReflEpcFieldOptionsAD::return_hit_points)
+            .def_rw("return_normals", &ReflEpcFieldOptionsAD::return_normals)
+            .def_rw("return_resolved_prim_ids",
+                    &ReflEpcFieldOptionsAD::return_resolved_prim_ids)
+            .def_rw("return_surface_group_ids",
+                    &ReflEpcFieldOptionsAD::return_surface_group_ids);
 
         nb::class_<Intersection>(m, "Intersection")
             .def("is_valid", &Intersection::is_valid)
@@ -1293,6 +1342,120 @@ NB_MODULE(rayd, m) {
                   "max_bounces"_a,
                   "options"_a = nb::none(),
                   "active"_a = true)
+            .def("trace_refl_epc_field",
+                 [](const Scene &scene,
+                    nb::handle source_obj,
+                    nb::handle receiver_obj,
+                    int max_bounces,
+                    const ReflEpcFieldOptions &options,
+                    nb::handle active_obj) -> nb::object {
+                     auto is_ad_drjit = [](nb::handle obj) {
+                         const std::string type_name =
+                             nb::cast<std::string>(nb::str(obj.type()));
+                         return type_name.find("drjit.cuda.ad.") != std::string::npos;
+                     };
+                      if (nb::isinstance<RayAD>(source_obj)) {
+                          const RayAD ray = nb::cast<RayAD>(source_obj);
+                          const Vector3fAD receiver =
+                              nb::cast<Vector3fAD>(receiver_obj);
+                          const rayd::MaskAD active =
+                              nb::cast<rayd::MaskAD>(active_obj);
+                          const ReflEpcFieldOptionsAD options_ad =
+                              refl_epc_field_options_ad_from_detached(options);
+                          return nb::cast(scene.trace_refl_epc_field<false>(
+                              ray, receiver, max_bounces, options_ad, active));
+                      }
+                      if (is_ad_drjit(source_obj) ||
+                          is_ad_drjit(receiver_obj) ||
+                          is_ad_drjit(active_obj)) {
+                         const Vector3fAD tx_position =
+                             nb::cast<Vector3fAD>(source_obj);
+                          const Vector3fAD receiver =
+                              nb::cast<Vector3fAD>(receiver_obj);
+                          const rayd::MaskAD active =
+                              nb::cast<rayd::MaskAD>(active_obj);
+                          const ReflEpcFieldOptionsAD options_ad =
+                              refl_epc_field_options_ad_from_detached(options);
+                          return nb::cast(scene.trace_refl_epc_field<false>(
+                              tx_position, receiver, max_bounces, options_ad, active));
+                      }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("source"),
+                  nb::arg("receiver"),
+                  "max_bounces"_a,
+                  "options"_a,
+                  "active"_a = true)
+            .def("trace_refl_epc_field",
+                 [](const Scene &scene,
+                    nb::handle source_obj,
+                    nb::handle receiver_obj,
+                    int max_bounces,
+                    const ReflEpcFieldOptionsAD &options,
+                    nb::handle active_obj) -> nb::object {
+                     auto is_ad_drjit = [](nb::handle obj) {
+                         const std::string type_name =
+                             nb::cast<std::string>(nb::str(obj.type()));
+                         return type_name.find("drjit.cuda.ad.") != std::string::npos;
+                     };
+                     if (nb::isinstance<RayAD>(source_obj)) {
+                         const RayAD ray = nb::cast<RayAD>(source_obj);
+                         const Vector3fAD receiver =
+                             nb::cast<Vector3fAD>(receiver_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.trace_refl_epc_field<false>(
+                             ray, receiver, max_bounces, options, active));
+                     }
+                     if (is_ad_drjit(source_obj) ||
+                         is_ad_drjit(receiver_obj) ||
+                         is_ad_drjit(active_obj)) {
+                         const Vector3fAD tx_position =
+                             nb::cast<Vector3fAD>(source_obj);
+                         const Vector3fAD receiver =
+                             nb::cast<Vector3fAD>(receiver_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.trace_refl_epc_field<false>(
+                             tx_position, receiver, max_bounces, options, active));
+                     }
+                     throw nb::next_overload();
+                 },
+                 nb::arg("source"),
+                 nb::arg("receiver"),
+                 "max_bounces"_a,
+                 "options"_a,
+                 "active"_a = true)
+            .def("trace_refl_epc_field",
+                 [](const Scene &scene,
+                    const RayAD &ray,
+                     const Vector3fAD &receiver,
+                     int max_bounces,
+                     const ReflEpcFieldOptionsAD &options,
+                    rayd::MaskAD active) {
+                     return scene.trace_refl_epc_field<false>(
+                         ray, receiver, max_bounces, options, active);
+                 },
+                 nb::arg("ray").noconvert(),
+                 nb::arg("receiver").noconvert(),
+                  "max_bounces"_a,
+                  "options"_a,
+                  "active"_a = true)
+            .def("trace_refl_epc_field",
+                 [](const Scene &scene,
+                     const Vector3fAD &tx_position,
+                     const Vector3fAD &receiver,
+                     int max_bounces,
+                     const ReflEpcFieldOptionsAD &options,
+                    rayd::MaskAD active) {
+                     return scene.trace_refl_epc_field<false>(
+                         tx_position, receiver, max_bounces, options, active);
+                 },
+                 nb::arg("tx_position").noconvert(),
+                 nb::arg("receiver").noconvert(),
+                 "max_bounces"_a,
+                 "options"_a,
+                 "active"_a = true)
             .def("trace_refl_epc_field",
                  [](const Scene &scene,
                     const Ray &ray,
