@@ -4657,6 +4657,24 @@ DfrAccumT<Detached> Scene::accum_dfr(
                 "Scene::accum_dfr(): invalid initial state count.");
         require(recursive_count > 0 && recursive_count <= recursive_width,
                 "Scene::accum_dfr(): invalid recursive state count.");
+        require(static_cast<int>(slices(initial_states.edge_pos)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_dir)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_t_min)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.edge_t_max)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.prim0)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.prim1)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.exterior_angle)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.src)) >= initial_count &&
+                    static_cast<int>(slices(initial_states.src_power)) >= initial_count,
+                "Scene::accum_dfr(): initial state fields must cover state count.");
+        require(static_cast<int>(slices(recursive_states.edge_pos)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_dir)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_t_min)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.edge_t_max)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.prim0)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.prim1)) >= recursive_count &&
+                    static_cast<int>(slices(recursive_states.exterior_angle)) >= recursive_count,
+                "Scene::accum_dfr(): recursive state fields must cover state count.");
 
         const int material_count = static_cast<int>(slices(material.eta_r));
         require(material_count > 0,

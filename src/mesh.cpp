@@ -219,7 +219,11 @@ void Mesh::init(const Vector3f &vertex_positions,
             record.reserve(3 * face_count_);
         }
 
-        std::map<std::pair<int, int>, std::vector<int>> edge_map;
+        // Per edge, record every incident face together with its own opposite
+        // vertex (the corner of that face not on the edge). Storing the opposite
+        // vertex per face (rather than once per edge) is what lets non-manifold
+        // edges emit correct wedges below.
+        std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> edge_map;
         for (int face_index = 0; face_index < face_count_; ++face_index) {
             for (int local_edge = 0; local_edge < 3; ++local_edge) {
                 const int start_corner = local_edge;
@@ -233,27 +237,36 @@ void Mesh::init(const Vector3f &vertex_positions,
                     ? std::make_pair(start_vertex, end_vertex)
                     : std::make_pair(end_vertex, start_vertex);
 
-                auto edge_entry = edge_map.find(edge_key);
-                if (edge_entry == edge_map.end()) {
-                    edge_entry = edge_map.emplace(edge_key, std::vector<int>{}).first;
-                    edge_entry->second.push_back(opposite_vertex);
-                }
-                edge_entry->second.push_back(face_index);
+                edge_map[edge_key].emplace_back(face_index, opposite_vertex);
             }
         }
 
-        for (const auto &[edge_vertices, adjacency] : edge_map) {
-            edge_records[0].push_back(edge_vertices.first);
-            edge_records[1].push_back(edge_vertices.second);
-            edge_records[2].push_back(adjacency[1]);
-            if (adjacency.size() >= 3) {
-                edge_records[3].push_back(adjacency[2]);
-                edge_records[4].push_back(adjacency[0]);
-            } else {
+        for (const auto &[edge_vertices, faces] : edge_map) {
+            if (faces.size() == 1) {
+                // Boundary edge: a single incident face, no second wedge face.
+                edge_records[0].push_back(edge_vertices.first);
+                edge_records[1].push_back(edge_vertices.second);
+                edge_records[2].push_back(faces[0].first);
                 edge_records[3].push_back(-1);
-                edge_records[4].push_back(adjacency[0]);
+                edge_records[4].push_back(faces[0].second);
+                ++edge_count;
+                continue;
             }
-            ++edge_count;
+            // Emit one wedge per unordered pair of incident faces. A manifold
+            // edge (2 faces) yields exactly the single (face0, face1) wedge,
+            // identical to before. Non-manifold edges (3+ faces) emit every
+            // face pair so no wedge or diffraction path is silently dropped;
+            // each wedge carries the opposite vertex of its own face0.
+            for (size_t i = 0; i < faces.size(); ++i) {
+                for (size_t j = i + 1; j < faces.size(); ++j) {
+                    edge_records[0].push_back(edge_vertices.first);
+                    edge_records[1].push_back(edge_vertices.second);
+                    edge_records[2].push_back(faces[i].first);
+                    edge_records[3].push_back(faces[j].first);
+                    edge_records[4].push_back(faces[i].second);
+                    ++edge_count;
+                }
+            }
         }
 
         edge_indices_ = VectoriT<5, true>(drjit::load<Int>(edge_records[0].data(), edge_count),
