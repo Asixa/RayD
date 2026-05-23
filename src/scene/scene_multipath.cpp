@@ -5000,6 +5000,329 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
     }
 }
 
+
+template <bool Detached>
+DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
+    const DfrCoherentUtdStatesT<Detached> &states,
+    const DfrGrid &grid,
+    const DfrCoherentOptions &options,
+    MaskT<Detached> active) const {
+    ScopedNativeLaunchStage native_launch_stage(
+        NativeLaunchStage::AccumDfr);
+    require(is_ready(), "Scene::accum_dfr_coherent_direct(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::accum_dfr_coherent_direct(): scene has pending updates. Call Scene::sync() first.");
+    require(grid.axis >= 0 && grid.axis <= 2,
+            "Scene::accum_dfr_coherent_direct(): grid.axis must be 0, 1, or 2.");
+    require(grid.resolution0 > 0 && grid.resolution1 > 0,
+            "Scene::accum_dfr_coherent_direct(): grid resolution must be positive.");
+    require(grid.coord0_min < grid.coord0_max && grid.coord1_min < grid.coord1_max,
+            "Scene::accum_dfr_coherent_direct(): grid bounds must be ordered.");
+    require(options.wavelength > 0.f,
+            "Scene::accum_dfr_coherent_direct(): wavelength must be positive.");
+    require(options.max_order == 1,
+            "Scene::accum_dfr_coherent_direct(): only max_order == 1 is supported.");
+    require(options.receiver_model == RAYD_DFR_MATCHED_ISO,
+            "Scene::accum_dfr_coherent_direct(): only matched isotropic receivers are supported.");
+    if constexpr (!Detached) {
+        (void)states;
+        (void)active;
+        throw std::runtime_error(
+            "Scene::accum_dfr_coherent_direct(): AD inputs are not supported yet.");
+    } else {
+        const int state_count = states.count;
+        require(state_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid state count.");
+        require(static_cast<int>(slices(states.edge_pos)) >= state_count &&
+                    static_cast<int>(slices(states.edge_dir)) >= state_count &&
+                    static_cast<int>(slices(states.n0)) >= state_count &&
+                    static_cast<int>(slices(states.n_face_n)) >= state_count &&
+                    static_cast<int>(slices(states.source_pos)) >= state_count &&
+                    static_cast<int>(slices(states.incident_basis_u)) >= state_count &&
+                    static_cast<int>(slices(states.incident_basis_v)) >= state_count &&
+                    static_cast<int>(slices(states.incident_basis_k)) >= state_count &&
+                    static_cast<int>(slices(states.wedge_n)) >= state_count &&
+                    static_cast<int>(slices(states.edge_line_min)) >= state_count &&
+                    static_cast<int>(slices(states.edge_line_max)) >= state_count &&
+                    static_cast<int>(slices(states.face0_eta_r)) >= state_count &&
+                    static_cast<int>(slices(states.face0_mu_r)) >= state_count &&
+                    static_cast<int>(slices(states.face0_sigma)) >= state_count &&
+                    static_cast<int>(slices(states.face0_gain)) >= state_count &&
+                    static_cast<int>(slices(states.face0_use_fresnel)) >= state_count &&
+                    static_cast<int>(slices(states.face1_eta_r)) >= state_count &&
+                    static_cast<int>(slices(states.face1_mu_r)) >= state_count &&
+                    static_cast<int>(slices(states.face1_sigma)) >= state_count &&
+                    static_cast<int>(slices(states.face1_gain)) >= state_count &&
+                    static_cast<int>(slices(states.face1_use_fresnel)) >= state_count &&
+                    static_cast<int>(slices(states.select_stationary_point)) >= state_count &&
+                    static_cast<int>(slices(states.incident_field)) >= state_count &&
+                    static_cast<int>(slices(states.incident_normal_derivative)) >= state_count &&
+                    static_cast<int>(slices(states.r_face0)) >= state_count &&
+                    static_cast<int>(slices(states.r_face_n)) >= state_count &&
+                    static_cast<int>(slices(states.incident_vector_x)) >= state_count &&
+                    static_cast<int>(slices(states.incident_vector_y)) >= state_count &&
+                    static_cast<int>(slices(states.incident_vector_z)) >= state_count &&
+                    static_cast<int>(slices(states.incident_normal_derivative_vector_x)) >= state_count &&
+                    static_cast<int>(slices(states.incident_normal_derivative_vector_y)) >= state_count &&
+                    static_cast<int>(slices(states.incident_normal_derivative_vector_z)) >= state_count &&
+                    static_cast<int>(slices(states.incident_jones_u)) >= state_count &&
+                    static_cast<int>(slices(states.incident_jones_v)) >= state_count &&
+                    static_cast<int>(slices(states.incident_derivative_jones_u)) >= state_count &&
+                    static_cast<int>(slices(states.incident_derivative_jones_v)) >= state_count &&
+                    static_cast<int>(slices(states.face0_operator_m00)) >= state_count &&
+                    static_cast<int>(slices(states.face0_operator_m01)) >= state_count &&
+                    static_cast<int>(slices(states.face0_operator_m10)) >= state_count &&
+                    static_cast<int>(slices(states.face0_operator_m11)) >= state_count &&
+                    static_cast<int>(slices(states.face1_operator_m00)) >= state_count &&
+                    static_cast<int>(slices(states.face1_operator_m01)) >= state_count &&
+                    static_cast<int>(slices(states.face1_operator_m10)) >= state_count &&
+                    static_cast<int>(slices(states.face1_operator_m11)) >= state_count &&
+                    static_cast<int>(slices(states.owner_code)) >= state_count &&
+                    static_cast<int>(slices(states.adjacent_face0)) >= state_count &&
+                    static_cast<int>(slices(states.adjacent_face1)) >= state_count,
+                "Scene::accum_dfr_coherent_direct(): full UTD state fields must cover state count.");
+        const int grid_cell_count = grid.resolution0 * grid.resolution1;
+        const int launch_count = state_count * grid_cell_count;
+        require(launch_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid launch count.");
+
+        Mask active_detached = active;
+        const int active_width = static_cast<int>(slices(active_detached));
+        if (active_width == 1 && state_count > 1) {
+            active_detached = gather<Mask>(active_detached, zeros<Int>(state_count));
+        } else {
+            require(active_width == state_count,
+                    "Scene::accum_dfr_coherent_direct(): active width must be 1 or match state count.");
+        }
+        active_detached &= drjit::isfinite(states.source_pos.x()) &&
+                           drjit::isfinite(states.source_pos.y()) &&
+                           drjit::isfinite(states.source_pos.z()) &&
+                           drjit::isfinite(states.edge_pos.x()) &&
+                           drjit::isfinite(states.edge_pos.y()) &&
+                           drjit::isfinite(states.edge_pos.z());
+
+        const OptixSceneSelection scenes = select_optix_scenes();
+        const OptixScene *primary_scene = scenes.primary;
+        const OptixScene *secondary_scene = scenes.secondary;
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
+        require(scenes.hitgroup_record_count > 0,
+                "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
+
+        ensure_pipeline(diffraction_accumulation_pipeline_,
+                        primary_scene->context(),
+                        scenes.hitgroup_record_count,
+                        diffraction_accumulation_pipeline_config());
+
+        drjit::eval(states.edge_pos,
+                    states.edge_dir,
+                    states.n0,
+                    states.n_face_n,
+                    states.source_pos,
+                    states.incident_basis_u,
+                    states.incident_basis_v,
+                    states.incident_basis_k,
+                    states.wedge_n,
+                    states.edge_line_min,
+                    states.edge_line_max,
+                    states.face0_eta_r,
+                    states.face0_mu_r,
+                    states.face0_sigma,
+                    states.face0_gain,
+                    states.face0_use_fresnel,
+                    states.face1_eta_r,
+                    states.face1_mu_r,
+                    states.face1_sigma,
+                    states.face1_gain,
+                    states.face1_use_fresnel,
+                    states.select_stationary_point,
+                    states.incident_field,
+                    states.incident_normal_derivative,
+                    states.r_face0,
+                    states.r_face_n,
+                    states.incident_vector_x,
+                    states.incident_vector_y,
+                    states.incident_vector_z,
+                    states.incident_normal_derivative_vector_x,
+                    states.incident_normal_derivative_vector_y,
+                    states.incident_normal_derivative_vector_z,
+                    states.incident_jones_u,
+                    states.incident_jones_v,
+                    states.incident_derivative_jones_u,
+                    states.incident_derivative_jones_v,
+                    states.face0_operator_m00,
+                    states.face0_operator_m01,
+                    states.face0_operator_m10,
+                    states.face0_operator_m11,
+                    states.face1_operator_m00,
+                    states.face1_operator_m01,
+                    states.face1_operator_m10,
+                    states.face1_operator_m11,
+                    states.owner_code,
+                    states.adjacent_face0,
+                    states.adjacent_face1,
+                    active_detached,
+                    triangle_info_detached_.face_normal,
+                    face_offsets_);
+
+        DfrCoherentAccum result;
+        result.grid_cell_count = grid_cell_count;
+        DfrCoherentAccumRaw raw = alloc_dfr_coherent_accum_raw(grid_cell_count);
+        init_dfr_coherent_accum_raw(raw);
+
+        DfrAccumParams params = {};
+        params.primary_handle = primary_scene->ias_handle();
+        params.secondary_handle =
+            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+        params.split_mode = scenes.split_mode;
+        params.n_rays = launch_count;
+        params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+        params.state_count = state_count;
+        params.grid_axis = grid.axis;
+        params.grid_position = grid.position;
+        params.grid_coord0_min = grid.coord0_min;
+        params.grid_coord0_max = grid.coord0_max;
+        params.grid_coord1_min = grid.coord1_min;
+        params.grid_coord1_max = grid.coord1_max;
+        params.grid_resolution0 = grid.resolution0;
+        params.grid_resolution1 = grid.resolution1;
+        params.grid_cell_area = grid.cell_area;
+        params.tri_fn_x = triangle_info_detached_.face_normal.x().data();
+        params.tri_fn_y = triangle_info_detached_.face_normal.y().data();
+        params.tri_fn_z = triangle_info_detached_.face_normal.z().data();
+        params.face_offsets = face_offsets_.data();
+        params.n_meshes = mesh_count_;
+        params.n_triangles = static_cast<int>(slices(triangle_info_detached_.p0));
+        params.wavelength = options.wavelength;
+        params.k = options.k;
+        params.max_order = options.max_order;
+        params.receiver_model = options.receiver_model;
+        params.select_diffraction_point = options.select_diffraction_point ? 1 : 0;
+        params.prefilter_visibility = options.prefilter_visibility ? 1 : 0;
+        params.collect_debug_counts = options.collect_debug_counts ? 1 : 0;
+        params.omega = options.omega;
+        params.tx_pol_x = options.tx_pol_x;
+        params.tx_pol_y = options.tx_pol_y;
+        params.tx_pol_z = options.tx_pol_z;
+        params.coherent_utd_slot_count = 84;
+        params.utd_epx = states.edge_pos.x().data();
+        params.utd_epy = states.edge_pos.y().data();
+        params.utd_epz = states.edge_pos.z().data();
+        params.utd_edx = states.edge_dir.x().data();
+        params.utd_edy = states.edge_dir.y().data();
+        params.utd_edz = states.edge_dir.z().data();
+        params.utd_n0x = states.n0.x().data();
+        params.utd_n0y = states.n0.y().data();
+        params.utd_n0z = states.n0.z().data();
+        params.utd_nnx = states.n_face_n.x().data();
+        params.utd_nny = states.n_face_n.y().data();
+        params.utd_nnz = states.n_face_n.z().data();
+        params.utd_wn = states.wedge_n.data();
+        params.utd_elm = states.edge_line_min.data();
+        params.utd_elx = states.edge_line_max.data();
+        params.utd_spx = states.source_pos.x().data();
+        params.utd_spy = states.source_pos.y().data();
+        params.utd_spz = states.source_pos.z().data();
+        params.utd_ifr = drjit::real(states.incident_field).data();
+        params.utd_ifi = drjit::imag(states.incident_field).data();
+        params.utd_inr = drjit::real(states.incident_normal_derivative).data();
+        params.utd_ini = drjit::imag(states.incident_normal_derivative).data();
+        params.utd_r0r = drjit::real(states.r_face0).data();
+        params.utd_r0i = drjit::imag(states.r_face0).data();
+        params.utd_rnr = drjit::real(states.r_face_n).data();
+        params.utd_rni = drjit::imag(states.r_face_n).data();
+        params.utd_vxr = drjit::real(states.incident_vector_x).data();
+        params.utd_vxi = drjit::imag(states.incident_vector_x).data();
+        params.utd_vyr = drjit::real(states.incident_vector_y).data();
+        params.utd_vyi = drjit::imag(states.incident_vector_y).data();
+        params.utd_vzr = drjit::real(states.incident_vector_z).data();
+        params.utd_vzi = drjit::imag(states.incident_vector_z).data();
+        params.utd_dxr = drjit::real(states.incident_normal_derivative_vector_x).data();
+        params.utd_dxi = drjit::imag(states.incident_normal_derivative_vector_x).data();
+        params.utd_dyr = drjit::real(states.incident_normal_derivative_vector_y).data();
+        params.utd_dyi = drjit::imag(states.incident_normal_derivative_vector_y).data();
+        params.utd_dzr = drjit::real(states.incident_normal_derivative_vector_z).data();
+        params.utd_dzi = drjit::imag(states.incident_normal_derivative_vector_z).data();
+        params.utd_jur = drjit::real(states.incident_jones_u).data();
+        params.utd_jui = drjit::imag(states.incident_jones_u).data();
+        params.utd_jvr = drjit::real(states.incident_jones_v).data();
+        params.utd_jvi = drjit::imag(states.incident_jones_v).data();
+        params.utd_djur = drjit::real(states.incident_derivative_jones_u).data();
+        params.utd_djui = drjit::imag(states.incident_derivative_jones_u).data();
+        params.utd_djvr = drjit::real(states.incident_derivative_jones_v).data();
+        params.utd_djvi = drjit::imag(states.incident_derivative_jones_v).data();
+        params.utd_bux = states.incident_basis_u.x().data();
+        params.utd_buy = states.incident_basis_u.y().data();
+        params.utd_buz = states.incident_basis_u.z().data();
+        params.utd_bvx = states.incident_basis_v.x().data();
+        params.utd_bvy = states.incident_basis_v.y().data();
+        params.utd_bvz = states.incident_basis_v.z().data();
+        params.utd_bkx = states.incident_basis_k.x().data();
+        params.utd_bky = states.incident_basis_k.y().data();
+        params.utd_bkz = states.incident_basis_k.z().data();
+        params.utd_f0m00r = drjit::real(states.face0_operator_m00).data();
+        params.utd_f0m00i = drjit::imag(states.face0_operator_m00).data();
+        params.utd_f0m01r = drjit::real(states.face0_operator_m01).data();
+        params.utd_f0m01i = drjit::imag(states.face0_operator_m01).data();
+        params.utd_f0m10r = drjit::real(states.face0_operator_m10).data();
+        params.utd_f0m10i = drjit::imag(states.face0_operator_m10).data();
+        params.utd_f0m11r = drjit::real(states.face0_operator_m11).data();
+        params.utd_f0m11i = drjit::imag(states.face0_operator_m11).data();
+        params.utd_f1m00r = drjit::real(states.face1_operator_m00).data();
+        params.utd_f1m00i = drjit::imag(states.face1_operator_m00).data();
+        params.utd_f1m01r = drjit::real(states.face1_operator_m01).data();
+        params.utd_f1m01i = drjit::imag(states.face1_operator_m01).data();
+        params.utd_f1m10r = drjit::real(states.face1_operator_m10).data();
+        params.utd_f1m10i = drjit::imag(states.face1_operator_m10).data();
+        params.utd_f1m11r = drjit::real(states.face1_operator_m11).data();
+        params.utd_f1m11i = drjit::imag(states.face1_operator_m11).data();
+        params.utd_f0er = states.face0_eta_r.data();
+        params.utd_f0mu = states.face0_mu_r.data();
+        params.utd_f0sg = states.face0_sigma.data();
+        params.utd_f0g = states.face0_gain.data();
+        params.utd_f0uf = states.face0_use_fresnel.data();
+        params.utd_f1er = states.face1_eta_r.data();
+        params.utd_f1mu = states.face1_mu_r.data();
+        params.utd_f1sg = states.face1_sigma.data();
+        params.utd_f1g = states.face1_gain.data();
+        params.utd_f1uf = states.face1_use_fresnel.data();
+        params.utd_select = states.select_stationary_point.data();
+        params.coherent_owner_code = states.owner_code.data();
+        params.coherent_adjacent_face0 = states.adjacent_face0.data();
+        params.coherent_adjacent_face1 = states.adjacent_face1.data();
+        params.out_direct_count = raw.direct_count.data();
+        params.out_direct_field_x_re = raw.direct_field_x_re.data();
+        params.out_direct_field_x_im = raw.direct_field_x_im.data();
+        params.out_direct_field_y_re = raw.direct_field_y_re.data();
+        params.out_direct_field_y_im = raw.direct_field_y_im.data();
+        params.out_direct_field_z_re = raw.direct_field_z_re.data();
+        params.out_direct_field_z_im = raw.direct_field_z_im.data();
+        params.out_multi_field_x_re = raw.multi_field_x_re.data();
+        params.out_multi_field_x_im = raw.multi_field_x_im.data();
+        params.out_multi_field_y_re = raw.multi_field_y_re.data();
+        params.out_multi_field_y_im = raw.multi_field_y_im.data();
+        params.out_multi_field_z_re = raw.multi_field_z_re.data();
+        params.out_multi_field_z_im = raw.multi_field_z_im.data();
+        params.out_multi_count = raw.multi_count.data();
+        params.out_visibility_reject_count = raw.visibility_reject_count.data();
+        params.out_utd_reject_count = raw.utd_reject_count.data();
+
+        diffraction_accumulation_pipeline_->launch(2, params);
+
+        result.direct_field_x = drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
+        result.direct_field_y = drjit::Complex<Float>(raw.direct_field_y_re, raw.direct_field_y_im);
+        result.direct_field_z = drjit::Complex<Float>(raw.direct_field_z_re, raw.direct_field_z_im);
+        result.multi_field_x = drjit::Complex<Float>(raw.multi_field_x_re, raw.multi_field_x_im);
+        result.multi_field_y = drjit::Complex<Float>(raw.multi_field_y_re, raw.multi_field_y_im);
+        result.multi_field_z = drjit::Complex<Float>(raw.multi_field_z_re, raw.multi_field_z_im);
+        result.direct_count = raw.direct_count;
+        result.multi_count = raw.multi_count;
+        result.visibility_reject_count = raw.visibility_reject_count;
+        result.utd_reject_count = raw.utd_reject_count;
+        return result;
+    }
+}
+
 template <bool Detached>
 DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
     const DfrStatesT<Detached> &states,
@@ -6363,6 +6686,16 @@ template DfrAccumAD Scene::accum_dfr_direct<false>(
     const DfrGrid &grid,
     const DfrMaterialAD &material,
     const DfrOptions &options,
+    MaskAD active) const;
+template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(
+    const DfrCoherentUtdStates &states,
+    const DfrGrid &grid,
+    const DfrCoherentOptions &options,
+    Mask active) const;
+template DfrCoherentAccumAD Scene::accum_dfr_coherent_direct<false>(
+    const DfrCoherentUtdStatesAD &states,
+    const DfrGrid &grid,
+    const DfrCoherentOptions &options,
     MaskAD active) const;
 template DfrCoherentAccum Scene::accum_dfr_coherent_direct<true>(
     const DfrStates &states,

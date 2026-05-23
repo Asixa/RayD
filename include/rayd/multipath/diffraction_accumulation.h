@@ -62,6 +62,10 @@ struct DfrCoherentOptions {
     bool select_diffraction_point = true;
     bool prefilter_visibility = true;
     bool collect_debug_counts = false;
+    float omega = 0.f;
+    float tx_pol_x = 1.f;
+    float tx_pol_y = 0.f;
+    float tx_pol_z = 0.f;
 };
 
 /// Per-primitive electromagnetic material payload used by diffraction kernels.
@@ -126,6 +130,115 @@ struct DfrStatesData {
                  wi,
                  d0,
                  prefix_depth)
+};
+
+
+/// Full deterministic UTD state payload for exact coherent vector accumulation.
+template <typename Float_>
+struct DfrCoherentUtdStatesData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
+
+    using ComplexArray = drjit::Complex<Float_>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
+
+    int count = 0;
+    Vec3f edge_pos = zeros<Vec3f>(1);
+    Vec3f edge_dir = zeros<Vec3f>(1);
+    Vec3f n0 = zeros<Vec3f>(1);
+    Vec3f n_face_n = zeros<Vec3f>(1);
+    Float_ wedge_n = zeros<Float_>(1);
+    Float_ edge_line_min = zeros<Float_>(1);
+    Float_ edge_line_max = zeros<Float_>(1);
+    Vec3f source_pos = zeros<Vec3f>(1);
+    ComplexArray incident_field = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_normal_derivative = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray r_face0 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray r_face_n = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_vector_x = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_vector_y = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_vector_z = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_normal_derivative_vector_x = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_normal_derivative_vector_y = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_normal_derivative_vector_z = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_jones_u = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_jones_v = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_derivative_jones_u = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray incident_derivative_jones_v = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    Vec3f incident_basis_u = zeros<Vec3f>(1);
+    Vec3f incident_basis_v = zeros<Vec3f>(1);
+    Vec3f incident_basis_k = zeros<Vec3f>(1);
+    ComplexArray face0_operator_m00 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face0_operator_m01 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face0_operator_m10 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face0_operator_m11 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face1_operator_m00 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face1_operator_m01 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face1_operator_m10 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    ComplexArray face1_operator_m11 = ComplexArray(zeros<Float_>(1), zeros<Float_>(1));
+    Float_ face0_eta_r = zeros<Float_>(1);
+    Float_ face0_mu_r = full<Float_>(1.f, 1);
+    Float_ face0_sigma = zeros<Float_>(1);
+    Float_ face0_gain = full<Float_>(1.f, 1);
+    Float_ face0_use_fresnel = zeros<Float_>(1);
+    Float_ face1_eta_r = zeros<Float_>(1);
+    Float_ face1_mu_r = full<Float_>(1.f, 1);
+    Float_ face1_sigma = zeros<Float_>(1);
+    Float_ face1_gain = full<Float_>(1.f, 1);
+    Float_ face1_use_fresnel = zeros<Float_>(1);
+    Float_ select_stationary_point = zeros<Float_>(1);
+    Int_ owner_code = full<Int_>(0, 1);
+    Int_ adjacent_face0 = full<Int_>(-1, 1);
+    Int_ adjacent_face1 = full<Int_>(-1, 1);
+
+    DRJIT_STRUCT(DfrCoherentUtdStatesData,
+                 edge_pos,
+                 edge_dir,
+                 n0,
+                 n_face_n,
+                 wedge_n,
+                 edge_line_min,
+                 edge_line_max,
+                 source_pos,
+                 incident_field,
+                 incident_normal_derivative,
+                 r_face0,
+                 r_face_n,
+                 incident_vector_x,
+                 incident_vector_y,
+                 incident_vector_z,
+                 incident_normal_derivative_vector_x,
+                 incident_normal_derivative_vector_y,
+                 incident_normal_derivative_vector_z,
+                 incident_jones_u,
+                 incident_jones_v,
+                 incident_derivative_jones_u,
+                 incident_derivative_jones_v,
+                 incident_basis_u,
+                 incident_basis_v,
+                 incident_basis_k,
+                 face0_operator_m00,
+                 face0_operator_m01,
+                 face0_operator_m10,
+                 face0_operator_m11,
+                 face1_operator_m00,
+                 face1_operator_m01,
+                 face1_operator_m10,
+                 face1_operator_m11,
+                 face0_eta_r,
+                 face0_mu_r,
+                 face0_sigma,
+                 face0_gain,
+                 face0_use_fresnel,
+                 face1_eta_r,
+                 face1_mu_r,
+                 face1_sigma,
+                 face1_gain,
+                 face1_use_fresnel,
+                 select_stationary_point,
+                 owner_code,
+                 adjacent_face0,
+                 adjacent_face1)
 };
 
 /// Result of native diffraction accumulation. Grid arrays have grid_cell_count entries.

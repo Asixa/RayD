@@ -606,6 +606,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_types.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_math.h"
             VERBATIM
         )
     else()
@@ -621,6 +623,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_types.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_math.h"
             VERBATIM
         )
     endif()

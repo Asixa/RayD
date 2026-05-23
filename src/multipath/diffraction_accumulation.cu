@@ -3,6 +3,7 @@
 
 #include <rayd/multipath/diffraction_accumulation.h>
 #include <rayd/multipath/diffraction_accumulation_params.h>
+#include <utd/utd_math.h>
 
 namespace rayd {
 
@@ -146,6 +147,29 @@ static __forceinline__ __device__ int global_primitive_id(const HitPayload &hit)
     return static_cast<int>(hit.prim);
 }
 
+
+static __forceinline__ __device__ float3 face_normal_for_global_prim(int prim) {
+    if (prim < 0 || prim >= params.n_triangles || params.tri_fn_x == nullptr) {
+        return make_vec3(0.f, 0.f, 0.f);
+    }
+    return normalize3(make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]));
+}
+
+static __forceinline__ __device__ bool point_inside_one_ray(float3 point, float3 ray_dir) {
+    const HitPayload hit = trace_scene(point + 1.0e-3f * ray_dir, ray_dir, 1.0e8f);
+    if (hit.hit == 0u) {
+        return false;
+    }
+    const float3 normal = face_normal_for_global_prim(global_primitive_id(hit));
+    return dot3(normal, ray_dir) > 0.f;
+}
+
+static __forceinline__ __device__ bool point_inside_closed_mesh_robust(float3 point) {
+    const float3 d0 = normalize3(make_vec3(0.81234133f, 0.52311241f, 0.25843197f));
+    const float3 d1 = normalize3(make_vec3(-0.37139068f, 0.60114462f, 0.70757474f));
+    return point_inside_one_ray(point, d0) && point_inside_one_ray(point, d1);
+}
+
 static __forceinline__ __device__ bool visible_segment_ignore_prim(float3 start,
                                                                    float3 end,
                                                                    int ignore_prim) {
@@ -243,6 +267,219 @@ static __forceinline__ __device__ bool grid_cell_from_point(float3 point, int &c
                       params.grid_resolution1 - 1);
     cell = j * params.grid_resolution0 + i;
     return true;
+}
+
+
+namespace utd = witwin::channel::native_ext;
+
+static __forceinline__ __device__ float first_order_diffraction_parameter(float3 source, float3 target, float3 edge_origin, float3 edge_dir);
+
+static __forceinline__ __device__ utd::float3a to_utd(float3 value) {
+    return utd::make_f3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ float shadow_decay_span_from_wedge_n(float wedge_n) {
+    const float opening = fmaxf(2.f * kPi - wedge_n * kPi, 2.0e-3f);
+    const float ratio = fminf(opening / kPi, 1.f);
+    const float span = fmaxf((0.17f + 0.12f * ratio) * opening, 8.0e-3f);
+    return fminf(span, 0.5f * opening);
+}
+
+static __forceinline__ __device__ utd::MaterialParams coherent_material_params() {
+    utd::MaterialParams mat;
+    mat.useFresnel = 0;
+    mat.etaR = 0.f;
+    mat.muR = 1.f;
+    mat.sigma = 0.f;
+    mat.gain = 1.f;
+    mat.omega = params.omega;
+    mat.txPolX = params.tx_pol_x;
+    mat.txPolY = params.tx_pol_y;
+    mat.txPolZ = params.tx_pol_z;
+    return mat;
+}
+
+static __forceinline__ __device__ utd::PairInputs load_coherent_pair_inputs(int sIdx) {
+    utd::PairInputs p;
+    p.edgePos = utd::make_f3(params.utd_epx[sIdx], params.utd_epy[sIdx], params.utd_epz[sIdx]);
+    p.edgeDir = utd::make_f3(params.utd_edx[sIdx], params.utd_edy[sIdx], params.utd_edz[sIdx]);
+    p.n0 = utd::make_f3(params.utd_n0x[sIdx], params.utd_n0y[sIdx], params.utd_n0z[sIdx]);
+    p.nn = utd::make_f3(params.utd_nnx[sIdx], params.utd_nny[sIdx], params.utd_nnz[sIdx]);
+    p.wedgeN = params.utd_wn[sIdx];
+    p.edgeLineMin = params.utd_elm[sIdx];
+    p.edgeLineMax = params.utd_elx[sIdx];
+    p.sourcePos = utd::make_f3(params.utd_spx[sIdx], params.utd_spy[sIdx], params.utd_spz[sIdx]);
+    p.incidentField = utd::cplx(params.utd_ifr[sIdx], params.utd_ifi[sIdx]);
+    p.incidentNormalDerivative = utd::cplx(params.utd_inr[sIdx], params.utd_ini[sIdx]);
+    p.r0 = utd::cplx(params.utd_r0r[sIdx], params.utd_r0i[sIdx]);
+    p.rn = utd::cplx(params.utd_rnr[sIdx], params.utd_rni[sIdx]);
+    p.incidentVector = {utd::cplx(params.utd_vxr[sIdx], params.utd_vxi[sIdx]),
+                        utd::cplx(params.utd_vyr[sIdx], params.utd_vyi[sIdx]),
+                        utd::cplx(params.utd_vzr[sIdx], params.utd_vzi[sIdx])};
+    p.incidentDerivativeVector = {utd::cplx(params.utd_dxr[sIdx], params.utd_dxi[sIdx]),
+                                  utd::cplx(params.utd_dyr[sIdx], params.utd_dyi[sIdx]),
+                                  utd::cplx(params.utd_dzr[sIdx], params.utd_dzi[sIdx])};
+    p.incidentJones = {utd::cplx(params.utd_jur[sIdx], params.utd_jui[sIdx]),
+                       utd::cplx(params.utd_jvr[sIdx], params.utd_jvi[sIdx])};
+    p.incidentDerivativeJones = {utd::cplx(params.utd_djur[sIdx], params.utd_djui[sIdx]),
+                                 utd::cplx(params.utd_djvr[sIdx], params.utd_djvi[sIdx])};
+    p.incidentBasis = {utd::make_f3(params.utd_bux[sIdx], params.utd_buy[sIdx], params.utd_buz[sIdx]),
+                       utd::make_f3(params.utd_bvx[sIdx], params.utd_bvy[sIdx], params.utd_bvz[sIdx]),
+                       utd::make_f3(params.utd_bkx[sIdx], params.utd_bky[sIdx], params.utd_bkz[sIdx])};
+    p.face0Operator = {utd::cplx(params.utd_f0m00r[sIdx], params.utd_f0m00i[sIdx]),
+                       utd::cplx(params.utd_f0m01r[sIdx], params.utd_f0m01i[sIdx]),
+                       utd::cplx(params.utd_f0m10r[sIdx], params.utd_f0m10i[sIdx]),
+                       utd::cplx(params.utd_f0m11r[sIdx], params.utd_f0m11i[sIdx])};
+    p.face1Operator = {utd::cplx(params.utd_f1m00r[sIdx], params.utd_f1m00i[sIdx]),
+                       utd::cplx(params.utd_f1m01r[sIdx], params.utd_f1m01i[sIdx]),
+                       utd::cplx(params.utd_f1m10r[sIdx], params.utd_f1m10i[sIdx]),
+                       utd::cplx(params.utd_f1m11r[sIdx], params.utd_f1m11i[sIdx])};
+    p.face0Material = {params.utd_f0er[sIdx], params.utd_f0mu[sIdx], params.utd_f0sg[sIdx],
+                       params.utd_f0g[sIdx], params.utd_f0uf[sIdx], 1.f};
+    p.face1Material = {params.utd_f1er[sIdx], params.utd_f1mu[sIdx], params.utd_f1sg[sIdx],
+                       params.utd_f1g[sIdx], params.utd_f1uf[sIdx], 1.f};
+    p.selectStationaryPoint = params.utd_select[sIdx];
+    return p;
+}
+
+static __forceinline__ __device__ bool visible_segment_ignore_two_prims(float3 start,
+                                                                        float3 end,
+                                                                        int ignore0,
+                                                                        int ignore1) {
+    const float3 delta = end - start;
+    const float dist = norm3(delta);
+    if (dist <= 1e-5f) {
+        return true;
+    }
+    const float3 dir = (1.f / dist) * delta;
+    const HitPayload hit = trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+    if (hit.hit == 0u) {
+        return true;
+    }
+    const int prim = global_primitive_id(hit);
+    return prim == ignore0 || prim == ignore1;
+}
+
+static __forceinline__ __device__ bool coherent_visibility_and_support(utd::PairInputs state,
+                                                                       float3 target_f3,
+                                                                       bool selected_valid,
+                                                                       bool selected_inside,
+                                                                       float3 visibility_point_f3) {
+    if (!selected_valid) {
+        return false;
+    }
+    const utd::float3a target = to_utd(target_f3);
+    const bool target_exterior = utd::wedge_exterior_mask(
+        utd::f3_sub(target, state.edgePos), state.edgeDir, state.n0, state.nn);
+    float phi, phiP, s, sP, sb;
+    utd::compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0,
+                                  target, phi, phiP, s, sP, sb);
+    const bool source_exterior = utd::wedge_exterior_mask(
+        utd::f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
+    const bool base_valid = source_exterior && sP > utd::UTD_MIN_DISTANCE && s > utd::UTD_MIN_DISTANCE;
+    if (!base_valid) {
+        return false;
+    }
+    const float opening = fmaxf(2.f * kPi - state.wedgeN * kPi, 2.0e-3f);
+    const float half_angle = 0.5f * opening;
+    const bool wrap_boundary = phi >= 2.f * kPi - half_angle;
+    const float shadow_boundary_distance = wrap_boundary ? 2.f * kPi - phi : phi - state.wedgeN * kPi;
+    const bool selected_stationary = state.selectStationaryPoint > 0.5f;
+    const float support_angle = selected_stationary ? half_angle : shadow_decay_span_from_wedge_n(state.wedgeN);
+    bool shadow_completion = !target_exterior &&
+                             shadow_boundary_distance >= 0.f &&
+                             shadow_boundary_distance < support_angle;
+    if (shadow_completion && point_inside_closed_mesh_robust(target_f3)) {
+        shadow_completion = false;
+    }
+    (void)selected_inside;
+    (void)visibility_point_f3;
+    return target_exterior || shadow_completion;
+}
+
+static __forceinline__ __device__ bool coherent_selected_visibility_point(utd::PairInputs original,
+                                                                         float3 target,
+                                                                         utd::PairInputs &selected,
+                                                                         float3 &visibility_point) {
+    selected = original;
+    visibility_point = make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
+    if (original.selectStationaryPoint <= 0.5f) {
+        return true;
+    }
+    const float3 edge_dir = normalize3(make_vec3(original.edgeDir.x, original.edgeDir.y, original.edgeDir.z));
+    const float3 edge_pos = make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
+    const float edge_length = original.edgeLineMax - original.edgeLineMin;
+    const float3 edge_origin = edge_pos + original.edgeLineMin * edge_dir;
+    const float parameter = first_order_diffraction_parameter(
+        make_vec3(original.sourcePos.x, original.sourcePos.y, original.sourcePos.z),
+        target,
+        edge_origin,
+        edge_dir);
+    if (!isfinite(parameter) || !(edge_length > kSmallEps)) {
+        return false;
+    }
+    const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
+    visibility_point = edge_origin + clamped_parameter * edge_dir;
+    selected.edgePos = utd::make_f3(edge_origin.x + parameter * edge_dir.x,
+                                    edge_origin.y + parameter * edge_dir.y,
+                                    edge_origin.z + parameter * edge_dir.z);
+    selected.edgeLineMin = -parameter;
+    selected.edgeLineMax = edge_length - parameter;
+    return true;
+}
+
+static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int cell) {
+    utd::PairInputs original = load_coherent_pair_inputs(state_idx);
+    const float3 target = grid_cell_center(cell);
+    utd::PairInputs selected;
+    float3 visibility_point;
+    const bool selected_valid = coherent_selected_visibility_point(original, target, selected, visibility_point);
+    if (params.prefilter_visibility != 0) {
+        const int ignore0 = params.coherent_adjacent_face0 != nullptr ? params.coherent_adjacent_face0[state_idx] : -1;
+        const int ignore1 = params.coherent_adjacent_face1 != nullptr ? params.coherent_adjacent_face1[state_idx] : -1;
+        if (!visible_segment_ignore_two_prims(visibility_point, target, ignore0, ignore1)) {
+            if (params.collect_debug_counts != 0 && params.out_visibility_reject_count != nullptr) {
+                atomicAdd(params.out_visibility_reject_count + cell, 1);
+            }
+            return;
+        }
+    }
+    const bool selected_inside = selected.edgeLineMin < 0.f && selected.edgeLineMax > 0.f;
+    if (!coherent_visibility_and_support(selected, target, selected_valid, selected_inside, visibility_point)) {
+        if (params.collect_debug_counts != 0 && params.out_utd_reject_count != nullptr) {
+            atomicAdd(params.out_utd_reject_count + cell, 1);
+        }
+        return;
+    }
+    const utd::PairOutputs out = utd::compute_pair_contribution(
+        original, to_utd(target), params.k, coherent_material_params());
+    const float norm = utd::cplx_abs_sqr(out.vectorField.x) +
+                       utd::cplx_abs_sqr(out.vectorField.y) +
+                       utd::cplx_abs_sqr(out.vectorField.z);
+    if (!(norm > 0.f) || !isfinite(norm)) {
+        if (params.collect_debug_counts != 0 && params.out_utd_reject_count != nullptr) {
+            atomicAdd(params.out_utd_reject_count + cell, 1);
+        }
+        return;
+    }
+    const int owner = params.coherent_owner_code != nullptr ? params.coherent_owner_code[state_idx] : 0;
+    if (owner == utd::OWNERSHIP_MIXED) {
+        atomicAdd(params.out_multi_field_x_re + cell, out.vectorField.x.re);
+        atomicAdd(params.out_multi_field_x_im + cell, out.vectorField.x.im);
+        atomicAdd(params.out_multi_field_y_re + cell, out.vectorField.y.re);
+        atomicAdd(params.out_multi_field_y_im + cell, out.vectorField.y.im);
+        atomicAdd(params.out_multi_field_z_re + cell, out.vectorField.z.re);
+        atomicAdd(params.out_multi_field_z_im + cell, out.vectorField.z.im);
+        if (params.out_multi_count != nullptr) atomicAdd(params.out_multi_count + cell, 1);
+    } else {
+        atomicAdd(params.out_direct_field_x_re + cell, out.vectorField.x.re);
+        atomicAdd(params.out_direct_field_x_im + cell, out.vectorField.x.im);
+        atomicAdd(params.out_direct_field_y_re + cell, out.vectorField.y.re);
+        atomicAdd(params.out_direct_field_y_im + cell, out.vectorField.y.im);
+        atomicAdd(params.out_direct_field_z_re + cell, out.vectorField.z.re);
+        atomicAdd(params.out_direct_field_z_im + cell, out.vectorField.z.im);
+        if (params.out_direct_count != nullptr) atomicAdd(params.out_direct_count + cell, 1);
+    }
 }
 
 static __forceinline__ __device__ float3 stable_perpendicular(float3 axis,
@@ -650,6 +887,11 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     const float edge_t = params.state_edge_t_min[state_idx] +
                          edge_u * (params.state_edge_t_max[state_idx] -
                                    params.state_edge_t_min[state_idx]);
+    if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
+        run_coherent_utd_lane(state_idx, cell);
+        return;
+    }
+
     const float3 edge_pos =
         state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
     const float3 edge_dir =
@@ -765,6 +1007,10 @@ extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() 
         return;
     }
     if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        return;
+    }
+    if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
+        run_coherent_utd_lane(state_idx, cell);
         return;
     }
 

@@ -612,7 +612,11 @@ NB_MODULE(rayd, m) {
             .def_rw("prefilter_visibility",
                     &DfrCoherentOptions::prefilter_visibility)
             .def_rw("collect_debug_counts",
-                    &DfrCoherentOptions::collect_debug_counts);
+                    &DfrCoherentOptions::collect_debug_counts)
+            .def_rw("omega", &DfrCoherentOptions::omega)
+            .def_rw("tx_pol_x", &DfrCoherentOptions::tx_pol_x)
+            .def_rw("tx_pol_y", &DfrCoherentOptions::tx_pol_y)
+            .def_rw("tx_pol_z", &DfrCoherentOptions::tx_pol_z);
 
         nb::class_<DfrMaterial>(m, "DfrMaterial")
             .def(nb::init<>())
@@ -629,6 +633,108 @@ NB_MODULE(rayd, m) {
             .def_rw("mu_r", &DfrMaterialAD::mu_r)
             .def_rw("gain", &DfrMaterialAD::gain)
             .def_rw("valid", &DfrMaterialAD::valid);
+
+        nb::class_<DfrCoherentUtdStates>(m, "DfrCoherentUtdStates")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentUtdStates::count)
+            .def_rw("edge_pos", &DfrCoherentUtdStates::edge_pos)
+            .def_rw("edge_dir", &DfrCoherentUtdStates::edge_dir)
+            .def_rw("n0", &DfrCoherentUtdStates::n0)
+            .def_rw("n_face_n", &DfrCoherentUtdStates::n_face_n)
+            .def_rw("wedge_n", &DfrCoherentUtdStates::wedge_n)
+            .def_rw("edge_line_min", &DfrCoherentUtdStates::edge_line_min)
+            .def_rw("edge_line_max", &DfrCoherentUtdStates::edge_line_max)
+            .def_rw("source_pos", &DfrCoherentUtdStates::source_pos)
+            .def_rw("incident_field", &DfrCoherentUtdStates::incident_field)
+            .def_rw("incident_normal_derivative", &DfrCoherentUtdStates::incident_normal_derivative)
+            .def_rw("r_face0", &DfrCoherentUtdStates::r_face0)
+            .def_rw("r_face_n", &DfrCoherentUtdStates::r_face_n)
+            .def_rw("incident_vector_x", &DfrCoherentUtdStates::incident_vector_x)
+            .def_rw("incident_vector_y", &DfrCoherentUtdStates::incident_vector_y)
+            .def_rw("incident_vector_z", &DfrCoherentUtdStates::incident_vector_z)
+            .def_rw("incident_normal_derivative_vector_x", &DfrCoherentUtdStates::incident_normal_derivative_vector_x)
+            .def_rw("incident_normal_derivative_vector_y", &DfrCoherentUtdStates::incident_normal_derivative_vector_y)
+            .def_rw("incident_normal_derivative_vector_z", &DfrCoherentUtdStates::incident_normal_derivative_vector_z)
+            .def_rw("incident_jones_u", &DfrCoherentUtdStates::incident_jones_u)
+            .def_rw("incident_jones_v", &DfrCoherentUtdStates::incident_jones_v)
+            .def_rw("incident_derivative_jones_u", &DfrCoherentUtdStates::incident_derivative_jones_u)
+            .def_rw("incident_derivative_jones_v", &DfrCoherentUtdStates::incident_derivative_jones_v)
+            .def_rw("incident_basis_u", &DfrCoherentUtdStates::incident_basis_u)
+            .def_rw("incident_basis_v", &DfrCoherentUtdStates::incident_basis_v)
+            .def_rw("incident_basis_k", &DfrCoherentUtdStates::incident_basis_k)
+            .def_rw("face0_operator_m00", &DfrCoherentUtdStates::face0_operator_m00)
+            .def_rw("face0_operator_m01", &DfrCoherentUtdStates::face0_operator_m01)
+            .def_rw("face0_operator_m10", &DfrCoherentUtdStates::face0_operator_m10)
+            .def_rw("face0_operator_m11", &DfrCoherentUtdStates::face0_operator_m11)
+            .def_rw("face1_operator_m00", &DfrCoherentUtdStates::face1_operator_m00)
+            .def_rw("face1_operator_m01", &DfrCoherentUtdStates::face1_operator_m01)
+            .def_rw("face1_operator_m10", &DfrCoherentUtdStates::face1_operator_m10)
+            .def_rw("face1_operator_m11", &DfrCoherentUtdStates::face1_operator_m11)
+            .def_rw("face0_eta_r", &DfrCoherentUtdStates::face0_eta_r)
+            .def_rw("face0_mu_r", &DfrCoherentUtdStates::face0_mu_r)
+            .def_rw("face0_sigma", &DfrCoherentUtdStates::face0_sigma)
+            .def_rw("face0_gain", &DfrCoherentUtdStates::face0_gain)
+            .def_rw("face0_use_fresnel", &DfrCoherentUtdStates::face0_use_fresnel)
+            .def_rw("face1_eta_r", &DfrCoherentUtdStates::face1_eta_r)
+            .def_rw("face1_mu_r", &DfrCoherentUtdStates::face1_mu_r)
+            .def_rw("face1_sigma", &DfrCoherentUtdStates::face1_sigma)
+            .def_rw("face1_gain", &DfrCoherentUtdStates::face1_gain)
+            .def_rw("face1_use_fresnel", &DfrCoherentUtdStates::face1_use_fresnel)
+            .def_rw("select_stationary_point", &DfrCoherentUtdStates::select_stationary_point)
+            .def_rw("owner_code", &DfrCoherentUtdStates::owner_code)
+            .def_rw("adjacent_face0", &DfrCoherentUtdStates::adjacent_face0)
+            .def_rw("adjacent_face1", &DfrCoherentUtdStates::adjacent_face1);
+
+        nb::class_<DfrCoherentUtdStatesAD>(m, "DfrCoherentUtdStatesAD")
+            .def(nb::init<>())
+            .def_rw("count", &DfrCoherentUtdStatesAD::count)
+            .def_rw("edge_pos", &DfrCoherentUtdStatesAD::edge_pos)
+            .def_rw("edge_dir", &DfrCoherentUtdStatesAD::edge_dir)
+            .def_rw("n0", &DfrCoherentUtdStatesAD::n0)
+            .def_rw("n_face_n", &DfrCoherentUtdStatesAD::n_face_n)
+            .def_rw("wedge_n", &DfrCoherentUtdStatesAD::wedge_n)
+            .def_rw("edge_line_min", &DfrCoherentUtdStatesAD::edge_line_min)
+            .def_rw("edge_line_max", &DfrCoherentUtdStatesAD::edge_line_max)
+            .def_rw("source_pos", &DfrCoherentUtdStatesAD::source_pos)
+            .def_rw("incident_field", &DfrCoherentUtdStatesAD::incident_field)
+            .def_rw("incident_normal_derivative", &DfrCoherentUtdStatesAD::incident_normal_derivative)
+            .def_rw("r_face0", &DfrCoherentUtdStatesAD::r_face0)
+            .def_rw("r_face_n", &DfrCoherentUtdStatesAD::r_face_n)
+            .def_rw("incident_vector_x", &DfrCoherentUtdStatesAD::incident_vector_x)
+            .def_rw("incident_vector_y", &DfrCoherentUtdStatesAD::incident_vector_y)
+            .def_rw("incident_vector_z", &DfrCoherentUtdStatesAD::incident_vector_z)
+            .def_rw("incident_normal_derivative_vector_x", &DfrCoherentUtdStatesAD::incident_normal_derivative_vector_x)
+            .def_rw("incident_normal_derivative_vector_y", &DfrCoherentUtdStatesAD::incident_normal_derivative_vector_y)
+            .def_rw("incident_normal_derivative_vector_z", &DfrCoherentUtdStatesAD::incident_normal_derivative_vector_z)
+            .def_rw("incident_jones_u", &DfrCoherentUtdStatesAD::incident_jones_u)
+            .def_rw("incident_jones_v", &DfrCoherentUtdStatesAD::incident_jones_v)
+            .def_rw("incident_derivative_jones_u", &DfrCoherentUtdStatesAD::incident_derivative_jones_u)
+            .def_rw("incident_derivative_jones_v", &DfrCoherentUtdStatesAD::incident_derivative_jones_v)
+            .def_rw("incident_basis_u", &DfrCoherentUtdStatesAD::incident_basis_u)
+            .def_rw("incident_basis_v", &DfrCoherentUtdStatesAD::incident_basis_v)
+            .def_rw("incident_basis_k", &DfrCoherentUtdStatesAD::incident_basis_k)
+            .def_rw("face0_operator_m00", &DfrCoherentUtdStatesAD::face0_operator_m00)
+            .def_rw("face0_operator_m01", &DfrCoherentUtdStatesAD::face0_operator_m01)
+            .def_rw("face0_operator_m10", &DfrCoherentUtdStatesAD::face0_operator_m10)
+            .def_rw("face0_operator_m11", &DfrCoherentUtdStatesAD::face0_operator_m11)
+            .def_rw("face1_operator_m00", &DfrCoherentUtdStatesAD::face1_operator_m00)
+            .def_rw("face1_operator_m01", &DfrCoherentUtdStatesAD::face1_operator_m01)
+            .def_rw("face1_operator_m10", &DfrCoherentUtdStatesAD::face1_operator_m10)
+            .def_rw("face1_operator_m11", &DfrCoherentUtdStatesAD::face1_operator_m11)
+            .def_rw("face0_eta_r", &DfrCoherentUtdStatesAD::face0_eta_r)
+            .def_rw("face0_mu_r", &DfrCoherentUtdStatesAD::face0_mu_r)
+            .def_rw("face0_sigma", &DfrCoherentUtdStatesAD::face0_sigma)
+            .def_rw("face0_gain", &DfrCoherentUtdStatesAD::face0_gain)
+            .def_rw("face0_use_fresnel", &DfrCoherentUtdStatesAD::face0_use_fresnel)
+            .def_rw("face1_eta_r", &DfrCoherentUtdStatesAD::face1_eta_r)
+            .def_rw("face1_mu_r", &DfrCoherentUtdStatesAD::face1_mu_r)
+            .def_rw("face1_sigma", &DfrCoherentUtdStatesAD::face1_sigma)
+            .def_rw("face1_gain", &DfrCoherentUtdStatesAD::face1_gain)
+            .def_rw("face1_use_fresnel", &DfrCoherentUtdStatesAD::face1_use_fresnel)
+            .def_rw("select_stationary_point", &DfrCoherentUtdStatesAD::select_stationary_point)
+            .def_rw("owner_code", &DfrCoherentUtdStatesAD::owner_code)
+            .def_rw("adjacent_face0", &DfrCoherentUtdStatesAD::adjacent_face0)
+            .def_rw("adjacent_face1", &DfrCoherentUtdStatesAD::adjacent_face1);
 
         nb::class_<DfrStates>(m, "DfrStates")
             .def(nb::init<>())
@@ -1630,6 +1736,21 @@ NB_MODULE(rayd, m) {
                     nb::handle material_obj,
                     const DfrCoherentOptions &options,
                     nb::handle active_obj) -> nb::object {
+                     if (nb::isinstance<DfrCoherentUtdStates>(states_obj)) {
+                         const DfrCoherentUtdStates states =
+                             nb::cast<DfrCoherentUtdStates>(states_obj);
+                         const rayd::Mask active = nb::cast<rayd::Mask>(active_obj);
+                         return nb::cast(scene.accum_dfr_coherent_direct<true>(
+                             states, grid, options, active));
+                     }
+                     if (nb::isinstance<DfrCoherentUtdStatesAD>(states_obj)) {
+                         const DfrCoherentUtdStatesAD states =
+                             nb::cast<DfrCoherentUtdStatesAD>(states_obj);
+                         const rayd::MaskAD active =
+                             nb::cast<rayd::MaskAD>(active_obj);
+                         return nb::cast(scene.accum_dfr_coherent_direct<false>(
+                             states, grid, options, active));
+                     }
                      if (nb::isinstance<DfrStates>(states_obj)) {
                          const DfrStates states =
                              nb::cast<DfrStates>(states_obj);

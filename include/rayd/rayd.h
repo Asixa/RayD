@@ -101,6 +101,12 @@ using DfrStatesT = DfrStatesData<FloatT<Detached>>;
 using DfrStatesAD = DfrStatesT<false>;
 using DfrStates = DfrStatesT<true>;
 
+template <typename> struct DfrCoherentUtdStatesData;
+template <bool Detached>
+using DfrCoherentUtdStatesT = DfrCoherentUtdStatesData<FloatT<Detached>>;
+using DfrCoherentUtdStatesAD = DfrCoherentUtdStatesT<false>;
+using DfrCoherentUtdStates = DfrCoherentUtdStatesT<true>;
+
 template <typename> struct DfrAccumData;
 template <bool Detached>
 using DfrAccumT = DfrAccumData<FloatT<Detached>>;
