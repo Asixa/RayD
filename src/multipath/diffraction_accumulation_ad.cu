@@ -235,20 +235,34 @@ struct ChainPrimal {
     int first_idx;
     int second_idx;
     int third_idx;
+    int suffix_material_idx;
     bool is_keller;
+    bool is_suffix;
     bool has_third;
     int sample_count;
     float wave_gain;
     float sample_norm;
     float contribution;
+    float suffix_material_gain;
+    float suffix_reflection_gain;
+    float suffix_fspl;
+    float suffix_candidate_count;
+    float suffix_outgoing_dist2;
+    float suffix_ray_t;
     float keller_ray_t;
     float keller_sin;
     float keller_cos;
     float keller_incident_norm;
+    float suffix_normal_norm;
+    bool suffix_material_active;
     float3 keller_incident;
     float3 keller_ko;
     float3 grid_target;
     float3 final_target;
+    float3 suffix_p0;
+    float3 suffix_normal;
+    float3 suffix_image_source;
+    float3 suffix_ray_dir;
     ChainEventPrimal first;
     ChainEventPrimal second;
     ChainEventPrimal third;
@@ -269,6 +283,9 @@ struct ChainTangent {
     ChainEventTangent first;
     ChainEventTangent second;
     ChainEventTangent third;
+    float suffix_material_gain;
+    float3 suffix_p0;
+    float3 suffix_normal_raw;
 };
 
 static __forceinline__ __device__ bool keller_target_from_state(
@@ -420,16 +437,18 @@ static __forceinline__ __device__ int material_index_for_faces(
     return -1;
 }
 
+template <typename Params>
 static __forceinline__ __device__ bool suffix_candidate_valid(
-    const DfrDirectAccumADParams &params,
+    const Params &params,
     int prim) {
     return prim >= 0 &&
            prim < params.n_triangles &&
            material_valid_for_prim(params, prim);
 }
 
+template <typename Params>
 static __forceinline__ __device__ bool select_local_suffix_candidate(
-    const DfrDirectAccumADParams &params,
+    const Params &params,
     int face0_prim,
     int face1_prim,
     unsigned int lane,
@@ -452,8 +471,9 @@ static __forceinline__ __device__ bool select_local_suffix_candidate(
     return true;
 }
 
+template <typename Params>
 static __forceinline__ __device__ bool load_triangle(
-    const DfrDirectAccumADParams &params,
+    const Params &params,
     int prim,
     float3 &p0,
     float3 &e1,
@@ -495,8 +515,9 @@ static __forceinline__ __device__ bool load_triangle(
     return true;
 }
 
+template <typename Params>
 static __forceinline__ __device__ bool intersect_reflection_triangle(
-    const DfrDirectAccumADParams &params,
+    const Params &params,
     float3 image_source,
     float3 target,
     int prim,
@@ -540,8 +561,9 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(
     return true;
 }
 
+template <typename Params>
 static __forceinline__ __device__ bool suffix_reflection_connection(
-    const DfrDirectAccumADParams &params,
+    const Params &params,
     float3 diff_point,
     float3 target,
     int face0_prim,
@@ -948,6 +970,56 @@ static __forceinline__ __device__ float3 chain_keller_target_jvp(
     return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
+static __forceinline__ __device__ float3 chain_suffix_target_jvp(
+    const ChainPrimal &p,
+    const ChainTangent &tangent,
+    float3 terminal_point,
+    float3 dot_terminal_point,
+    float &dot_suffix_fspl) {
+    dot_suffix_fspl = 0.f;
+    if (!p.is_suffix) {
+        return make_vec3(0.f, 0.f, 0.f);
+    }
+
+    const float3 dot_normal =
+        normalize_jvp(p.suffix_normal, p.suffix_normal_norm, tangent.suffix_normal_raw);
+    const float3 plane_delta = terminal_point - p.suffix_p0;
+    const float plane_distance = dot3(plane_delta, p.suffix_normal);
+    const float dot_plane_distance =
+        dot3(dot_terminal_point - tangent.suffix_p0, p.suffix_normal) +
+        dot3(plane_delta, dot_normal);
+    const float3 dot_image_source =
+        dot_terminal_point -
+        2.f * (dot_plane_distance * p.suffix_normal + plane_distance * dot_normal);
+    const float3 ray_delta = p.grid_target - p.suffix_image_source;
+    const float ray_dist = norm3(ray_delta);
+    const float3 dot_ray_delta = -1.f * dot_image_source;
+    const float3 dot_ray_dir =
+        normalize_jvp(p.suffix_ray_dir, ray_dist, dot_ray_delta);
+    const float denom = dot3(p.suffix_ray_dir, p.suffix_normal);
+    const float dot_denom =
+        dot3(dot_ray_dir, p.suffix_normal) + dot3(p.suffix_ray_dir, dot_normal);
+    const float3 plane_to_image = p.suffix_p0 - p.suffix_image_source;
+    const float numerator = dot3(plane_to_image, p.suffix_normal);
+    const float dot_numerator =
+        dot3(tangent.suffix_p0 - dot_image_source, p.suffix_normal) +
+        dot3(plane_to_image, dot_normal);
+    const float dot_ray_t =
+        (dot_numerator * denom - numerator * dot_denom) /
+        fmaxf(denom * denom, kSmallEps);
+    const float3 dot_reflection_point =
+        dot_image_source + dot_ray_t * p.suffix_ray_dir + p.suffix_ray_t * dot_ray_dir;
+
+    if (p.suffix_outgoing_dist2 > kSmallEps && p.suffix_fspl != 0.f) {
+        const float3 outgoing = p.grid_target - p.final_target;
+        const float dot_outgoing_dist2 =
+            2.f * dot3(outgoing, -1.f * dot_reflection_point);
+        dot_suffix_fspl =
+            p.suffix_fspl * (-(dot_outgoing_dist2 / p.suffix_outgoing_dist2));
+    }
+    return dot_reflection_point;
+}
+
 static __forceinline__ __device__ float chain_event_weight(
     const DfrChainAccumADParams &params,
     ChainEventPrimal &event,
@@ -1046,8 +1118,7 @@ static __forceinline__ __device__ bool load_chain_primal(
     ChainPrimal &p) {
     if (lane >= params.n_rays ||
         params.tape_active == nullptr ||
-        params.tape_active[lane] == 0u ||
-        params.suffix_samples > 0) {
+        params.tape_active[lane] == 0u) {
         return false;
     }
     p.lane = lane;
@@ -1061,8 +1132,12 @@ static __forceinline__ __device__ bool load_chain_primal(
     }
     p.is_keller = lane >= params.direct_samples &&
                   lane < params.direct_samples + params.keller_samples;
+    p.is_suffix = lane >= params.direct_samples + params.keller_samples &&
+                  lane < params.direct_samples + params.keller_samples + params.suffix_samples;
     p.has_third = params.max_order == 3;
-    p.sample_count = p.is_keller ? params.keller_samples : params.direct_samples;
+    p.sample_count = p.is_keller
+                         ? params.keller_samples
+                         : (p.is_suffix ? params.suffix_samples : params.direct_samples);
     if (p.sample_count <= 0) {
         return false;
     }
@@ -1103,6 +1178,19 @@ static __forceinline__ __device__ bool load_chain_primal(
                                     params.state_src_z[p.first_idx]);
     p.grid_target = grid_cell_center(params, p.cell);
     p.final_target = p.grid_target;
+    p.suffix_material_idx = -1;
+    p.suffix_material_gain = 1.f;
+    p.suffix_reflection_gain = 1.f;
+    p.suffix_fspl = 1.f;
+    p.suffix_candidate_count = 1.f;
+    p.suffix_outgoing_dist2 = 1.f;
+    p.suffix_ray_t = 0.f;
+    p.suffix_normal_norm = 1.f;
+    p.suffix_material_active = false;
+    p.suffix_p0 = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_normal = make_vec3(0.f, 0.f, 1.f);
+    p.suffix_image_source = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_ray_dir = make_vec3(0.f, 0.f, 0.f);
     p.keller_ko = make_vec3(0.f, 0.f, 0.f);
     p.keller_ray_t = 0.f;
     p.keller_sin = 0.f;
@@ -1124,6 +1212,37 @@ static __forceinline__ __device__ bool load_chain_primal(
                                  p.keller_ray_t,
                                  p.keller_sin,
                                  p.keller_cos)) {
+            return false;
+        }
+    }
+    if (p.is_suffix) {
+        const ChainEventPrimal &terminal = p.has_third ? p.third : p.second;
+        const int face0_prim = p.has_third
+                                   ? params.recursive_state_prim0[p.third_idx]
+                                   : params.recursive_state_prim0[p.second_idx];
+        const int face1_prim = p.has_third
+                                   ? params.recursive_state_prim1[p.third_idx]
+                                   : params.recursive_state_prim1[p.second_idx];
+        if (!suffix_reflection_connection(params,
+                                          terminal.edge_point,
+                                          p.grid_target,
+                                          face0_prim,
+                                          face1_prim,
+                                          static_cast<unsigned int>(lane),
+                                          p.final_target,
+                                          p.suffix_material_idx,
+                                          p.suffix_reflection_gain,
+                                          p.suffix_fspl,
+                                          p.suffix_candidate_count,
+                                          p.suffix_normal,
+                                          p.suffix_p0,
+                                          p.suffix_normal_norm,
+                                          p.suffix_image_source,
+                                          p.suffix_ray_dir,
+                                          p.suffix_ray_t,
+                                          p.suffix_outgoing_dist2,
+                                          p.suffix_material_gain,
+                                          p.suffix_material_active)) {
             return false;
         }
     }
@@ -1172,7 +1291,14 @@ static __forceinline__ __device__ bool load_chain_primal(
     p.wave_gain = p.has_third ? wave_gain_per_event * wave_gain_per_event
                               : wave_gain_per_event;
     p.sample_norm = 1.f / fmaxf(static_cast<float>(p.sample_count), 1.f);
-    p.contribution = chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm;
+    const float suffix_scale =
+        p.is_suffix
+            ? p.suffix_reflection_gain *
+                  p.suffix_fspl *
+                  fmaxf(p.suffix_candidate_count, 1.f)
+            : 1.f;
+    p.contribution =
+        chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale;
     return p.contribution > 0.f && isfinite(p.contribution);
 }
 
@@ -1233,6 +1359,7 @@ static __forceinline__ __device__ float chain_contribution_jvp(
         p.has_third ? chain_event_point_jvp(p.third, tangent.third)
                     : make_vec3(0.f, 0.f, 0.f);
     float3 dot_final_target = make_vec3(0.f, 0.f, 0.f);
+    float dot_suffix_fspl = 0.f;
     if (p.is_keller) {
         const ChainEventPrimal &terminal = p.has_third ? p.third : p.second;
         const ChainEventTangent &terminal_tangent =
@@ -1248,9 +1375,19 @@ static __forceinline__ __device__ float chain_contribution_jvp(
         dot_final_target =
             chain_keller_target_jvp(params,
                                     p,
-                                    dot_terminal_point - dot_previous_point,
+                                     dot_terminal_point - dot_previous_point,
+                                     dot_terminal_point,
+                                     dot_terminal_dir);
+    } else if (p.is_suffix) {
+        const ChainEventPrimal &terminal = p.has_third ? p.third : p.second;
+        const float3 dot_terminal_point =
+            p.has_third ? dot_third_point : dot_second_point;
+        dot_final_target =
+            chain_suffix_target_jvp(p,
+                                    tangent,
+                                    terminal.edge_point,
                                     dot_terminal_point,
-                                    dot_terminal_dir);
+                                    dot_suffix_fspl);
     }
 
     const float dot_first_weight = chain_event_weight_jvp(
@@ -1281,8 +1418,27 @@ static __forceinline__ __device__ float chain_contribution_jvp(
             chain_weight * dot_third_weight;
         chain_weight *= p.third.contribution;
     }
+    const float suffix_scale =
+        p.is_suffix
+            ? p.suffix_reflection_gain *
+                  p.suffix_fspl *
+                  fmaxf(p.suffix_candidate_count, 1.f)
+            : 1.f;
+    float dot_contribution =
+        dot_chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm * suffix_scale;
+    if (p.is_suffix && p.suffix_reflection_gain != 0.f) {
+        const float dot_reflection_gain =
+            p.suffix_material_active
+                ? 2.f * p.suffix_material_gain * tangent.suffix_material_gain
+                : 0.f;
+        dot_contribution +=
+            p.contribution * (dot_reflection_gain / p.suffix_reflection_gain);
+    }
+    if (p.is_suffix && p.suffix_fspl != 0.f) {
+        dot_contribution += p.contribution * (dot_suffix_fspl / p.suffix_fspl);
+    }
     (void) chain_weight;
-    return dot_chain_weight * p.wave_gain * params.grid_cell_area * p.sample_norm;
+    return dot_contribution;
 }
 
 static __forceinline__ __device__ ChainTangent chain_read_tangent(
@@ -1356,6 +1512,22 @@ static __forceinline__ __device__ ChainTangent chain_read_tangent(
             (p.third.material_active && p.third.material_idx >= 0)
                 ? read_or_zero(params.dot_material_gain, p.third.material_idx)
                 : 0.f;
+    }
+    tangent.suffix_material_gain =
+        (p.suffix_material_active && p.suffix_material_idx >= 0)
+            ? read_or_zero(params.dot_material_gain, p.suffix_material_idx)
+            : 0.f;
+    if (p.is_suffix && p.suffix_material_idx >= 0) {
+        tangent.suffix_p0 =
+            read_vec_or_zero(params.dot_tri_p0_x,
+                             params.dot_tri_p0_y,
+                             params.dot_tri_p0_z,
+                             p.suffix_material_idx);
+        tangent.suffix_normal_raw =
+            read_vec_or_zero(params.dot_tri_fn_x,
+                             params.dot_tri_fn_y,
+                             params.dot_tri_fn_z,
+                             p.suffix_material_idx);
     }
     return tangent;
 }
@@ -1488,6 +1660,34 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
             tangent.third.material_gain = 1.f;
             add_chain_unit_vjp(params, p, grad_contribution, params.grad_material_gain, p.third.material_idx, tangent);
         }
+    }
+    if (p.suffix_material_active && p.suffix_material_idx >= 0) {
+        tangent = {};
+        tangent.suffix_material_gain = 1.f;
+        add_chain_unit_vjp(params,
+                           p,
+                           grad_contribution,
+                           params.grad_material_gain,
+                           p.suffix_material_idx,
+                           tangent);
+        tangent = {};
+        tangent.suffix_p0 = make_vec3(1.f, 0.f, 0.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_x, p.suffix_material_idx, tangent);
+        tangent = {};
+        tangent.suffix_p0 = make_vec3(0.f, 1.f, 0.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_y, p.suffix_material_idx, tangent);
+        tangent = {};
+        tangent.suffix_p0 = make_vec3(0.f, 0.f, 1.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_z, p.suffix_material_idx, tangent);
+        tangent = {};
+        tangent.suffix_normal_raw = make_vec3(1.f, 0.f, 0.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_x, p.suffix_material_idx, tangent);
+        tangent = {};
+        tangent.suffix_normal_raw = make_vec3(0.f, 1.f, 0.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_y, p.suffix_material_idx, tangent);
+        tangent = {};
+        tangent.suffix_normal_raw = make_vec3(0.f, 0.f, 1.f);
+        add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_z, p.suffix_material_idx, tangent);
     }
 }
 

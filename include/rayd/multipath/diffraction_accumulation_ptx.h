@@ -1800,7 +1800,7 @@ $L__BB2_151:
 	@%p16 bra 	$L__BB3_214;
 
 	ld.const.u32 	%r7, [params+676];
-	and.b32  	%r333, %r7, 3;
+	and.b32  	%r333, %r7, 7;
 	setp.eq.s32 	%p17, %r333, 0;
 	@%p17 bra 	$L__BB3_214;
 

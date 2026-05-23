@@ -711,7 +711,8 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
         params.grid_resolution0 <= 0 ||
         params.grid_resolution1 <= 0 ||
         (params.max_order != 2 && params.max_order != 3) ||
-        (params.strategy_mask & (RAYD_DFR_DIRECT | RAYD_DFR_KELLER)) == 0) {
+        (params.strategy_mask &
+         (RAYD_DFR_DIRECT | RAYD_DFR_KELLER | RAYD_DFR_SUFFIX_REFL)) == 0) {
         return;
     }
 

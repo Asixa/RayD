@@ -141,6 +141,7 @@ struct DfrChainAccumADParams {
     int max_order;
     float wavelength;
     int seed;
+    int n_triangles;
 
     const uint8_t *tape_active;
     const int *tape_cell;
@@ -175,6 +176,19 @@ struct DfrChainAccumADParams {
     const int *recursive_state_prim0;
     const int *recursive_state_prim1;
 
+    const float *tri_p0_x;
+    const float *tri_p0_y;
+    const float *tri_p0_z;
+    const float *tri_e1_x;
+    const float *tri_e1_y;
+    const float *tri_e1_z;
+    const float *tri_e2_x;
+    const float *tri_e2_y;
+    const float *tri_e2_z;
+    const float *tri_fn_x;
+    const float *tri_fn_y;
+    const float *tri_fn_z;
+
     const float *material_gain;
     const uint8_t *material_valid;
 
@@ -202,6 +216,12 @@ struct DfrChainAccumADParams {
     const float *dot_recursive_state_edge_t_max;
     const float *dot_recursive_state_exterior_angle;
     const float *dot_material_gain;
+    const float *dot_tri_p0_x;
+    const float *dot_tri_p0_y;
+    const float *dot_tri_p0_z;
+    const float *dot_tri_fn_x;
+    const float *dot_tri_fn_y;
+    const float *dot_tri_fn_z;
 
     float *dot_out_power;
     float *dot_out_field_x_re;
@@ -233,6 +253,12 @@ struct DfrChainAccumADParams {
     float *grad_recursive_state_edge_t_max;
     float *grad_recursive_state_exterior_angle;
     float *grad_material_gain;
+    float *grad_tri_p0_x;
+    float *grad_tri_p0_y;
+    float *grad_tri_p0_z;
+    float *grad_tri_fn_x;
+    float *grad_tri_fn_y;
+    float *grad_tri_fn_z;
 };
 
 void dfr_chain_accum_jvp_gpu(const DfrChainAccumADParams &params);

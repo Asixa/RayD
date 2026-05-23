@@ -71,13 +71,13 @@ Each core query, what it computes, its input/output, and how it behaves under Dr
 | `scene.trace_refl_epc_field(tx, receiver, ...)` | EPC trace returning the complex reflected field | tx position + receiver + `ReflEpcFieldOptions(AD)` -> `ReflEpcField` (complex E-field) | **Native AD** |
 | `scene.accumulate_reflections(...)` | Accumulate reflected field/power onto a grid | rays + grid + material -> `AccumResult` | **Native AD** |
 | `scene.accum_dfr_direct(...)` | Native direct/Keller/suffix diffraction accumulation onto a grid | `DfrStates` + `DfrGrid` + `DfrMaterial` -> `DfrAccum` | **Native AD** for direct, Keller, and suffix-reflection order-1, including suffix reflector mesh-vertex gradients; detached for unsupported AD strategies |
-| `scene.accum_dfr(...)` | Native order-2/3 diffraction-chain accumulation onto a grid | initial/recursive `DfrStates` + grid + material -> `DfrAccum` | **Native AD** for direct/Keller order-2 and order-3 chains |
+| `scene.accum_dfr(...)` | Native order-2/3 diffraction-chain accumulation onto a grid | initial/recursive `DfrStates` + grid + material -> `DfrAccum` | **Native AD** for direct, Keller, and suffix-reflection order-2/3 chains, including suffix reflector mesh-vertex gradients |
 | `scene.trace_dfr_paths(...)` | Compact first-order diffraction path export | tx/rx + `DfrStates` + `DfrMaterial` -> `DfrPaths` | **AD** |
 
 AD legend:
 
 - **AD** - differentiable geometry: geometric outputs carry Dr.Jit gradients with respect to mesh vertices and transforms; the discrete hit/edge/path selection runs detached.
-- **Native AD** - the native RayD multipath implementation preserves Dr.Jit gradients for continuous inputs passed as AD arrays and supplies RayD-side derivative code. Diffraction grid accumulation uses CUDA custom-op JVP/VJP over a fixed OptiX forward tape for direct, Keller, suffix-reflection order-1, and direct/Keller order-2/3 chains. Discrete visibility/path-selection decisions remain detached.
+- **Native AD** - the native RayD multipath implementation preserves Dr.Jit gradients for continuous inputs passed as AD arrays and supplies RayD-side derivative code. Diffraction grid accumulation uses CUDA custom-op JVP/VJP over a fixed OptiX forward tape for direct, Keller, and suffix-reflection order-1 and order-2/3 chain accumulation. Discrete visibility/path-selection decisions remain detached.
 - **Boolean** - returns occlusion/visibility booleans and is not differentiable.
 - **Detached** - native fast path: runs detached only and rejects AD inputs.
 
