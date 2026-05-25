@@ -110,12 +110,15 @@ static __forceinline__ __device__ HitPayload choose_hit(HitPayload a, HitPayload
     return __uint_as_float(a.t) <= __uint_as_float(b.t) ? a : b;
 }
 
-static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
-                                                         float3 direction,
-                                                         float tmax) {
+template <bool PrimaryOnly>
+static __forceinline__ __device__ HitPayload trace_scene_impl(float3 origin,
+                                                              float3 direction,
+                                                              float tmax) {
     HitPayload primary;
     trace_handle(params.primary_handle, origin, direction, tmax, primary);
-    if (params.split_mode == 0) {
+    if constexpr (PrimaryOnly) {
+        return primary;
+    } else if (params.split_mode == 0) {
         return primary;
     }
     HitPayload secondary;
@@ -123,14 +126,16 @@ static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
     return choose_hit(primary, secondary);
 }
 
-static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
+template <bool PrimaryOnly>
+static __forceinline__ __device__ bool visible_segment_impl(float3 start, float3 end) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
     if (dist <= 1e-5f) {
         return true;
     }
     const float3 dir = (1.f / dist) * delta;
-    const HitPayload hit = trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+    const HitPayload hit =
+        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
     return hit.hit == 0u;
 }
 
@@ -155,8 +160,10 @@ static __forceinline__ __device__ float3 face_normal_for_global_prim(int prim) {
     return normalize3(make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]));
 }
 
-static __forceinline__ __device__ bool point_inside_one_ray(float3 point, float3 ray_dir) {
-    const HitPayload hit = trace_scene(point + 1.0e-3f * ray_dir, ray_dir, 1.0e8f);
+template <bool PrimaryOnly>
+static __forceinline__ __device__ bool point_inside_one_ray_impl(float3 point, float3 ray_dir) {
+    const HitPayload hit =
+        trace_scene_impl<PrimaryOnly>(point + 1.0e-3f * ray_dir, ray_dir, 1.0e8f);
     if (hit.hit == 0u) {
         return false;
     }
@@ -164,22 +171,26 @@ static __forceinline__ __device__ bool point_inside_one_ray(float3 point, float3
     return dot3(normal, ray_dir) > 0.f;
 }
 
-static __forceinline__ __device__ bool point_inside_closed_mesh_robust(float3 point) {
+template <bool PrimaryOnly>
+static __forceinline__ __device__ bool point_inside_closed_mesh_robust_impl(float3 point) {
     const float3 d0 = normalize3(make_vec3(0.81234133f, 0.52311241f, 0.25843197f));
     const float3 d1 = normalize3(make_vec3(-0.37139068f, 0.60114462f, 0.70757474f));
-    return point_inside_one_ray(point, d0) && point_inside_one_ray(point, d1);
+    return point_inside_one_ray_impl<PrimaryOnly>(point, d0) &&
+           point_inside_one_ray_impl<PrimaryOnly>(point, d1);
 }
 
-static __forceinline__ __device__ bool visible_segment_ignore_prim(float3 start,
-                                                                   float3 end,
-                                                                   int ignore_prim) {
+template <bool PrimaryOnly>
+static __forceinline__ __device__ bool visible_segment_ignore_prim_impl(float3 start,
+                                                                        float3 end,
+                                                                        int ignore_prim) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
     if (dist <= 1e-5f) {
         return true;
     }
     const float3 dir = (1.f / dist) * delta;
-    const HitPayload hit = trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+    const HitPayload hit =
+        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
     if (hit.hit == 0u) {
         return true;
     }
@@ -342,17 +353,19 @@ static __forceinline__ __device__ utd::PairInputs load_coherent_pair_inputs(int 
     return p;
 }
 
-static __forceinline__ __device__ bool visible_segment_ignore_two_prims(float3 start,
-                                                                        float3 end,
-                                                                        int ignore0,
-                                                                        int ignore1) {
+template <bool PrimaryOnly>
+static __forceinline__ __device__ bool visible_segment_ignore_two_prims_impl(float3 start,
+                                                                             float3 end,
+                                                                             int ignore0,
+                                                                             int ignore1) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
     if (dist <= 1e-5f) {
         return true;
     }
     const float3 dir = (1.f / dist) * delta;
-    const HitPayload hit = trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+    const HitPayload hit =
+        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
     if (hit.hit == 0u) {
         return true;
     }
@@ -360,6 +373,7 @@ static __forceinline__ __device__ bool visible_segment_ignore_two_prims(float3 s
     return prim == ignore0 || prim == ignore1;
 }
 
+template <bool PrimaryOnly>
 static __forceinline__ __device__ bool coherent_visibility_and_support(utd::PairInputs state,
                                                                        float3 target_f3,
                                                                        bool selected_valid,
@@ -389,7 +403,7 @@ static __forceinline__ __device__ bool coherent_visibility_and_support(utd::Pair
     bool shadow_completion = !target_exterior &&
                              shadow_boundary_distance >= 0.f &&
                              shadow_boundary_distance < support_angle;
-    if (shadow_completion && point_inside_closed_mesh_robust(target_f3)) {
+    if (shadow_completion && point_inside_closed_mesh_robust_impl<PrimaryOnly>(target_f3)) {
         shadow_completion = false;
     }
     (void)selected_inside;
@@ -428,6 +442,7 @@ static __forceinline__ __device__ bool coherent_selected_visibility_point(utd::P
     return parameter > 0.f && parameter < edge_length;
 }
 
+template <bool PrimaryOnly>
 static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int cell) {
     utd::PairInputs original = load_coherent_pair_inputs(state_idx);
     const float3 target = grid_cell_center(cell);
@@ -437,7 +452,7 @@ static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int 
     if (params.prefilter_visibility != 0) {
         const int ignore0 = params.coherent_adjacent_face0 != nullptr ? params.coherent_adjacent_face0[state_idx] : -1;
         const int ignore1 = params.coherent_adjacent_face1 != nullptr ? params.coherent_adjacent_face1[state_idx] : -1;
-        if (!visible_segment_ignore_two_prims(visibility_point, target, ignore0, ignore1)) {
+        if (!visible_segment_ignore_two_prims_impl<PrimaryOnly>(visibility_point, target, ignore0, ignore1)) {
             if (params.collect_debug_counts != 0 && params.out_visibility_reject_count != nullptr) {
                 atomicAdd(params.out_visibility_reject_count + cell, 1);
             }
@@ -445,7 +460,7 @@ static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int 
         }
     }
     const bool selected_inside = selected.edgeLineMin < 0.f && selected.edgeLineMax > 0.f;
-    if (!coherent_visibility_and_support(selected, target, selected_valid, selected_inside, visibility_point)) {
+    if (!coherent_visibility_and_support<PrimaryOnly>(selected, target, selected_valid, selected_inside, visibility_point)) {
         if (params.collect_debug_counts != 0 && params.out_utd_reject_count != nullptr) {
             atomicAdd(params.out_utd_reject_count + cell, 1);
         }
@@ -846,7 +861,12 @@ extern "C" __global__ void __miss__diffraction_accumulation() {
     optixSetPayload_0(0u);
 }
 
-extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
+template <bool PrimaryOnly,
+          bool IncludeCoherent,
+          bool IncludeDirect,
+          bool IncludeKeller,
+          bool IncludeSuffix>
+static __forceinline__ __device__ void run_diffraction_order1_accumulation_raygen() {
     const unsigned int lane = optixGetLaunchIndex().x;
     if (lane >= static_cast<unsigned int>(params.n_rays) ||
         params.state_count <= 0 ||
@@ -855,20 +875,23 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
         return;
     }
 
-    const int direct_limit =
-        (params.strategy_mask & RAYD_DFR_DIRECT) != 0 ? params.direct_samples : 0;
-    const int keller_limit =
-        (params.strategy_mask & RAYD_DFR_KELLER) != 0 ? params.keller_samples : 0;
-    const int suffix_limit =
-        (params.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+    const int direct_limit = IncludeDirect && (params.strategy_mask & RAYD_DFR_DIRECT) != 0
+        ? params.direct_samples
+        : 0;
+    const int keller_limit = IncludeKeller && (params.strategy_mask & RAYD_DFR_KELLER) != 0
+        ? params.keller_samples
+        : 0;
+    const int suffix_limit = IncludeSuffix && (params.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0
+        ? params.suffix_samples
+        : 0;
     const int total_samples = direct_limit + keller_limit + suffix_limit;
     if (total_samples <= 0) {
         return;
     }
-    const bool is_direct = static_cast<int>(lane) < direct_limit;
-    const bool is_keller =
+    const bool is_direct = IncludeDirect && static_cast<int>(lane) < direct_limit;
+    const bool is_keller = IncludeKeller &&
         !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
-    const bool is_suffix =
+    const bool is_suffix = IncludeSuffix &&
         static_cast<int>(lane) >= direct_limit + keller_limit &&
         static_cast<int>(lane) < total_samples;
     if (!is_direct && !is_keller && !is_suffix) {
@@ -887,9 +910,11 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     const float edge_t = params.state_edge_t_min[state_idx] +
                          edge_u * (params.state_edge_t_max[state_idx] -
                                    params.state_edge_t_min[state_idx]);
-    if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
-        run_coherent_utd_lane(state_idx, cell);
-        return;
+    if constexpr (IncludeCoherent) {
+        if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
+            run_coherent_utd_lane<PrimaryOnly>(state_idx, cell);
+            return;
+        }
     }
 
     const float3 edge_pos =
@@ -900,30 +925,8 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     float3 target = grid_cell_center(cell);
-    if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
-        if (params.collect_debug_counts != 0) {
-            atomicAdd(params.out_utd_rejects, 1);
-        }
-        return;
-    }
-
-    float suffix_reflection_gain = 1.f;
-    float suffix_fspl = 1.f;
-    float suffix_candidate_count = 1.f;
-    int suffix_prim = -1;
-    float3 connection_target = target;
-    if (is_suffix) {
-        if (!suffix_reflection_connection(edge_point,
-                                          target,
-                                          params.state_prim0[state_idx],
-                                          params.state_prim1[state_idx],
-                                          lane,
-                                          17u,
-                                          connection_target,
-                                          suffix_prim,
-                                          suffix_reflection_gain,
-                                          suffix_fspl,
-                                          suffix_candidate_count)) {
+    if constexpr (IncludeKeller) {
+        if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
             if (params.collect_debug_counts != 0) {
                 atomicAdd(params.out_utd_rejects, 1);
             }
@@ -931,11 +934,46 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
         }
     }
 
-    const bool source_visible = visible_segment(source, edge_point);
-    const bool target_visible = is_suffix
-        ? (visible_segment_ignore_prim(edge_point, connection_target, suffix_prim) &&
-           visible_segment_ignore_prim(connection_target, target, suffix_prim))
-        : visible_segment(edge_point, target);
+    float suffix_reflection_gain = 1.f;
+    float suffix_fspl = 1.f;
+    float suffix_candidate_count = 1.f;
+    int suffix_prim = -1;
+    float3 connection_target = target;
+    if constexpr (IncludeSuffix) {
+        if (is_suffix) {
+            if (!suffix_reflection_connection(edge_point,
+                                              target,
+                                              params.state_prim0[state_idx],
+                                              params.state_prim1[state_idx],
+                                              lane,
+                                              17u,
+                                              connection_target,
+                                              suffix_prim,
+                                              suffix_reflection_gain,
+                                              suffix_fspl,
+                                              suffix_candidate_count)) {
+                if (params.collect_debug_counts != 0) {
+                    atomicAdd(params.out_utd_rejects, 1);
+                }
+                return;
+            }
+        }
+    }
+
+    const bool source_visible = visible_segment_impl<PrimaryOnly>(source, edge_point);
+    bool target_visible = true;
+    if constexpr (IncludeDirect || IncludeKeller) {
+        if (is_direct || is_keller) {
+            target_visible = visible_segment_impl<PrimaryOnly>(edge_point, target);
+        }
+    }
+    if constexpr (IncludeSuffix) {
+        if (is_suffix) {
+            target_visible =
+                visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim) &&
+                visible_segment_ignore_prim_impl<PrimaryOnly>(connection_target, target, suffix_prim);
+        }
+    }
     if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_vis_rejects, 1);
@@ -947,10 +985,12 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
         is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
     float contribution =
         diffraction_weight(state_idx, edge_point, connection_target, strategy_sample_count);
-    if (is_suffix) {
-        contribution *= suffix_reflection_gain *
-                        suffix_fspl *
-                        fmaxf(suffix_candidate_count, 1.f);
+    if constexpr (IncludeSuffix) {
+        if (is_suffix) {
+            contribution *= suffix_reflection_gain *
+                            suffix_fspl *
+                            fmaxf(suffix_candidate_count, 1.f);
+        }
     }
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
@@ -981,17 +1021,401 @@ extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
     atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
         atomicAdd(params.out_direct_count, 1);
-    } else if (is_keller) {
-        atomicAdd(params.out_keller_count, 1);
     } else {
-        atomicAdd(params.out_suffix_count, 1);
+        if constexpr (IncludeKeller) {
+            if (is_keller) {
+                atomicAdd(params.out_keller_count, 1);
+            }
+        }
+        if constexpr (IncludeSuffix) {
+            if (is_suffix) {
+                atomicAdd(params.out_suffix_count, 1);
+            }
+        }
     }
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_uses, 1);
     }
 }
 
-extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() {
+extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
+    run_diffraction_order1_accumulation_raygen<false, false, true, true, true>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_accumulation_primary() {
+    run_diffraction_order1_accumulation_raygen<true, false, true, true, true>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_accumulation_no_suffix() {
+    run_diffraction_order1_accumulation_raygen<false, false, true, true, false>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_accumulation_no_suffix_primary() {
+    run_diffraction_order1_accumulation_raygen<true, false, true, true, false>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_accumulation_suffix() {
+    run_diffraction_order1_accumulation_raygen<false, false, false, false, true>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_accumulation_suffix_primary() {
+    run_diffraction_order1_accumulation_raygen<true, false, false, false, true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_order1_source_visibility_raygen() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.temp_visibility == nullptr) {
+        return;
+    }
+    params.temp_visibility[lane] = 0u;
+
+    const int direct_limit =
+        (params.strategy_mask & RAYD_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+    const int keller_limit =
+        (params.strategy_mask & RAYD_DFR_KELLER) != 0 ? params.keller_samples : 0;
+    const int suffix_limit =
+        (params.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+    const int total_samples = direct_limit + keller_limit + suffix_limit;
+    if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
+        return;
+    }
+
+    const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
+    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        return;
+    }
+
+    const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
+    const float edge_t = params.state_edge_t_min[state_idx] +
+                         edge_u * (params.state_edge_t_max[state_idx] -
+                                   params.state_edge_t_min[state_idx]);
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float3 edge_point = edge_pos + edge_t * edge_dir;
+    const float3 source =
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    params.temp_visibility[lane] =
+        visible_segment_impl<PrimaryOnly>(source, edge_point) ? 1u : 0u;
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_source_visibility_primary() {
+    run_diffraction_order1_source_visibility_raygen<true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_accumulation_raygen() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.grid_resolution0 <= 0 ||
+        params.grid_resolution1 <= 0) {
+        return;
+    }
+
+    const int direct_limit =
+        (params.strategy_mask & RAYD_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+    const int keller_limit =
+        (params.strategy_mask & RAYD_DFR_KELLER) != 0 ? params.keller_samples : 0;
+    const int total_samples = direct_limit + keller_limit;
+    if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
+        return;
+    }
+    if (params.temp_visibility != nullptr && params.temp_visibility[lane] == 0u) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_vis_rejects, 1);
+        }
+        return;
+    }
+    const bool is_direct = static_cast<int>(lane) < direct_limit;
+    const bool is_keller =
+        !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
+
+    const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
+    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        return;
+    }
+
+    const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+    int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
+                                static_cast<unsigned int>(grid_cell_count));
+    const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
+    const float edge_t = params.state_edge_t_min[state_idx] +
+                         edge_u * (params.state_edge_t_max[state_idx] -
+                                   params.state_edge_t_min[state_idx]);
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float3 edge_point = edge_pos + edge_t * edge_dir;
+    float3 target = grid_cell_center(cell);
+    if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_rejects, 1);
+        }
+        return;
+    }
+
+    if (!visible_segment_impl<PrimaryOnly>(edge_point, target)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_vis_rejects, 1);
+        }
+        return;
+    }
+
+    const int strategy_sample_count = is_direct ? direct_limit : keller_limit;
+    const float contribution =
+        diffraction_weight(state_idx, edge_point, target, strategy_sample_count);
+    if (!(contribution > 0.f) || !isfinite(contribution)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_rejects, 1);
+        }
+        return;
+    }
+    if (params.tape_active != nullptr) {
+        params.tape_active[lane] = 1u;
+        if (params.tape_state_idx != nullptr) {
+            params.tape_state_idx[lane] = state_idx;
+        }
+        if (params.tape_cell != nullptr) {
+            params.tape_cell[lane] = cell;
+        }
+        if (params.tape_material_idx != nullptr) {
+            params.tape_material_idx[lane] =
+                material_index_for_faces(params.state_prim0[state_idx],
+                                         params.state_prim1[state_idx]);
+        }
+        if (params.tape_edge_u != nullptr) {
+            params.tape_edge_u[lane] = edge_u;
+        }
+    }
+
+    atomicAdd(params.out_power + cell, contribution);
+    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    if (is_direct) {
+        atomicAdd(params.out_direct_count, 1);
+    } else {
+        atomicAdd(params.out_keller_count, 1);
+    }
+    if (params.collect_edge_use != 0) {
+        atomicAdd(params.out_edge_uses, 1);
+    }
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_no_suffix_target_accumulation_primary() {
+    run_diffraction_order1_no_suffix_target_accumulation_raygen<true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visibility_raygen() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.temp_visibility == nullptr) {
+        return;
+    }
+
+    const int direct_limit =
+        (params.strategy_mask & RAYD_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+    const int keller_limit =
+        (params.strategy_mask & RAYD_DFR_KELLER) != 0 ? params.keller_samples : 0;
+    const int suffix_limit =
+        (params.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+    const int suffix_begin = direct_limit + keller_limit;
+    const int total_samples = suffix_begin + suffix_limit;
+    if (suffix_limit <= 0 ||
+        static_cast<int>(lane) < suffix_begin ||
+        static_cast<int>(lane) >= total_samples) {
+        return;
+    }
+    if (params.temp_visibility[lane] == 0u) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_vis_rejects, 1);
+        }
+        return;
+    }
+
+    const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
+    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        params.temp_visibility[lane] = 0u;
+        return;
+    }
+
+    const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+    int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
+                                static_cast<unsigned int>(grid_cell_count));
+    const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
+    const float edge_t = params.state_edge_t_min[state_idx] +
+                         edge_u * (params.state_edge_t_max[state_idx] -
+                                   params.state_edge_t_min[state_idx]);
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float3 edge_point = edge_pos + edge_t * edge_dir;
+    const float3 target = grid_cell_center(cell);
+
+    float suffix_reflection_gain = 1.f;
+    float suffix_fspl = 1.f;
+    float suffix_candidate_count = 1.f;
+    int suffix_prim = -1;
+    float3 connection_target = target;
+    if (!suffix_reflection_connection(edge_point,
+                                      target,
+                                      params.state_prim0[state_idx],
+                                      params.state_prim1[state_idx],
+                                      lane,
+                                      17u,
+                                      connection_target,
+                                      suffix_prim,
+                                      suffix_reflection_gain,
+                                      suffix_fspl,
+                                      suffix_candidate_count)) {
+        params.temp_visibility[lane] = 0u;
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_rejects, 1);
+        }
+        return;
+    }
+
+    const bool visible =
+        visible_segment_ignore_prim_impl<PrimaryOnly>(edge_point, connection_target, suffix_prim);
+    params.temp_visibility[lane] = visible ? 1u : 0u;
+    if (!visible && params.collect_debug_counts != 0) {
+        atomicAdd(params.out_vis_rejects, 1);
+    }
+    (void)suffix_reflection_gain;
+    (void)suffix_fspl;
+    (void)suffix_candidate_count;
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_suffix_first_visibility_primary() {
+    run_diffraction_order1_suffix_first_visibility_raygen<true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accumulation_raygen() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.state_count <= 0 ||
+        params.grid_resolution0 <= 0 ||
+        params.grid_resolution1 <= 0) {
+        return;
+    }
+
+    const int direct_limit =
+        (params.strategy_mask & RAYD_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+    const int keller_limit =
+        (params.strategy_mask & RAYD_DFR_KELLER) != 0 ? params.keller_samples : 0;
+    const int suffix_limit =
+        (params.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+    const int suffix_begin = direct_limit + keller_limit;
+    const int total_samples = suffix_begin + suffix_limit;
+    if (suffix_limit <= 0 ||
+        static_cast<int>(lane) < suffix_begin ||
+        static_cast<int>(lane) >= total_samples) {
+        return;
+    }
+    if (params.temp_visibility != nullptr && params.temp_visibility[lane] == 0u) {
+        return;
+    }
+
+    const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
+    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+        return;
+    }
+
+    const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+    int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
+                                static_cast<unsigned int>(grid_cell_count));
+    const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
+    const float edge_t = params.state_edge_t_min[state_idx] +
+                         edge_u * (params.state_edge_t_max[state_idx] -
+                                   params.state_edge_t_min[state_idx]);
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float3 edge_point = edge_pos + edge_t * edge_dir;
+    const float3 target = grid_cell_center(cell);
+
+    float suffix_reflection_gain = 1.f;
+    float suffix_fspl = 1.f;
+    float suffix_candidate_count = 1.f;
+    int suffix_prim = -1;
+    float3 connection_target = target;
+    if (!suffix_reflection_connection(edge_point,
+                                      target,
+                                      params.state_prim0[state_idx],
+                                      params.state_prim1[state_idx],
+                                      lane,
+                                      17u,
+                                      connection_target,
+                                      suffix_prim,
+                                      suffix_reflection_gain,
+                                      suffix_fspl,
+                                      suffix_candidate_count)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_rejects, 1);
+        }
+        return;
+    }
+
+    if (!visible_segment_ignore_prim_impl<PrimaryOnly>(connection_target, target, suffix_prim)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_vis_rejects, 1);
+        }
+        return;
+    }
+
+    float contribution =
+        diffraction_weight(state_idx, edge_point, connection_target, suffix_limit);
+    contribution *= suffix_reflection_gain *
+                    suffix_fspl *
+                    fmaxf(suffix_candidate_count, 1.f);
+    if (!(contribution > 0.f) || !isfinite(contribution)) {
+        if (params.collect_debug_counts != 0) {
+            atomicAdd(params.out_utd_rejects, 1);
+        }
+        return;
+    }
+
+    if (params.tape_active != nullptr) {
+        params.tape_active[lane] = 1u;
+        if (params.tape_state_idx != nullptr) {
+            params.tape_state_idx[lane] = state_idx;
+        }
+        if (params.tape_cell != nullptr) {
+            params.tape_cell[lane] = cell;
+        }
+        if (params.tape_material_idx != nullptr) {
+            params.tape_material_idx[lane] =
+                material_index_for_faces(params.state_prim0[state_idx],
+                                         params.state_prim1[state_idx]);
+        }
+        if (params.tape_edge_u != nullptr) {
+            params.tape_edge_u[lane] = edge_u;
+        }
+    }
+
+    atomicAdd(params.out_power + cell, contribution);
+    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomicAdd(params.out_suffix_count, 1);
+    if (params.collect_edge_use != 0) {
+        atomicAdd(params.out_edge_uses, 1);
+    }
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_suffix_target_accumulation_primary() {
+    run_diffraction_order1_suffix_target_accumulation_raygen<true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulation_raygen() {
     const unsigned int lane = optixGetLaunchIndex().x;
     if (lane >= static_cast<unsigned int>(params.n_rays) ||
         params.state_count <= 0 ||
@@ -1010,7 +1434,7 @@ extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() 
         return;
     }
     if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
-        run_coherent_utd_lane(state_idx, cell);
+        run_coherent_utd_lane<PrimaryOnly>(state_idx, cell);
         return;
     }
 
@@ -1044,8 +1468,8 @@ extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() 
     const float3 visibility_edge_point = edge_pos + visibility_edge_t * edge_dir;
 
     if (params.prefilter_visibility != 0) {
-        const bool source_visible = visible_segment(source, visibility_edge_point);
-        const bool target_visible = visible_segment(visibility_edge_point, target);
+        const bool source_visible = visible_segment_impl<PrimaryOnly>(source, visibility_edge_point);
+        const bool target_visible = visible_segment_impl<PrimaryOnly>(visibility_edge_point, target);
         if (!source_visible || !target_visible) {
             if (params.collect_debug_counts != 0 &&
                 params.out_visibility_reject_count != nullptr) {
@@ -1093,7 +1517,16 @@ extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() 
     }
 }
 
-extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
+extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation() {
+    run_diffraction_order1_coherent_accumulation_raygen<false>();
+}
+
+extern "C" __global__ void __raygen__diffraction_order1_coherent_accumulation_primary() {
+    run_diffraction_order1_coherent_accumulation_raygen<true>();
+}
+
+template <bool PrimaryOnly>
+static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen() {
     const unsigned int lane = optixGetLaunchIndex().x;
     if (lane >= static_cast<unsigned int>(params.n_rays) ||
         params.state_count <= 0 ||
@@ -1266,14 +1699,14 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
             return;
         }
     }
-    const bool source_visible = visible_segment(source, first_point);
-    const bool first_inter_edge_visible = visible_segment(first_point, second_point);
+    const bool source_visible = visible_segment_impl<PrimaryOnly>(source, first_point);
+    const bool first_inter_edge_visible = visible_segment_impl<PrimaryOnly>(first_point, second_point);
     const bool second_inter_edge_visible =
-        params.max_order == 3 ? visible_segment(second_point, third_point) : true;
+        params.max_order == 3 ? visible_segment_impl<PrimaryOnly>(second_point, third_point) : true;
     const bool target_visible = is_suffix
-        ? (visible_segment_ignore_prim(terminal_point, final_target, suffix_prim) &&
-           visible_segment_ignore_prim(final_target, target, suffix_prim))
-        : visible_segment(terminal_point, final_target);
+        ? (visible_segment_ignore_prim_impl<PrimaryOnly>(terminal_point, final_target, suffix_prim) &&
+           visible_segment_ignore_prim_impl<PrimaryOnly>(final_target, target, suffix_prim))
+        : visible_segment_impl<PrimaryOnly>(terminal_point, final_target);
     if (!source_visible || !target_visible) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_vis_rejects, 1);
@@ -1375,6 +1808,14 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
     if (params.collect_edge_use != 0) {
         atomicAdd(params.out_edge_uses, 1);
     }
+}
+
+extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
+    run_diffraction_chain_accumulation_raygen<false>();
+}
+
+extern "C" __global__ void __raygen__diffraction_chain_accumulation_primary() {
+    run_diffraction_chain_accumulation_raygen<true>();
 }
 
 } // namespace rayd

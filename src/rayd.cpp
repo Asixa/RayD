@@ -1576,7 +1576,7 @@ NB_MODULE(rayd, m) {
                   nb::arg("receiver"),
                   "max_bounces"_a,
                   "options"_a = nb::none(),
-                  "active"_a = true)
+                  "active"_a = rayd::Mask(true))
             .def("trace_refl_epc_field",
                  [](const Scene &scene,
                     nb::handle source_obj,
@@ -1675,7 +1675,7 @@ NB_MODULE(rayd, m) {
                  nb::arg("receiver").noconvert(),
                   "max_bounces"_a,
                   "options"_a,
-                  "active"_a = true)
+                  "active"_a = rayd::MaskAD(true))
             .def("trace_refl_epc_field",
                  [](const Scene &scene,
                      const Vector3fAD &tx_position,
@@ -1690,7 +1690,7 @@ NB_MODULE(rayd, m) {
                  nb::arg("receiver").noconvert(),
                  "max_bounces"_a,
                  "options"_a,
-                 "active"_a = true)
+                 "active"_a = rayd::MaskAD(true))
             .def("trace_refl_epc_field",
                  [](const Scene &scene,
                     const Ray &ray,
@@ -1705,7 +1705,7 @@ NB_MODULE(rayd, m) {
                  nb::arg("receiver"),
                   "max_bounces"_a,
                   "options"_a,
-                  "active"_a = true)
+                  "active"_a = rayd::Mask(true))
             .def("trace_refl_epc_field",
                  [](const Scene &scene,
                     const Vector3f &tx_position,
@@ -1720,7 +1720,7 @@ NB_MODULE(rayd, m) {
                  nb::arg("receiver"),
                  "max_bounces"_a,
                  "options"_a,
-                 "active"_a = true)
+                 "active"_a = rayd::Mask(true))
             .def("accumulate_reflections",
                  [](const Scene &scene,
                     nb::handle ray_obj,

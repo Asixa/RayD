@@ -246,6 +246,7 @@ struct DfrAccumParams {
     int *out_visibility_reject_count;
     int *out_utd_reject_count;
 
+    uint8_t *temp_visibility;
     uint8_t *tape_active;
     int *tape_state_idx;
     int *tape_cell;

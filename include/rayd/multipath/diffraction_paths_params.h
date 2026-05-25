@@ -69,6 +69,8 @@ struct DfrPathParams {
     int return_geom;
     int receiver_model;
 
+    uint8_t *temp_visibility;
+
     int *out_count;
     uint8_t *out_valid;
     int *out_tx_id;

@@ -1047,6 +1047,88 @@ class ReflEpcTests(unittest.TestCase):
         for actual, expected in zip(data["normal"], [0.0, -1.0, 0.0]):
             self.assertAlmostEqual(actual, expected, places=4)
 
+    def test_epc_field_batched_direct_path_creates_cold_pipeline(self):
+        data = run_json(
+            """
+            import json
+            import math
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd as pj
+
+            n = 8
+            reflector = pj.Mesh(
+                cuda.Array3f([-4.0, 4.0, -4.0, 4.0],
+                             [0.0, 0.0, 0.0, 0.0],
+                             [-1.0, -1.0, 1.0, 1.0]),
+                cuda.Array3i([0, 0], [1, 3], [3, 2]),
+            )
+            scene = pj.Scene()
+            scene.add_mesh(reflector)
+            scene.build()
+
+            tx = cuda.Array3f(
+                [0.0 + 0.02 * i for i in range(n)],
+                [-2.0] * n,
+                [0.0] * n,
+            )
+            rx = cuda.Array3f(
+                [6.0 + 0.02 * i for i in range(n)],
+                [-2.0] * n,
+                [0.0] * n,
+            )
+
+            options = pj.ReflEpcFieldOptions()
+            options.expected_prim_ids = cuda.Int([0] * n)
+            options.surface_group_id = cuda.Int([0, 0])
+            options.surface_group_size = cuda.Int([2])
+            options.surface_group_members = cuda.Int([0, 1])
+            options.surface_max_group_size = 2
+            options.visibility_ignore_mode = "surface_group"
+            options.slot_plane_point = cuda.Array3f(
+                [-4.0] * n,
+                [0.0] * n,
+                [-1.0] * n,
+            )
+            options.slot_plane_normal = cuda.Array3f(
+                [0.0] * n,
+                [-1.0] * n,
+                [0.0] * n,
+            )
+            options.slot_eta_r = cuda.Float([4.0] * n)
+            options.slot_mu_r = cuda.Float([1.0] * n)
+            options.slot_sigma = cuda.Float([0.0] * n)
+            options.slot_gain = cuda.Float([1.0] * n)
+            options.tx_polarization = cuda.Array3f([1.0], [0.0], [0.0])
+            options.omega = 2.0 * math.pi * 3.5e9
+            options.wavelength = 299792458.0 / 3.5e9
+            options.return_geom = False
+            options.return_endpoints = False
+
+            result = scene.trace_refl_epc_field(
+                tx,
+                rx,
+                max_bounces=1,
+                options=options,
+                active=cuda.Bool([True] * n),
+            )
+            dr.eval(result.valid, result.field_x_re, result.field_x_im)
+            print(json.dumps({
+                "width": int(dr.width(result.valid)),
+                "valid": [bool(result.valid[i]) for i in range(n)],
+                "finite": [
+                    math.isfinite(float(result.field_x_re[i])) and
+                    math.isfinite(float(result.field_x_im[i]))
+                    for i in range(n)
+                ],
+            }))
+            """
+        )
+
+        self.assertEqual(data["width"], 8)
+        self.assertTrue(all(data["valid"]))
+        self.assertTrue(all(data["finite"]))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

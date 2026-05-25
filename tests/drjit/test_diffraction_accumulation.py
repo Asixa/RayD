@@ -671,7 +671,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertEqual(data["keller_count"], 0)
         self.assertEqual(data["vis_rejects"], 0)
         self.assertEqual(data["edge_uses"], 64)
-        self.assertEqual(data["accum_dfr_launches"], 1)
+        self.assertEqual(data["accum_dfr_launches"], 2)
         self.assertGreater(data["keller_power"], 0.0)
         self.assertGreater(data["keller_field_x_re"], 0.0)
         self.assertEqual(data["keller_direct_count"], 0)
@@ -682,7 +682,7 @@ class DfrAccumulationTests(unittest.TestCase):
             data["keller_path_count"] + data["keller_utd_rejects"], 64
         )
         self.assertEqual(data["keller_edge_uses"], data["keller_path_count"])
-        self.assertEqual(data["keller_launches"], 1)
+        self.assertEqual(data["keller_launches"], 2)
 
     def test_accum_dfr_direct_supports_ad_inputs(self):
         data = run_json(
@@ -1600,6 +1600,7 @@ class DfrAccumulationTests(unittest.TestCase):
             options.return_geom = 1
             options.receiver_model = pj.RAYD_DFR_MATCHED_ISO
 
+            pj.native_launch_audit_clear()
             result = scene.trace_dfr_paths(
                 cuda.Array3f([0.0], [0.0], [1.0]),
                 cuda.Array3f([0.0], [0.0], [-1.0]),
@@ -1618,6 +1619,7 @@ class DfrAccumulationTests(unittest.TestCase):
                 result.field_x.imag,
                 result.p0.x,
             )
+            audit = pj.native_launch_audit()
 
             print(json.dumps({
                 "capacity": result.capacity,
@@ -1629,6 +1631,7 @@ class DfrAccumulationTests(unittest.TestCase):
                 "field_x_re0": float(np.asarray(result.field_x.real, dtype=np.float32)[0]),
                 "field_x_im0": float(np.asarray(result.field_x.imag, dtype=np.float32)[0]),
                 "p0_x0": float(np.asarray(result.p0.x, dtype=np.float32)[0]),
+                "path_export_launches": audit["accum_dfr"]["optix_launch"],
             }))
             """
         )
@@ -1643,6 +1646,7 @@ class DfrAccumulationTests(unittest.TestCase):
         self.assertTrue(math.isfinite(data["field_x_re0"]))
         self.assertTrue(math.isfinite(data["field_x_im0"]))
         self.assertAlmostEqual(data["p0_x0"], 0.0, places=5)
+        self.assertEqual(data["path_export_launches"], 2)
 
     def test_trace_dfr_paths_order1_supports_ad_inputs(self):
         data = run_json(

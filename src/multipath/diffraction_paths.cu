@@ -311,12 +311,164 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
                 out_idx, make_vec3(0.f, 0.f, 0.f));
 }
 
+static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
+                                                         int &state_idx,
+                                                         int &rx_idx,
+                                                         int &tx_idx) {
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.capacity <= 0 ||
+        params.tx_count <= 0 ||
+        params.rx_count <= 0 ||
+        params.state_count <= 0 ||
+        params.state_limit <= 0 ||
+        params.max_order != 1 ||
+        (params.strategy_mask & RAYD_DFR_DIRECT) == 0 ||
+        params.receiver_model != RAYD_DFR_MATCHED_ISO) {
+        return false;
+    }
+
+    const int state_limit = params.state_limit;
+    const int rx_count = params.rx_count;
+    state_idx = static_cast<int>(lane % static_cast<unsigned int>(state_limit));
+    const int pair_idx = static_cast<int>(lane / static_cast<unsigned int>(state_limit));
+    rx_idx = pair_idx % rx_count;
+    tx_idx = pair_idx / rx_count;
+    return tx_idx < params.tx_count &&
+           state_idx < params.state_count &&
+           state_active(state_idx);
+}
+
+static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x,
+                             params.state_edge_dir_y,
+                             params.state_edge_dir_z,
+                             state_idx));
+    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
+                               params.state_edge_t_max[state_idx]);
+    return edge_pos + mid_t * edge_dir;
+}
+
+static __forceinline__ __device__ bool finite_paths_points(float3 source,
+                                                           float3 edge_point,
+                                                           float3 receiver) {
+    return isfinite(source.x) && isfinite(source.y) && isfinite(source.z) &&
+           isfinite(edge_point.x) && isfinite(edge_point.y) && isfinite(edge_point.z) &&
+           isfinite(receiver.x) && isfinite(receiver.y) && isfinite(receiver.z);
+}
+
+static __forceinline__ __device__ void trace_paths_order1_source_visibility_primary_impl() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays) ||
+        params.temp_visibility == nullptr) {
+        return;
+    }
+    params.temp_visibility[lane] = 0u;
+
+    int state_idx = -1;
+    int rx_idx = -1;
+    int tx_idx = -1;
+    if (!paths_order1_lane(lane, state_idx, rx_idx, tx_idx)) {
+        return;
+    }
+    (void)rx_idx;
+    (void)tx_idx;
+
+    const float3 source =
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 edge_point = paths_edge_point(state_idx);
+    if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
+        !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z)) {
+        return;
+    }
+
+    params.temp_visibility[lane] =
+        visible_segment<false>(source, edge_point) ? 1u : 0u;
+}
+
+static __forceinline__ __device__ void trace_paths_order1_target_export_primary_impl() {
+    const unsigned int lane = optixGetLaunchIndex().x;
+    if (lane >= static_cast<unsigned int>(params.n_rays)) {
+        return;
+    }
+    if (params.temp_visibility != nullptr && params.temp_visibility[lane] == 0u) {
+        return;
+    }
+
+    int state_idx = -1;
+    int rx_idx = -1;
+    int tx_idx = -1;
+    if (!paths_order1_lane(lane, state_idx, rx_idx, tx_idx)) {
+        return;
+    }
+
+    const float3 source =
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 edge_point = paths_edge_point(state_idx);
+    const float3 receiver =
+        make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+
+    if (!finite_paths_points(source, edge_point, receiver)) {
+        return;
+    }
+    if (!visible_segment<false>(edge_point, receiver)) {
+        return;
+    }
+
+    const float contribution = path_weight(state_idx, edge_point, receiver);
+    if (!(contribution > 0.f) || !isfinite(contribution)) {
+        return;
+    }
+
+    const int out_idx = atomicAdd(params.out_count, 1);
+    if (out_idx < 0 || out_idx >= params.capacity) {
+        return;
+    }
+
+    const float path_length = norm3(edge_point - source) + norm3(receiver - edge_point);
+    float phase_s;
+    float phase_c;
+    sincosf(-params.k * path_length, &phase_s, &phase_c);
+    const float amplitude = sqrtf(fmaxf(contribution, 0.f));
+
+    params.out_valid[out_idx] = 1u;
+    params.out_tx_id[out_idx] = tx_idx;
+    params.out_rx_id[out_idx] = rx_idx;
+    params.out_order[out_idx] = 1;
+    params.out_edge0[out_idx] = params.state_edge_index[state_idx];
+    params.out_edge1[out_idx] = -1;
+    params.out_edge2[out_idx] = -1;
+    params.out_delay[out_idx] = path_length / kSpeedOfLight;
+    params.out_field_x_re[out_idx] = amplitude * phase_c;
+    params.out_field_x_im[out_idx] = amplitude * phase_s;
+    params.out_field_y_re[out_idx] = 0.f;
+    params.out_field_y_im[out_idx] = 0.f;
+    params.out_field_z_re[out_idx] = 0.f;
+    params.out_field_z_im[out_idx] = 0.f;
+    write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
+                out_idx, edge_point);
+    write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
+                out_idx, make_vec3(0.f, 0.f, 0.f));
+    write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
+                out_idx, make_vec3(0.f, 0.f, 0.f));
+}
+
 extern "C" __global__ void __raygen__diffraction_paths_order1_primary() {
     trace_paths_order1_impl<false>();
 }
 
 extern "C" __global__ void __raygen__diffraction_paths_order1() {
     trace_paths_order1_impl<true>();
+}
+
+extern "C" __global__ void __raygen__diffraction_paths_order1_source_visibility_primary() {
+    trace_paths_order1_source_visibility_primary_impl();
+}
+
+extern "C" __global__ void __raygen__diffraction_paths_order1_target_export_primary() {
+    trace_paths_order1_target_export_primary_impl();
 }
 
 } // namespace rayd

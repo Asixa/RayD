@@ -226,10 +226,10 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility_handle(
 }
 
 static __forceinline__ __device__ VisibilityPayload trace_visibility(float3 start,
-                                                                    float3 end,
-                                                                    int ignore0,
-                                                                    int ignore1,
-                                                                    int ignore2) {
+                                                                     float3 end,
+                                                                     int ignore0,
+                                                                     int ignore1,
+                                                                     int ignore2) {
     const unsigned int ignore0_u = ignore0 >= 0 ? static_cast<unsigned int>(ignore0)
                                                 : kInvalidPrim;
     const unsigned int ignore1_u = ignore1 >= 0 ? static_cast<unsigned int>(ignore1)
@@ -244,6 +244,21 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility(float3 star
     }
 
     return trace_visibility_handle(params.secondary_handle, start, end, ignore0_u, ignore1_u, ignore2_u);
+}
+
+static __forceinline__ __device__ VisibilityPayload trace_visibility_primary(float3 start,
+                                                                             float3 end,
+                                                                             int ignore0,
+                                                                             int ignore1,
+                                                                             int ignore2) {
+    const unsigned int ignore0_u = ignore0 >= 0 ? static_cast<unsigned int>(ignore0)
+                                                : kInvalidPrim;
+    const unsigned int ignore1_u = ignore1 >= 0 ? static_cast<unsigned int>(ignore1)
+                                                : kInvalidPrim;
+    const unsigned int ignore2_u = ignore2 >= 0 ? static_cast<unsigned int>(ignore2)
+                                                : kInvalidPrim;
+
+    return trace_visibility_handle(params.primary_handle, start, end, ignore0_u, ignore1_u, ignore2_u);
 }
 
 static __forceinline__ __device__ float3 load_triangle_p0(int prim) {
@@ -415,7 +430,8 @@ extern "C" __global__ void __miss__reflection_epc() {
 
 /// Raygen: trace the expected reflector sequence, apply equivalent-path correction, and check
 /// segment visibility to the receiver, writing per-slot reflection geometry and per-ray validity.
-extern "C" __global__ void __raygen__reflection_epc() {
+template <bool DirectOnly, bool PrimaryVisibilityOnly>
+static __forceinline__ __device__ void run_reflection_epc_raygen() {
     const unsigned int ray_index = optixGetLaunchIndex().x;
     if (ray_index >= static_cast<unsigned int>(params.n_rays)) {
         return;
@@ -502,6 +518,10 @@ extern "C" __global__ void __raygen__reflection_epc() {
             ++bounce_count;
         }
     } else {
+        if constexpr (DirectOnly) {
+            store_invalid(ray_index, bounce_count, -1, -1, -1);
+            return;
+        } else {
         float3 trace_origin = origin;
         float3 trace_direction = normalize3(make_vec3(params.ray_dx[ray_index],
                                                       params.ray_dy[ray_index],
@@ -563,6 +583,7 @@ extern "C" __global__ void __raygen__reflection_epc() {
             const float ray_dot_normal = dot3(trace_direction, geo_normal);
             trace_direction = normalize3(trace_direction - 2.f * ray_dot_normal * geo_normal);
             trace_origin = hit_point + kRayBias * trace_direction;
+        }
         }
     }
 
@@ -628,8 +649,12 @@ extern "C" __global__ void __raygen__reflection_epc() {
                                 : -1;
         const int ignore2 =
             ignore_surface_group && segment == B ? final_ignore_group : -1;
-        const VisibilityPayload visibility =
-            trace_visibility(start, end, ignore0, ignore1, ignore2);
+        VisibilityPayload visibility;
+        if constexpr (PrimaryVisibilityOnly) {
+            visibility = trace_visibility_primary(start, end, ignore0, ignore1, ignore2);
+        } else {
+            visibility = trace_visibility(start, end, ignore0, ignore1, ignore2);
+        }
         if (visibility.visible == 0u) {
             first_blocked_segment = segment;
             first_blocked_prim = static_cast<int>(visibility.blocker);
@@ -666,6 +691,18 @@ extern "C" __global__ void __raygen__reflection_epc() {
         params.out_plane_normal_y[slot] = plane_normals[bounce].y;
         params.out_plane_normal_z[slot] = plane_normals[bounce].z;
     }
+}
+
+extern "C" __global__ void __raygen__reflection_epc() {
+    run_reflection_epc_raygen<false, false>();
+}
+
+extern "C" __global__ void __raygen__reflection_epc_direct() {
+    run_reflection_epc_raygen<true, false>();
+}
+
+extern "C" __global__ void __raygen__reflection_epc_direct_primary() {
+    run_reflection_epc_raygen<true, true>();
 }
 
 } // namespace rayd
