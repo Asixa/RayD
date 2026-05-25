@@ -104,12 +104,13 @@ static __forceinline__ __device__ HitPayload choose_hit(HitPayload a, HitPayload
     return __uint_as_float(a.t) <= __uint_as_float(b.t) ? a : b;
 }
 
+template <bool SplitScene>
 static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
                                                          float3 direction,
                                                          float tmax) {
     HitPayload primary;
     trace_handle(params.primary_handle, origin, direction, tmax, primary);
-    if (params.split_mode == 0) {
+    if (!SplitScene) {
         return primary;
     }
     HitPayload secondary;
@@ -117,6 +118,7 @@ static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
     return choose_hit(primary, secondary);
 }
 
+template <bool SplitScene>
 static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
     const float3 delta = end - start;
     const float dist = norm3(delta);
@@ -125,7 +127,10 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     }
     const float3 dir = (1.f / dist) * delta;
     const HitPayload hit =
-        trace_scene(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+        trace_scene<SplitScene>(
+            start + kRayBias * dir,
+            dir,
+            fmaxf(dist - 2.f * kRayBias, 0.f));
     return hit.hit == 0u;
 }
 
@@ -218,7 +223,8 @@ extern "C" __global__ void __miss__diffraction_paths() {
     optixSetPayload_0(0u);
 }
 
-extern "C" __global__ void __raygen__diffraction_paths_order1() {
+template <bool SplitScene>
+static __forceinline__ __device__ void trace_paths_order1_impl() {
     const unsigned int lane = optixGetLaunchIndex().x;
     if (lane >= static_cast<unsigned int>(params.n_rays) ||
         params.capacity <= 0 ||
@@ -262,7 +268,8 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
         !isfinite(receiver.x) || !isfinite(receiver.y) || !isfinite(receiver.z)) {
         return;
     }
-    if (!visible_segment(source, edge_point) || !visible_segment(edge_point, receiver)) {
+    if (!visible_segment<SplitScene>(source, edge_point) ||
+        !visible_segment<SplitScene>(edge_point, receiver)) {
         return;
     }
 
@@ -302,6 +309,14 @@ extern "C" __global__ void __raygen__diffraction_paths_order1() {
                 out_idx, make_vec3(0.f, 0.f, 0.f));
     write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
                 out_idx, make_vec3(0.f, 0.f, 0.f));
+}
+
+extern "C" __global__ void __raygen__diffraction_paths_order1_primary() {
+    trace_paths_order1_impl<false>();
+}
+
+extern "C" __global__ void __raygen__diffraction_paths_order1() {
+    trace_paths_order1_impl<true>();
 }
 
 } // namespace rayd

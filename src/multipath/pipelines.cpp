@@ -327,6 +327,24 @@ OptixPipelineConfig diffraction_accumulation_pipeline_config() {
     return config;
 }
 
+OptixPipelineConfig diffraction_order1_accumulation_pipeline_config() {
+    OptixPipelineConfig config = diffraction_accumulation_pipeline_config();
+    config.raygen_entries = {"__raygen__diffraction_order1_accumulation"};
+    return config;
+}
+
+OptixPipelineConfig diffraction_chain_accumulation_pipeline_config() {
+    OptixPipelineConfig config = diffraction_accumulation_pipeline_config();
+    config.raygen_entries = {"__raygen__diffraction_chain_accumulation"};
+    return config;
+}
+
+OptixPipelineConfig diffraction_coherent_accumulation_pipeline_config() {
+    OptixPipelineConfig config = diffraction_accumulation_pipeline_config();
+    config.raygen_entries = {"__raygen__diffraction_order1_coherent_accumulation"};
+    return config;
+}
+
 OptixPipelineConfig diffraction_paths_pipeline_config() {
     OptixPipelineConfig config;
     config.ptx = diffraction_paths_ptx;
@@ -336,6 +354,12 @@ OptixPipelineConfig diffraction_paths_pipeline_config() {
     config.closesthit_entry = "__closesthit__diffraction_paths";
     config.num_payload_values = 4;
     config.params_size = sizeof(DfrPathParams);
+    return config;
+}
+
+OptixPipelineConfig diffraction_paths_primary_pipeline_config() {
+    OptixPipelineConfig config = diffraction_paths_pipeline_config();
+    config.raygen_entries = {"__raygen__diffraction_paths_order1_primary"};
     return config;
 }
 

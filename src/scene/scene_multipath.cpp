@@ -1113,6 +1113,30 @@ void ensure_pipeline(std::shared_ptr<OptixLaunchPipeline> &pipeline,
     }
 }
 
+int dfr_accum_direct_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_DIRECT) != 0
+               ? (options.direct_samples > 0 ? options.direct_samples : options.samples)
+               : 0;
+}
+
+int dfr_accum_keller_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_KELLER) != 0
+               ? options.keller_samples
+               : 0;
+}
+
+int dfr_accum_suffix_sample_count(const DfrOptions &options) {
+    return (options.strategy_mask & RAYD_DFR_SUFFIX_REFL) != 0
+               ? options.suffix_samples
+               : 0;
+}
+
+int dfr_accum_launch_count(const DfrOptions &options) {
+    return dfr_accum_direct_sample_count(options) +
+           dfr_accum_keller_sample_count(options) +
+           dfr_accum_suffix_sample_count(options);
+}
+
 void eval_segment_visibility_common(const Vector3f &start,
                                     const Int &face_offsets,
                                     const Int &ignore_prim_ids,
@@ -1605,6 +1629,32 @@ ReflectionTraceT<Detached> trace_bounces_impl(
 }
 
 } // namespace
+
+void Scene::ensure_dfr_order1_accumulation_pipeline() const {
+    const OptixSceneSelection scenes = select_optix_scenes();
+    const OptixScene *primary_scene = scenes.primary;
+    require(primary_scene != nullptr && primary_scene->is_ready(),
+            "Scene::accum_dfr_direct(): OptiX scene is not ready.");
+    require(scenes.hitgroup_record_count > 0,
+            "Scene::accum_dfr_direct(): invalid hitgroup record count.");
+    ensure_pipeline(diffraction_order1_accumulation_pipeline_,
+                    primary_scene->context(),
+                    scenes.hitgroup_record_count,
+                    diffraction_order1_accumulation_pipeline_config());
+}
+
+void Scene::ensure_dfr_chain_accumulation_pipeline() const {
+    const OptixSceneSelection scenes = select_optix_scenes();
+    const OptixScene *primary_scene = scenes.primary;
+    require(primary_scene != nullptr && primary_scene->is_ready(),
+            "Scene::accum_dfr(): OptiX scene is not ready.");
+    require(scenes.hitgroup_record_count > 0,
+            "Scene::accum_dfr(): invalid hitgroup record count.");
+    ensure_pipeline(diffraction_chain_accumulation_pipeline_,
+                    primary_scene->context(),
+                    scenes.hitgroup_record_count,
+                    diffraction_chain_accumulation_pipeline_config());
+}
 
 template <bool Detached>
 ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
@@ -2410,67 +2460,6 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
                 "Scene::trace_dfr_paths(): requested path capacity exceeds int range.");
         const int capacity = static_cast<int>(capacity64);
 
-        auto trace_dfr_paths_jit_fallback = [&]() -> DfrPaths {
-            DfrStatesAD states_ad;
-            states_ad.count = states.count;
-            states_ad.edge_index = IntAD(states.edge_index);
-            states_ad.edge_pos = Vector3fAD(states.edge_pos);
-            states_ad.edge_dir = Vector3fAD(states.edge_dir);
-            states_ad.edge_t_min = FloatAD(states.edge_t_min);
-            states_ad.edge_t_max = FloatAD(states.edge_t_max);
-            states_ad.n0 = Vector3fAD(states.n0);
-            states_ad.n1 = Vector3fAD(states.n1);
-            states_ad.prim0 = IntAD(states.prim0);
-            states_ad.prim1 = IntAD(states.prim1);
-            states_ad.exterior_angle = FloatAD(states.exterior_angle);
-            states_ad.src = Vector3fAD(states.src);
-            states_ad.src_power = FloatAD(states.src_power);
-            states_ad.wi = Vector3fAD(states.wi);
-            states_ad.d0 = Vector3fAD(states.d0);
-            states_ad.prefix_depth = IntAD(states.prefix_depth);
-
-            DfrMaterialAD material_ad;
-            material_ad.eta_r = FloatAD(material.eta_r);
-            material_ad.sigma = FloatAD(material.sigma);
-            material_ad.mu_r = FloatAD(material.mu_r);
-            material_ad.gain = FloatAD(material.gain);
-            material_ad.valid = MaskAD(material.valid);
-
-            const DfrPathsAD ad_result =
-                this->template trace_dfr_paths<false>(
-                    Vector3fAD(tx_positions),
-                    Vector3fAD(rx_positions),
-                    states_ad,
-                    material_ad,
-                    options,
-                    MaskAD(active));
-
-            DfrPaths detached;
-            detached.capacity = ad_result.capacity;
-            detached.count = detach<false>(ad_result.count);
-            detached.valid = detach<false>(ad_result.valid);
-            detached.tx_id = detach<false>(ad_result.tx_id);
-            detached.rx_id = detach<false>(ad_result.rx_id);
-            detached.order = detach<false>(ad_result.order);
-            detached.edge0 = detach<false>(ad_result.edge0);
-            detached.edge1 = detach<false>(ad_result.edge1);
-            detached.edge2 = detach<false>(ad_result.edge2);
-            detached.delay = detach<false>(ad_result.delay);
-            detached.field_x = drjit::Complex<Float>(
-                detach<false>(ad_result.field_x.x()),
-                detach<false>(ad_result.field_x.y()));
-            detached.field_y = drjit::Complex<Float>(
-                detach<false>(ad_result.field_y.x()),
-                detach<false>(ad_result.field_y.y()));
-            detached.field_z = drjit::Complex<Float>(
-                detach<false>(ad_result.field_z.x()),
-                detach<false>(ad_result.field_z.y()));
-            detached.p0 = detach<false>(ad_result.p0);
-            detached.p1 = detach<false>(ad_result.p1);
-            detached.p2 = detach<false>(ad_result.p2);
-            return detached;
-        };
-
         const OptixSceneSelection scenes = select_optix_scenes();
         const OptixScene *primary_scene = scenes.primary;
         const OptixScene *secondary_scene = scenes.secondary;
@@ -2481,13 +2470,16 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
         require(hitgroup_record_count > 0,
                 "Scene::trace_dfr_paths(): invalid hitgroup record count.");
 
-        try {
+        if (split_mode == 0) {
+            ensure_pipeline(diffraction_paths_primary_pipeline_,
+                            primary_scene->context(),
+                            hitgroup_record_count,
+                            diffraction_paths_primary_pipeline_config());
+        } else {
             ensure_pipeline(diffraction_paths_pipeline_,
                             primary_scene->context(),
                             hitgroup_record_count,
                             diffraction_paths_pipeline_config());
-        } catch (const std::exception &) {
-            return trace_dfr_paths_jit_fallback();
         }
 
         drjit::eval(tx_positions,
@@ -2591,7 +2583,10 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
         params.out_p2_y = raw.p2.y().data();
         params.out_p2_z = raw.p2.z().data();
 
-        diffraction_paths_pipeline_->launch(0, params);
+        const std::shared_ptr<OptixLaunchPipeline> &paths_pipeline =
+            split_mode == 0 ? diffraction_paths_primary_pipeline_
+                            : diffraction_paths_pipeline_;
+        paths_pipeline->launch(0, params);
 
         result.capacity = capacity;
         result.count = raw.count;
@@ -4523,6 +4518,16 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         require_dfr_direct_custom_ad_supported(options);
+        {
+            const int state_width = static_cast<int>(slices(states.edge_index));
+            const int state_count = states.count > 0 ? states.count : state_width;
+            const int material_count = static_cast<int>(slices(material.eta_r));
+            if (state_count > 0 &&
+                material_count > 0 &&
+                dfr_accum_launch_count(options) > 0) {
+                ensure_dfr_order1_accumulation_pipeline();
+            }
+        }
         return dfr_direct_accum_custom_op(
             this,
             states,
@@ -4591,10 +4596,10 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
                     "Scene::accum_dfr_direct(): OptiX scene is not ready.");
             require(scenes.hitgroup_record_count > 0,
                     "Scene::accum_dfr_direct(): invalid hitgroup record count.");
-            ensure_pipeline(diffraction_accumulation_pipeline_,
+            ensure_pipeline(diffraction_order1_accumulation_pipeline_,
                             primary_scene->context(),
                             scenes.hitgroup_record_count,
-                            diffraction_accumulation_pipeline_config());
+                            diffraction_order1_accumulation_pipeline_config());
         }
 
         const int direct_samples =
@@ -4901,10 +4906,10 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
                     "Scene::accum_dfr_direct(): suffix reflection requires per-triangle materials.");
         }
 
-        ensure_pipeline(diffraction_accumulation_pipeline_,
+        ensure_pipeline(diffraction_order1_accumulation_pipeline_,
                         primary_scene->context(),
                         hitgroup_record_count,
-                        diffraction_accumulation_pipeline_config());
+                        diffraction_order1_accumulation_pipeline_config());
 
         drjit::eval(states.edge_index,
                     states.edge_pos,
@@ -5049,7 +5054,7 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
                 active_dfr_direct_tape_capture->edge_u.data();
         }
 
-        diffraction_accumulation_pipeline_->launch(0, params);
+        diffraction_order1_accumulation_pipeline_->launch(0, params);
 
         result.power = raw.power;
         result.field_x =
@@ -5530,10 +5535,10 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         require(scenes.hitgroup_record_count > 0,
                 "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
 
-        ensure_pipeline(diffraction_accumulation_pipeline_,
+        ensure_pipeline(diffraction_coherent_accumulation_pipeline_,
                         primary_scene->context(),
                         scenes.hitgroup_record_count,
-                        diffraction_accumulation_pipeline_config());
+                        diffraction_coherent_accumulation_pipeline_config());
 
         drjit::eval(states.edge_pos,
                     states.edge_dir,
@@ -5728,7 +5733,7 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         params.out_visibility_reject_count = raw.visibility_reject_count.data();
         params.out_utd_reject_count = raw.utd_reject_count.data();
 
-        diffraction_accumulation_pipeline_->launch(2, params);
+        diffraction_coherent_accumulation_pipeline_->launch(0, params);
 
         result.direct_field_x = drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
         result.direct_field_y = drjit::Complex<Float>(raw.direct_field_y_re, raw.direct_field_y_im);
@@ -5836,10 +5841,10 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         require(scenes.hitgroup_record_count > 0,
                 "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
 
-        ensure_pipeline(diffraction_accumulation_pipeline_,
+        ensure_pipeline(diffraction_coherent_accumulation_pipeline_,
                         primary_scene->context(),
                         scenes.hitgroup_record_count,
-                        diffraction_accumulation_pipeline_config());
+                        diffraction_coherent_accumulation_pipeline_config());
 
         drjit::eval(states.edge_index,
                     states.edge_pos,
@@ -5944,7 +5949,7 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
             raw.visibility_reject_count.data();
         params.out_utd_reject_count = raw.utd_reject_count.data();
 
-        diffraction_accumulation_pipeline_->launch(2, params);
+        diffraction_coherent_accumulation_pipeline_->launch(0, params);
 
         result.direct_field_x =
             drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
@@ -5997,6 +6002,23 @@ DfrAccumT<Detached> Scene::accum_dfr(
     result.grid_cell_count = grid_cell_count;
     if constexpr (!Detached) {
         require_dfr_chain_custom_ad_supported(options);
+        {
+            const int initial_width =
+                static_cast<int>(slices(initial_states.edge_index));
+            const int recursive_width =
+                static_cast<int>(slices(recursive_states.edge_index));
+            const int initial_count =
+                initial_states.count > 0 ? initial_states.count : initial_width;
+            const int recursive_count =
+                recursive_states.count > 0 ? recursive_states.count : recursive_width;
+            const int material_count = static_cast<int>(slices(material.eta_r));
+            if (initial_count > 0 &&
+                recursive_count > 0 &&
+                material_count > 0 &&
+                dfr_accum_launch_count(options) > 0) {
+                ensure_dfr_chain_accumulation_pipeline();
+            }
+        }
         return dfr_chain_accum_custom_op(
             this,
             initial_states,
@@ -6076,10 +6098,10 @@ DfrAccumT<Detached> Scene::accum_dfr(
                     "Scene::accum_dfr(): OptiX scene is not ready.");
             require(scenes.hitgroup_record_count > 0,
                     "Scene::accum_dfr(): invalid hitgroup record count.");
-            ensure_pipeline(diffraction_accumulation_pipeline_,
+            ensure_pipeline(diffraction_chain_accumulation_pipeline_,
                             primary_scene->context(),
                             scenes.hitgroup_record_count,
-                            diffraction_accumulation_pipeline_config());
+                            diffraction_chain_accumulation_pipeline_config());
         }
 
         const int direct_samples =
@@ -6563,10 +6585,10 @@ DfrAccumT<Detached> Scene::accum_dfr(
                     "Scene::accum_dfr(): suffix reflection requires per-triangle materials.");
         }
 
-        ensure_pipeline(diffraction_accumulation_pipeline_,
+        ensure_pipeline(diffraction_chain_accumulation_pipeline_,
                         primary_scene->context(),
                         hitgroup_record_count,
-                        diffraction_accumulation_pipeline_config());
+                        diffraction_chain_accumulation_pipeline_config());
 
         drjit::eval(initial_states.edge_index,
                     initial_states.edge_pos,
@@ -6719,7 +6741,7 @@ DfrAccumT<Detached> Scene::accum_dfr(
                 active_dfr_direct_tape_capture->edge_u.data();
         }
 
-        diffraction_accumulation_pipeline_->launch(1, params);
+        diffraction_chain_accumulation_pipeline_->launch(0, params);
 
         result.power = raw.power;
         result.field_x =

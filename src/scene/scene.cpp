@@ -195,7 +195,10 @@ int face_opposite_vertex(const std::array<int, 3> &face_vertices, int v0, int v1
 void Scene::reset_multipath_pipelines() {
     reflection_pipeline_.reset();
     reflection_accumulation_pipeline_.reset();
-    diffraction_accumulation_pipeline_.reset();
+    diffraction_order1_accumulation_pipeline_.reset();
+    diffraction_chain_accumulation_pipeline_.reset();
+    diffraction_coherent_accumulation_pipeline_.reset();
+    diffraction_paths_primary_pipeline_.reset();
     diffraction_paths_pipeline_.reset();
     reflection_epc_pipeline_.reset();
     reflection_epc_geometry_ready_ = false;

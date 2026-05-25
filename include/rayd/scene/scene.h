@@ -338,6 +338,8 @@ private:
 
     OptixSceneSelection select_optix_scenes() const;
     void reset_multipath_pipelines();
+    void ensure_dfr_order1_accumulation_pipeline() const;
+    void ensure_dfr_chain_accumulation_pipeline() const;
     SceneMeshRecord &mesh_record(int mesh_id);
     const SceneMeshRecord &mesh_record(int mesh_id) const;
     void scatter_mesh_data(const SceneMeshRecord &record, bool include_static);
@@ -382,7 +384,10 @@ private:
     std::unique_ptr<OptixScene> optix_dynamic_scene_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
-    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_order1_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_chain_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_coherent_accumulation_pipeline_;
+    mutable std::shared_ptr<OptixLaunchPipeline> diffraction_paths_primary_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> diffraction_paths_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_epc_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> segment_visibility_pipeline_;
