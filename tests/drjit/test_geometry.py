@@ -731,6 +731,65 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["t"], 1.0, places=5)
         self.assertGreater(data["grad_z_sum"], 0.0)
 
+    def test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            n = 64
+            verts = ad.Array3f([0.0, 1.0, 0.0],
+                               [0.0, 0.0, 1.0],
+                               [0.0, 0.0, 0.0])
+            dr.enable_grad(verts)
+
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(verts, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.RayAD(
+                ad.Array3f([0.25] * n, [0.25] * n, [-1.0] * n),
+                ad.Array3f([0.0] * n, [0.0] * n, [1.0] * n),
+            )
+            active = cuda.Bool([(i % 3) != 0 for i in range(n)])
+
+            # Reproduce the ordering that exposed the 2026-05-25 cold
+            # optixPipelineCreate failure: materialize AD inputs before the
+            # first native reflection trace pipeline exists.
+            dr.eval(verts, ray.o, ray.d, active)
+
+            pj.native_launch_audit_clear()
+            chain = scene.trace_reflections(
+                ray,
+                max_bounces=1,
+                active=active,
+                symbolic=False,
+            )
+            valid = chain.is_valid()
+            dr.eval(valid, chain.t, chain.prim_ids, chain.bounce_count)
+
+            loss = dr.sum(dr.select(valid, chain.t, ad.Float(0.0)))
+            dr.backward(loss)
+            grad = dr.grad(verts)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "valid_count": sum(1 for v in list(valid) if bool(v)),
+                "active_count": sum(1 for i in range(n) if (i % 3) != 0),
+                "launches": audit["trace_reflections"]["optix_launch"],
+                "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+            }))
+            """,
+            timeout=180,
+        )
+
+        self.assertEqual(data["valid_count"], data["active_count"])
+        self.assertEqual(data["launches"], 1)
+        self.assertGreater(data["grad_z_sum"], 0.0)
+
     def test_trace_reflections_preserves_gradients_for_ad_mesh_constructor_inputs(self):
         data = run_json_case(
             """

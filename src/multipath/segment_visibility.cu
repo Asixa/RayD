@@ -155,12 +155,21 @@ extern "C" __global__ void __raygen__segment_visibility() {
         return;
     }
 
-    params.out_visible[ray] =
+    uint32_t blocker = 0xFFFFFFFFu;
+    const bool collect_blocker = params.out_first_blocked_prim != nullptr;
+    const uint32_t visible =
         trace_segment(load_start(ray),
                       load_end_a(ray),
                       is_active(ray),
                       ray * params.ignore_k,
-                      nullptr) != 0u ? 1u : 0u;
+                      collect_blocker ? &blocker : nullptr);
+    params.out_visible[ray] = visible != 0u ? 1u : 0u;
+    if (collect_blocker) {
+        params.out_first_blocked_prim[ray] =
+            (visible == 0u && blocker != 0xFFFFFFFFu)
+                ? static_cast<int>(blocker)
+                : -1;
+    }
 }
 
 /// Raygen (SegmentPair kind): test two segments sharing the start point in one launch.

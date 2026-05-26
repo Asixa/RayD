@@ -33,10 +33,11 @@ pip install --no-build-isolation -ve .
 
 ## OptiX Pipeline Guardrail
 
-- If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a pipeline-shape issue, not as an input/API issue.
-- Cold-created primary-only multipath raygen entries should stay small and preferably contain only one `optixTrace()` site. Split source visibility, target visibility/export, suffix reflection, and accumulation into staged launches with temporary visibility buffers when needed.
-- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and inspect the embedded PTX trace-call count for the failing raygen.
-- See `docs/optix_pipeline_create_failures.md` for the 2026-05-25 root-cause writeup and regression checklist.
+- If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.
+- The verified 2026-05-26 fix keeps scene/edge OptiX production flags separate from multipath flags: multipath uses production module optimization plus `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
+- Trace-call count and instruction count are useful diagnostics, but they are not proof of root cause; do not split reflection tracing or add fallback launches unless tests prove the pipeline shape itself is the failing variable.
+- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `tests.drjit.test_optix_pipeline_cold_create` for public API cold-create coverage.
+- See `docs/optix_pipeline_create_failures.md` for the root-cause writeup and regression checklist.
 
 ## Edge BVH Status
 

@@ -2,19 +2,18 @@
 
 Date: 2026-05-25
 
-This note records the root cause and guardrails for the `optixPipelineCreate(multipath)` failures fixed around reflection EPC, diffraction accumulation, and diffraction path export.
+This note records the root cause and guardrails for the `optixPipelineCreate(multipath)` failures fixed around reflection EPC, diffraction accumulation, diffraction path export, and AD reflection tracing.
 
 ## Summary
 
-The failures were not caused by bad scene inputs, Python API changes, or missing fallback behavior. They were OptiX pipeline link/compile failures triggered by overly complex native multipath raygen programs, especially on cold pipeline creation.
+The failures were not caused by bad scene inputs, Python API changes, or missing fallback behavior. They were OptiX pipeline link/compile failures that only surfaced on cold pipeline creation.
 
-The recurring pattern was:
+There were two related but distinct failure modes:
 
-- A single raygen contained multiple `optixTrace()` sites.
-- The raygen also carried enough surrounding control flow, strategy branching, visibility logic, and payload handling to make the OptiX pipeline linker fail.
-- Existing tests often missed the issue because a pipeline had already been warmed, or the tested path used a smaller/simpler entry point.
+- RayD's multipath OptiX pipelines were linked with the global production exception flags (`0`). On the verified Windows/RTX 5080 target, cold `optixPipelineCreate()` failed for several otherwise valid multipath program groups unless multipath used dedicated OptiX exception flags (`11`).
+- Existing tests often missed the issue because a pipeline had already been warmed, or because they covered one public API at a time instead of fresh subprocess cold creation for every native multipath entry point.
 
-The reliable fix was to split large multipath raygens into smaller operation-specific pipelines, particularly for primary-only scenes.
+Instruction count, trace-call count, and OptiX stderr pipeline statistics were useful risk signals, but they were not the root cause by themselves. A small segment-visibility pipeline with one trace site and only 191 entry instructions still failed with exception flags `0`, and passed with multipath exception flags `11`.
 
 ## Symptoms
 
@@ -34,45 +33,49 @@ Info: Pipeline statistics
     trace call(s)                        :     2
 ```
 
-`trace call(s): 2` was enough to fail for `trace_dfr_paths()` in the channel endpoint repro. Other generic entries had even more trace sites.
+Failures appeared across different pipeline shapes, including `trace_reflections`, `trace_refl_epc`, reflection accumulation, diffraction coherent builders, and native segment visibility. This was not an API-contract change and not bad input data.
 
 ## Root Cause
 
-RayD's native multipath kernels had several generic raygen entries that combined multiple visibility or propagation phases into one OptiX program group:
+RayD had treated all OptiX module exception flags as one global production setting. That was fine for scene/edge OptiX pipelines, but not for multipath launch pipelines on the verified Windows target. With `RAYD_OPTIX_EXCEPTION_FLAGS=0`, fresh multipath pipeline creation could fail during `optixPipelineCreate()` even when:
 
-- reflection EPC field used a generic EPC pipeline for a direct-path field case
-- first-order diffraction accumulation combined source visibility and target visibility/accumulation
-- diffraction path export combined source-to-edge visibility and edge-to-receiver export in one raygen
-- some AD custom-op paths pre-created native OptiX pipelines before all JIT inputs had been evaluated, making cold creation failures show up in paths that later did not need the same generic pipeline shape
+- the PTX module compiled successfully
+- the selected raygen had only one `optixTrace()` call site
+- the same test passed after another API had warmed the pipeline cache
+- the public Python call and input tensors were valid
 
-This produced pipeline programs with multiple trace sites and large branch bodies. On the verified Windows target, these could fail during `optixPipelineCreate()` even though the CUDA code compiled and the same algorithm was logically valid.
+The fix that generalized across all failing APIs was to separate multipath OptiX settings:
 
-The failure is therefore a pipeline-shape problem, not a numerical or API-contract problem.
+- keep scene/edge production settings at `RAYD_OPTIX_MODULE_OPT_LEVEL=0x2343` and `RAYD_OPTIX_EXCEPTION_FLAGS=0`
+- keep multipath module optimization at the production level by default
+- use `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11` for multipath pipeline compile/link
+
+Two experimental fixes were rejected because they were not causal:
+
+- splitting `trace_reflections()` into primary/one-bounce raygen variants did not fix production cold creation
+- changing multipath module optimization to level 0 only passed because it was tested together with exception flags `11`; restoring optimization level 3 while keeping multipath exception flags `11` also passed
 
 ## Fix Pattern
 
-Use staged native launches for primary-only multipath paths that need more than one visibility segment.
+Use dedicated multipath OptiX compile settings instead of mutating public APIs or falling back to JIT paths:
 
-For example:
+1. define `RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL` separately from the global scene/edge setting
+2. default it to the production module optimization level
+3. define `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`
+4. use the multipath-specific macros in `OptixLaunchPipeline::build()`
+5. keep the shared pipeline cache key keyed by full pipeline shape: context, PTX pointer, PTX size, raygen entries, hit entries, hitgroup capacity, payload count, and params size
 
-1. launch a small source-visibility raygen
-2. write a `uint8_t` temporary visibility mask
-3. launch a small target/export or target/accumulation raygen
-4. keep the temporary Dr.Jit array alive until after the staged launches and `drjit::sync_thread()`
-
-Pipeline configs should be operation-specific:
-
-- generic split-scene fallback entries can remain available for split static/dynamic scenes
-- primary-only scenes should use smaller entries such as `*_primary`, `*_source_visibility_primary`, and `*_target_*_primary`
-- direct reflection EPC field should use direct/direct-primary EPC entries instead of the generic EPC raygen
+For staged diffraction/EPC paths, staged native launches are still acceptable when they are the intended implementation. For reflection tracing, do not introduce staged fallback launches just to avoid pipeline creation: the reason Channel moved reflection discovery to RayD was to keep reflection discovery in one native OptiX launch.
 
 After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded PTX header. A source-only change is incomplete.
 
 ## Design Rules
 
-- Treat `optixPipelineCreate(multipath)` as a pipeline-shape regression until proven otherwise.
-- For cold-created primary-only native multipath pipelines, prefer raygen entries with one `optixTrace()` site.
-- Do not merge source visibility, target visibility, suffix reflection, export, and accumulation into a single primary raygen when staged launches are possible.
+- Treat `optixPipelineCreate(multipath)` first as a multipath OptiX pipeline configuration issue, not as a Python API/input issue.
+- Verify `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS` before rewriting kernels or splitting launches.
+- Use trace-call and instruction counts as diagnostics, not as proof of root cause.
+- Keep scene/edge OptiX production flags independent from multipath flags.
+- Keep reflection discovery as one native OptiX launch; do not use staged fallback launches to work around reflection pipeline creation.
 - Do not rely on warmed pipeline cache behavior. Reproduce in a fresh subprocess.
 - Do not fallback silently. If a native OptiX path is selected, fix that native path.
 - Keep public API stable. The successful fixes changed internal launch params, pipeline members, and PTX entries without requiring downstream caller changes.
@@ -90,7 +93,8 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
 
    Editable installs can load `rayd/__init__.py` from the source tree while loading `rayd.rayd` from `site-packages`.
 
-3. Read the OptiX stderr pipeline statistics. Pay special attention to `trace call(s)`.
+3. Confirm the effective C++ build defines. For the verified fix, the build log should contain `RAYD_OPTIX_MODULE_OPT_LEVEL=0x2343`, `RAYD_OPTIX_EXCEPTION_FLAGS=0`, `RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL=0x2343`, and `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
+4. Read the OptiX stderr pipeline statistics. Treat them as risk diagnostics, not the final root cause.
 4. Count trace sites in the embedded PTX:
 
    ```powershell
@@ -103,8 +107,9 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
    ([regex]::Matches($body, "_optix_trace")).Count
    ```
 
-5. If a failing primary-only path has more than one trace site, split it into staged launches.
+5. If a failing primary-only path has more than one trace site, consider staged launches only if that matches the operation contract.
 6. Reinstall the package and verify the actual `.pyd` size/timestamp under the target conda environment.
+7. Run the full cold-create matrix; do not accept a single warmed-process pass as proof.
 
 ## Regression Tests
 
@@ -112,6 +117,9 @@ Run RayD tests:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_reflection_epc -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_optix_pipeline_cold_create -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_geometry.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.test_project_metadata -v
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_diffraction_accumulation -v
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover -v
 ```
@@ -123,11 +131,8 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pytest tests\path\test_endp
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pytest tests\path\test_example_path_solver_minimal.py tests\deterministic\test_reflection_rayd_epc_backend.py tests\deterministic\test_example_deterministic_radiomap_three_cubes.py -q --gpu
 ```
 
-The 2026-05-25 verified state after the staged fixes:
+The 2026-05-26 verified state after the multipath exception-flag fix:
 
-- `tests\path\test_endpoint_api_contract.py -q --gpu`: `21 passed`
-- channel minimal + deterministic files: `11 passed`
-- RayD diffraction suite: `29 passed`
-- RayD reflection EPC suite: `12 passed`
-- RayD full unittest discover: `119 passed`
-
+- RayD `tests.drjit.test_optix_pipeline_cold_create`: `1 passed`
+- RayD targeted trace/reflection EPC cold-create tests: passing
+- No downstream caller API changes required

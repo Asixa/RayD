@@ -52,7 +52,7 @@ struct SegmentVisibilityParams {
     uint8_t *out_visible = nullptr;   ///< Primary visibility output.
     uint8_t *out_visible_b = nullptr; ///< Second-endpoint output (segment-pair kind).
     int *out_first_blocked_segment = nullptr; ///< First occluded segment (chain kind).
-    int *out_first_blocked_prim = nullptr;    ///< Primitive that blocked it (chain kind).
+    int *out_first_blocked_prim = nullptr;    ///< Primitive that blocked a segment query when requested.
 };
 
 } // namespace rayd

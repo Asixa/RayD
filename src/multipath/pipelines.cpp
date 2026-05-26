@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -23,15 +24,46 @@
 
 namespace rayd {
 
+#ifndef RAYD_OPTIX_MODULE_OPT_LEVEL
+#  define RAYD_OPTIX_MODULE_OPT_LEVEL OPTIX_COMPILE_OPTIMIZATION_LEVEL_3
+#endif
+
+#ifndef RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL
+#  define RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL RAYD_OPTIX_MODULE_OPT_LEVEL
+#endif
+
+#ifndef RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS
+#  define RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS RAYD_OPTIX_EXCEPTION_FLAGS
+#endif
+
 namespace {
 
 using PipelineCacheKey = std::tuple<
     OptixDeviceContext,
     const char *,
-    const char *,
+    size_t,
+    std::string,
+    std::string,
+    std::string,
+    std::string,
     int,
     int,
     size_t>;
+
+std::string pipeline_entry_key(const char *entry) {
+    return entry != nullptr ? std::string(entry) : std::string();
+}
+
+std::string pipeline_raygen_entries_key(const std::vector<const char *> &entries) {
+    std::string key;
+    for (const char *entry : entries) {
+        if (!key.empty()) {
+            key.push_back('\n');
+        }
+        key += pipeline_entry_key(entry);
+    }
+    return key;
+}
 
 std::mutex &pipeline_cache_mutex() {
     static std::mutex *mutex = new std::mutex();
@@ -103,7 +135,7 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
 
     OptixModuleCompileOptions module_options = {};
     module_options.maxRegisterCount = 0;
-    module_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_3;
+    module_options.optLevel = RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL;
     module_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
     OptixPipelineCompileOptions pipeline_options = {};
@@ -112,7 +144,7 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipeline_options.numPayloadValues = config.num_payload_values;
     pipeline_options.numAttributeValues = 2;
-    pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
+    pipeline_options.exceptionFlags = RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags =
         static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
@@ -217,7 +249,11 @@ std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(
     PipelineCacheKey key{
         context,
         config.ptx,
-        config.raygen_entries.empty() ? nullptr : config.raygen_entries.front(),
+        config.ptx_size,
+        pipeline_raygen_entries_key(config.raygen_entries),
+        pipeline_entry_key(config.miss_entry),
+        pipeline_entry_key(config.closesthit_entry),
+        pipeline_entry_key(config.anyhit_entry),
         hitgroup_capacity,
         config.num_payload_values,
         config.params_size,
