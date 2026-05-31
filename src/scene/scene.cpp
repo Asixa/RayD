@@ -1076,8 +1076,6 @@ Scene::OptixSceneSelection Scene::select_optix_scenes() const {
         selection.primary = optix_static_scene_.get();
         selection.secondary = optix_dynamic_scene_.get();
         selection.split_mode = 1;
-        selection.hitgroup_record_count = static_cast<int>(
-            std::max(optix_static_mesh_indices_.size(), optix_dynamic_mesh_indices_.size()));
     } else {
         selection.primary = optix_scene_.get();
     }

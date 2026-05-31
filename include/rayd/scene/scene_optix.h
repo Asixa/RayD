@@ -16,7 +16,7 @@ struct OptixIntersection {
 
     int64_t m_size = 0;             ///< Allocated lane count.
     Int shape_id;          ///< Owning mesh id per ray; -1 when no hit.
-    Int global_prim_id;    ///< Scene-global face index per ray; -1 when no hit.
+    Int local_prim_id;     ///< Face index within the owning mesh; -1 when no hit.
     Vector2f barycentric;  ///< Barycentric (u, v) of the hit.
     Float t;               ///< Hit distance; Infinity when no hit.
 };

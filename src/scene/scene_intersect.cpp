@@ -57,8 +57,8 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
         optix_hit.barycentric[1] =
             select(choose_dynamic, dynamic_hit.barycentric[1], static_hit.barycentric[1]);
         optix_hit.shape_id = select(choose_dynamic, dynamic_hit.shape_id, static_hit.shape_id);
-        optix_hit.global_prim_id =
-            select(choose_dynamic, dynamic_hit.global_prim_id, static_hit.global_prim_id);
+        optix_hit.local_prim_id =
+            select(choose_dynamic, dynamic_hit.local_prim_id, static_hit.local_prim_id);
 
         if constexpr (!Detached) {
             hit_mask = MaskAD(any_hit);
@@ -70,10 +70,10 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     }
 
     const Int shape_id = optix_hit.shape_id;
-    const Int global_primitive_id = optix_hit.global_prim_id;
+    const Int local_primitive_id = optix_hit.local_prim_id;
     const Mask hit_mask_detached = detach<false>(hit_mask);
     const Int mesh_face_offset = gather<Int>(face_offsets_, shape_id, hit_mask_detached);
-    const Int local_primitive_id = global_primitive_id - mesh_face_offset;
+    const Int global_primitive_id = local_primitive_id + mesh_face_offset;
 
     Vector2fT<Detached> triangle_uv_coords;
     FloatT<Detached> hit_distance;

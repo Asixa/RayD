@@ -3275,6 +3275,56 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertFalse(data["shadow_old"])
         self.assertTrue(data["shadow_new"])
 
+    def test_split_reflection_trace_handles_high_global_dynamic_mesh_id(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_OPTIX_SPLIT_MODE"] = "on"
+
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            def make_mesh(offset_x):
+                return pj.Mesh(
+                    cuda.Array3f(
+                        [offset_x + 0.0, offset_x + 1.0, offset_x + 0.0],
+                        [0.0, 0.0, 1.0],
+                        [0.0, 0.0, 0.0],
+                    ),
+                    cuda.Array3i([0], [1], [2]),
+                )
+
+            scene = pj.Scene()
+            for i in range(64):
+                scene.add_mesh(make_mesh(-100.0 - 2.0 * i), dynamic=False)
+            dynamic_id = scene.add_mesh(make_mesh(20.0), dynamic=True)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([20.25], [0.25], [-1.0]),
+                cuda.Array3f([0.0], [0.0], [1.0]),
+            )
+            hit = scene.intersect(ray)
+            chain = scene.trace_reflections(ray, max_bounces=1, symbolic=False)
+
+            print(json.dumps({
+                "dynamic_id": dynamic_id,
+                "intersect_valid": bool(hit.is_valid()[0]),
+                "intersect_shape": int(hit.shape_id[0]),
+                "bounce_count": int(chain.bounce_count[0]),
+                "trace_shape": int(chain.shape_ids[0]),
+            }))
+            """,
+            timeout=180,
+        )
+
+        self.assertEqual(data["dynamic_id"], 64)
+        self.assertTrue(data["intersect_valid"])
+        self.assertEqual(data["intersect_shape"], data["dynamic_id"])
+        self.assertEqual(data["bounce_count"], 1)
+        self.assertEqual(data["trace_shape"], data["dynamic_id"])
+
     def test_dynamic_vertex_updates_preserve_gradients(self):
         data = run_json_case(
             """

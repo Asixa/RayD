@@ -214,7 +214,7 @@ void OptixIntersection::reserve(int64_t size) {
     if (size != m_size) {
         m_size = size;
         shape_id = empty<Int>(size);
-        global_prim_id = empty<Int>(size);
+        local_prim_id = empty<Int>(size);
         barycentric = empty<Vector2f>(size);
         t = empty<Float>(size);
     }
@@ -835,7 +835,7 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
         OptixHitObjectField::Attribute0,
         OptixHitObjectField::Attribute1,
         OptixHitObjectField::PrimitiveIndex,
-        OptixHitObjectField::SBTDataPointer,
+        OptixHitObjectField::InstanceId,
     };
     uint32_t hitobject_out[6];
 
@@ -861,19 +861,13 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
     intersection.barycentric[1] =
         drjit::reinterpret_array<Single, UInt>(UInt::steal(hitobject_out[3]));
     UInt raw_prim_index = UInt::steal(hitobject_out[4]);
-
-    // Extract shape_offset and shape_id from the hit-group SBT data.
-    UInt64 sbt_data_ptr = UInt64::steal(hitobject_out[5]);
-    Int shape_offset = Int(UInt::steal(
-        jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 0, active_detached.index())));
-    intersection.shape_id = Int(UInt::steal(
-        jit_optix_sbt_data_load(sbt_data_ptr.index(), VarType::UInt32, 4, active_detached.index())));
-    intersection.global_prim_id = Int(raw_prim_index) + shape_offset;
+    intersection.local_prim_id = Int(raw_prim_index);
+    intersection.shape_id = Int(UInt::steal(hitobject_out[5]));
 
     // Clear invalid lanes.
     intersection.t[!active_detached] = Infinity;
     intersection.shape_id[!active_detached] = -1;
-    intersection.global_prim_id[!active_detached] = -1;
+    intersection.local_prim_id[!active_detached] = -1;
 
     if constexpr (!Detached) {
         active &= MaskAD(active_detached);
