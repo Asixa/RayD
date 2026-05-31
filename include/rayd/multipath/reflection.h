@@ -6,11 +6,19 @@
 
 namespace rayd {
 
+enum ReflectionExportMode {
+    RAYD_REFLECTION_EXPORT_FULL = 0,
+    RAYD_REFLECTION_EXPORT_MINIMAL = 1,
+    RAYD_REFLECTION_EXPORT_COUNT_ONLY = 2,
+};
+
 /// Options controlling specular reflection traces.
 struct ReflectionTraceOptions {
     bool deduplicate = false;          ///< Merge paths that share the same sequence of reflectors.
     Int canonical_prim_table;  ///< Optional map collapsing primitives to a canonical id for dedup.
     float image_source_tolerance = 1e-5f; ///< Distance tolerance when comparing image sources for dedup.
+    int export_mode = RAYD_REFLECTION_EXPORT_FULL; ///< Output payload size; defaults to full.
+    bool return_trailing = true; ///< Trace and export the segment after the last reflection.
 };
 
 /// One reflection bounce for a batch of rays (the per-bounce slice of a chain).

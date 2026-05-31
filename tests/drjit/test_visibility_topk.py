@@ -451,7 +451,7 @@ class VisibilityAndTopKTests(unittest.TestCase):
 
         self.assertFalse(data["a"])
         self.assertTrue(data["b"])
-        self.assertEqual(data["native_optix_launches"], 2)
+        self.assertEqual(data["native_optix_launches"], 1)
 
     def test_visible_edge_native_backend_cold_create(self):
         data = run_json_case(

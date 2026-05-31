@@ -49,6 +49,9 @@ struct NativeLaunchStageStats {
     uint64_t optix_accel_build = 0;
     uint64_t optix_accel_compact = 0;
     uint64_t optix_launch = 0;
+    double optix_launch_time_ms = 0.0;
+    double optix_launch_time_min_ms = 0.0;
+    double optix_launch_time_max_ms = 0.0;
     std::vector<NativeKernelLaunchStat> kernels;
 };
 
@@ -105,5 +108,9 @@ void audit_jit_memcpy_async();
 void audit_optix_accel_build();
 void audit_optix_accel_compact();
 void audit_optix_launch();
+void audit_optix_launch_duration_ms(double elapsed_ms);
+
+/// Return true when native OptiX launch timing should record CUDA event durations.
+bool native_launch_audit_timing_enabled();
 
 } // namespace rayd

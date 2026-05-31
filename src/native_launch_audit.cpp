@@ -1,6 +1,7 @@
 #include <rayd/native_launch_audit.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <mutex>
 
 namespace rayd {
@@ -171,6 +172,25 @@ void audit_optix_accel_compact() {
 
 void audit_optix_launch() {
     increment_counter(&NativeLaunchStageStats::optix_launch);
+}
+
+void audit_optix_launch_duration_ms(double elapsed_ms) {
+    std::lock_guard<std::mutex> guard(audit_mutex());
+    NativeLaunchStageStats &stats = stage_stats(audit_snapshot_storage(), current_stage);
+    stats.optix_launch_time_ms += elapsed_ms;
+    if (stats.optix_launch_time_min_ms == 0.0 ||
+        elapsed_ms < stats.optix_launch_time_min_ms) {
+        stats.optix_launch_time_min_ms = elapsed_ms;
+    }
+    stats.optix_launch_time_max_ms = std::max(stats.optix_launch_time_max_ms, elapsed_ms);
+}
+
+bool native_launch_audit_timing_enabled() {
+    static const bool enabled = []() {
+        const char *value = std::getenv("RAYD_NATIVE_LAUNCH_AUDIT_TIMING");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    return enabled;
 }
 
 } // namespace rayd

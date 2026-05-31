@@ -687,6 +687,67 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertGreater(data["trailing_origin"][2], 0.0)
         self.assertLess(data["trailing_origin"][2], 1e-3)
 
+    def test_trace_reflections_minimal_export_can_skip_trailing_trace(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            floor = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [0.0, 0.0, 0.0, 0.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            ceiling = pj.Mesh(
+                cuda.Array3f([-2.0, 2.0, 2.0, -2.0],
+                             [-2.0, -2.0, 2.0, 2.0],
+                             [1.0, 1.0, 1.0, 1.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            scene = pj.Scene()
+            scene.add_mesh(floor)
+            scene.add_mesh(ceiling)
+            scene.build()
+
+            options = pj.ReflectionTraceOptions()
+            options.export_mode = pj.REFLECTION_EXPORT_MINIMAL
+            options.return_trailing = False
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [0.5]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            chain = scene.trace_reflections(
+                ray, max_bounces=2, options=options, symbolic=False)
+            dr.eval(chain.bounce_count, chain.t, chain.prim_ids,
+                    chain.global_prim_ids, chain.trailing_t, chain.trailing_prim)
+            dr.sync_thread()
+
+            print(json.dumps({
+                "bounce_count": int(chain.bounce_count[0]),
+                "valid": [bool(v) for v in list(chain.is_valid())],
+                "t": [float(v) for v in list(chain.t)],
+                "prim_ids": [int(v) for v in list(chain.prim_ids)],
+                "global_prim_ids": [int(v) for v in list(chain.global_prim_ids)],
+                "trailing_t_is_inf": math.isinf(float(chain.trailing_t[0])),
+                "trailing_prim": int(chain.trailing_prim[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["bounce_count"], 2)
+        self.assertEqual(data["valid"], [True, True])
+        self.assertAlmostEqual(data["t"][0], 0.5, places=4)
+        self.assertAlmostEqual(data["t"][1], 1.0, places=3)
+        self.assertTrue(all(v >= 0 for v in data["prim_ids"]))
+        self.assertTrue(all(v >= 0 for v in data["global_prim_ids"]))
+        self.assertTrue(data["trailing_t_is_inf"])
+        self.assertEqual(data["trailing_prim"], -1)
+
     def test_trace_reflections_preserves_gradients_for_ad_inputs(self):
         data = run_json_case(
             """

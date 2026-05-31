@@ -7,6 +7,8 @@
 #include <tuple>
 #include <vector>
 
+#include <cuda_runtime_api.h>
+
 #include <rayd/native_launch_audit.h>
 
 #include <rayd/multipath/reflection_trace_ptx.h>
@@ -74,6 +76,11 @@ std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> &pipeline_cache
     static std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>> *cache =
         new std::map<PipelineCacheKey, std::shared_ptr<OptixLaunchPipeline>>();
     return *cache;
+}
+
+void check_cuda(cudaError_t result, const char *message) {
+    require(result == cudaSuccess,
+            std::string(message) + ": " + cudaGetErrorString(result));
 }
 
 int hitgroup_record_capacity(int hitgroup_record_count) {
@@ -298,9 +305,23 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
     sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     sbt.hitgroupRecordCount = static_cast<unsigned int>(hitgroup_record_count_);
 
+    CUstream jit_stream = jit_cuda_stream();
+    cudaStream_t cuda_stream = reinterpret_cast<cudaStream_t>(jit_stream);
+    cudaEvent_t start_event = nullptr;
+    cudaEvent_t stop_event = nullptr;
+    const bool time_optix_launch = native_launch_audit_timing_enabled();
+    if (time_optix_launch) {
+        check_cuda(cudaEventCreateWithFlags(&start_event, cudaEventDefault),
+                   "cudaEventCreateWithFlags(start)");
+        check_cuda(cudaEventCreateWithFlags(&stop_event, cudaEventDefault),
+                   "cudaEventCreateWithFlags(stop)");
+        audit_cuda_event_record();
+        check_cuda(cudaEventRecord(start_event, cuda_stream), "cudaEventRecord(start)");
+    }
+
     audit_optix_launch();
     check_optix(optixLaunch(pipeline_,
-                            jit_cuda_stream(),
+                            jit_stream,
                             reinterpret_cast<CUdeviceptr>(params_buffer_),
                             launch_params_size,
                             &sbt,
@@ -308,6 +329,18 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
                             1,
                             1),
                 "optixLaunch(multipath)");
+
+    if (time_optix_launch) {
+        audit_cuda_event_record();
+        check_cuda(cudaEventRecord(stop_event, cuda_stream), "cudaEventRecord(stop)");
+        check_cuda(cudaEventSynchronize(stop_event), "cudaEventSynchronize(stop)");
+        float elapsed_ms = 0.0f;
+        check_cuda(cudaEventElapsedTime(&elapsed_ms, start_event, stop_event),
+                   "cudaEventElapsedTime(optixLaunch)");
+        audit_optix_launch_duration_ms(static_cast<double>(elapsed_ms));
+        check_cuda(cudaEventDestroy(start_event), "cudaEventDestroy(start)");
+        check_cuda(cudaEventDestroy(stop_event), "cudaEventDestroy(stop)");
+    }
 }
 
 OptixPipelineConfig reflection_trace_pipeline_config() {

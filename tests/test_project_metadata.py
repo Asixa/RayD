@@ -161,8 +161,9 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertGreaterEqual(end, 0, "Missing end of native segment-pair visibility helper.")
         body = source[start:end]
 
-        self.assertGreaterEqual(body.count("launch_segment_visibility_detached("), 2)
-        self.assertNotIn("out_visible_b", body)
+        self.assertNotIn("launch_segment_visibility_detached(", body)
+        self.assertIn("out_visible_b", body)
+        self.assertIn("segment_pair_visibility_pipeline_config", source)
         self.assertIn("params.out_first_blocked_prim[ray]", segment_source)
 
     def test_public_optix_cold_create_matrix_covers_multipath_apis(self):

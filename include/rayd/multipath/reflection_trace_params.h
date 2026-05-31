@@ -46,12 +46,15 @@ struct ReflectionTraceParams {
     const uint8_t *active_mask;
     int n_rays;
     int max_bounces;
+    int export_mode;
+    int return_trailing;
 
     // Outputs: per-ray bounce_count plus ray-major (n_rays * max_bounces) per-slot
     // arrays, and the trailing-segment state past the last reflection.
     int *out_bounce_count;
     int *out_shape_ids;
     int *out_prim_ids;
+    int *out_global_prim_ids;
     float *out_t;
     float *out_bary_u;
     float *out_bary_v;

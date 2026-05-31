@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <string>
@@ -108,6 +109,7 @@ struct ReflectionTraceRaw {
     Int representative_ray_index;
     Int shape_ids;
     Int prim_ids;
+    Int global_prim_ids;
     Float t;
     Float bary_u;
     Float bary_v;
@@ -403,30 +405,47 @@ ReflEpcOptions epc_options_from_field_options(
 }
 
 template <bool Detached>
-ReflectionChainT<Detached> initialize_reflection_chain_result(int ray_count,
-                                                              int max_bounces) {
+ReflectionChainT<Detached> initialize_reflection_chain_result(
+    int ray_count,
+    int max_bounces,
+    int export_mode = RAYD_REFLECTION_EXPORT_FULL,
+    bool return_trailing = true,
+    bool include_shape_ids = true) {
     ReflectionChainT<Detached> result;
     result.max_bounces = max_bounces;
     result.ray_count = ray_count;
 
     const int slot_count = ray_count * max_bounces;
+    const bool full_export = export_mode == RAYD_REFLECTION_EXPORT_FULL;
+    const bool minimal_export = export_mode == RAYD_REFLECTION_EXPORT_MINIMAL;
+    const bool slot_ids_export = full_export || minimal_export;
     result.bounce_count = full<IntT<Detached>>(0, ray_count);
-    result.discovery_count = full<IntT<Detached>>(0, ray_count);
-    result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
-    result.t = full<FloatT<Detached>>(Infinity, slot_count);
-    result.hit_points = zeros<Vector3fT<Detached>>(slot_count);
-    result.geo_normals = zeros<Vector3fT<Detached>>(slot_count);
-    result.image_sources = zeros<Vector3fT<Detached>>(slot_count);
-    result.plane_points = zeros<Vector3fT<Detached>>(slot_count);
-    result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
-    result.shape_ids = full<IntT<Detached>>(-1, slot_count);
-    result.prim_ids = full<IntT<Detached>>(-1, slot_count);
-    result.local_prim_ids = full<IntT<Detached>>(-1, slot_count);
-    result.global_prim_ids = full<IntT<Detached>>(-1, slot_count);
-    result.trailing_t = full<FloatT<Detached>>(Infinity, ray_count);
-    result.trailing_prim = full<IntT<Detached>>(-1, ray_count);
-    result.trailing_dir = zeros<Vector3fT<Detached>>(ray_count);
-    result.trailing_origin = zeros<Vector3fT<Detached>>(ray_count);
+    if (full_export) {
+        result.discovery_count = full<IntT<Detached>>(0, ray_count);
+        result.representative_ray_index = full<IntT<Detached>>(-1, ray_count);
+    }
+    if (slot_ids_export) {
+        result.t = full<FloatT<Detached>>(Infinity, slot_count);
+        result.prim_ids = full<IntT<Detached>>(-1, slot_count);
+        result.local_prim_ids = full<IntT<Detached>>(-1, slot_count);
+        result.global_prim_ids = full<IntT<Detached>>(-1, slot_count);
+    }
+    if (slot_ids_export && include_shape_ids) {
+        result.shape_ids = full<IntT<Detached>>(-1, slot_count);
+    }
+    if (full_export) {
+        result.hit_points = zeros<Vector3fT<Detached>>(slot_count);
+        result.geo_normals = zeros<Vector3fT<Detached>>(slot_count);
+        result.image_sources = zeros<Vector3fT<Detached>>(slot_count);
+        result.plane_points = zeros<Vector3fT<Detached>>(slot_count);
+        result.plane_normals = zeros<Vector3fT<Detached>>(slot_count);
+    }
+    if (return_trailing) {
+        result.trailing_t = full<FloatT<Detached>>(Infinity, ray_count);
+        result.trailing_prim = full<IntT<Detached>>(-1, ray_count);
+        result.trailing_dir = zeros<Vector3fT<Detached>>(ray_count);
+        result.trailing_origin = zeros<Vector3fT<Detached>>(ray_count);
+    }
     return result;
 }
 
@@ -461,41 +480,63 @@ ReflectionTraceT<Detached> initialize_reflection_trace_result(
     return result;
 }
 
-ReflectionTraceRaw allocate_reflection_trace_raw(int ray_count, int max_bounces) {
+ReflectionTraceRaw allocate_reflection_trace_raw(
+    int ray_count,
+    int max_bounces,
+    int export_mode = RAYD_REFLECTION_EXPORT_FULL,
+    bool return_trailing = true,
+    bool include_shape_ids = true) {
     const int slot_count = ray_count * max_bounces;
+    const bool full_export = export_mode == RAYD_REFLECTION_EXPORT_FULL;
+    const bool minimal_export = export_mode == RAYD_REFLECTION_EXPORT_MINIMAL;
+    const bool slot_ids_export = full_export || minimal_export;
 
     ReflectionTraceRaw raw;
     raw.max_bounces = max_bounces;
     raw.ray_count = ray_count;
     raw.bounce_count = empty<Int>(ray_count);
-    raw.discovery_count = empty<Int>(ray_count);
-    raw.representative_ray_index = empty<Int>(ray_count);
-    raw.shape_ids = empty<Int>(slot_count);
-    raw.prim_ids = empty<Int>(slot_count);
-    raw.t = empty<Float>(slot_count);
-    raw.bary_u = empty<Float>(slot_count);
-    raw.bary_v = empty<Float>(slot_count);
-    raw.hit_x = empty<Float>(slot_count);
-    raw.hit_y = empty<Float>(slot_count);
-    raw.hit_z = empty<Float>(slot_count);
-    raw.norm_x = empty<Float>(slot_count);
-    raw.norm_y = empty<Float>(slot_count);
-    raw.norm_z = empty<Float>(slot_count);
-    raw.img_x = empty<Float>(slot_count);
-    raw.img_y = empty<Float>(slot_count);
-    raw.img_z = empty<Float>(slot_count);
-    raw.trailing_t = empty<Float>(ray_count);
-    raw.trailing_prim = empty<Int>(ray_count);
-    raw.trailing_dir_x = empty<Float>(ray_count);
-    raw.trailing_dir_y = empty<Float>(ray_count);
-    raw.trailing_dir_z = empty<Float>(ray_count);
-    raw.trailing_origin_x = empty<Float>(ray_count);
-    raw.trailing_origin_y = empty<Float>(ray_count);
-    raw.trailing_origin_z = empty<Float>(ray_count);
+    if (full_export) {
+        raw.discovery_count = empty<Int>(ray_count);
+        raw.representative_ray_index = empty<Int>(ray_count);
+    }
+    if (slot_ids_export && include_shape_ids) {
+        raw.shape_ids = empty<Int>(slot_count);
+    }
+    if (slot_ids_export) {
+        raw.prim_ids = empty<Int>(slot_count);
+        raw.t = empty<Float>(slot_count);
+    }
+    if (minimal_export) {
+        raw.global_prim_ids = empty<Int>(slot_count);
+    }
+    if (full_export) {
+        raw.bary_u = empty<Float>(slot_count);
+        raw.bary_v = empty<Float>(slot_count);
+        raw.hit_x = empty<Float>(slot_count);
+        raw.hit_y = empty<Float>(slot_count);
+        raw.hit_z = empty<Float>(slot_count);
+        raw.norm_x = empty<Float>(slot_count);
+        raw.norm_y = empty<Float>(slot_count);
+        raw.norm_z = empty<Float>(slot_count);
+        raw.img_x = empty<Float>(slot_count);
+        raw.img_y = empty<Float>(slot_count);
+        raw.img_z = empty<Float>(slot_count);
+    }
+    if (return_trailing) {
+        raw.trailing_t = empty<Float>(ray_count);
+        raw.trailing_prim = empty<Int>(ray_count);
+        raw.trailing_dir_x = empty<Float>(ray_count);
+        raw.trailing_dir_y = empty<Float>(ray_count);
+        raw.trailing_dir_z = empty<Float>(ray_count);
+        raw.trailing_origin_x = empty<Float>(ray_count);
+        raw.trailing_origin_y = empty<Float>(ray_count);
+        raw.trailing_origin_z = empty<Float>(ray_count);
+    }
     return raw;
 }
 
-void initialize_reflection_trace_raw(ReflectionTraceRaw &raw) {
+void initialize_reflection_trace_raw(ReflectionTraceRaw &raw,
+                                     bool initialize_bounce_count = true) {
     const int ray_count = raw.ray_count;
     const int slot_count = raw.ray_count * raw.max_bounces;
     const int zero_i = 0;
@@ -503,35 +544,88 @@ void initialize_reflection_trace_raw(ReflectionTraceRaw &raw) {
     const float zero_f = 0.f;
     const float inf_f = Infinity;
 
-    jit_memset_async(JitBackend::CUDA, raw.bounce_count.data(), ray_count, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA, raw.discovery_count.data(), ray_count, sizeof(int), &zero_i);
-    jit_memset_async(JitBackend::CUDA,
-                     raw.representative_ray_index.data(),
-                     ray_count,
-                     sizeof(int),
-                     &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.shape_ids.data(), slot_count, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.prim_ids.data(), slot_count, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.t.data(), slot_count, sizeof(float), &inf_f);
-    jit_memset_async(JitBackend::CUDA, raw.bary_u.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.bary_v.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.hit_z.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.norm_z.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_x.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_y.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.img_z.data(), slot_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_t.data(), ray_count, sizeof(float), &inf_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_prim.data(), ray_count, sizeof(int), &minus_one_i);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_x.data(), ray_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_y.data(), ray_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_dir_z.data(), ray_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_x.data(), ray_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_y.data(), ray_count, sizeof(float), &zero_f);
-    jit_memset_async(JitBackend::CUDA, raw.trailing_origin_z.data(), ray_count, sizeof(float), &zero_f);
+    if (initialize_bounce_count) {
+        jit_memset_async(JitBackend::CUDA, raw.bounce_count.data(), ray_count, sizeof(int), &zero_i);
+    }
+    if (slices(raw.discovery_count) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.discovery_count.data(), ray_count, sizeof(int), &zero_i);
+    }
+    if (slices(raw.representative_ray_index) > 0) {
+        jit_memset_async(JitBackend::CUDA,
+                         raw.representative_ray_index.data(),
+                         ray_count,
+                         sizeof(int),
+                         &minus_one_i);
+    }
+    if (slices(raw.shape_ids) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.shape_ids.data(), slot_count, sizeof(int), &minus_one_i);
+    }
+    if (slices(raw.prim_ids) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.prim_ids.data(), slot_count, sizeof(int), &minus_one_i);
+    }
+    if (slices(raw.global_prim_ids) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.global_prim_ids.data(), slot_count, sizeof(int), &minus_one_i);
+    }
+    if (slices(raw.t) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.t.data(), slot_count, sizeof(float), &inf_f);
+    }
+    if (slices(raw.bary_u) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.bary_u.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.bary_v) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.bary_v.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.hit_x) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.hit_x.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.hit_y) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.hit_y.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.hit_z) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.hit_z.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.norm_x) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.norm_x.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.norm_y) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.norm_y.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.norm_z) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.norm_z.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.img_x) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.img_x.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.img_y) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.img_y.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.img_z) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.img_z.data(), slot_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_t) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_t.data(), ray_count, sizeof(float), &inf_f);
+    }
+    if (slices(raw.trailing_prim) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_prim.data(), ray_count, sizeof(int), &minus_one_i);
+    }
+    if (slices(raw.trailing_dir_x) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_dir_x.data(), ray_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_dir_y) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_dir_y.data(), ray_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_dir_z) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_dir_z.data(), ray_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_origin_x) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_origin_x.data(), ray_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_origin_y) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_origin_y.data(), ray_count, sizeof(float), &zero_f);
+    }
+    if (slices(raw.trailing_origin_z) > 0) {
+        jit_memset_async(JitBackend::CUDA, raw.trailing_origin_z.data(), ray_count, sizeof(float), &zero_f);
+    }
 }
 
 AccumRaw allocate_reflection_accumulation_raw(int ray_count,
@@ -1313,33 +1407,36 @@ SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_native(
     SegmentPairVisibilityT<Detached> result;
     result.ray_count = ray_count;
 
-    const SegmentVisibilityLaunchResult launched_a =
-        launch_segment_visibility_detached(optix_scene,
-                                           pipeline,
-                                           face_offsets,
-                                           mesh_count,
-                                           start,
-                                           end_a,
-                                           ignore_prim_ids,
-                                           ignore_k,
-                                           active_detached);
-    const SegmentVisibilityLaunchResult launched_b =
-        launch_segment_visibility_detached(optix_scene,
-                                           pipeline,
-                                           face_offsets,
-                                           mesh_count,
-                                           start,
-                                           end_b,
-                                           ignore_prim_ids,
-                                           ignore_k,
-                                           active_detached);
+    Mask visible_a = empty<Mask>(ray_count);
+    Mask visible_b = empty<Mask>(ray_count);
+    eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end_a, end_b);
+
+    SegmentVisibilityParams params =
+        make_segment_visibility_params(optix_scene,
+                                       face_offsets,
+                                       mesh_count,
+                                       start,
+                                       ignore_prim_ids,
+                                       ignore_k,
+                                       active_detached,
+                                       ray_count);
+    params.end_x = end_a.x().data();
+    params.end_y = end_a.y().data();
+    params.end_z = end_a.z().data();
+    params.end_b_x = end_b.x().data();
+    params.end_b_y = end_b.y().data();
+    params.end_b_z = end_b.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
+    params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
+    pipeline.launch(0, params);
 
     if constexpr (!Detached) {
-        result.visible_a = MaskAD(launched_a.visible);
-        result.visible_b = MaskAD(launched_b.visible);
+        result.visible_a = MaskAD(visible_a);
+        result.visible_b = MaskAD(visible_b);
     } else {
-        result.visible_a = launched_a.visible;
-        result.visible_b = launched_b.visible;
+        result.visible_a = visible_a;
+        result.visible_b = visible_b;
     }
     return result;
 }
@@ -1502,49 +1599,31 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     result.chain_count = chain_count;
     result.max_segments = max_segments;
 
-    Mask all_visible = active_detached;
-    Int first_blocked_segment = full<Int>(-1, chain_count);
-    Int first_blocked_prim = full<Int>(-1, chain_count);
-    const Int chain_index = arange<Int>(chain_count);
+    Mask all_visible = empty<Mask>(chain_count);
+    Int first_blocked_segment = empty<Int>(chain_count);
+    Int first_blocked_prim = empty<Int>(chain_count);
+    eval_segment_visibility_common(
+        points, face_offsets, ignore_prim_per_segment, ignore_k, active_detached);
+    drjit::eval(chain_length);
 
-    for (int segment = 0; segment < max_segments; ++segment) {
-        const Mask has_segment = chain_length > Int(segment);
-        const Mask segment_active = all_visible && has_segment;
-        const Int start_index = chain_index * Int(max_points) + Int(segment);
-        const Vector3f segment_start =
-            gather<Vector3f>(points, start_index, segment_active);
-        const Vector3f segment_end =
-            gather<Vector3f>(points, start_index + Int(1), segment_active);
-
-        Int segment_ignore_ids;
-        if (ignore_k > 0) {
-            const Int ignore_lane = arange<Int>(chain_count * ignore_k);
-            const Int ignore_chain = ignore_lane / Int(ignore_k);
-            const Int ignore_slot = ignore_lane - ignore_chain * Int(ignore_k);
-            const Int source_slot =
-                (ignore_chain * Int(max_segments) + Int(segment)) * Int(ignore_k) +
-                ignore_slot;
-            segment_ignore_ids = gather<Int>(ignore_prim_per_segment, source_slot);
-        }
-
-        const SegmentVisibilityLaunchResult launched =
-            launch_segment_visibility_detached(optix_scene,
-                                               pipeline,
-                                               face_offsets,
-                                               mesh_count,
-                                               segment_start,
-                                               segment_end,
-                                               segment_ignore_ids,
-                                               ignore_k,
-                                               segment_active,
-                                               true);
-        const Mask blocked = segment_active && !launched.visible;
-        first_blocked_segment =
-            select(blocked, Int(segment), first_blocked_segment);
-        first_blocked_prim =
-            select(blocked, launched.blocker_prim, first_blocked_prim);
-        all_visible = all_visible && (!has_segment || launched.visible);
-    }
+    SegmentVisibilityParams params = {};
+    params.handle = optix_scene.ias_handle();
+    params.face_offsets = face_offsets.data();
+    params.n_meshes = mesh_count;
+    params.chain_point_x = points.x().data();
+    params.chain_point_y = points.y().data();
+    params.chain_point_z = points.z().data();
+    params.chain_length = chain_length.data();
+    params.max_points = max_points;
+    params.max_segments = max_segments;
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_per_segment.data() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.n_rays = chain_count;
+    params.out_visible = reinterpret_cast<uint8_t *>(all_visible.data());
+    params.out_first_blocked_segment = first_blocked_segment.data();
+    params.out_first_blocked_prim = first_blocked_prim.data();
+    pipeline.launch(0, params);
 
     if constexpr (!Detached) {
         result.all_visible = MaskAD(all_visible);
@@ -1731,10 +1810,29 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     require(!pending_updates_,
             "Scene::trace_reflections(): scene has pending updates. Call Scene::sync() first.");
     require(max_bounces > 0, "Scene::trace_reflections(): max_bounces must be positive.");
+    require(options.export_mode == RAYD_REFLECTION_EXPORT_FULL ||
+                options.export_mode == RAYD_REFLECTION_EXPORT_MINIMAL ||
+                options.export_mode == RAYD_REFLECTION_EXPORT_COUNT_ONLY,
+            "Scene::trace_reflections(): invalid reflection export mode.");
+    require(!options.deduplicate ||
+                options.export_mode == RAYD_REFLECTION_EXPORT_FULL,
+            "Scene::trace_reflections(): deduplicate requires full export mode.");
+    const int export_mode =
+        Detached ? options.export_mode : RAYD_REFLECTION_EXPORT_FULL;
 
     const int ray_count = static_cast<int>(slices(ray.o));
+    const bool include_shape_ids =
+        export_mode == RAYD_REFLECTION_EXPORT_FULL || !Detached;
+    const bool return_trailing =
+        options.return_trailing &&
+        export_mode != RAYD_REFLECTION_EXPORT_COUNT_ONLY;
     ReflectionChainT<Detached> result =
-        initialize_reflection_chain_result<Detached>(ray_count, max_bounces);
+        initialize_reflection_chain_result<Detached>(
+            ray_count,
+            max_bounces,
+            export_mode,
+            return_trailing,
+            include_shape_ids);
     if (ray_count == 0) {
         return result;
     }
@@ -1763,36 +1861,38 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             result.local_prim_ids = bounce.local_prim_ids;
             result.global_prim_ids = bounce.global_prim_ids;
 
-            const MaskT<Detached> trailing_active = trace.bounce_count > 0;
-            const Vector3fT<Detached> reflected_direction =
-                ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
-            const Vector3fT<Detached> trailing_origin =
-                bounce.hit_points + Epsilon * reflected_direction;
-            RayT<Detached> trailing_ray(
-                trailing_origin,
-                reflected_direction,
-                full<FloatT<Detached>>(Infinity, ray_count));
-            const IntersectionT<Detached> trailing =
-                this->template intersect<Detached>(
-                    trailing_ray, trailing_active, RayFlags::Geometric);
-            const MaskT<Detached> trailing_hit =
-                trailing_active && trailing.is_valid();
-            result.trailing_t =
-                select(trailing_hit,
-                       trailing.t,
-                       full<FloatT<Detached>>(Infinity, ray_count));
-            result.trailing_prim =
-                select(trailing_hit,
-                       trailing.global_prim_id,
-                       full<IntT<Detached>>(-1, ray_count));
-            result.trailing_dir =
-                select(trailing_active,
-                       reflected_direction,
-                       zeros<Vector3fT<Detached>>(ray_count));
-            result.trailing_origin =
-                select(trailing_active,
-                       trailing_origin,
-                       zeros<Vector3fT<Detached>>(ray_count));
+            if (return_trailing) {
+                const MaskT<Detached> trailing_active = trace.bounce_count > 0;
+                const Vector3fT<Detached> reflected_direction =
+                    ray.d - 2.f * dot(ray.d, bounce.geo_normals) * bounce.geo_normals;
+                const Vector3fT<Detached> trailing_origin =
+                    bounce.hit_points + Epsilon * reflected_direction;
+                RayT<Detached> trailing_ray(
+                    trailing_origin,
+                    reflected_direction,
+                    full<FloatT<Detached>>(Infinity, ray_count));
+                const IntersectionT<Detached> trailing =
+                    this->template intersect<Detached>(
+                        trailing_ray, trailing_active, RayFlags::Geometric);
+                const MaskT<Detached> trailing_hit =
+                    trailing_active && trailing.is_valid();
+                result.trailing_t =
+                    select(trailing_hit,
+                           trailing.t,
+                           full<FloatT<Detached>>(Infinity, ray_count));
+                result.trailing_prim =
+                    select(trailing_hit,
+                           trailing.global_prim_id,
+                           full<IntT<Detached>>(-1, ray_count));
+                result.trailing_dir =
+                    select(trailing_active,
+                           reflected_direction,
+                           zeros<Vector3fT<Detached>>(ray_count));
+                result.trailing_origin =
+                    select(trailing_active,
+                           trailing_origin,
+                           zeros<Vector3fT<Detached>>(ray_count));
+            }
         }
         return result;
     }
@@ -1846,8 +1946,13 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         drjit::eval(options.canonical_prim_table);
     }
 
-    ReflectionTraceRaw raw = allocate_reflection_trace_raw(ray_count, max_bounces);
-    initialize_reflection_trace_raw(raw);
+    ReflectionTraceRaw raw =
+        allocate_reflection_trace_raw(ray_count,
+                                      max_bounces,
+                                      export_mode,
+                                      return_trailing,
+                                      include_shape_ids);
+    initialize_reflection_trace_raw(raw, false);
 
     ReflectionTraceParams params = {};
     params.primary_handle = primary_scene->ias_handle();
@@ -1879,41 +1984,58 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
     params.n_rays = ray_count;
     params.max_bounces = max_bounces;
+    params.export_mode = export_mode;
+    params.return_trailing = return_trailing ? 1 : 0;
     params.out_bounce_count = raw.bounce_count.data();
-    params.out_shape_ids = raw.shape_ids.data();
-    params.out_prim_ids = raw.prim_ids.data();
-    params.out_t = raw.t.data();
-    params.out_bary_u = raw.bary_u.data();
-    params.out_bary_v = raw.bary_v.data();
-    params.out_hit_x = raw.hit_x.data();
-    params.out_hit_y = raw.hit_y.data();
-    params.out_hit_z = raw.hit_z.data();
-    params.out_norm_x = raw.norm_x.data();
-    params.out_norm_y = raw.norm_y.data();
-    params.out_norm_z = raw.norm_z.data();
-    params.out_img_x = raw.img_x.data();
-    params.out_img_y = raw.img_y.data();
-    params.out_img_z = raw.img_z.data();
-    params.out_trailing_t = raw.trailing_t.data();
-    params.out_trailing_prim = raw.trailing_prim.data();
-    params.out_trailing_dir_x = raw.trailing_dir_x.data();
-    params.out_trailing_dir_y = raw.trailing_dir_y.data();
-    params.out_trailing_dir_z = raw.trailing_dir_z.data();
-    params.out_trailing_origin_x = raw.trailing_origin_x.data();
-    params.out_trailing_origin_y = raw.trailing_origin_y.data();
-    params.out_trailing_origin_z = raw.trailing_origin_z.data();
+    params.out_shape_ids = slices(raw.shape_ids) > 0 ? raw.shape_ids.data() : nullptr;
+    params.out_prim_ids = slices(raw.prim_ids) > 0 ? raw.prim_ids.data() : nullptr;
+    params.out_global_prim_ids =
+        slices(raw.global_prim_ids) > 0 ? raw.global_prim_ids.data() : nullptr;
+    params.out_t = slices(raw.t) > 0 ? raw.t.data() : nullptr;
+    params.out_bary_u = slices(raw.bary_u) > 0 ? raw.bary_u.data() : nullptr;
+    params.out_bary_v = slices(raw.bary_v) > 0 ? raw.bary_v.data() : nullptr;
+    params.out_hit_x = slices(raw.hit_x) > 0 ? raw.hit_x.data() : nullptr;
+    params.out_hit_y = slices(raw.hit_y) > 0 ? raw.hit_y.data() : nullptr;
+    params.out_hit_z = slices(raw.hit_z) > 0 ? raw.hit_z.data() : nullptr;
+    params.out_norm_x = slices(raw.norm_x) > 0 ? raw.norm_x.data() : nullptr;
+    params.out_norm_y = slices(raw.norm_y) > 0 ? raw.norm_y.data() : nullptr;
+    params.out_norm_z = slices(raw.norm_z) > 0 ? raw.norm_z.data() : nullptr;
+    params.out_img_x = slices(raw.img_x) > 0 ? raw.img_x.data() : nullptr;
+    params.out_img_y = slices(raw.img_y) > 0 ? raw.img_y.data() : nullptr;
+    params.out_img_z = slices(raw.img_z) > 0 ? raw.img_z.data() : nullptr;
+    params.out_trailing_t =
+        slices(raw.trailing_t) > 0 ? raw.trailing_t.data() : nullptr;
+    params.out_trailing_prim =
+        slices(raw.trailing_prim) > 0 ? raw.trailing_prim.data() : nullptr;
+    params.out_trailing_dir_x =
+        slices(raw.trailing_dir_x) > 0 ? raw.trailing_dir_x.data() : nullptr;
+    params.out_trailing_dir_y =
+        slices(raw.trailing_dir_y) > 0 ? raw.trailing_dir_y.data() : nullptr;
+    params.out_trailing_dir_z =
+        slices(raw.trailing_dir_z) > 0 ? raw.trailing_dir_z.data() : nullptr;
+    params.out_trailing_origin_x =
+        slices(raw.trailing_origin_x) > 0 ? raw.trailing_origin_x.data() : nullptr;
+    params.out_trailing_origin_y =
+        slices(raw.trailing_origin_y) > 0 ? raw.trailing_origin_y.data() : nullptr;
+    params.out_trailing_origin_z =
+        slices(raw.trailing_origin_z) > 0 ? raw.trailing_origin_z.data() : nullptr;
 
     reflection_pipeline_->launch(0, params);
 
     int trace_ray_count = ray_count;
     Int trace_bounce_count = raw.bounce_count;
-    Int trace_discovery_count =
-        select(raw.bounce_count > 0,
-               full<Int>(1, ray_count),
-               full<Int>(0, ray_count));
-    Int trace_representative_ray_index = arange<Int>(ray_count);
+    Int trace_discovery_count;
+    Int trace_representative_ray_index;
+    if (export_mode == RAYD_REFLECTION_EXPORT_FULL) {
+        trace_discovery_count =
+            select(raw.bounce_count > 0,
+                   full<Int>(1, ray_count),
+                   full<Int>(0, ray_count));
+        trace_representative_ray_index = arange<Int>(ray_count);
+    }
     Int trace_shape_ids = raw.shape_ids;
     Int trace_prim_ids = raw.prim_ids;
+    Int trace_global_prim_ids = raw.global_prim_ids;
     Float trace_t = raw.t;
     Float trace_hit_x = raw.hit_x;
     Float trace_hit_y = raw.hit_y;
@@ -1935,7 +2057,7 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
 
     if (options.deduplicate) {
         ReflectionTraceRaw compacted = allocate_reflection_trace_raw(ray_count, max_bounces);
-        initialize_reflection_trace_raw(compacted);
+        initialize_reflection_trace_raw(compacted, false);
 
         const Int canonical_table = options.canonical_prim_table;
         const int canonical_table_size = static_cast<int>(slices(canonical_table));
@@ -2018,33 +2140,57 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         result.ray_count = trace_ray_count;
     }
 
-    const Int trace_global_prim_ids =
-        globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
+    if (slices(trace_global_prim_ids) == 0 &&
+        slices(trace_prim_ids) > 0 &&
+        slices(trace_shape_ids) > 0) {
+        trace_global_prim_ids =
+            globalize_primitive_ids(trace_prim_ids, trace_shape_ids, face_offsets_);
+    }
 
     if constexpr (Detached) {
-        const Vector3f hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
-        const Vector3f plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
         result.bounce_count = trace_bounce_count;
-        result.discovery_count = trace_discovery_count;
-        result.representative_ray_index = trace_representative_ray_index;
-        result.t = trace_t;
-        result.hit_points = hit_points;
-        result.geo_normals = plane_normals;
-        result.image_sources = Vector3f(trace_img_x, trace_img_y, trace_img_z);
-        result.plane_points = hit_points;
-        result.plane_normals = plane_normals;
-        result.shape_ids = trace_shape_ids;
-        result.prim_ids = trace_prim_ids;
-        result.local_prim_ids = trace_prim_ids;
-        result.global_prim_ids = trace_global_prim_ids;
-        result.trailing_t = trace_trailing_t;
-        result.trailing_prim = trace_trailing_prim;
-        result.trailing_dir = Vector3f(trace_trailing_dir_x,
-                                               trace_trailing_dir_y,
-                                               trace_trailing_dir_z);
-        result.trailing_origin = Vector3f(trace_trailing_origin_x,
-                                                  trace_trailing_origin_y,
-                                                  trace_trailing_origin_z);
+        if (slices(trace_discovery_count) > 0) {
+            result.discovery_count = trace_discovery_count;
+        }
+        if (slices(trace_representative_ray_index) > 0) {
+            result.representative_ray_index = trace_representative_ray_index;
+        }
+        if (slices(trace_t) > 0) {
+            result.t = trace_t;
+        }
+        if (slices(trace_hit_x) > 0) {
+            const Vector3f hit_points(trace_hit_x, trace_hit_y, trace_hit_z);
+            result.hit_points = hit_points;
+            result.plane_points = hit_points;
+        }
+        if (slices(trace_norm_x) > 0) {
+            const Vector3f plane_normals(trace_norm_x, trace_norm_y, trace_norm_z);
+            result.geo_normals = plane_normals;
+            result.plane_normals = plane_normals;
+        }
+        if (slices(trace_img_x) > 0) {
+            result.image_sources = Vector3f(trace_img_x, trace_img_y, trace_img_z);
+        }
+        if (slices(trace_shape_ids) > 0) {
+            result.shape_ids = trace_shape_ids;
+        }
+        if (slices(trace_prim_ids) > 0) {
+            result.prim_ids = trace_prim_ids;
+            result.local_prim_ids = trace_prim_ids;
+        }
+        if (slices(trace_global_prim_ids) > 0) {
+            result.global_prim_ids = trace_global_prim_ids;
+        }
+        if (return_trailing) {
+            result.trailing_t = trace_trailing_t;
+            result.trailing_prim = trace_trailing_prim;
+            result.trailing_dir = Vector3f(trace_trailing_dir_x,
+                                                   trace_trailing_dir_y,
+                                                   trace_trailing_dir_z);
+            result.trailing_origin = Vector3f(trace_trailing_origin_x,
+                                                      trace_trailing_origin_y,
+                                                      trace_trailing_origin_z);
+        }
         return result;
     } else {
         result = initialize_reflection_chain_result<false>(trace_ray_count, max_bounces);
@@ -2147,27 +2293,29 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
             current_active_detached = detach<false>(bounce_hit);
         }
 
-        const MaskAD trailing_active = result.bounce_count > 0;
-        const IntersectionAD trailing =
-            this->template intersect<false>(
-                current_ray, trailing_active, RayFlags::Geometric);
-        const MaskAD trailing_hit = trailing_active && trailing.is_valid();
-        result.trailing_t =
-            select(trailing_hit,
-                   trailing.t,
-                   full<FloatAD>(Infinity, trace_ray_count));
-        result.trailing_prim =
-            select(trailing_hit,
-                   trailing.global_prim_id,
-                   full<IntAD>(-1, trace_ray_count));
-        result.trailing_dir =
-            select(trailing_active,
-                   current_ray.d,
-                   zeros<Vector3fAD>(trace_ray_count));
-        result.trailing_origin =
-            select(trailing_active,
-                   current_ray.o,
-                   zeros<Vector3fAD>(trace_ray_count));
+        if (return_trailing) {
+            const MaskAD trailing_active = result.bounce_count > 0;
+            const IntersectionAD trailing =
+                this->template intersect<false>(
+                    current_ray, trailing_active, RayFlags::Geometric);
+            const MaskAD trailing_hit = trailing_active && trailing.is_valid();
+            result.trailing_t =
+                select(trailing_hit,
+                       trailing.t,
+                       full<FloatAD>(Infinity, trace_ray_count));
+            result.trailing_prim =
+                select(trailing_hit,
+                       trailing.global_prim_id,
+                       full<IntAD>(-1, trace_ray_count));
+            result.trailing_dir =
+                select(trailing_active,
+                       current_ray.d,
+                       zeros<Vector3fAD>(trace_ray_count));
+            result.trailing_origin =
+                select(trailing_active,
+                       current_ray.o,
+                       zeros<Vector3fAD>(trace_ray_count));
+        }
 
         return result;
     }
@@ -6922,10 +7070,6 @@ SegmentVisibilityT<Detached> Scene::visible(
             *optix_scene_, start_detached, end_detached, active_detached);
     }
 
-    eval_segment_visibility_common(
-        start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
-    drjit::eval(end_detached);
-
     ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
                     mesh_count_, segment_visibility_pipeline_config());
 
@@ -6998,16 +7142,12 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
             active_detached);
     }
 
-    eval_segment_visibility_common(
-        start_detached, face_offsets_, ignore_prim_ids, ignore_k, active_detached);
-    drjit::eval(end_a_detached, end_b_detached);
-
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
+    ensure_pipeline(segment_pair_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_pair_visibility_pipeline_config());
 
     return trace_segment_pair_visibility_native<Detached>(
         *optix_scene_,
-        *segment_visibility_pipeline_,
+        *segment_pair_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
         start_detached,
@@ -7175,37 +7315,12 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
             active_detached);
     }
 
-    const Int first_chain_index = arange<Int>(chain_count);
-    const Mask first_segment_active =
-        active_detached && (chain_length > Int(0));
-    const Int first_start_index = first_chain_index * Int(max_points);
-    const Vector3f first_segment_start =
-        gather<Vector3f>(points_detached, first_start_index, first_segment_active);
-    const Vector3f first_segment_end =
-        gather<Vector3f>(points_detached, first_start_index + Int(1), first_segment_active);
-    Int first_ignore_ids;
-    if (ignore_k > 0) {
-        const Int ignore_lane = arange<Int>(chain_count * ignore_k);
-        const Int ignore_chain = ignore_lane / Int(ignore_k);
-        const Int ignore_slot = ignore_lane - ignore_chain * Int(ignore_k);
-        first_ignore_ids =
-            gather<Int>(ignore_prim_per_segment,
-                        ignore_chain * Int(max_segments * ignore_k) + ignore_slot);
-    }
-    eval_segment_visibility_common(
-        first_segment_start, face_offsets_, first_ignore_ids, ignore_k, first_segment_active);
-    drjit::eval(first_segment_end);
-
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
-                    mesh_count_, segment_visibility_pipeline_config());
-
-    eval_segment_visibility_common(
-        points_detached, face_offsets_, ignore_prim_per_segment, ignore_k, active_detached);
-    drjit::eval(chain_length);
+    ensure_pipeline(segment_chain_visibility_pipeline_, optix_scene_->context(),
+                    mesh_count_, segment_chain_visibility_pipeline_config());
 
     return trace_segment_chain_visibility_native<Detached>(
         *optix_scene_,
-        *segment_visibility_pipeline_,
+        *segment_chain_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
         points_detached,

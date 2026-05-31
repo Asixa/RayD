@@ -208,6 +208,9 @@ NB_MODULE(rayd, m) {
         result["optix_accel_build"] = stats.optix_accel_build;
         result["optix_accel_compact"] = stats.optix_accel_compact;
         result["optix_launch"] = stats.optix_launch;
+        result["optix_launch_time_ms"] = stats.optix_launch_time_ms;
+        result["optix_launch_time_min_ms"] = stats.optix_launch_time_min_ms;
+        result["optix_launch_time_max_ms"] = stats.optix_launch_time_max_ms;
         result["kernels"] = kernels;
         return result;
     };
@@ -237,6 +240,12 @@ NB_MODULE(rayd, m) {
     m.def("current_device",
           []() { return checked_cuda_device_count() > 0 ? jit_cuda_device() : 0; },
           "Return the current thread's active Dr.Jit CUDA device index.");
+    m.attr("REFLECTION_EXPORT_FULL") =
+        nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_FULL));
+    m.attr("REFLECTION_EXPORT_MINIMAL") =
+        nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_MINIMAL));
+    m.attr("REFLECTION_EXPORT_COUNT_ONLY") =
+        nb::int_(static_cast<int>(RAYD_REFLECTION_EXPORT_COUNT_ONLY));
     m.def("native_launch_audit_clear",
           &native_launch_audit_clear,
           "Clear grouped native launch audit counters.");
@@ -347,7 +356,9 @@ NB_MODULE(rayd, m) {
             .def(nb::init<>())
             .def_rw("deduplicate", &ReflectionTraceOptions::deduplicate)
             .def_rw("canonical_prim_table", &ReflectionTraceOptions::canonical_prim_table)
-            .def_rw("image_source_tolerance", &ReflectionTraceOptions::image_source_tolerance);
+            .def_rw("image_source_tolerance", &ReflectionTraceOptions::image_source_tolerance)
+            .def_rw("export_mode", &ReflectionTraceOptions::export_mode)
+            .def_rw("return_trailing", &ReflectionTraceOptions::return_trailing);
 
         nb::class_<ReflEpcOptions>(m, "ReflEpcOptions")
             .def(nb::init<>())

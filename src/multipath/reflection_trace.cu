@@ -208,24 +208,57 @@ extern "C" __global__ void __raygen__reflection_trace() {
             geo_normal = -1.0f * geo_normal;
         }
 
-        const float image_distance = dot3(image_source - hit_point, geo_normal);
-        image_source = image_source - 2.0f * image_distance * geo_normal;
+        const bool write_image_source =
+            params.out_img_x != nullptr &&
+            params.out_img_y != nullptr &&
+            params.out_img_z != nullptr;
+        if (write_image_source) {
+            const float image_distance = dot3(image_source - hit_point, geo_normal);
+            image_source = image_source - 2.0f * image_distance * geo_normal;
+        }
 
         const int slot = base + bounce;
-        params.out_shape_ids[slot] = shape_id;
-        params.out_prim_ids[slot] = local_prim;
-        params.out_t[slot] = t;
-        params.out_bary_u[slot] = bary_u;
-        params.out_bary_v[slot] = bary_v;
-        params.out_hit_x[slot] = hit_point.x;
-        params.out_hit_y[slot] = hit_point.y;
-        params.out_hit_z[slot] = hit_point.z;
-        params.out_norm_x[slot] = geo_normal.x;
-        params.out_norm_y[slot] = geo_normal.y;
-        params.out_norm_z[slot] = geo_normal.z;
-        params.out_img_x[slot] = image_source.x;
-        params.out_img_y[slot] = image_source.y;
-        params.out_img_z[slot] = image_source.z;
+        if (params.out_shape_ids != nullptr) {
+            params.out_shape_ids[slot] = shape_id;
+        }
+        if (params.out_prim_ids != nullptr) {
+            params.out_prim_ids[slot] = local_prim;
+        }
+        if (params.out_global_prim_ids != nullptr) {
+            params.out_global_prim_ids[slot] = global_prim;
+        }
+        if (params.out_t != nullptr) {
+            params.out_t[slot] = t;
+        }
+        if (params.out_bary_u != nullptr) {
+            params.out_bary_u[slot] = bary_u;
+        }
+        if (params.out_bary_v != nullptr) {
+            params.out_bary_v[slot] = bary_v;
+        }
+        if (params.out_hit_x != nullptr) {
+            params.out_hit_x[slot] = hit_point.x;
+        }
+        if (params.out_hit_y != nullptr) {
+            params.out_hit_y[slot] = hit_point.y;
+        }
+        if (params.out_hit_z != nullptr) {
+            params.out_hit_z[slot] = hit_point.z;
+        }
+        if (params.out_norm_x != nullptr) {
+            params.out_norm_x[slot] = geo_normal.x;
+        }
+        if (params.out_norm_y != nullptr) {
+            params.out_norm_y[slot] = geo_normal.y;
+        }
+        if (params.out_norm_z != nullptr) {
+            params.out_norm_z[slot] = geo_normal.z;
+        }
+        if (write_image_source) {
+            params.out_img_x[slot] = image_source.x;
+            params.out_img_y[slot] = image_source.y;
+            params.out_img_z[slot] = image_source.z;
+        }
 
         const float dot_dn = dot3(direction, geo_normal);
         direction = direction - 2.0f * dot_dn * geo_normal;
@@ -233,13 +266,25 @@ extern "C" __global__ void __raygen__reflection_trace() {
         bounce_count = bounce + 1;
     }
 
-    if (bounce_count > 0) {
-        params.out_trailing_dir_x[ray_index] = direction.x;
-        params.out_trailing_dir_y[ray_index] = direction.y;
-        params.out_trailing_dir_z[ray_index] = direction.z;
-        params.out_trailing_origin_x[ray_index] = origin.x;
-        params.out_trailing_origin_y[ray_index] = origin.y;
-        params.out_trailing_origin_z[ray_index] = origin.z;
+    if (bounce_count > 0 && params.return_trailing != 0) {
+        if (params.out_trailing_dir_x != nullptr) {
+            params.out_trailing_dir_x[ray_index] = direction.x;
+        }
+        if (params.out_trailing_dir_y != nullptr) {
+            params.out_trailing_dir_y[ray_index] = direction.y;
+        }
+        if (params.out_trailing_dir_z != nullptr) {
+            params.out_trailing_dir_z[ray_index] = direction.z;
+        }
+        if (params.out_trailing_origin_x != nullptr) {
+            params.out_trailing_origin_x[ray_index] = origin.x;
+        }
+        if (params.out_trailing_origin_y != nullptr) {
+            params.out_trailing_origin_y[ray_index] = origin.y;
+        }
+        if (params.out_trailing_origin_z != nullptr) {
+            params.out_trailing_origin_z[ray_index] = origin.z;
+        }
 
         HitPayload trailing_primary;
         trace_handle(params.primary_handle, origin, direction, kTraceTMax, trailing_primary);
@@ -256,8 +301,12 @@ extern "C" __global__ void __raygen__reflection_trace() {
             const int local_prim = static_cast<int>(trailing.prim);
             const int face_offset =
                 (shape_id >= 0 && shape_id < params.n_meshes) ? params.face_offsets[shape_id] : 0;
-            params.out_trailing_t[ray_index] = __uint_as_float(trailing.t);
-            params.out_trailing_prim[ray_index] = face_offset + local_prim;
+            if (params.out_trailing_t != nullptr) {
+                params.out_trailing_t[ray_index] = __uint_as_float(trailing.t);
+            }
+            if (params.out_trailing_prim != nullptr) {
+                params.out_trailing_prim[ray_index] = face_offset + local_prim;
+            }
         }
     }
 
