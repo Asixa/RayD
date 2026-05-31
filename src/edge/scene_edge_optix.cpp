@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -39,6 +40,27 @@ void ensure_device_buffer(void *&buffer, size_t &buffer_size, size_t required_si
     }
     buffer = jit_malloc(AllocType::Device, required_size);
     buffer_size = required_size;
+}
+
+bool any_active_lane(const Mask &mask) {
+    drjit::eval(mask);
+    return !drjit::none(mask);
+}
+
+bool prepare_stage_mask(const Mask &mask, bool early_exit, bool first_stage) {
+    if (first_stage || !early_exit) {
+        drjit::eval(mask);
+        return true;
+    }
+    return any_active_lane(mask);
+}
+
+bool edge_optix_stage_early_exit_enabled() {
+    static const bool enabled = []() {
+        const char *value = std::getenv("RAYD_EDGE_OPTIX_STAGE_EARLY_EXIT");
+        return value == nullptr || std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
 }
 
 } // namespace
@@ -599,13 +621,18 @@ ClosestEdgeCandidate SceneEdgeOptix::nearest_edge(const Vector3fT<Detached> &poi
     drjit::eval(point_detached, active_detached, edge_mask_);
 
     Mask unresolved = active_detached;
+    const bool early_exit = edge_optix_stage_early_exit_enabled();
+    bool first_stage = true;
     for (const EdgeOptixState::Gas &gas : state_->gases) {
+        if (!prepare_stage_mask(unresolved, early_exit, first_stage)) {
+            break;
+        }
+        first_stage = false;
         ClosestEdgeCandidate stage;
         stage.global_edge_id = full<Int>(-1, query_count);
         stage.distance_sq = full<Float>(Infinity, query_count);
         Float edge_t = empty<Float>(query_count);
         Mask valid = empty<Mask>(query_count);
-        drjit::eval(unresolved);
 
         EdgeOptixQueryParams params = {};
         params.handle = gas.gas_handle;
@@ -763,7 +790,13 @@ ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges(const Vector3fT<Detached>
     const Int output_query_indices = output_indices / k;
     const Mask output_active = full<Mask>(true, output_count);
     const Int kth_slot = arange<Int>(query_count) * k + (k - 1);
+    const bool early_exit = edge_optix_stage_early_exit_enabled();
+    bool first_stage = true;
     for (const EdgeOptixState::Gas &gas : state_->gases) {
+        if (!prepare_stage_mask(unresolved, early_exit, first_stage)) {
+            break;
+        }
+        first_stage = false;
         ClosestEdgeTopKCandidate stage;
         stage.query_count = query_count;
         stage.k = k;
@@ -771,7 +804,6 @@ ClosestEdgeTopKCandidate SceneEdgeOptix::nearest_edges(const Vector3fT<Detached>
         stage.global_edge_ids = full<Int>(-1, output_count);
         stage.distance_sq = full<Float>(Infinity, output_count);
         Float edge_t = empty<Float>(output_count);
-        drjit::eval(unresolved);
 
         EdgeOptixQueryParams params = {};
         params.handle = gas.gas_handle;
