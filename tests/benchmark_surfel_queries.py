@@ -57,6 +57,37 @@ def make_surfel_grid(side: int, spacing: float) -> rd.SurfelCloud:
     )
 
 
+def make_surfel_geometry(side: int, spacing: float, ad_mode: bool = False) -> rd.SurfelGeometry:
+    centers_x: list[float] = []
+    centers_y: list[float] = []
+    centers_z: list[float] = []
+    half = 0.5 * (side - 1)
+    for iy in range(side):
+        for ix in range(side):
+            centers_x.append((ix - half) * spacing)
+            centers_y.append((iy - half) * spacing)
+            centers_z.append(0.0)
+
+    count = side * side
+    radius = spacing * 0.48
+    array3 = ad.Array3f if ad_mode else cuda.Array3f
+    scalar = ad.Float if ad_mode else cuda.Float
+    return rd.SurfelGeometry(
+        array3(scalar(centers_x), scalar(centers_y), scalar(centers_z)),
+        array3(scalar([radius] * count), scalar([0.0] * count), scalar([0.0] * count)),
+        array3(scalar([0.0] * count), scalar([radius] * count), scalar([0.0] * count)),
+    )
+
+
+def make_rgb_appearance(count: int, ad_mode: bool = False) -> rd.SurfelAppearance:
+    scalar = ad.Float if ad_mode else cuda.Float
+    array3 = ad.Array3f if ad_mode else cuda.Array3f
+    return rd.SurfelAppearance.rgb(
+        scalar([0.75] * count),
+        array3(scalar([0.2] * count), scalar([0.4] * count), scalar([0.6] * count)),
+    )
+
+
 def make_ortho_rays(width: int, height: int, extent: float, z: float = 2.0) -> rd.Ray:
     xs: list[float] = []
     ys: list[float] = []
@@ -76,6 +107,10 @@ def make_ortho_rays(width: int, height: int, extent: float, z: float = 2.0) -> r
 
 def materialize(its: rd.SurfelIntersection) -> None:
     dr.eval(its.t, its.surfel_id, its.triangle_id, its.gaussian_weight)
+
+
+def materialize_render(out) -> None:
+    dr.eval(out.rgb, out.alpha, out.transmittance, out.depth)
 
 
 def benchmark_mode(
@@ -127,6 +162,87 @@ def benchmark_mode(
         "valid_count": valid_count,
         "build_ms": build_ms,
         "trace": summarize(samples_ms),
+    }
+
+
+def benchmark_appearance_pipeline(
+    side: int,
+    spacing: float,
+    rays: rd.Ray,
+    ray_count: int,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    opts = rd.SurfelTraceOptions()
+    opts.alpha_min = 1.0 / 255.0
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
+    opts.single_launch = True
+    surfel_count = side * side
+
+    dr.sync_thread()
+    build_start = time.perf_counter()
+    scene = rd.SurfelScene(make_surfel_geometry(side, spacing), opts)
+    scene.build()
+    dr.sync_thread()
+    build_ms = (time.perf_counter() - build_start) * 1000.0
+
+    appearance = make_rgb_appearance(surfel_count)
+    update_samples: list[float] = []
+    render_samples: list[float] = []
+    for iteration in range(warmup + repeats):
+        dr.sync_thread()
+        start = time.perf_counter()
+        scene.update_appearance(appearance)
+        dr.sync_thread()
+        update_ms = (time.perf_counter() - start) * 1000.0
+
+        start = time.perf_counter()
+        out = scene.render(rays, rd.SurfelRenderOptions.rgb())
+        materialize_render(out)
+        dr.sync_thread()
+        render_ms = (time.perf_counter() - start) * 1000.0
+
+        if iteration >= warmup:
+            update_samples.append(update_ms)
+            render_samples.append(render_ms)
+
+    rays_ad = rd.RayAD(
+        ad.Array3f(
+            ad.Float([float(rays.o[0][i]) for i in range(ray_count)]),
+            ad.Float([float(rays.o[1][i]) for i in range(ray_count)]),
+            ad.Float([float(rays.o[2][i]) for i in range(ray_count)]),
+        ),
+        ad.Array3f(
+            ad.Float([float(rays.d[0][i]) for i in range(ray_count)]),
+            ad.Float([float(rays.d[1][i]) for i in range(ray_count)]),
+            ad.Float([float(rays.d[2][i]) for i in range(ray_count)]),
+        ),
+    )
+    ad_scene = rd.SurfelScene(make_surfel_geometry(side, spacing, ad_mode=True), opts)
+    ad_scene.build()
+    rgb = ad.Array3f(
+        ad.Float([0.2] * surfel_count),
+        ad.Float([0.4] * surfel_count),
+        ad.Float([0.6] * surfel_count),
+    )
+    dr.enable_grad(rgb)
+    ad_scene.update_appearance(rd.SurfelAppearance.rgb(ad.Float([0.75] * surfel_count), rgb))
+    dr.sync_thread()
+    ad_start = time.perf_counter()
+    out_ad = ad_scene.render(rays_ad, rd.SurfelRenderOptions.rgb())
+    loss = dr.sum(out_ad.rgb[0])
+    dr.backward(loss)
+    dr.eval(dr.grad(rgb))
+    dr.sync_thread()
+    ad_ms = (time.perf_counter() - ad_start) * 1000.0
+
+    return {
+        "surfel_count": surfel_count,
+        "ray_count": ray_count,
+        "build_ms": build_ms,
+        "appearance_update": summarize(update_samples),
+        "render": summarize(render_samples),
+        "ad_replay_backward_ms": ad_ms,
     }
 
 
@@ -279,6 +395,7 @@ def main() -> None:
     parser.add_argument("--trace-backend", choices=["single-launch", "legacy-retrace"], default="single-launch")
     parser.add_argument("--fit-image-size", type=int, default=24)
     parser.add_argument("--skip-fit", action="store_true")
+    parser.add_argument("--skip-appearance", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--image-output-dir", type=Path, default=Path("artifacts/surfel_fit"))
     args = parser.parse_args()
@@ -317,6 +434,15 @@ def main() -> None:
 
     if not args.skip_fit:
         result["fit"] = fit_depth_image(args.fit_image_size, args.fit_image_size, args.image_output_dir)
+    if not args.skip_appearance:
+        result["appearance"] = benchmark_appearance_pipeline(
+            args.grid_side,
+            args.spacing,
+            rays,
+            args.ray_side * args.ray_side,
+            args.repeats,
+            args.warmup,
+        )
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

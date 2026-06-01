@@ -360,6 +360,18 @@ NB_MODULE(rayd, m) {
             .value("QuadTriangles", SurfelPrimitiveMode::QuadTriangles)
             .value("SingleTriangle", SurfelPrimitiveMode::SingleTriangle);
 
+        nb::enum_<SurfelColorModel>(m, "SurfelColorModel")
+            .value("ConstantRGB", SurfelColorModel::ConstantRGB)
+            .value("SH", SurfelColorModel::SH)
+            .value("FeatureChannels", SurfelColorModel::FeatureChannels);
+
+        nb::enum_<SurfelRenderMode>(m, "SurfelRenderMode")
+            .value("Alpha", SurfelRenderMode::Alpha)
+            .value("Depth", SurfelRenderMode::Depth)
+            .value("RGB", SurfelRenderMode::RGB)
+            .value("RGBDepth", SurfelRenderMode::RGBDepth)
+            .value("Feature", SurfelRenderMode::Feature);
+
         nb::class_<SurfelTraceOptions>(m, "SurfelTraceOptions")
             .def(nb::init<>())
             .def_rw("alpha_min", &SurfelTraceOptions::alpha_min)
@@ -370,6 +382,38 @@ NB_MODULE(rayd, m) {
             .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
             .def_rw("face_forward", &SurfelTraceOptions::face_forward)
             .def_rw("single_launch", &SurfelTraceOptions::single_launch);
+
+        nb::class_<SurfelRenderOptions>(m, "SurfelRenderOptions")
+            .def(nb::init<>())
+            .def_static("rgb",
+                        [](int sh_degree, const ScalarVector3f &background_rgb) {
+                            SurfelRenderOptions options;
+                            options.mode = SurfelRenderMode::RGB;
+                            options.color_model = sh_degree > 0
+                                ? SurfelColorModel::SH
+                                : SurfelColorModel::ConstantRGB;
+                            options.sh_degree = sh_degree;
+                            options.channel_count = 3;
+                            options.background_rgb = background_rgb;
+                            return options;
+                        },
+                        "sh_degree"_a = 0,
+                        "background_rgb"_a = ScalarVector3f(0.f, 0.f, 0.f))
+            .def_static("feature",
+                        [](int channel_count) {
+                            SurfelRenderOptions options;
+                            options.mode = SurfelRenderMode::Feature;
+                            options.color_model = SurfelColorModel::FeatureChannels;
+                            options.channel_count = channel_count;
+                            return options;
+                        },
+                        "channel_count"_a)
+            .def_rw("mode", &SurfelRenderOptions::mode)
+            .def_rw("color_model", &SurfelRenderOptions::color_model)
+            .def_rw("sh_degree", &SurfelRenderOptions::sh_degree)
+            .def_rw("channel_count", &SurfelRenderOptions::channel_count)
+            .def_rw("channel_chunk", &SurfelRenderOptions::channel_chunk)
+            .def_rw("background_rgb", &SurfelRenderOptions::background_rgb);
 
         nb::class_<ReflectionTraceOptions>(m, "ReflectionTraceOptions")
             .def(nb::init<>())
@@ -496,6 +540,24 @@ NB_MODULE(rayd, m) {
             .def_ro("alpha", &SurfelCompositeAD::alpha)
             .def_ro("transmittance", &SurfelCompositeAD::transmittance)
             .def_ro("depth", &SurfelCompositeAD::depth);
+
+        nb::class_<SurfelRender>(m, "SurfelRender")
+            .def("is_valid", &SurfelRender::is_valid)
+            .def_ro("channels", &SurfelRender::channels)
+            .def_ro("rgb", &SurfelRender::rgb)
+            .def_ro("alpha", &SurfelRender::alpha)
+            .def_ro("transmittance", &SurfelRender::transmittance)
+            .def_ro("depth", &SurfelRender::depth)
+            .def_ro("channel_count", &SurfelRender::channel_count);
+
+        nb::class_<SurfelRenderAD>(m, "SurfelRenderAD")
+            .def("is_valid", &SurfelRenderAD::is_valid)
+            .def_ro("channels", &SurfelRenderAD::channels)
+            .def_ro("rgb", &SurfelRenderAD::rgb)
+            .def_ro("alpha", &SurfelRenderAD::alpha)
+            .def_ro("transmittance", &SurfelRenderAD::transmittance)
+            .def_ro("depth", &SurfelRenderAD::depth)
+            .def_ro("channel_count", &SurfelRenderAD::channel_count);
 
         nb::class_<ReflectionChain>(m, "ReflectionChain")
             .def("is_valid", &ReflectionChain::is_valid)
@@ -1353,6 +1415,70 @@ NB_MODULE(rayd, m) {
     });
 
     bind_section("surfel", [&]() {
+        nb::class_<SurfelGeometry>(m, "SurfelGeometry")
+            .def(nb::init<>())
+            .def(nb::init<const Vector3f &, const Vector3f &, const Vector3f &>(),
+                 "center"_a,
+                 "tangent_u"_a,
+                 "tangent_v"_a)
+            .def(nb::init<const Vector3fAD &, const Vector3fAD &, const Vector3fAD &>(),
+                 "center"_a,
+                 "tangent_u"_a,
+                 "tangent_v"_a)
+            .def_prop_ro("surfel_count", &SurfelGeometry::surfel_count)
+            .def_prop_ro("center", &SurfelGeometry::center)
+            .def_prop_ro("tangent_u", &SurfelGeometry::tangent_u)
+            .def_prop_ro("tangent_v", &SurfelGeometry::tangent_v);
+
+        nb::class_<SurfelAppearance>(m, "SurfelAppearance")
+            .def(nb::init<>())
+            .def(nb::init<const Float &, const Float &, SurfelColorModel, int, int>(),
+                 "opacity"_a,
+                 "values"_a,
+                 "color_model"_a,
+                 "channel_count"_a,
+                 "sh_degree"_a = 0)
+            .def(nb::init<const FloatAD &, const FloatAD &, SurfelColorModel, int, int>(),
+                 "opacity"_a,
+                 "values"_a,
+                 "color_model"_a,
+                 "channel_count"_a,
+                 "sh_degree"_a = 0)
+            .def_static("rgb",
+                        nb::overload_cast<const Float &, const Vector3f &>(&SurfelAppearance::rgb),
+                        "opacity"_a,
+                        "rgb"_a)
+            .def_static("rgb",
+                        nb::overload_cast<const FloatAD &, const Vector3fAD &>(&SurfelAppearance::rgb),
+                        "opacity"_a,
+                        "rgb"_a)
+            .def_static("features",
+                        nb::overload_cast<const Float &, const Float &, int>(&SurfelAppearance::features),
+                        "opacity"_a,
+                        "values"_a,
+                        "channel_count"_a)
+            .def_static("features",
+                        nb::overload_cast<const FloatAD &, const FloatAD &, int>(&SurfelAppearance::features),
+                        "opacity"_a,
+                        "values"_a,
+                        "channel_count"_a)
+            .def_static("sh",
+                        nb::overload_cast<const Float &, const Float &, int>(&SurfelAppearance::sh),
+                        "opacity"_a,
+                        "coeffs"_a,
+                        "sh_degree"_a)
+            .def_static("sh",
+                        nb::overload_cast<const FloatAD &, const FloatAD &, int>(&SurfelAppearance::sh),
+                        "opacity"_a,
+                        "coeffs"_a,
+                        "sh_degree"_a)
+            .def_prop_ro("surfel_count", &SurfelAppearance::surfel_count)
+            .def_prop_ro("channel_count", &SurfelAppearance::channel_count)
+            .def_prop_ro("sh_degree", &SurfelAppearance::sh_degree)
+            .def_prop_ro("color_model", &SurfelAppearance::color_model)
+            .def_prop_ro("opacity", &SurfelAppearance::opacity)
+            .def_prop_ro("values", &SurfelAppearance::values);
+
         nb::class_<SurfelCloud>(m, "SurfelCloud")
             .def(nb::init<>())
             .def("__init__",
@@ -1394,10 +1520,15 @@ NB_MODULE(rayd, m) {
             .def(nb::init<const SurfelCloud &, const SurfelTraceOptions &>(),
                  "cloud"_a,
                  "options"_a = SurfelTraceOptions())
+            .def(nb::init<const SurfelGeometry &, const SurfelTraceOptions &>(),
+                 "geometry"_a,
+                 "options"_a = SurfelTraceOptions())
             .def("build", &SurfelScene::build)
             .def("is_ready", &SurfelScene::is_ready)
+            .def("update_appearance", &SurfelScene::update_appearance, "appearance"_a)
             .def_prop_ro("surfel_count", &SurfelScene::surfel_count)
             .def_prop_ro("triangle_count", &SurfelScene::triangle_count)
+            .def_prop_ro("build_count", &SurfelScene::build_count)
             .def("intersect",
                  [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.intersect<true>(ray, active);
@@ -1426,8 +1557,28 @@ NB_MODULE(rayd, m) {
             .def("composite_alpha_reference",
                  [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
                      return scene.composite_alpha_reference<false>(ray, active);
+                  },
+                  nb::arg("ray").noconvert(), "active"_a = true)
+            .def("render",
+                 [](const SurfelScene &scene,
+                    const Ray &ray,
+                    const SurfelRenderOptions &render_options,
+                    rayd::Mask active) {
+                     return scene.render<true>(ray, render_options, active);
                  },
-                 nb::arg("ray").noconvert(), "active"_a = true)
+                 nb::arg("ray").noconvert(),
+                 "render_options"_a = SurfelRenderOptions(),
+                 "active"_a = true)
+            .def("render",
+                 [](const SurfelScene &scene,
+                    const RayAD &ray,
+                    const SurfelRenderOptions &render_options,
+                    rayd::MaskAD active) {
+                     return scene.render<false>(ray, render_options, active);
+                 },
+                 nb::arg("ray").noconvert(),
+                 "render_options"_a = SurfelRenderOptions(),
+                 "active"_a = true)
             .def("shadow_test",
                  [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
                      return scene.shadow_test<true>(ray, active);

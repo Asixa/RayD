@@ -328,6 +328,7 @@ void SurfelOptixComposite::reserve(int64_t size) {
         m_size = size;
         hit_capacity = 0;
         intensity = zeros<Float>(size);
+        channels = Float();
         alpha = zeros<Float>(size);
         transmittance = full<Float>(1.f, size);
         depth = full<Float>(Infinity, size);
@@ -795,6 +796,7 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     Float scratch_t = empty<Float>(scratch_count);
     Float scratch_alpha = empty<Float>(scratch_count);
     Float scratch_value = empty<Float>(scratch_count);
+    composite.channels = empty<Float>(ray_count);
 
     drjit::eval(ox,
                 oy,
@@ -838,6 +840,11 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.tangent_v_z = tangent_v.z().data();
     params.opacity = opacity.data();
     params.value = value.data();
+    params.appearance_values = value.data();
+    params.appearance_channel_count = 1;
+    params.color_model = 2;
+    params.sh_degree = 0;
+    params.render_channel_count = 1;
     params.alpha_min = alpha_min;
     params.alpha_cap = alpha_cap;
     params.ray_epsilon = RayEpsilon;
@@ -851,6 +858,170 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.scratch_alpha = scratch_alpha.data();
     params.scratch_value = scratch_value.data();
     params.out_intensity = composite.intensity.data();
+    params.out_channels = composite.channels.data();
+    params.out_alpha = composite.alpha.data();
+    params.out_transmittance = composite.transmittance.data();
+    params.out_depth = composite.depth.data();
+
+    {
+        ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
+        m_accel->launch_trace(SurfelOptixLaunchKind::Composite, params);
+    }
+
+    composite.hit_capacity = k;
+    composite.surfel_id = scratch_surfel_id;
+    composite.hit_t = scratch_t;
+    composite.hit_alpha = scratch_alpha;
+    composite.hit_value = scratch_value;
+    return composite;
+}
+
+template <bool Detached>
+SurfelOptixComposite SurfelOptixScene::render(
+    const RayT<Detached> &ray,
+    const Int &triangle_to_surfel_id,
+    const Vector3f &center,
+    const Vector3f &tangent_u,
+    const Vector3f &tangent_v,
+    const Float &opacity,
+    const Float &appearance_values,
+    int appearance_channel_count,
+    int color_model,
+    int appearance_sh_degree,
+    int sh_degree,
+    int render_channel_count,
+    const ScalarVector3f &background_rgb,
+    float alpha_min,
+    float alpha_cap,
+    int max_candidate_hits,
+    bool face_forward,
+    MaskT<Detached> active) const {
+    require(m_accel != nullptr, "SurfelOptixScene::render(): scene is not built.");
+    require(max_candidate_hits > 0,
+            "SurfelOptixScene::render(): max_candidate_hits must be positive.");
+    require(render_channel_count >= 0,
+            "SurfelOptixScene::render(): render_channel_count must be non-negative.");
+
+    const int ray_count = static_cast<int>(slices(ray.o));
+    SurfelOptixComposite composite;
+    composite.reserve(ray_count);
+    if (ray_count == 0) {
+        return composite;
+    }
+
+    Float ox;
+    Float oy;
+    Float oz;
+    Float dx;
+    Float dy;
+    Float dz;
+    Float t_max_input;
+    if constexpr (!Detached) {
+        ox = detach<false>(ray.o.x());
+        oy = detach<false>(ray.o.y());
+        oz = detach<false>(ray.o.z());
+        dx = detach<false>(ray.d.x());
+        dy = detach<false>(ray.d.y());
+        dz = detach<false>(ray.d.z());
+        t_max_input = detach<false>(ray.tmax);
+    } else {
+        ox = ray.o.x();
+        oy = ray.o.y();
+        oz = ray.o.z();
+        dx = ray.d.x();
+        dy = ray.d.y();
+        dz = ray.d.z();
+        t_max_input = ray.tmax;
+    }
+
+    const Float zero = zeros<Float>(ray_count);
+    ox += zero;
+    oy += zero;
+    oz += zero;
+    dx += zero;
+    dy += zero;
+    dz += zero;
+    t_max_input += zero;
+
+    Mask active_detached = detach<false>(active);
+    active_detached = active_detached && full<Mask>(true, ray_count);
+    Mask valid = empty<Mask>(ray_count);
+
+    const int k = max_candidate_hits;
+    const int scratch_count = ray_count * k;
+    Int scratch_surfel_id = empty<Int>(scratch_count);
+    Float scratch_t = empty<Float>(scratch_count);
+    Float scratch_alpha = empty<Float>(scratch_count);
+    Float scratch_value = empty<Float>(scratch_count);
+    composite.channels = render_channel_count > 0
+        ? empty<Float>(ray_count * render_channel_count)
+        : Float();
+
+    drjit::eval(ox,
+                oy,
+                oz,
+                dx,
+                dy,
+                dz,
+                t_max_input,
+                active_detached,
+                triangle_to_surfel_id,
+                center,
+                tangent_u,
+                tangent_v,
+                opacity,
+                appearance_values);
+
+    ensure_surfel_trace_pipeline(m_accel);
+
+    SurfelTraceParams params = {};
+    params.handle = m_accel->gas_handle;
+    params.ray_ox = ox.data();
+    params.ray_oy = oy.data();
+    params.ray_oz = oz.data();
+    params.ray_dx = dx.data();
+    params.ray_dy = dy.data();
+    params.ray_dz = dz.data();
+    params.ray_tmax = t_max_input.data();
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.ray_count = ray_count;
+    params.triangle_to_surfel_id = triangle_to_surfel_id.data();
+    params.triangle_count = m_accel->triangle_count;
+    params.surfel_count = static_cast<int>(slices(center));
+    params.center_x = center.x().data();
+    params.center_y = center.y().data();
+    params.center_z = center.z().data();
+    params.tangent_u_x = tangent_u.x().data();
+    params.tangent_u_y = tangent_u.y().data();
+    params.tangent_u_z = tangent_u.z().data();
+    params.tangent_v_x = tangent_v.x().data();
+    params.tangent_v_y = tangent_v.y().data();
+    params.tangent_v_z = tangent_v.z().data();
+    params.opacity = opacity.data();
+    params.value = appearance_values.data();
+    params.appearance_values = appearance_values.data();
+    params.appearance_channel_count = appearance_channel_count;
+    params.color_model = color_model;
+    params.appearance_sh_degree = appearance_sh_degree;
+    params.sh_degree = sh_degree;
+    params.render_channel_count = render_channel_count;
+    params.background_rgb[0] = background_rgb[0];
+    params.background_rgb[1] = background_rgb[1];
+    params.background_rgb[2] = background_rgb[2];
+    params.alpha_min = alpha_min;
+    params.alpha_cap = alpha_cap;
+    params.ray_epsilon = RayEpsilon;
+    params.tmax_fallback = 1.0e8f;
+    params.max_candidate_hits = max_candidate_hits;
+    params.face_forward = face_forward ? 1 : 0;
+    params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
+    params.composite_hit_capacity = k;
+    params.scratch_surfel_id = scratch_surfel_id.data();
+    params.scratch_t = scratch_t.data();
+    params.scratch_alpha = scratch_alpha.data();
+    params.scratch_value = scratch_value.data();
+    params.out_intensity = composite.intensity.data();
+    params.out_channels = render_channel_count > 0 ? composite.channels.data() : nullptr;
     params.out_alpha = composite.alpha.data();
     params.out_transmittance = composite.transmittance.data();
     params.out_depth = composite.depth.data();
@@ -917,6 +1088,44 @@ template SurfelOptixComposite SurfelOptixScene::composite_alpha<false>(
     const Vector3f &tangent_v,
     const Float &opacity,
     const Float &value,
+    float alpha_min,
+    float alpha_cap,
+    int max_candidate_hits,
+    bool face_forward,
+    MaskAD active) const;
+template SurfelOptixComposite SurfelOptixScene::render<true>(
+    const Ray &ray,
+    const Int &triangle_to_surfel_id,
+    const Vector3f &center,
+    const Vector3f &tangent_u,
+    const Vector3f &tangent_v,
+    const Float &opacity,
+    const Float &appearance_values,
+    int appearance_channel_count,
+    int color_model,
+    int appearance_sh_degree,
+    int sh_degree,
+    int render_channel_count,
+    const ScalarVector3f &background_rgb,
+    float alpha_min,
+    float alpha_cap,
+    int max_candidate_hits,
+    bool face_forward,
+    Mask active) const;
+template SurfelOptixComposite SurfelOptixScene::render<false>(
+    const RayAD &ray,
+    const Int &triangle_to_surfel_id,
+    const Vector3f &center,
+    const Vector3f &tangent_u,
+    const Vector3f &tangent_v,
+    const Float &opacity,
+    const Float &appearance_values,
+    int appearance_channel_count,
+    int color_model,
+    int appearance_sh_degree,
+    int sh_degree,
+    int render_channel_count,
+    const ScalarVector3f &background_rgb,
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,

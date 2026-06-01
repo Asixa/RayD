@@ -45,6 +45,12 @@ using SurfelCompositeT = SurfelCompositeData<FloatT<Detached>>;
 using SurfelCompositeAD = SurfelCompositeT<false>;
 using SurfelComposite = SurfelCompositeT<true>;
 
+template <typename> struct SurfelRenderData;
+template <bool Detached>
+using SurfelRenderT = SurfelRenderData<FloatT<Detached>>;
+using SurfelRenderAD = SurfelRenderT<false>;
+using SurfelRender = SurfelRenderT<true>;
+
 template <typename> struct ReflectionChainData;
 template <bool Detached>
 using ReflectionChainT = ReflectionChainData<FloatT<Detached>>;

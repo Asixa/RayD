@@ -25,6 +25,7 @@ struct SurfelOptixComposite {
     int64_t m_size = 0;
     int hit_capacity = 0;
     Float intensity;
+    Float channels;
     Float alpha;
     Float transmittance;
     Float depth;
@@ -85,6 +86,26 @@ public:
                                          int max_candidate_hits,
                                          bool face_forward,
                                          MaskT<Detached> active) const;
+
+    template <bool Detached>
+    SurfelOptixComposite render(const RayT<Detached> &ray,
+                                const Int &triangle_to_surfel_id,
+                                const Vector3f &center,
+                                const Vector3f &tangent_u,
+                                const Vector3f &tangent_v,
+                                const Float &opacity,
+                                const Float &appearance_values,
+                                int appearance_channel_count,
+                                int color_model,
+                                int appearance_sh_degree,
+                                int sh_degree,
+                                int render_channel_count,
+                                const ScalarVector3f &background_rgb,
+                                float alpha_min,
+                                float alpha_cap,
+                                int max_candidate_hits,
+                                bool face_forward,
+                                MaskT<Detached> active) const;
 
 private:
     SurfelOptixState *m_accel = nullptr;

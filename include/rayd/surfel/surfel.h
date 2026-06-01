@@ -11,6 +11,20 @@ enum class SurfelPrimitiveMode : uint32_t {
     SingleTriangle = 2,
 };
 
+enum class SurfelColorModel : uint32_t {
+    ConstantRGB = 0,
+    SH = 1,
+    FeatureChannels = 2,
+};
+
+enum class SurfelRenderMode : uint32_t {
+    Alpha = 0,
+    Depth = 1,
+    RGB = 2,
+    RGBDepth = 3,
+    Feature = 4,
+};
+
 struct SurfelTraceOptions {
     /// Minimum Gaussian alpha included in the proxy and final alpha compositing.
     float alpha_min = 1.f / 255.f;
@@ -27,6 +41,15 @@ struct SurfelTraceOptions {
     /// Use the surfel native OptiX pipeline for detached intersect/composite calls.
     /// AD alpha compositing keeps the differentiable reference path.
     bool single_launch = true;
+};
+
+struct SurfelRenderOptions {
+    SurfelRenderMode mode = SurfelRenderMode::RGB;
+    SurfelColorModel color_model = SurfelColorModel::ConstantRGB;
+    int sh_degree = 0;
+    int channel_count = 3;
+    int channel_chunk = 0;
+    ScalarVector3f background_rgb = ScalarVector3f(0.f, 0.f, 0.f);
 };
 
 template <typename Float_>
@@ -84,6 +107,95 @@ struct SurfelCompositeData {
                  depth)
 };
 
+template <typename Float_>
+struct SurfelRenderData {
+    static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
+
+    using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+
+    Mask_ is_valid() const { return alpha > Float_(0.f); }
+
+    Float_ channels = Float();           ///< Flat [ray_count, channel_count] output buffer.
+    Vec3f rgb = zeros<Vec3f>(1);         ///< Convenience RGB view for RGB/RGBDepth modes.
+    Float_ alpha = zeros<Float_>(1);
+    Float_ transmittance = full<Float_>(1.f, 1);
+    Float_ depth = full<Float_>(Infinity, 1);
+    int channel_count = 0;
+};
+
+class SurfelGeometry {
+public:
+    SurfelGeometry() = default;
+    SurfelGeometry(const Vector3f &center,
+                   const Vector3f &tangent_u,
+                   const Vector3f &tangent_v);
+    SurfelGeometry(const Vector3fAD &center,
+                   const Vector3fAD &tangent_u,
+                   const Vector3fAD &tangent_v);
+
+    int surfel_count() const { return surfel_count_; }
+
+    const Vector3fAD &center() const { return center_; }
+    const Vector3fAD &tangent_u() const { return tangent_u_; }
+    const Vector3fAD &tangent_v() const { return tangent_v_; }
+
+private:
+    void initialize(const Vector3fAD &center,
+                    const Vector3fAD &tangent_u,
+                    const Vector3fAD &tangent_v);
+
+    Vector3fAD center_;
+    Vector3fAD tangent_u_;
+    Vector3fAD tangent_v_;
+    int surfel_count_ = 0;
+};
+
+class SurfelAppearance {
+public:
+    SurfelAppearance() = default;
+    static SurfelAppearance rgb(const Float &opacity, const Vector3f &rgb);
+    static SurfelAppearance rgb(const FloatAD &opacity, const Vector3fAD &rgb);
+    static SurfelAppearance features(const Float &opacity, const Float &values, int channel_count);
+    static SurfelAppearance features(const FloatAD &opacity, const FloatAD &values, int channel_count);
+    static SurfelAppearance sh(const Float &opacity, const Float &coeffs, int sh_degree);
+    static SurfelAppearance sh(const FloatAD &opacity, const FloatAD &coeffs, int sh_degree);
+
+    SurfelAppearance(const Float &opacity,
+                     const Float &values,
+                     SurfelColorModel color_model,
+                     int channel_count,
+                     int sh_degree = 0);
+    SurfelAppearance(const FloatAD &opacity,
+                     const FloatAD &values,
+                     SurfelColorModel color_model,
+                     int channel_count,
+                     int sh_degree = 0);
+
+    int surfel_count() const { return surfel_count_; }
+    int channel_count() const { return channel_count_; }
+    int sh_degree() const { return sh_degree_; }
+    int sh_basis_count() const { return (sh_degree_ + 1) * (sh_degree_ + 1); }
+    SurfelColorModel color_model() const { return color_model_; }
+
+    const FloatAD &opacity() const { return opacity_; }
+    const FloatAD &values() const { return values_; }
+
+private:
+    void initialize(const FloatAD &opacity,
+                    const FloatAD &values,
+                    SurfelColorModel color_model,
+                    int channel_count,
+                    int sh_degree);
+
+    FloatAD opacity_;
+    FloatAD values_;
+    SurfelColorModel color_model_ = SurfelColorModel::FeatureChannels;
+    int channel_count_ = 0;
+    int sh_degree_ = 0;
+    int surfel_count_ = 0;
+};
+
 class SurfelCloud {
 public:
     SurfelCloud() = default;
@@ -126,14 +238,19 @@ public:
     SurfelScene() = default;
     explicit SurfelScene(const SurfelCloud &cloud,
                          const SurfelTraceOptions &options = SurfelTraceOptions());
+    explicit SurfelScene(const SurfelGeometry &geometry,
+                         const SurfelTraceOptions &options = SurfelTraceOptions());
 
     SurfelScene(const SurfelScene &) = delete;
     SurfelScene &operator=(const SurfelScene &) = delete;
 
     void build();
     bool is_ready() const { return ready_; }
-    int surfel_count() const { return cloud_.surfel_count(); }
+    int surfel_count() const { return geometry_.surfel_count(); }
     int triangle_count() const { return triangle_count_; }
+    int build_count() const { return build_count_; }
+
+    void update_appearance(const SurfelAppearance &appearance);
 
     template <bool Detached>
     SurfelIntersectionT<Detached> intersect(const RayT<Detached> &ray,
@@ -148,6 +265,11 @@ public:
                                                          MaskT<Detached> active) const;
 
     template <bool Detached>
+    SurfelRenderT<Detached> render(const RayT<Detached> &ray,
+                                   const SurfelRenderOptions &render_options,
+                                   MaskT<Detached> active) const;
+
+    template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray,
                                 MaskT<Detached> active) const;
 
@@ -158,10 +280,16 @@ public:
 
 private:
     void build_triangle_buffers();
+    void validate_trace_options(const char *context) const;
+    void refresh_detached_appearance();
+    int render_channel_count(const SurfelRenderOptions &render_options) const;
 
     SurfelCloud cloud_;
+    SurfelGeometry geometry_;
+    SurfelAppearance appearance_;
     SurfelTraceOptions options_;
     bool ready_ = false;
+    int build_count_ = 0;
     int vertex_count_ = 0;
     int triangle_count_ = 0;
 
@@ -171,6 +299,10 @@ private:
     Vector3f detached_tangent_v_;
     Float detached_opacity_;
     Float detached_value_;
+    Float detached_appearance_values_;
+    int appearance_channel_count_ = 1;
+    int appearance_sh_degree_ = 0;
+    SurfelColorModel appearance_color_model_ = SurfelColorModel::FeatureChannels;
     Float optix_vertex_buffer_;
     Int optix_face_buffer_;
     SurfelOptixScene optix_scene_;

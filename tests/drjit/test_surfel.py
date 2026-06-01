@@ -51,27 +51,445 @@ class SurfelCoreTests(unittest.TestCase):
 
             print(json.dumps({
                 "has_cloud": hasattr(pj, "SurfelCloud"),
+                "has_geometry": hasattr(pj, "SurfelGeometry"),
+                "has_appearance": hasattr(pj, "SurfelAppearance"),
                 "has_scene": hasattr(pj, "SurfelScene"),
                 "has_options": hasattr(pj, "SurfelTraceOptions"),
+                "has_render_options": hasattr(pj, "SurfelRenderOptions"),
+                "has_render_mode": hasattr(pj, "SurfelRenderMode"),
+                "has_color_model": hasattr(pj, "SurfelColorModel"),
                 "has_mode": hasattr(pj, "SurfelPrimitiveMode"),
                 "has_reference_composite": hasattr(pj.SurfelScene, "composite_alpha_reference"),
+                "has_render": hasattr(pj.SurfelScene, "render"),
+                "has_update_appearance": hasattr(pj.SurfelScene, "update_appearance"),
                 "single_launch_default": pj.SurfelTraceOptions().single_launch,
                 "ico_name": str(pj.SurfelPrimitiveMode.Icosahedron20),
                 "quad_name": str(pj.SurfelPrimitiveMode.QuadTriangles),
                 "single_name": str(pj.SurfelPrimitiveMode.SingleTriangle),
+                "rgb_mode": str(pj.SurfelRenderMode.RGB),
+                "sh_model": str(pj.SurfelColorModel.SH),
             }))
             """
         )
 
         self.assertTrue(data["has_cloud"])
+        self.assertTrue(data["has_geometry"])
+        self.assertTrue(data["has_appearance"])
         self.assertTrue(data["has_scene"])
         self.assertTrue(data["has_options"])
+        self.assertTrue(data["has_render_options"])
+        self.assertTrue(data["has_render_mode"])
+        self.assertTrue(data["has_color_model"])
         self.assertTrue(data["has_mode"])
         self.assertTrue(data["has_reference_composite"])
+        self.assertTrue(data["has_render"])
+        self.assertTrue(data["has_update_appearance"])
         self.assertTrue(data["single_launch_default"])
         self.assertIn("Icosahedron20", data["ico_name"])
         self.assertIn("QuadTriangles", data["quad_name"])
         self.assertIn("SingleTriangle", data["single_name"])
+        self.assertIn("RGB", data["rgb_mode"])
+        self.assertIn("SH", data["sh_model"])
+
+    def test_surfel_geometry_and_rgb_appearance_render_without_rebuild(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            before_build_count = scene.build_count
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            opts = pj.SurfelRenderOptions.rgb()
+
+            scene.update_appearance(pj.SurfelAppearance.rgb(
+                cuda.Float([0.5]),
+                cuda.Array3f([0.2], [0.4], [0.6]),
+            ))
+            first = scene.render(ray, opts)
+
+            scene.update_appearance(pj.SurfelAppearance.rgb(
+                cuda.Float([0.5]),
+                cuda.Array3f([0.8], [0.6], [0.4]),
+            ))
+            second = scene.render(ray, opts)
+
+            print(json.dumps({
+                "surfel_count": geometry.surfel_count,
+                "first_r": float(first.rgb[0][0]),
+                "first_g": float(first.rgb[1][0]),
+                "first_b": float(first.rgb[2][0]),
+                "second_r": float(second.rgb[0][0]),
+                "second_g": float(second.rgb[1][0]),
+                "second_b": float(second.rgb[2][0]),
+                "alpha": float(second.alpha[0]),
+                "depth": float(second.depth[0]),
+                "build_count_before": before_build_count,
+                "build_count_after": scene.build_count,
+                "channel_count": second.channel_count,
+            }))
+            """
+        )
+
+        self.assertEqual(data["surfel_count"], 1)
+        self.assertAlmostEqual(data["first_r"], 0.1, places=5)
+        self.assertAlmostEqual(data["first_g"], 0.2, places=5)
+        self.assertAlmostEqual(data["first_b"], 0.3, places=5)
+        self.assertAlmostEqual(data["second_r"], 0.4, places=5)
+        self.assertAlmostEqual(data["second_g"], 0.3, places=5)
+        self.assertAlmostEqual(data["second_b"], 0.2, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.5, places=5)
+        self.assertAlmostEqual(data["depth"], 1.0, places=5)
+        self.assertEqual(data["build_count_before"], 1)
+        self.assertEqual(data["build_count_after"], 1)
+        self.assertEqual(data["channel_count"], 3)
+
+    def test_surfel_feature_render_outputs_flat_channel_buffer(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            appearance = pj.SurfelAppearance.features(
+                cuda.Float([0.25]),
+                cuda.Float([0.1, 0.2, 0.3, 0.4]),
+                4,
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(appearance)
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, pj.SurfelRenderOptions.feature(4))
+
+            print(json.dumps({
+                "channel_count": out.channel_count,
+                "c0": float(out.channels[0]),
+                "c1": float(out.channels[1]),
+                "c2": float(out.channels[2]),
+                "c3": float(out.channels[3]),
+                "alpha": float(out.alpha[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["channel_count"], 4)
+        self.assertAlmostEqual(data["c0"], 0.025, places=5)
+        self.assertAlmostEqual(data["c1"], 0.05, places=5)
+        self.assertAlmostEqual(data["c2"], 0.075, places=5)
+        self.assertAlmostEqual(data["c3"], 0.1, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.25, places=5)
+
+    def test_surfel_sh_render_evaluates_degree_one_in_native_render(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            y10 = 0.4886025119029199
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            # Layout is [surfel][basis][rgb], basis order:
+            # Y00, Y1-1(y), Y10(z), Y11(x).
+            coeffs = cuda.Float([
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                1.0, 2.0, 3.0,
+                0.0, 0.0, 0.0,
+            ])
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(pj.SurfelAppearance.sh(cuda.Float([0.5]), coeffs, 1))
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, pj.SurfelRenderOptions.rgb(sh_degree=1))
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "g": float(out.rgb[1][0]),
+                "b": float(out.rgb[2][0]),
+                "expected_r": 0.5 * y10,
+                "expected_g": 0.5 * 2.0 * y10,
+                "expected_b": 0.5 * 3.0 * y10,
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], data["expected_r"], places=5)
+        self.assertAlmostEqual(data["g"], data["expected_g"], places=5)
+        self.assertAlmostEqual(data["b"], data["expected_b"], places=5)
+
+    def test_surfel_sh_render_options_degree_limits_evaluation(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            coeffs = cuda.Float([
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                1.0, 2.0, 3.0,
+                0.0, 0.0, 0.0,
+            ])
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(pj.SurfelAppearance.sh(cuda.Float([0.5]), coeffs, 1))
+
+            opts = pj.SurfelRenderOptions()
+            opts.mode = pj.SurfelRenderMode.RGB
+            opts.color_model = pj.SurfelColorModel.SH
+            opts.sh_degree = 0
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, opts)
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "g": float(out.rgb[1][0]),
+                "b": float(out.rgb[2][0]),
+                "alpha": float(out.alpha[0]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], 0.0, places=5)
+        self.assertAlmostEqual(data["g"], 0.0, places=5)
+        self.assertAlmostEqual(data["b"], 0.0, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.5, places=5)
+
+    def test_surfel_sh_lower_degree_render_uses_storage_stride(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            y00 = 0.28209479177387814
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([-2.0, 2.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+            )
+            # Two surfels, degree-1 SH: 4 basis values * RGB per surfel.
+            # The first surfel's Y1-1 red coefficient is deliberately large;
+            # a degree-0 render of surfel 1 must not use it as surfel 1's Y00.
+            coeffs = cuda.Float([
+                1.0, 0.0, 0.0,
+                123.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                4.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+            ])
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(pj.SurfelAppearance.sh(cuda.Float([0.5, 0.5]), coeffs, 1))
+
+            opts = pj.SurfelRenderOptions()
+            opts.mode = pj.SurfelRenderMode.RGB
+            opts.color_model = pj.SurfelColorModel.SH
+            opts.sh_degree = 0
+
+            ray = pj.Ray(
+                cuda.Array3f([2.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, opts)
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "expected_r": 0.5 * 4.0 * y00,
+                "alpha": float(out.alpha[0]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], data["expected_r"], places=5)
+        self.assertAlmostEqual(data["alpha"], 0.5, places=5)
+
+    def test_surfel_sh_ad_replay_lower_degree_uses_storage_stride(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda.ad as ad
+
+            y00 = 0.28209479177387814
+            coeffs = ad.Float([
+                1.0, 0.0, 0.0,
+                123.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                4.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+            ])
+            dr.enable_grad(coeffs)
+            geometry = pj.SurfelGeometry(
+                ad.Array3f(ad.Float([-2.0, 2.0]), ad.Float([0.0, 0.0]), ad.Float([0.0, 0.0])),
+                ad.Array3f(ad.Float([1.0, 1.0]), ad.Float([0.0, 0.0]), ad.Float([0.0, 0.0])),
+                ad.Array3f(ad.Float([0.0, 0.0]), ad.Float([1.0, 1.0]), ad.Float([0.0, 0.0])),
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(pj.SurfelAppearance.sh(ad.Float([0.5, 0.5]), coeffs, 1))
+
+            opts = pj.SurfelRenderOptions()
+            opts.mode = pj.SurfelRenderMode.RGB
+            opts.color_model = pj.SurfelColorModel.SH
+            opts.sh_degree = 0
+
+            ray = pj.RayAD(
+                ad.Array3f(ad.Float([2.0]), ad.Float([0.0]), ad.Float([1.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([-1.0])),
+            )
+            out = scene.render(ray, opts)
+            dr.backward(dr.sum(out.rgb[0]))
+            grad = dr.grad(coeffs)
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "expected_r": 0.5 * 4.0 * y00,
+                "grad_surfel1_y00_r": float(grad[12]),
+                "expected_grad": 0.5 * y00,
+                "grad_wrong_stride": float(grad[3]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], data["expected_r"], places=5)
+        self.assertAlmostEqual(data["grad_surfel1_y00_r"], data["expected_grad"], places=5)
+        self.assertAlmostEqual(data["grad_wrong_stride"], 0.0, places=5)
+
+    def test_surfel_render_inactive_lane_does_not_emit_background(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(pj.SurfelAppearance.rgb(
+                cuda.Float([0.5]),
+                cuda.Array3f([0.2], [0.4], [0.6]),
+            ))
+
+            opts = pj.SurfelRenderOptions.rgb(background_rgb=[0.9, 0.8, 0.7])
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, opts, False)
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "g": float(out.rgb[1][0]),
+                "b": float(out.rgb[2][0]),
+                "alpha": float(out.alpha[0]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], 0.0, places=5)
+        self.assertAlmostEqual(data["g"], 0.0, places=5)
+        self.assertAlmostEqual(data["b"], 0.0, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.0, places=5)
+
+    def test_surfel_rgb_render_ad_replays_appearance_gradients(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda.ad as ad
+
+            opacity = ad.Float([0.5])
+            red = ad.Float([0.2])
+            dr.enable_grad(opacity, red)
+
+            geometry = pj.SurfelGeometry(
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([0.0])),
+                ad.Array3f(ad.Float([1.0]), ad.Float([0.0]), ad.Float([0.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([1.0]), ad.Float([0.0])),
+            )
+            appearance = pj.SurfelAppearance.rgb(
+                opacity,
+                ad.Array3f(red, ad.Float([0.4]), ad.Float([0.6])),
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+            scene.update_appearance(appearance)
+
+            ray = pj.RayAD(
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([1.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([-1.0])),
+            )
+
+            pj.native_launch_audit_clear()
+            out = scene.render(ray, pj.SurfelRenderOptions.rgb())
+            loss = dr.sum(out.rgb[0])
+            dr.backward(loss)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "r": float(out.rgb[0][0]),
+                "grad_opacity": float(dr.grad(opacity)[0]),
+                "grad_red": float(dr.grad(red)[0]),
+                "surfel_launches": audit.get("surfel_trace", {}).get("optix_launch", -1),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["r"], 0.1, places=5)
+        self.assertAlmostEqual(data["grad_opacity"], 0.2, places=5)
+        self.assertAlmostEqual(data["grad_red"], 0.5, places=5)
+        self.assertEqual(data["surfel_launches"], 1)
 
     def test_surfel_cloud_fields_are_exposed(self):
         data = run_json_case(

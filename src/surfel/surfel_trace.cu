@@ -164,6 +164,74 @@ static __forceinline__ __device__ bool evaluate_gaussian_hit(float3 origin,
     return valid;
 }
 
+static __forceinline__ __device__ float sh_basis(int basis, float3 view) {
+    switch (basis) {
+        case 0: return 0.28209479177387814f;
+        case 1: return 0.4886025119029199f * view.y;
+        case 2: return 0.4886025119029199f * view.z;
+        case 3: return 0.4886025119029199f * view.x;
+        case 4: return 1.0925484305920792f * view.x * view.y;
+        case 5: return 1.0925484305920792f * view.y * view.z;
+        case 6: return 0.31539156525252005f * (3.0f * view.z * view.z - 1.0f);
+        case 7: return 1.0925484305920792f * view.x * view.z;
+        case 8: return 0.5462742152960396f * (view.x * view.x - view.y * view.y);
+        case 9: return 0.5900435899266435f * view.y *
+                       (3.0f * view.x * view.x - view.y * view.y);
+        case 10: return 2.890611442640554f * view.x * view.y * view.z;
+        case 11: return 0.4570457994644658f * view.y *
+                        (5.0f * view.z * view.z - 1.0f);
+        case 12: return 0.3731763325901154f * view.z *
+                        (5.0f * view.z * view.z - 3.0f);
+        case 13: return 0.4570457994644658f * view.x *
+                        (5.0f * view.z * view.z - 1.0f);
+        case 14: return 1.445305721320277f * view.z *
+                        (view.x * view.x - view.y * view.y);
+        case 15: return 0.5900435899266435f * view.x *
+                        (view.x * view.x - 3.0f * view.y * view.y);
+        default: return 0.0f;
+    }
+}
+
+static __forceinline__ __device__ float3 normalized_view_direction(float3 direction) {
+    float3 view = -direction;
+    const float len_sq = squared_norm(view);
+    if (!(len_sq > 1.0e-16f)) {
+        return make_float3(0.0f, 0.0f, 1.0f);
+    }
+    return view * rsqrtf(len_sq);
+}
+
+static __forceinline__ __device__ float evaluate_appearance_channel(int surfel,
+                                                                    int channel,
+                                                                    float3 view) {
+    if (params.appearance_values == nullptr || surfel < 0 || surfel >= params.surfel_count) {
+        return channel == 0 ? 1.0f : 0.0f;
+    }
+
+    if (params.color_model == 1) {
+        const int degree = params.sh_degree < 0 ? 0 : (params.sh_degree > 3 ? 3 : params.sh_degree);
+        const int basis_count = (degree + 1) * (degree + 1);
+        const int storage_degree = params.appearance_sh_degree < 0
+            ? 0
+            : (params.appearance_sh_degree > 3 ? 3 : params.appearance_sh_degree);
+        const int storage_basis_count = (storage_degree + 1) * (storage_degree + 1);
+        const int rgb_channel = channel < 3 ? channel : 0;
+        float value = 0.0f;
+        const int base = surfel * storage_basis_count * 3;
+        for (int basis = 0; basis < basis_count; ++basis) {
+            value += params.appearance_values[base + basis * 3 + rgb_channel] *
+                     sh_basis(basis, view);
+        }
+        return value;
+    }
+
+    const int channel_count = params.appearance_channel_count > 0
+        ? params.appearance_channel_count
+        : 1;
+    const int source_channel = channel < channel_count ? channel : channel_count - 1;
+    return params.appearance_values[surfel * channel_count + source_channel];
+}
+
 static __forceinline__ __device__ void insert_composite_hit(unsigned int ray,
                                                            int surfel,
                                                            float t,
@@ -372,6 +440,13 @@ extern "C" __global__ void __raygen__surfel_composite() {
         params.scratch_alpha[index] = 0.0f;
         params.scratch_value[index] = 0.0f;
     }
+    const int channel_count = params.render_channel_count > 0 ? params.render_channel_count : 0;
+    const int channel_base = static_cast<int>(ray) * channel_count;
+    if (params.out_channels != nullptr) {
+        for (int channel = 0; channel < channel_count; ++channel) {
+            params.out_channels[channel_base + channel] = 0.0f;
+        }
+    }
 
     const bool trace_enabled =
         is_active(ray) &&
@@ -384,6 +459,7 @@ extern "C" __global__ void __raygen__surfel_composite() {
     float alpha_accum = 0.0f;
     float transmittance = 1.0f;
     float depth_numerator = 0.0f;
+    const float3 view = normalized_view_direction(load_ray_direction(ray));
 
     if (trace_enabled) {
         const float trace_tmax = ray_tmax(ray);
@@ -411,11 +487,25 @@ extern "C" __global__ void __raygen__surfel_composite() {
                 continue;
             }
             const float contribution = transmittance * hit_alpha;
-            intensity += contribution * params.scratch_value[index];
+            const int surfel = params.scratch_surfel_id[index];
+            const float first_channel = evaluate_appearance_channel(surfel, 0, view);
+            intensity += contribution * first_channel;
+            if (params.out_channels != nullptr) {
+                for (int channel = 0; channel < channel_count; ++channel) {
+                    params.out_channels[channel_base + channel] +=
+                        contribution * evaluate_appearance_channel(surfel, channel, view);
+                }
+            }
             alpha_accum += contribution;
             depth_numerator += contribution * params.scratch_t[index];
             transmittance *= 1.0f - hit_alpha;
         }
+    }
+
+    if (params.out_channels != nullptr && channel_count >= 3 && is_active(ray)) {
+        params.out_channels[channel_base + 0] += transmittance * params.background_rgb[0];
+        params.out_channels[channel_base + 1] += transmittance * params.background_rgb[1];
+        params.out_channels[channel_base + 2] += transmittance * params.background_rgb[2];
     }
 
     params.out_intensity[ray] = intensity;

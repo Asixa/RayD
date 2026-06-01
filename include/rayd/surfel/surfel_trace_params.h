@@ -34,6 +34,13 @@ struct SurfelTraceParams {
     const float *tangent_v_z = nullptr;
     const float *opacity = nullptr;
     const float *value = nullptr;
+    const float *appearance_values = nullptr;
+    int appearance_channel_count = 1;
+    int color_model = 0;
+    int appearance_sh_degree = 0;
+    int sh_degree = 0;
+    int render_channel_count = 1;
+    float background_rgb[3] = {0.0f, 0.0f, 0.0f};
 
     float alpha_min = 1.0f / 255.0f;
     float alpha_cap = 0.99f;
@@ -52,6 +59,7 @@ struct SurfelTraceParams {
     float *scratch_alpha = nullptr;
     float *scratch_value = nullptr;
     float *out_intensity = nullptr;
+    float *out_channels = nullptr;
     float *out_alpha = nullptr;
     float *out_transmittance = nullptr;
     float *out_depth = nullptr;
