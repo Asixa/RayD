@@ -55,6 +55,7 @@ class SurfelCoreTests(unittest.TestCase):
                 "has_options": hasattr(pj, "SurfelTraceOptions"),
                 "has_mode": hasattr(pj, "SurfelPrimitiveMode"),
                 "has_reference_composite": hasattr(pj.SurfelScene, "composite_alpha_reference"),
+                "single_launch_default": pj.SurfelTraceOptions().single_launch,
                 "ico_name": str(pj.SurfelPrimitiveMode.Icosahedron20),
                 "quad_name": str(pj.SurfelPrimitiveMode.QuadTriangles),
                 "single_name": str(pj.SurfelPrimitiveMode.SingleTriangle),
@@ -67,6 +68,7 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertTrue(data["has_options"])
         self.assertTrue(data["has_mode"])
         self.assertTrue(data["has_reference_composite"])
+        self.assertTrue(data["single_launch_default"])
         self.assertIn("Icosahedron20", data["ico_name"])
         self.assertIn("QuadTriangles", data["quad_name"])
         self.assertIn("SingleTriangle", data["single_name"])
@@ -315,6 +317,7 @@ class SurfelCoreTests(unittest.TestCase):
             capped_opts = pj.SurfelTraceOptions()
             capped_opts.alpha_min = math.exp(-0.5)
             capped_opts.max_candidate_hits = 1
+            capped_opts.single_launch = False
             capped_scene = pj.SurfelScene(cloud, capped_opts)
             capped_scene.build()
 
@@ -338,6 +341,115 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertEqual(data["surfel_id"], 1)
         self.assertAlmostEqual(data["t"], 3.0, places=5)
         self.assertFalse(data["capped_valid"])
+
+    def test_single_launch_matches_legacy_retrace_and_counts_one_optix_launch(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 1.1], [0.0, 0.0], [0.0, -1.0]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+                cuda.Float([1.0, 1.0]),
+            )
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = math.exp(-0.5)
+            opts.max_candidate_hits = 8
+            opts.single_launch = True
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            legacy_opts = pj.SurfelTraceOptions()
+            legacy_opts.alpha_min = math.exp(-0.5)
+            legacy_opts.max_candidate_hits = 8
+            legacy_opts.single_launch = False
+            legacy_scene = pj.SurfelScene(cloud, legacy_opts)
+            legacy_scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([1.05], [0.0], [2.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+
+            pj.native_launch_audit_clear()
+            fast = scene.intersect(ray)
+            fast_valid = bool(fast.is_valid()[0])
+            fast_surfel = int(fast.surfel_id[0])
+            fast_t = float(fast.t[0])
+            fast_alpha = float(fast.alpha[0])
+            audit = pj.native_launch_audit()
+
+            legacy = legacy_scene.intersect(ray)
+            print(json.dumps({
+                "fast_valid": fast_valid,
+                "legacy_valid": bool(legacy.is_valid()[0]),
+                "fast_surfel": fast_surfel,
+                "legacy_surfel": int(legacy.surfel_id[0]),
+                "fast_t": fast_t,
+                "legacy_t": float(legacy.t[0]),
+                "fast_alpha": fast_alpha,
+                "legacy_alpha": float(legacy.alpha[0]),
+                "surfel_launches": audit.get("surfel_trace", {}).get("optix_launch", -1),
+            }))
+            """
+        )
+
+        self.assertTrue(data["fast_valid"])
+        self.assertTrue(data["legacy_valid"])
+        self.assertEqual(data["fast_surfel"], data["legacy_surfel"])
+        self.assertAlmostEqual(data["fast_t"], data["legacy_t"], places=5)
+        self.assertAlmostEqual(data["fast_alpha"], data["legacy_alpha"], places=5)
+        self.assertEqual(data["surfel_launches"], 1)
+
+    def test_single_launch_intersect_sorts_by_analytic_plane_t_not_proxy_t(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, 0.05]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+                cuda.Float([1.0, 0.01]),
+            )
+
+            opts = pj.SurfelTraceOptions()
+            opts.proxy_epsilon = 0.1
+            opts.single_launch = True
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+
+            pj.native_launch_audit_clear()
+            hit = scene.intersect(ray)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "valid": bool(hit.is_valid()[0]),
+                "surfel_id": int(hit.surfel_id[0]),
+                "t": float(hit.t[0]),
+                "alpha": float(hit.alpha[0]),
+                "surfel_launches": audit.get("surfel_trace", {}).get("optix_launch", -1),
+            }))
+            """
+        )
+
+        self.assertTrue(data["valid"])
+        self.assertEqual(data["surfel_id"], 1)
+        self.assertAlmostEqual(data["t"], 0.95, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.01, places=5)
+        self.assertEqual(data["surfel_launches"], 1)
 
     def test_alpha_composite_makes_quad_edges_transparent(self):
         data = run_json_case(
@@ -424,6 +536,118 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["nearest_alpha"], 0.5, places=5)
         self.assertAlmostEqual(data["composite_alpha"], data["expected"], places=5)
         self.assertAlmostEqual(data["depth"], 1.0, places=5)
+
+    def test_single_launch_alpha_composite_matches_reference_and_counts_one_launch(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = math.exp(-0.5 * (2.5 * 2.5))
+            opts.alpha_cap = 0.99
+            opts.max_candidate_hits = 8
+            opts.single_launch = True
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, 0.5]),
+                cuda.Array3f([0.2, 0.2], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [0.2, 0.2], [0.0, 0.0]),
+                cuda.Float([0.5, 0.25]),
+                cuda.Float([0.2, 0.8]),
+            )
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            legacy_opts = pj.SurfelTraceOptions()
+            legacy_opts.alpha_min = opts.alpha_min
+            legacy_opts.alpha_cap = opts.alpha_cap
+            legacy_opts.max_candidate_hits = opts.max_candidate_hits
+            legacy_opts.single_launch = False
+            legacy_scene = pj.SurfelScene(cloud, legacy_opts)
+            legacy_scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+
+            pj.native_launch_audit_clear()
+            native = scene.composite_alpha(ray)
+            audit = pj.native_launch_audit()
+            reference = legacy_scene.composite_alpha_reference(ray)
+
+            print(json.dumps({
+                "native_alpha": float(native.alpha[0]),
+                "reference_alpha": float(reference.alpha[0]),
+                "native_intensity": float(native.intensity[0]),
+                "reference_intensity": float(reference.intensity[0]),
+                "native_depth": float(native.depth[0]),
+                "reference_depth": float(reference.depth[0]),
+                "surfel_launches": audit.get("surfel_trace", {}).get("optix_launch", -1),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["native_alpha"], data["reference_alpha"], places=5)
+        self.assertAlmostEqual(data["native_intensity"], data["reference_intensity"], places=5)
+        self.assertAlmostEqual(data["native_depth"], data["reference_depth"], places=5)
+        self.assertEqual(data["surfel_launches"], 1)
+
+    def test_single_launch_alpha_composite_ad_uses_native_candidates_and_gradients(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit as dr
+            import drjit.cuda.ad as ad
+
+            opacity = ad.Float([0.8])
+            value = ad.Float([0.5])
+            dr.enable_grad(opacity, value)
+
+            cloud = pj.SurfelCloud(
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([0.0])),
+                ad.Array3f(ad.Float([1.0]), ad.Float([0.0]), ad.Float([0.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([1.0]), ad.Float([0.0])),
+                opacity,
+                value,
+            )
+            opts = pj.SurfelTraceOptions()
+            opts.single_launch = True
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            ray = pj.RayAD(
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([1.0])),
+                ad.Array3f(ad.Float([0.0]), ad.Float([0.0]), ad.Float([-1.0])),
+            )
+
+            pj.native_launch_audit_clear()
+            comp = scene.composite_alpha(ray)
+            loss = dr.sum(comp.intensity)
+            dr.backward(loss)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "valid": bool(comp.is_valid()[0]),
+                "intensity": float(comp.intensity[0]),
+                "alpha": float(comp.alpha[0]),
+                "grad_opacity": float(dr.grad(opacity)[0]),
+                "grad_value": float(dr.grad(value)[0]),
+                "surfel_launches": audit.get("surfel_trace", {}).get("optix_launch", -1),
+            }))
+            """
+        )
+
+        self.assertTrue(data["valid"])
+        self.assertAlmostEqual(data["intensity"], 0.4, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.8, places=5)
+        self.assertAlmostEqual(data["grad_opacity"], 0.5, places=5)
+        self.assertAlmostEqual(data["grad_value"], 0.8, places=5)
+        self.assertEqual(data["surfel_launches"], 1)
 
     def test_scalar_surfel_value_modulates_composited_intensity(self):
         data = run_json_case(

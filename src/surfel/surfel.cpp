@@ -108,7 +108,10 @@ AnalyticSurfelHit<Detached> evaluate_analytic_surfel_hit(const RayT<Detached> &r
     const FloatT<Detached> gaussian =
         exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
     const FloatT<Detached> alpha_uncapped = opacity * gaussian;
-    valid &= basis_valid && (alpha_uncapped >= FloatT<Detached>(options.alpha_min));
+    const FloatT<Detached> alpha_min_value(options.alpha_min);
+    const FloatT<Detached> alpha_accept_slack =
+        FloatT<Detached>(1e-6f) * maximum(FloatT<Detached>(1.f), alpha_min_value);
+    valid &= basis_valid && (alpha_uncapped + alpha_accept_slack >= alpha_min_value);
 
     FloatT<Detached> alpha =
         minimum(FloatT<Detached>(options.alpha_cap),
@@ -208,8 +211,24 @@ void SurfelScene::build() {
             "SurfelScene::build(): max_candidate_hits must be positive.");
 
     build_triangle_buffers();
-    eval(optix_vertex_buffer_, optix_face_buffer_, triangle_to_surfel_id_);
-    optix_scene_.build(optix_vertex_buffer_, optix_face_buffer_, vertex_count_, triangle_count_);
+    detached_center_ = detach<false>(cloud_.center());
+    detached_tangent_u_ = detach<false>(cloud_.tangent_u());
+    detached_tangent_v_ = detach<false>(cloud_.tangent_v());
+    detached_opacity_ = detach<false>(cloud_.opacity());
+    detached_value_ = detach<false>(cloud_.value());
+    eval(optix_vertex_buffer_,
+         optix_face_buffer_,
+         triangle_to_surfel_id_,
+         detached_center_,
+         detached_tangent_u_,
+         detached_tangent_v_,
+         detached_opacity_,
+         detached_value_);
+    optix_scene_.build(optix_vertex_buffer_,
+                       optix_face_buffer_,
+                       vertex_count_,
+                       triangle_count_,
+                       !options_.single_launch);
     ready_ = true;
 }
 
@@ -234,6 +253,8 @@ void SurfelScene::build_triangle_buffers() {
     if (std::isfinite(options_.cutoff)) {
         influence_radius = minimum(influence_radius, FloatAD(options_.cutoff));
     }
+    const FloatAD proxy_radius =
+        influence_radius * FloatAD(1.0001f) + FloatAD(1e-6f);
 
     if (use_icosahedron) {
         const Vector3fAD raw_normal = cross(u, v);
@@ -249,19 +270,19 @@ void SurfelScene::build_triangle_buffers() {
             const FloatAD local_z(vertices[static_cast<size_t>(vertex)][2]);
             const Vector3fAD proxy_vertex =
                 center +
-                influence_radius * (local_x * u + local_y * v) +
-                influence_radius * FloatAD(options_.proxy_epsilon) * local_z * normal;
+                proxy_radius * (local_x * u + local_y * v) +
+                proxy_radius * FloatAD(options_.proxy_epsilon) * local_z * normal;
             scatter(vertices_ad, proxy_vertex, base + vertex);
         }
     } else if (use_quad) {
-        scatter(vertices_ad, center - influence_radius * u - influence_radius * v, base + 0);
-        scatter(vertices_ad, center + influence_radius * u - influence_radius * v, base + 1);
-        scatter(vertices_ad, center + influence_radius * u + influence_radius * v, base + 2);
-        scatter(vertices_ad, center - influence_radius * u + influence_radius * v, base + 3);
+        scatter(vertices_ad, center - proxy_radius * u - proxy_radius * v, base + 0);
+        scatter(vertices_ad, center + proxy_radius * u - proxy_radius * v, base + 1);
+        scatter(vertices_ad, center + proxy_radius * u + proxy_radius * v, base + 2);
+        scatter(vertices_ad, center - proxy_radius * u + proxy_radius * v, base + 3);
     } else {
-        scatter(vertices_ad, center + (-2.f * influence_radius) * u - influence_radius * v, base + 0);
-        scatter(vertices_ad, center + ( 2.f * influence_radius) * u - influence_radius * v, base + 1);
-        scatter(vertices_ad, center + ( 3.f * influence_radius) * v, base + 2);
+        scatter(vertices_ad, center + (-2.f * proxy_radius) * u - proxy_radius * v, base + 0);
+        scatter(vertices_ad, center + ( 2.f * proxy_radius) * u - proxy_radius * v, base + 1);
+        scatter(vertices_ad, center + ( 3.f * proxy_radius) * v, base + 2);
     }
 
     const Vector3f vertices = detach<false>(vertices_ad);
@@ -328,6 +349,67 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
     result.surfel_id = full<IntT<Detached>>(-1, ray_count);
     result.triangle_id = full<IntT<Detached>>(-1, ray_count);
 
+    if (options_.single_launch) {
+        MaskT<Detached> hit_mask = active;
+        const SurfelOptixIntersection optix_hit =
+            optix_scene_.template trace_analytic_candidates<Detached>(ray,
+                                                                       triangle_to_surfel_id_,
+                                                                       detached_center_,
+                                                                       detached_tangent_u_,
+                                                                       detached_tangent_v_,
+                                                                       detached_opacity_,
+                                                                       options_.alpha_min,
+                                                                       options_.alpha_cap,
+                                                                       options_.max_candidate_hits,
+                                                                       options_.face_forward,
+                                                                       hit_mask);
+        const Mask hit_mask_detached = detach<false>(hit_mask);
+        const Int triangle_id = optix_hit.triangle_id;
+        const Int surfel_id = gather<Int>(triangle_to_surfel_id_, triangle_id, hit_mask_detached);
+
+        Vector3fT<Detached> center;
+        Vector3fT<Detached> tangent_u;
+        Vector3fT<Detached> tangent_v;
+        FloatT<Detached> opacity;
+        FloatT<Detached> value;
+        if constexpr (!Detached) {
+            const IntAD surfel_id_ad = IntAD(surfel_id);
+            center = gather<Vector3fAD>(cloud_.center(), surfel_id_ad, hit_mask);
+            tangent_u = gather<Vector3fAD>(cloud_.tangent_u(), surfel_id_ad, hit_mask);
+            tangent_v = gather<Vector3fAD>(cloud_.tangent_v(), surfel_id_ad, hit_mask);
+            opacity = gather<FloatAD>(cloud_.opacity(), surfel_id_ad, hit_mask);
+            value = gather<FloatAD>(cloud_.value(), surfel_id_ad, hit_mask);
+        } else {
+            center = gather<Vector3f>(detached_center_, surfel_id, hit_mask_detached);
+            tangent_u = gather<Vector3f>(detached_tangent_u_, surfel_id, hit_mask_detached);
+            tangent_v = gather<Vector3f>(detached_tangent_v_, surfel_id, hit_mask_detached);
+            opacity = gather<Float>(detached_opacity_, surfel_id, hit_mask_detached);
+            value = gather<Float>(detach<false>(cloud_.value()), surfel_id, hit_mask_detached);
+        }
+
+        const AnalyticSurfelHit<Detached> analytic =
+            evaluate_analytic_surfel_hit<Detached>(ray,
+                                                   center,
+                                                   tangent_u,
+                                                   tangent_v,
+                                                   opacity,
+                                                   value,
+                                                   options_,
+                                                   hit_mask);
+        const MaskT<Detached> take = hit_mask && analytic.valid;
+        result.t = select(take, analytic.t, result.t);
+        result.p = select(take, analytic.p, result.p);
+        result.n = select(take, analytic.n, result.n);
+        result.local_uv = select(take, analytic.local_uv, result.local_uv);
+        result.gaussian_weight = select(take, analytic.gaussian_weight, result.gaussian_weight);
+        result.opacity = select(take, analytic.opacity, result.opacity);
+        result.alpha = select(take, analytic.alpha, result.alpha);
+        result.value = select(take, analytic.value, result.value);
+        result.surfel_id = select(take, IntT<Detached>(surfel_id), result.surfel_id);
+        result.triangle_id = select(take, IntT<Detached>(triangle_id), result.triangle_id);
+        return result;
+    }
+
     MaskT<Detached> search_active = active;
     FloatT<Detached> t_min = full<FloatT<Detached>>(RayEpsilon, ray_count);
 
@@ -391,6 +473,74 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
 template <bool Detached>
 SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ray,
                                                         MaskT<Detached> active) const {
+    if (options_.single_launch) {
+        const SurfelOptixComposite native =
+            optix_scene_.template composite_alpha<Detached>(ray,
+                                                            triangle_to_surfel_id_,
+                                                            detached_center_,
+                                                            detached_tangent_u_,
+                                                            detached_tangent_v_,
+                                                            detached_opacity_,
+                                                            detached_value_,
+                                                            options_.alpha_min,
+                                                            options_.alpha_cap,
+                                                            options_.max_candidate_hits,
+                                                            options_.face_forward,
+                                                            active);
+        if constexpr (Detached) {
+            SurfelCompositeT<Detached> result;
+            result.intensity = native.intensity;
+            result.alpha = native.alpha;
+            result.transmittance = native.transmittance;
+            result.depth = native.depth;
+            return result;
+        } else {
+            const int ray_count = static_cast<int>(slices(ray.o));
+            SurfelCompositeT<Detached> result;
+            result.intensity = zeros<FloatT<Detached>>(ray_count);
+            result.alpha = zeros<FloatT<Detached>>(ray_count);
+            result.transmittance = full<FloatT<Detached>>(1.f, ray_count);
+            result.depth = full<FloatT<Detached>>(Infinity, ray_count);
+
+            FloatT<Detached> depth_numerator = zeros<FloatT<Detached>>(ray_count);
+            const Int slot_base = arange<Int>(ray_count) * native.hit_capacity;
+            for (int slot = 0; slot < native.hit_capacity; ++slot) {
+                const Int surfel_id = gather<Int>(native.surfel_id, slot_base + slot);
+                const MaskT<Detached> hit_mask = active && (IntT<Detached>(surfel_id) >= IntT<Detached>(0));
+                const IntAD surfel_id_ad = IntAD(surfel_id);
+                const Vector3fAD center = gather<Vector3fAD>(cloud_.center(), surfel_id_ad, hit_mask);
+                const Vector3fAD tangent_u = gather<Vector3fAD>(cloud_.tangent_u(), surfel_id_ad, hit_mask);
+                const Vector3fAD tangent_v = gather<Vector3fAD>(cloud_.tangent_v(), surfel_id_ad, hit_mask);
+                const FloatAD opacity = gather<FloatAD>(cloud_.opacity(), surfel_id_ad, hit_mask);
+                const FloatAD value = gather<FloatAD>(cloud_.value(), surfel_id_ad, hit_mask);
+                const AnalyticSurfelHit<Detached> analytic =
+                    evaluate_analytic_surfel_hit<Detached>(ray,
+                                                           center,
+                                                           tangent_u,
+                                                           tangent_v,
+                                                           opacity,
+                                                           value,
+                                                           options_,
+                                                           hit_mask);
+                const FloatT<Detached> contribution =
+                    select(analytic.valid,
+                           result.transmittance * analytic.alpha,
+                           zeros<FloatT<Detached>>(ray_count));
+                result.intensity += contribution * analytic.value;
+                result.alpha += contribution;
+                depth_numerator += contribution * select(analytic.valid,
+                                                         analytic.t,
+                                                         zeros<FloatT<Detached>>(ray_count));
+                result.transmittance *= select(analytic.valid,
+                                               FloatT<Detached>(1.f) - analytic.alpha,
+                                               FloatT<Detached>(1.f));
+            }
+
+            const MaskT<Detached> has_alpha = result.alpha > FloatT<Detached>(0.f);
+            result.depth = select(has_alpha, depth_numerator / result.alpha, result.depth);
+            return result;
+        }
+    }
     return composite_alpha_reference<Detached>(ray, active);
 }
 

@@ -17,6 +17,7 @@ option(RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX "Regenerate diffraction_accu
 option(RAYD_REGENERATE_DIFFRACTION_PATHS_PTX "Regenerate diffraction_paths PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_REFLECTION_EPC_PTX "Regenerate reflection_epc PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX "Regenerate segment_visibility PTX during the build. Requires OptiX SDK headers." OFF)
+option(RAYD_REGENERATE_SURFEL_TRACE_PTX "Regenerate surfel trace PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_EDGE_OPTIX_PTX "Regenerate edge OptiX custom-AABB PTX during the build. Requires OptiX SDK headers." OFF)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
@@ -132,6 +133,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/optix.h
 
     ${RAYD_INCLUDE_DIR}/surfel/surfel_optix.h
+    ${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h
     ${RAYD_SOURCE_DIR}/surfel/surfel_optix.cpp
     ${RAYD_INCLUDE_DIR}/surfel/surfel.h
     ${RAYD_SOURCE_DIR}/surfel/surfel.cpp
@@ -834,6 +836,91 @@ else()
             "Restore it or enable RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX with OptiX SDK headers available.")
     endif()
     list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
+endif()
+
+set(RAYD_SURFEL_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/surfel/surfel_trace.cu")
+set(RAYD_SURFEL_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/surfel/surfel_trace_ptx.h")
+set(RAYD_SURFEL_TRACE_PTX_H_COMMITTED
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_ptx.h")
+
+if(RAYD_REGENERATE_SURFEL_TRACE_PTX)
+    find_path(OPTIX_INCLUDE_DIR optix.h
+        HINTS
+            ENV OPTIX_INCLUDE_DIR
+            ENV OPTIX_PATH
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
+            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
+            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
+            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
+        PATH_SUFFIXES include
+    )
+    if(NOT OPTIX_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "Could not locate OptiX SDK headers needed to regenerate surfel_trace PTX. "
+            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_SURFEL_TRACE_PTX.")
+    endif()
+
+    set(RAYD_SURFEL_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/surfel_trace.ptx")
+    if(WIN32)
+        set(RAYD_SURFEL_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_surfel_trace_ptx.bat")
+        file(GENERATE OUTPUT "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SURFEL_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SURFEL_TRACE_PTX}\"\r\n\
+")
+        add_custom_command(
+            OUTPUT "${RAYD_SURFEL_TRACE_PTX}"
+            COMMAND "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}"
+            DEPENDS
+                "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}"
+                "${RAYD_SURFEL_TRACE_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT "${RAYD_SURFEL_TRACE_PTX}"
+            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
+                    "${RAYD_SURFEL_TRACE_CU}"
+                    -I"${OPTIX_INCLUDE_DIR}"
+                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                    ${RAYD_CUDA_DEFINITIONS_LIST}
+                    -o "${RAYD_SURFEL_TRACE_PTX}"
+            DEPENDS
+                "${RAYD_SURFEL_TRACE_CU}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
+            VERBATIM
+        )
+    endif()
+
+    add_custom_command(
+        OUTPUT "${RAYD_SURFEL_TRACE_PTX_H}"
+        COMMAND ${CMAKE_COMMAND}
+            -DPTX_FILE=${RAYD_SURFEL_TRACE_PTX}
+            -DOUTPUT_FILE=${RAYD_SURFEL_TRACE_PTX_H}
+            -DVAR_NAME=surfel_trace_ptx
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        DEPENDS
+            "${RAYD_SURFEL_TRACE_PTX}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
+        VERBATIM
+    )
+    set_source_files_properties("${RAYD_SURFEL_TRACE_PTX_H}" PROPERTIES GENERATED TRUE)
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SURFEL_TRACE_PTX_H}")
+else()
+    if(NOT EXISTS "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}")
+        message(FATAL_ERROR
+            "Missing committed surfel_trace PTX header at "
+            "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}. "
+            "Restore it or enable RAYD_REGENERATE_SURFEL_TRACE_PTX with OptiX SDK headers available.")
+    endif()
+    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}")
 endif()
 
 set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu")

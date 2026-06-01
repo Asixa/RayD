@@ -33,6 +33,8 @@ NativeLaunchStageStats &stage_stats(NativeLaunchAuditSnapshot &snapshot,
         return snapshot.accumulate_reflections;
     case NativeLaunchStage::AccumDfr:
         return snapshot.accum_dfr;
+    case NativeLaunchStage::SurfelTrace:
+        return snapshot.surfel_trace;
     case NativeLaunchStage::Unknown:
     default:
         return snapshot.unknown;
@@ -92,6 +94,7 @@ void native_launch_audit_clear() {
     clear_stage_stats(snapshot.trace_reflections);
     clear_stage_stats(snapshot.accumulate_reflections);
     clear_stage_stats(snapshot.accum_dfr);
+    clear_stage_stats(snapshot.surfel_trace);
 }
 
 NativeLaunchAuditSnapshot native_launch_audit_snapshot() {

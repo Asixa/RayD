@@ -19,10 +19,14 @@ struct SurfelTraceOptions {
     float alpha_cap = 0.99f;
     /// Relative normal-axis scale for the thin Icosahedron20 proxy, multiplied by the Gaussian radius.
     float proxy_epsilon = 1e-3f;
-    /// Maximum closest-hit retrace iterations used to skip proxy false positives.
+    /// Small per-ray k-buffer capacity for detached native alpha compositing.
+    /// The legacy retrace path also uses this as its candidate-iteration limit.
     int max_candidate_hits = 8;
     SurfelPrimitiveMode primitive_mode = SurfelPrimitiveMode::Icosahedron20;
     bool face_forward = true;
+    /// Use the surfel native OptiX pipeline for detached intersect/composite calls.
+    /// AD alpha compositing keeps the differentiable reference path.
+    bool single_launch = true;
 };
 
 template <typename Float_>
@@ -162,6 +166,11 @@ private:
     int triangle_count_ = 0;
 
     Int triangle_to_surfel_id_;
+    Vector3f detached_center_;
+    Vector3f detached_tangent_u_;
+    Vector3f detached_tangent_v_;
+    Float detached_opacity_;
+    Float detached_value_;
     Float optix_vertex_buffer_;
     Int optix_face_buffer_;
     SurfelOptixScene optix_scene_;

@@ -63,9 +63,10 @@ def make_ray_grid(count: int, extent_x: float, extent_y: float) -> rd.Ray:
     )
 
 
-def make_options(mode_name: str) -> rd.SurfelTraceOptions:
+def make_options(mode_name: str, single_launch: bool = True) -> rd.SurfelTraceOptions:
     opts = rd.SurfelTraceOptions()
     opts.alpha_min = 1.0 / 255.0
+    opts.single_launch = single_launch
     if mode_name == "ico":
         opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
     elif mode_name == "quad":
@@ -138,6 +139,7 @@ def run_case(
     spacing: float,
     repeats: int,
     warmup: int,
+    single_launch: bool = True,
 ) -> dict[str, Any]:
     width, height = grid_shape(surfel_count)
     extent_x = max(1.0, width * spacing * 0.55)
@@ -146,6 +148,7 @@ def run_case(
         "mode": mode_name,
         "surfel_count": surfel_count,
         "ray_count": ray_count,
+        "trace_backend": "single_launch" if single_launch else "legacy_retrace",
         "grid": {"width": width, "height": height},
         "estimate": estimate_proxy_bytes(surfel_count, mode_name),
     }
@@ -155,7 +158,7 @@ def run_case(
     dr.sync_thread()
     record["cloud_ms"] = (time.perf_counter() - start) * 1000.0
 
-    opts = make_options(mode_name)
+    opts = make_options(mode_name, single_launch)
     start = time.perf_counter()
     scene = rd.SurfelScene(cloud, opts)
     scene.build()
@@ -179,6 +182,7 @@ def run_surfel_count(
     spacing: float,
     repeats: int,
     warmup: int,
+    single_launch: bool = True,
 ) -> list[dict[str, Any]]:
     width, height = grid_shape(surfel_count)
     extent_x = max(1.0, width * spacing * 0.55)
@@ -186,6 +190,7 @@ def run_surfel_count(
     base: dict[str, Any] = {
         "mode": mode_name,
         "surfel_count": surfel_count,
+        "trace_backend": "single_launch" if single_launch else "legacy_retrace",
         "grid": {"width": width, "height": height},
         "estimate": estimate_proxy_bytes(surfel_count, mode_name),
     }
@@ -196,7 +201,7 @@ def run_surfel_count(
         dr.sync_thread()
         base["cloud_ms"] = (time.perf_counter() - start) * 1000.0
 
-        opts = make_options(mode_name)
+        opts = make_options(mode_name, single_launch)
         start = time.perf_counter()
         scene = rd.SurfelScene(cloud, opts)
         scene.build()
@@ -256,7 +261,8 @@ def plot(data: dict[str, Any], output_dir: Path) -> dict[str, str]:
         plt.yscale("log")
         plt.xlabel("surfel count")
         plt.ylabel("trace avg time (ms)")
-        plt.title(f"RayD surfel trace scale at {ray_count:,} rays")
+        backend = records[0].get("trace_backend", "single_launch")
+        plt.title(f"RayD surfel trace scale at {ray_count:,} rays ({backend})")
         plt.grid(True, which="both", alpha=0.25)
         path = output_dir / f"surfel_trace_scale_ray_{ray_count}.png"
         plt.tight_layout()
@@ -294,6 +300,7 @@ def main() -> None:
     parser.add_argument("--surfel-counts", type=int, nargs="+", default=[10_000, 100_000, 1_000_000])
     parser.add_argument("--ray-counts", type=int, nargs="+", default=[10_000, 100_000, 1_000_000])
     parser.add_argument("--mode", choices=["ico", "quad"], default="ico")
+    parser.add_argument("--trace-backend", choices=["single-launch", "legacy-retrace"], default="single-launch")
     parser.add_argument("--spacing", type=float, default=0.08)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
@@ -302,6 +309,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     result: dict[str, Any] = {
         "mode": args.mode,
+        "trace_backend": args.trace_backend,
         "spacing": args.spacing,
         "repeats": args.repeats,
         "warmup": args.warmup,
@@ -318,6 +326,7 @@ def main() -> None:
                 args.spacing,
                 args.repeats,
                 args.warmup,
+                args.trace_backend == "single-launch",
             )
         )
         write_json(json_path, result)

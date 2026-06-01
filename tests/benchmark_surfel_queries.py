@@ -84,10 +84,12 @@ def benchmark_mode(
     rays: rd.Ray,
     repeats: int,
     warmup: int,
+    single_launch: bool = True,
 ) -> dict[str, Any]:
     opts = rd.SurfelTraceOptions()
     opts.alpha_min = 1.0 / 255.0
     opts.primitive_mode = mode
+    opts.single_launch = single_launch
 
     dr.sync_thread()
     build_start = time.perf_counter()
@@ -119,6 +121,7 @@ def benchmark_mode(
 
     return {
         "mode": str(mode).split(".")[-1],
+        "trace_backend": "single_launch" if single_launch else "legacy_retrace",
         "surfel_count": scene.surfel_count,
         "triangle_count": scene.triangle_count,
         "valid_count": valid_count,
@@ -273,6 +276,7 @@ def main() -> None:
     parser.add_argument("--spacing", type=float, default=0.08)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--trace-backend", choices=["single-launch", "legacy-retrace"], default="single-launch")
     parser.add_argument("--fit-image-size", type=int, default=24)
     parser.add_argument("--skip-fit", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
@@ -288,10 +292,26 @@ def main() -> None:
         "prewarmed": True,
         "ray_count": args.ray_side * args.ray_side,
         "surfel_count": args.grid_side * args.grid_side,
+        "trace_backend": args.trace_backend,
         "modes": [
-            benchmark_mode(rd.SurfelPrimitiveMode.Icosahedron20, cloud, rays, args.repeats, args.warmup),
-            benchmark_mode(rd.SurfelPrimitiveMode.QuadTriangles, cloud, rays, args.repeats, args.warmup),
-            benchmark_mode(rd.SurfelPrimitiveMode.SingleTriangle, cloud, rays, args.repeats, args.warmup),
+            benchmark_mode(rd.SurfelPrimitiveMode.Icosahedron20,
+                           cloud,
+                           rays,
+                           args.repeats,
+                           args.warmup,
+                           args.trace_backend == "single-launch"),
+            benchmark_mode(rd.SurfelPrimitiveMode.QuadTriangles,
+                           cloud,
+                           rays,
+                           args.repeats,
+                           args.warmup,
+                           args.trace_backend == "single-launch"),
+            benchmark_mode(rd.SurfelPrimitiveMode.SingleTriangle,
+                           cloud,
+                           rays,
+                           args.repeats,
+                           args.warmup,
+                           args.trace_backend == "single-launch"),
         ],
     }
 

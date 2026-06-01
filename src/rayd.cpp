@@ -262,6 +262,8 @@ NB_MODULE(rayd, m) {
                   native_stage_dict(snapshot.accumulate_reflections);
               result["accum_dfr"] =
                   native_stage_dict(snapshot.accum_dfr);
+              result["surfel_trace"] =
+                  native_stage_dict(snapshot.surfel_trace);
               return result;
           },
           "Return grouped native launch audit counters.");
@@ -366,7 +368,8 @@ NB_MODULE(rayd, m) {
             .def_rw("proxy_epsilon", &SurfelTraceOptions::proxy_epsilon)
             .def_rw("max_candidate_hits", &SurfelTraceOptions::max_candidate_hits)
             .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
-            .def_rw("face_forward", &SurfelTraceOptions::face_forward);
+            .def_rw("face_forward", &SurfelTraceOptions::face_forward)
+            .def_rw("single_launch", &SurfelTraceOptions::single_launch);
 
         nb::class_<ReflectionTraceOptions>(m, "ReflectionTraceOptions")
             .def(nb::init<>())
