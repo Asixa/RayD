@@ -12,6 +12,7 @@
 #include <rayd/multipath/segment_visibility.h>
 #include <rayd/mesh.h>
 #include <rayd/optix.h>
+#include <rayd/surfel/surfel.h>
 #include <rayd/scene/scene.h>
 
 #include <rayd/native_launch_audit.h>
@@ -352,6 +353,17 @@ NB_MODULE(rayd, m) {
             .value("UV", RayFlags::UV)
             .value("All", RayFlags::All);
 
+        nb::enum_<SurfelPrimitiveMode>(m, "SurfelPrimitiveMode")
+            .value("QuadTriangles", SurfelPrimitiveMode::QuadTriangles)
+            .value("SingleTriangle", SurfelPrimitiveMode::SingleTriangle);
+
+        nb::class_<SurfelTraceOptions>(m, "SurfelTraceOptions")
+            .def(nb::init<>())
+            .def_rw("cutoff", &SurfelTraceOptions::cutoff)
+            .def_rw("alpha_cap", &SurfelTraceOptions::alpha_cap)
+            .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
+            .def_rw("face_forward", &SurfelTraceOptions::face_forward);
+
         nb::class_<ReflectionTraceOptions>(m, "ReflectionTraceOptions")
             .def(nb::init<>())
             .def_rw("deduplicate", &ReflectionTraceOptions::deduplicate)
@@ -437,6 +449,42 @@ NB_MODULE(rayd, m) {
             .def_ro("prim_id", &IntersectionAD::prim_id)
             .def_ro("local_prim_id", &IntersectionAD::local_prim_id)
             .def_ro("global_prim_id", &IntersectionAD::global_prim_id);
+
+        nb::class_<SurfelIntersection>(m, "SurfelIntersection")
+            .def("is_valid", &SurfelIntersection::is_valid)
+            .def_ro("t", &SurfelIntersection::t)
+            .def_ro("p", &SurfelIntersection::p)
+            .def_ro("n", &SurfelIntersection::n)
+            .def_ro("local_uv", &SurfelIntersection::local_uv)
+            .def_ro("gaussian_weight", &SurfelIntersection::gaussian_weight)
+            .def_ro("opacity", &SurfelIntersection::opacity)
+            .def_ro("surfel_id", &SurfelIntersection::surfel_id)
+            .def_ro("triangle_id", &SurfelIntersection::triangle_id);
+
+        nb::class_<SurfelIntersectionAD>(m, "SurfelIntersectionAD")
+            .def("is_valid", &SurfelIntersectionAD::is_valid)
+            .def_ro("t", &SurfelIntersectionAD::t)
+            .def_ro("p", &SurfelIntersectionAD::p)
+            .def_ro("n", &SurfelIntersectionAD::n)
+            .def_ro("local_uv", &SurfelIntersectionAD::local_uv)
+            .def_ro("gaussian_weight", &SurfelIntersectionAD::gaussian_weight)
+            .def_ro("opacity", &SurfelIntersectionAD::opacity)
+            .def_ro("surfel_id", &SurfelIntersectionAD::surfel_id)
+            .def_ro("triangle_id", &SurfelIntersectionAD::triangle_id);
+
+        nb::class_<SurfelComposite>(m, "SurfelComposite")
+            .def("is_valid", &SurfelComposite::is_valid)
+            .def_ro("intensity", &SurfelComposite::intensity)
+            .def_ro("alpha", &SurfelComposite::alpha)
+            .def_ro("transmittance", &SurfelComposite::transmittance)
+            .def_ro("depth", &SurfelComposite::depth);
+
+        nb::class_<SurfelCompositeAD>(m, "SurfelCompositeAD")
+            .def("is_valid", &SurfelCompositeAD::is_valid)
+            .def_ro("intensity", &SurfelCompositeAD::intensity)
+            .def_ro("alpha", &SurfelCompositeAD::alpha)
+            .def_ro("transmittance", &SurfelCompositeAD::transmittance)
+            .def_ro("depth", &SurfelCompositeAD::depth);
 
         nb::class_<ReflectionChain>(m, "ReflectionChain")
             .def("is_valid", &ReflectionChain::is_valid)
@@ -1291,6 +1339,91 @@ NB_MODULE(rayd, m) {
             .def_ro("normalized_sibling_overlap",
                     &SceneEdgeBVHStats::normalized_sibling_overlap)
             .def_ro("leaf_size_histogram", &SceneEdgeBVHStats::leaf_size_histogram);
+    });
+
+    bind_section("surfel", [&]() {
+        nb::class_<SurfelCloud>(m, "SurfelCloud")
+            .def(nb::init<>())
+            .def("__init__",
+                 [](SurfelCloud *cloud,
+                    const Vector3f &center,
+                    const Vector3f &tangent_u,
+                    const Vector3f &tangent_v,
+                    const Float &opacity) {
+                     new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity);
+                 },
+                 "center"_a,
+                 "tangent_u"_a,
+                 "tangent_v"_a,
+                 "opacity"_a = Float())
+            .def("__init__",
+                 [](SurfelCloud *cloud,
+                    const Vector3fAD &center,
+                    const Vector3fAD &tangent_u,
+                    const Vector3fAD &tangent_v,
+                    const FloatAD &opacity) {
+                     new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity);
+                 },
+                 "center"_a,
+                 "tangent_u"_a,
+                 "tangent_v"_a,
+                 "opacity"_a = FloatAD())
+            .def_prop_ro("surfel_count", &SurfelCloud::surfel_count);
+
+        nb::class_<SurfelScene>(m, "SurfelScene")
+            .def(nb::init<const SurfelCloud &, const SurfelTraceOptions &>(),
+                 "cloud"_a,
+                 "options"_a = SurfelTraceOptions())
+            .def("build", &SurfelScene::build)
+            .def("is_ready", &SurfelScene::is_ready)
+            .def_prop_ro("surfel_count", &SurfelScene::surfel_count)
+            .def_prop_ro("triangle_count", &SurfelScene::triangle_count)
+            .def("intersect",
+                 [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
+                     return scene.intersect<true>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("intersect",
+                 [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
+                     return scene.intersect<false>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("composite_alpha",
+                 [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
+                     return scene.composite_alpha<true>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("composite_alpha",
+                 [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
+                     return scene.composite_alpha<false>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("shadow_test",
+                 [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
+                     return scene.shadow_test<true>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("shadow_test",
+                 [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
+                     return scene.shadow_test<false>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("visible",
+                 [](const SurfelScene &scene,
+                    const Vector3f &start,
+                    const Vector3f &end,
+                    rayd::Mask active) {
+                     return scene.visible<true>(start, end, active);
+                 },
+                 "start"_a, "end"_a, "active"_a = true)
+            .def("visible",
+                 [](const SurfelScene &scene,
+                    const Vector3fAD &start,
+                    const Vector3fAD &end,
+                    rayd::MaskAD active) {
+                     return scene.visible<false>(start, end, active);
+                 },
+                 "start"_a, "end"_a, "active"_a = true);
     });
 
     bind_section("mesh", [&]() {

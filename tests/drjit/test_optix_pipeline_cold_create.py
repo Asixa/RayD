@@ -150,6 +150,11 @@ class OptixPipelineColdCreateTests(unittest.TestCase):
             "tests.drjit.test_visibility_topk.VisibilityAndTopKTests."
             "test_nearest_edges_point_k2",
         ),
+        (
+            "surfel_intersect",
+            "tests.drjit.test_surfel.SurfelCoreTests."
+            "test_quad_surfel_intersection_returns_2dgs_fields",
+        ),
     )
 
     def test_public_optix_api_cold_create_matrix(self):

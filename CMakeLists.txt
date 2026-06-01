@@ -131,6 +131,11 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/optix.h
 
+    ${RAYD_INCLUDE_DIR}/surfel/surfel_optix.h
+    ${RAYD_SOURCE_DIR}/surfel/surfel_optix.cpp
+    ${RAYD_INCLUDE_DIR}/surfel/surfel.h
+    ${RAYD_SOURCE_DIR}/surfel/surfel.cpp
+
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
     ${RAYD_INCLUDE_DIR}/multipath/pipelines.h

@@ -33,6 +33,18 @@ using IntersectionT = IntersectionData<FloatT<Detached>>;
 using IntersectionAD = IntersectionT<false>;
 using Intersection = IntersectionT<true>;
 
+template <typename> struct SurfelIntersectionData;
+template <bool Detached>
+using SurfelIntersectionT = SurfelIntersectionData<FloatT<Detached>>;
+using SurfelIntersectionAD = SurfelIntersectionT<false>;
+using SurfelIntersection = SurfelIntersectionT<true>;
+
+template <typename> struct SurfelCompositeData;
+template <bool Detached>
+using SurfelCompositeT = SurfelCompositeData<FloatT<Detached>>;
+using SurfelCompositeAD = SurfelCompositeT<false>;
+using SurfelComposite = SurfelCompositeT<true>;
+
 template <typename> struct ReflectionChainData;
 template <bool Detached>
 using ReflectionChainT = ReflectionChainData<FloatT<Detached>>;
@@ -180,9 +192,13 @@ using SegmentChainVisibilityAD = SegmentChainVisibilityT<false>;
 using SegmentChainVisibility = SegmentChainVisibilityT<true>;
 
 struct OptixIntersection;
+struct SurfelOptixState;
 
 class Mesh;
 class OptixScene;
+class SurfelCloud;
+class SurfelScene;
+class SurfelOptixScene;
 class OptixLaunchPipeline;
 class SceneEdge;
 class Scene;
