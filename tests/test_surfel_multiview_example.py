@@ -1,6 +1,7 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -45,6 +46,87 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         frame = module.make_convergence_frame(target, pred, iteration=2, loss=0.25)
 
         self.assertEqual(frame.size, (4 * 3 + 32, 4 + 60))
+
+    def test_training_loop_keeps_coefficients_gpu_resident(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+        start = source.index("def fit_color_coefficients")
+        end = source.index("\ndef make_convergence_frame", start)
+        fit_body = source[start:end]
+
+        self.assertIn("class GpuSurfelFitState", source)
+        self.assertIn("self.train_scene.build()", source)
+        self.assertIn("self.preview_scene.build()", source)
+        self.assertIn("state.optimizer_step", fit_body)
+        self.assertNotIn("grad_coeffs = np.zeros_like", fit_body)
+        self.assertNotIn("np.array([float(grad", fit_body)
+        self.assertNotIn("active_coeff", fit_body)
+
+    def test_full_loss_mask_keeps_background_constrained(self):
+        module = load_example_module()
+        foreground = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+        full = module.select_loss_mask(foreground, "full")
+        fg = module.select_loss_mask(foreground, "foreground")
+
+        np.testing.assert_allclose(full, [1.0, 1.0, 1.0])
+        np.testing.assert_allclose(fg, foreground)
+
+    def test_example_has_no_depth_or_fallback_initializer(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertNotIn("fallback_sphere", source)
+        self.assertNotIn("initialize_from_depth", source)
+        self.assertNotIn("resolve_frame_depth", source)
+        self.assertNotIn("depth_path", source)
+        self.assertNotIn("--init-from-depth", source)
+        self.assertNotIn("--depth-scale", source)
+
+    def test_random_initializer_returns_2dgs_field(self):
+        module = load_example_module()
+        args = SimpleNamespace(
+            surfels=16,
+            seed=5,
+            random_radius=1.25,
+            initial_scale=0.08,
+        )
+
+        centers, colors, tangent_u, tangent_v, info = module.initialize_random_surfel_field(args)
+
+        self.assertEqual(info["source"], "random")
+        self.assertEqual(centers.shape, (16, 3))
+        self.assertEqual(colors.shape, (16, 3))
+        self.assertEqual(tangent_u.shape, (16, 3))
+        self.assertEqual(tangent_v.shape, (16, 3))
+        self.assertLessEqual(float(np.abs(centers).max()), 1.25)
+        self.assertTrue(np.all(np.linalg.norm(tangent_u, axis=1) > 0.0))
+        self.assertTrue(np.all(np.linalg.norm(tangent_v, axis=1) > 0.0))
+
+    def test_training_render_options_keep_configured_background(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("background_rgb=[self.background, self.background, self.background]", source)
+        self.assertIn("self.render_options", source)
+        fit_start = source.index("def fit_color_coefficients")
+        fit_end = source.index("\ndef make_convergence_frame", fit_start)
+        fit_body = source[fit_start:fit_end]
+        self.assertIn("state.render_options", fit_body)
+        self.assertNotIn("SurfelRenderOptions.rgb(sh_degree=state.degree)", fit_body)
+
+    def test_opacity_is_a_gpu_resident_trainable_parameter(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn("self.opacity_values = ad.Float(opacity.tolist())", source)
+        self.assertIn("dr.enable_grad(self.opacity_values)", source)
+        self.assertIn("self.opacity_values, self.opacity_momentum, self.opacity_velocity = self.optimizer_step_param", source)
+        self.assertIn("--fit-opacity", source)
+
+    def test_geometry_is_gpu_resident_and_trainable(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn("self.center_values = array3_ad(centers)", source)
+        self.assertIn("dr.enable_grad(self.center_values)", source)
+        self.assertIn("dr.enable_grad(self.tangent_u_values)", source)
+        self.assertIn("dr.enable_grad(self.tangent_v_values)", source)
+        self.assertIn("self.rebuild_train_scene()", source)
+        self.assertIn("self.center_values, self.center_momentum, self.center_velocity = self.optimizer_step_param", source)
 
 
 if __name__ == "__main__":
