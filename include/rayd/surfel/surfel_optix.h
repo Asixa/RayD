@@ -35,6 +35,11 @@ public:
 
     template <bool Detached>
     SurfelOptixIntersection intersect(const RayT<Detached> &ray,
+                                       MaskT<Detached> &active) const;
+
+    template <bool Detached>
+    SurfelOptixIntersection intersect(const RayT<Detached> &ray,
+                                      const FloatT<Detached> &t_min,
                                       MaskT<Detached> &active) const;
 
 private:

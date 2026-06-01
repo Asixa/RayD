@@ -364,6 +364,7 @@ NB_MODULE(rayd, m) {
             .def_rw("cutoff", &SurfelTraceOptions::cutoff)
             .def_rw("alpha_cap", &SurfelTraceOptions::alpha_cap)
             .def_rw("proxy_epsilon", &SurfelTraceOptions::proxy_epsilon)
+            .def_rw("max_candidate_hits", &SurfelTraceOptions::max_candidate_hits)
             .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
             .def_rw("face_forward", &SurfelTraceOptions::face_forward);
 
@@ -461,6 +462,8 @@ NB_MODULE(rayd, m) {
             .def_ro("local_uv", &SurfelIntersection::local_uv)
             .def_ro("gaussian_weight", &SurfelIntersection::gaussian_weight)
             .def_ro("opacity", &SurfelIntersection::opacity)
+            .def_ro("alpha", &SurfelIntersection::alpha)
+            .def_ro("value", &SurfelIntersection::value)
             .def_ro("surfel_id", &SurfelIntersection::surfel_id)
             .def_ro("triangle_id", &SurfelIntersection::triangle_id);
 
@@ -472,6 +475,8 @@ NB_MODULE(rayd, m) {
             .def_ro("local_uv", &SurfelIntersectionAD::local_uv)
             .def_ro("gaussian_weight", &SurfelIntersectionAD::gaussian_weight)
             .def_ro("opacity", &SurfelIntersectionAD::opacity)
+            .def_ro("alpha", &SurfelIntersectionAD::alpha)
+            .def_ro("value", &SurfelIntersectionAD::value)
             .def_ro("surfel_id", &SurfelIntersectionAD::surfel_id)
             .def_ro("triangle_id", &SurfelIntersectionAD::triangle_id);
 
@@ -1348,30 +1353,39 @@ NB_MODULE(rayd, m) {
         nb::class_<SurfelCloud>(m, "SurfelCloud")
             .def(nb::init<>())
             .def("__init__",
-                 [](SurfelCloud *cloud,
-                    const Vector3f &center,
-                    const Vector3f &tangent_u,
-                    const Vector3f &tangent_v,
-                    const Float &opacity) {
-                     new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity);
-                 },
-                 "center"_a,
-                 "tangent_u"_a,
-                 "tangent_v"_a,
-                 "opacity"_a = Float())
+                  [](SurfelCloud *cloud,
+                     const Vector3f &center,
+                     const Vector3f &tangent_u,
+                     const Vector3f &tangent_v,
+                     const Float &opacity,
+                     const Float &value) {
+                      new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity, value);
+                  },
+                  "center"_a,
+                  "tangent_u"_a,
+                  "tangent_v"_a,
+                  "opacity"_a = Float(),
+                  "value"_a = Float())
             .def("__init__",
-                 [](SurfelCloud *cloud,
-                    const Vector3fAD &center,
-                    const Vector3fAD &tangent_u,
-                    const Vector3fAD &tangent_v,
-                    const FloatAD &opacity) {
-                     new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity);
-                 },
-                 "center"_a,
-                 "tangent_u"_a,
-                 "tangent_v"_a,
-                 "opacity"_a = FloatAD())
-            .def_prop_ro("surfel_count", &SurfelCloud::surfel_count);
+                  [](SurfelCloud *cloud,
+                     const Vector3fAD &center,
+                     const Vector3fAD &tangent_u,
+                     const Vector3fAD &tangent_v,
+                     const FloatAD &opacity,
+                     const FloatAD &value) {
+                      new (cloud) SurfelCloud(center, tangent_u, tangent_v, opacity, value);
+                  },
+                  "center"_a,
+                  "tangent_u"_a,
+                  "tangent_v"_a,
+                  "opacity"_a = FloatAD(),
+                  "value"_a = FloatAD())
+            .def_prop_ro("surfel_count", &SurfelCloud::surfel_count)
+            .def_prop_ro("center", &SurfelCloud::center)
+            .def_prop_ro("tangent_u", &SurfelCloud::tangent_u)
+            .def_prop_ro("tangent_v", &SurfelCloud::tangent_v)
+            .def_prop_ro("opacity", &SurfelCloud::opacity)
+            .def_prop_ro("value", &SurfelCloud::value);
 
         nb::class_<SurfelScene>(m, "SurfelScene")
             .def(nb::init<const SurfelCloud &, const SurfelTraceOptions &>(),
@@ -1399,6 +1413,16 @@ NB_MODULE(rayd, m) {
             .def("composite_alpha",
                  [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
                      return scene.composite_alpha<false>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("composite_alpha_reference",
+                 [](const SurfelScene &scene, const Ray &ray, rayd::Mask active) {
+                     return scene.composite_alpha_reference<true>(ray, active);
+                 },
+                 nb::arg("ray").noconvert(), "active"_a = true)
+            .def("composite_alpha_reference",
+                 [](const SurfelScene &scene, const RayAD &ray, rayd::MaskAD active) {
+                     return scene.composite_alpha_reference<false>(ray, active);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true)
             .def("shadow_test",

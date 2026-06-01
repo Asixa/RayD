@@ -17,8 +17,10 @@ struct SurfelTraceOptions {
     /// Optional local-radius cap for debugging/backward compatibility; Infinity disables it.
     float cutoff = Infinity;
     float alpha_cap = 0.99f;
-    /// Thin-proxy half thickness in world units for Icosahedron20 mode.
+    /// Relative normal-axis scale for the thin Icosahedron20 proxy, multiplied by the Gaussian radius.
     float proxy_epsilon = 1e-3f;
+    /// Maximum closest-hit retrace iterations used to skip proxy false positives.
+    int max_candidate_hits = 8;
     SurfelPrimitiveMode primitive_mode = SurfelPrimitiveMode::Icosahedron20;
     bool face_forward = true;
 };
@@ -40,6 +42,8 @@ struct SurfelIntersectionData {
     Vec2f local_uv = zeros<Vec2f>(1);
     Float_ gaussian_weight = zeros<Float_>(1);
     Float_ opacity = zeros<Float_>(1);
+    Float_ alpha = zeros<Float_>(1);
+    Float_ value = zeros<Float_>(1);
     Int_ surfel_id = full<Int_>(-1, 1);
     Int_ triangle_id = full<Int_>(-1, 1);
 
@@ -50,6 +54,8 @@ struct SurfelIntersectionData {
                  local_uv,
                  gaussian_weight,
                  opacity,
+                 alpha,
+                 value,
                  surfel_id,
                  triangle_id)
 };
@@ -62,7 +68,7 @@ struct SurfelCompositeData {
 
     Mask_ is_valid() const { return alpha > Float_(0.f); }
 
-    Float_ intensity = zeros<Float_>(1);      ///< White-surfels alpha-composited intensity.
+    Float_ intensity = zeros<Float_>(1);      ///< Alpha-composited scalar surfel value.
     Float_ alpha = zeros<Float_>(1);          ///< Accumulated alpha, 1 - final transmittance.
     Float_ transmittance = full<Float_>(1.f, 1);
     Float_ depth = full<Float_>(Infinity, 1); ///< Alpha-weighted depth, Infinity when empty.
@@ -80,11 +86,13 @@ public:
     SurfelCloud(const Vector3f &center,
                 const Vector3f &tangent_u,
                 const Vector3f &tangent_v,
-                const Float &opacity = Float());
+                const Float &opacity = Float(),
+                const Float &value = Float());
     SurfelCloud(const Vector3fAD &center,
                 const Vector3fAD &tangent_u,
                 const Vector3fAD &tangent_v,
-                const FloatAD &opacity = FloatAD());
+                const FloatAD &opacity = FloatAD(),
+                const FloatAD &value = FloatAD());
 
     int surfel_count() const { return surfel_count_; }
 
@@ -92,17 +100,20 @@ public:
     const Vector3fAD &tangent_u() const { return tangent_u_; }
     const Vector3fAD &tangent_v() const { return tangent_v_; }
     const FloatAD &opacity() const { return opacity_; }
+    const FloatAD &value() const { return value_; }
 
 private:
     void initialize(const Vector3fAD &center,
                     const Vector3fAD &tangent_u,
                     const Vector3fAD &tangent_v,
-                    const FloatAD &opacity);
+                    const FloatAD &opacity,
+                    const FloatAD &value);
 
     Vector3fAD center_;
     Vector3fAD tangent_u_;
     Vector3fAD tangent_v_;
     FloatAD opacity_;
+    FloatAD value_;
     int surfel_count_ = 0;
 };
 
@@ -127,6 +138,10 @@ public:
     template <bool Detached>
     SurfelCompositeT<Detached> composite_alpha(const RayT<Detached> &ray,
                                                MaskT<Detached> active) const;
+
+    template <bool Detached>
+    SurfelCompositeT<Detached> composite_alpha_reference(const RayT<Detached> &ray,
+                                                         MaskT<Detached> active) const;
 
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray,

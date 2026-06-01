@@ -54,6 +54,7 @@ class SurfelCoreTests(unittest.TestCase):
                 "has_scene": hasattr(pj, "SurfelScene"),
                 "has_options": hasattr(pj, "SurfelTraceOptions"),
                 "has_mode": hasattr(pj, "SurfelPrimitiveMode"),
+                "has_reference_composite": hasattr(pj.SurfelScene, "composite_alpha_reference"),
                 "ico_name": str(pj.SurfelPrimitiveMode.Icosahedron20),
                 "quad_name": str(pj.SurfelPrimitiveMode.QuadTriangles),
                 "single_name": str(pj.SurfelPrimitiveMode.SingleTriangle),
@@ -65,9 +66,38 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertTrue(data["has_scene"])
         self.assertTrue(data["has_options"])
         self.assertTrue(data["has_mode"])
+        self.assertTrue(data["has_reference_composite"])
         self.assertIn("Icosahedron20", data["ico_name"])
         self.assertIn("QuadTriangles", data["quad_name"])
         self.assertIn("SingleTriangle", data["single_name"])
+
+    def test_surfel_cloud_fields_are_exposed(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([1.0], [2.0], [3.0]),
+                cuda.Array3f([0.5], [0.0], [0.0]),
+                cuda.Array3f([0.0], [0.25], [0.0]),
+                cuda.Float([0.75]),
+            )
+
+            print(json.dumps({
+                "center_x": float(cloud.center[0][0]),
+                "tangent_u_x": float(cloud.tangent_u[0][0]),
+                "tangent_v_y": float(cloud.tangent_v[1][0]),
+                "opacity": float(cloud.opacity[0]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["center_x"], 1.0, places=5)
+        self.assertAlmostEqual(data["tangent_u_x"], 0.5, places=5)
+        self.assertAlmostEqual(data["tangent_v_y"], 0.25, places=5)
+        self.assertAlmostEqual(data["opacity"], 0.75, places=5)
 
     def test_default_proxy_is_twenty_triangle_icosahedron(self):
         data = run_json_case(
@@ -261,6 +291,54 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertFalse(data["visible_blocked"])
         self.assertTrue(data["visible_clear"])
 
+    def test_intersect_continues_after_invalid_proxy_candidate(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = math.exp(-0.5)
+            opts.max_candidate_hits = 8
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 1.1], [0.0, 0.0], [0.0, -1.0]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+                cuda.Float([1.0, 1.0]),
+            )
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            capped_opts = pj.SurfelTraceOptions()
+            capped_opts.alpha_min = math.exp(-0.5)
+            capped_opts.max_candidate_hits = 1
+            capped_scene = pj.SurfelScene(cloud, capped_opts)
+            capped_scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([1.05], [0.0], [2.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            its = scene.intersect(ray)
+            capped = capped_scene.intersect(ray)
+
+            print(json.dumps({
+                "valid": bool(its.is_valid()[0]),
+                "surfel_id": int(its.surfel_id[0]),
+                "t": float(its.t[0]),
+                "capped_valid": bool(capped.is_valid()[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["valid"])
+        self.assertEqual(data["surfel_id"], 1)
+        self.assertAlmostEqual(data["t"], 3.0, places=5)
+        self.assertFalse(data["capped_valid"])
+
     def test_alpha_composite_makes_quad_edges_transparent(self):
         data = run_json_case(
             """
@@ -346,6 +424,49 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["nearest_alpha"], 0.5, places=5)
         self.assertAlmostEqual(data["composite_alpha"], data["expected"], places=5)
         self.assertAlmostEqual(data["depth"], 1.0, places=5)
+
+    def test_scalar_surfel_value_modulates_composited_intensity(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = 1.0 / 255.0
+            opts.alpha_cap = 0.99
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+                cuda.Float([0.5]),
+                cuda.Float([0.2]),
+            )
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            its = scene.intersect(ray)
+            comp = scene.composite_alpha_reference(ray)
+
+            print(json.dumps({
+                "hit_value": float(its.value[0]),
+                "hit_alpha": float(its.alpha[0]),
+                "alpha": float(comp.alpha[0]),
+                "intensity": float(comp.intensity[0]),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["hit_value"], 0.2, places=5)
+        self.assertAlmostEqual(data["hit_alpha"], 0.5, places=5)
+        self.assertAlmostEqual(data["alpha"], 0.5, places=5)
+        self.assertAlmostEqual(data["intensity"], 0.1, places=5)
 
     def test_alpha_composite_sorts_surfel_hits_front_to_back(self):
         data = run_json_case(

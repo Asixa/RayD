@@ -252,6 +252,13 @@ bool SurfelOptixScene::is_ready() const {
 template <bool Detached>
 SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
                                                     MaskT<Detached> &active) const {
+    return intersect<Detached>(ray, FloatT<Detached>(RayEpsilon), active);
+}
+
+template <bool Detached>
+SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
+                                                    const FloatT<Detached> &t_min_input,
+                                                    MaskT<Detached> &active) const {
     require(m_accel != nullptr, "SurfelOptixScene::intersect(): scene is not built.");
     const int ray_count = static_cast<int>(slices(ray.o));
 
@@ -264,6 +271,7 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
     Float dx;
     Float dy;
     Float dz;
+    Float t_min;
     Float t_max_input;
     if constexpr (!Detached) {
         ox = detach<false>(ray.o.x());
@@ -272,6 +280,7 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
         dx = detach<false>(ray.d.x());
         dy = detach<false>(ray.d.y());
         dz = detach<false>(ray.d.z());
+        t_min = maximum(detach<false>(t_min_input), Float(RayEpsilon));
         t_max_input = detach<false>(ray.tmax);
     } else {
         ox = ray.o.x();
@@ -280,12 +289,12 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
         dx = ray.d.x();
         dy = ray.d.y();
         dz = ray.d.z();
+        t_min = maximum(t_min_input, Float(RayEpsilon));
         t_max_input = ray.tmax;
     }
 
     Mask active_detached = detach<false>(active);
 
-    Float t_min = RayEpsilon;
     Float t_max = select(drjit::isfinite(t_max_input), t_max_input, full<Float>(1e8f, ray_count));
     Float time = 0.f;
     UInt ray_mask(255);
@@ -351,5 +360,7 @@ SurfelOptixIntersection SurfelOptixScene::intersect(const RayT<Detached> &ray,
 
 template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray &ray, Mask &active) const;
 template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD &ray, MaskAD &active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<true>(const Ray &ray, const Float &t_min, Mask &active) const;
+template SurfelOptixIntersection SurfelOptixScene::intersect<false>(const RayAD &ray, const FloatAD &t_min, MaskAD &active) const;
 
 } // namespace rayd
