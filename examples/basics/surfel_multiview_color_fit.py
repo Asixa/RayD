@@ -272,6 +272,150 @@ def initialize_random_surfel_field(args) -> tuple[np.ndarray, np.ndarray, np.nda
     return centers, colors, tangent_u, tangent_v, info
 
 
+def values_per_surfel(degree: int) -> int:
+    if degree == 0:
+        return 3
+    if degree == 1:
+        return 12
+    raise ValueError("Only --sh-degree 0 or 1 is supported by this example.")
+
+
+def surfel_scales(tangent_u: np.ndarray, tangent_v: np.ndarray) -> np.ndarray:
+    scale_u = np.linalg.norm(np.asarray(tangent_u, dtype=np.float32), axis=1)
+    scale_v = np.linalg.norm(np.asarray(tangent_v, dtype=np.float32), axis=1)
+    return ((scale_u + scale_v) * 0.5).astype(np.float32)
+
+
+def scheduled_learning_rate(iteration: int,
+                            base_lr: float,
+                            final_lr: float,
+                            warmup_iters: int,
+                            total_iters: int) -> float:
+    if total_iters <= 1:
+        return float(final_lr)
+    if warmup_iters > 0 and iteration <= warmup_iters:
+        start_lr = float(base_lr) * 0.1
+        alpha = max(0.0, min(1.0, iteration / float(warmup_iters)))
+        return float(start_lr + (float(base_lr) - start_lr) * alpha)
+    decay_start = max(1, int(warmup_iters))
+    alpha = (iteration - decay_start) / max(1.0, float(total_iters - decay_start))
+    alpha = max(0.0, min(1.0, alpha))
+    if base_lr <= 0.0 or final_lr <= 0.0:
+        return float(base_lr + (final_lr - base_lr) * alpha)
+    return float(base_lr * ((final_lr / base_lr) ** alpha))
+
+
+def effective_densify_until_iter(args) -> int:
+    if int(args.densify_until_iter) > 0:
+        return int(args.densify_until_iter)
+    return max(int(args.densify_from_iter), int(round(float(args.iterations) * 0.8)))
+
+
+def densify_and_prune_surfel_arrays(centers: np.ndarray,
+                                    tangent_u: np.ndarray,
+                                    tangent_v: np.ndarray,
+                                    opacity: np.ndarray,
+                                    values: np.ndarray,
+                                    degree: int,
+                                    grad_norm: np.ndarray,
+                                    args,
+                                    seed: int) -> dict:
+    centers = np.asarray(centers, dtype=np.float32).reshape(-1, 3)
+    tangent_u = np.asarray(tangent_u, dtype=np.float32).reshape(-1, 3)
+    tangent_v = np.asarray(tangent_v, dtype=np.float32).reshape(-1, 3)
+    opacity = np.asarray(opacity, dtype=np.float32).reshape(-1)
+    grad_norm = np.asarray(grad_norm, dtype=np.float32).reshape(-1)
+    per_surfel = values_per_surfel(degree)
+    values_2d = np.asarray(values, dtype=np.float32).reshape(centers.shape[0], per_surfel)
+
+    scale = surfel_scales(tangent_u, tangent_v)
+    keep = (
+        (opacity >= float(args.prune_opacity_threshold))
+        & (scale >= float(args.min_scale))
+        & (scale <= float(args.max_scale))
+    )
+    pruned = int(np.count_nonzero(~keep))
+    if not np.any(keep):
+        strongest = int(np.argmax(np.maximum(grad_norm, opacity)))
+        keep[strongest] = True
+        pruned -= 1
+
+    centers = centers[keep]
+    tangent_u = tangent_u[keep]
+    tangent_v = tangent_v[keep]
+    opacity = opacity[keep]
+    values_2d = values_2d[keep]
+    grad_norm = grad_norm[keep]
+    scale = scale[keep]
+
+    max_surfels = int(args.max_surfels)
+    if max_surfels <= 0:
+        max_surfels = centers.shape[0]
+    budget = max(0, max_surfels - centers.shape[0])
+    budget = min(budget, max(0, int(args.max_new_surfels_per_refine)))
+
+    clone_centers = []
+    clone_u = []
+    clone_v = []
+    clone_opacity = []
+    clone_values = []
+    cloned = 0
+    split = 0
+    if budget > 0:
+        rng = np.random.default_rng(int(seed))
+        candidates = np.flatnonzero(grad_norm >= float(args.densify_grad_threshold))
+        if candidates.size:
+            order = candidates[np.argsort(-grad_norm[candidates])]
+            for index in order:
+                if len(clone_centers) >= budget:
+                    break
+                offset_u = rng.normal(0.0, 0.35)
+                offset_v = rng.normal(0.0, 0.35)
+                jitter = (tangent_u[index] * offset_u + tangent_v[index] * offset_v).astype(np.float32)
+                if scale[index] >= float(args.split_scale_threshold):
+                    shrink = float(args.split_scale_shrink)
+                    tangent_u[index] *= shrink
+                    tangent_v[index] *= shrink
+                    child_u = tangent_u[index].copy()
+                    child_v = tangent_v[index].copy()
+                    child_center = centers[index] + jitter
+                    split += 1
+                else:
+                    child_u = tangent_u[index].copy()
+                    child_v = tangent_v[index].copy()
+                    child_center = centers[index] + 0.5 * jitter
+                    cloned += 1
+                parent_opacity = float(opacity[index])
+                opacity[index] = np.float32(parent_opacity * 0.5)
+                clone_centers.append(child_center.astype(np.float32))
+                clone_u.append(child_u.astype(np.float32))
+                clone_v.append(child_v.astype(np.float32))
+                clone_opacity.append(parent_opacity * 0.5)
+                clone_values.append(values_2d[index].copy())
+
+    if clone_centers:
+        centers = np.concatenate([centers, np.stack(clone_centers, axis=0)], axis=0)
+        tangent_u = np.concatenate([tangent_u, np.stack(clone_u, axis=0)], axis=0)
+        tangent_v = np.concatenate([tangent_v, np.stack(clone_v, axis=0)], axis=0)
+        opacity = np.concatenate([opacity, np.asarray(clone_opacity, dtype=np.float32)], axis=0)
+        values_2d = np.concatenate([values_2d, np.stack(clone_values, axis=0)], axis=0)
+
+    stats = {
+        "pruned": int(pruned),
+        "cloned": int(cloned),
+        "split": int(split),
+        "surfel_count": int(centers.shape[0]),
+    }
+    return {
+        "centers": centers.astype(np.float32),
+        "tangent_u": tangent_u.astype(np.float32),
+        "tangent_v": tangent_v.astype(np.float32),
+        "opacity": opacity.astype(np.float32),
+        "values": values_2d.reshape(-1).astype(np.float32),
+        "stats": stats,
+    }
+
+
 def array3_ad(values: np.ndarray):
     return ad.Array3f(
         ad.Float(values[:, 0].tolist()),
@@ -399,7 +543,9 @@ class GpuSurfelFitState:
                  tangent_max: float,
                  beta1: float = 0.9,
                  beta2: float = 0.999,
-                 eps: float = 1e-8):
+                 eps: float = 1e-8,
+                 train_build_count_base: int = 0,
+                 preview_build_count_base: int = 0):
         self.surfel_count = int(centers.shape[0])
         self.degree = degree
         self.opts = opts
@@ -415,8 +561,8 @@ class GpuSurfelFitState:
         self.beta2 = beta2
         self.eps = eps
         self.step_index = 0
-        self.train_build_count = 0
-        self.preview_build_count = 0
+        self.train_build_count = int(train_build_count_base)
+        self.preview_build_count = int(preview_build_count_base)
         self.render_options = rd.SurfelRenderOptions.rgb(
             sh_degree=self.degree,
             background_rgb=[self.background, self.background, self.background],
@@ -597,6 +743,23 @@ class GpuSurfelFitState:
             "tangent_v": np.stack([np.asarray(dr.detach(self.tangent_v_values[i]), dtype=np.float32) for i in range(3)], axis=1),
         }
 
+    def center_grad_norm_numpy(self) -> np.ndarray:
+        if not self.fit_geometry:
+            return np.zeros((self.surfel_count,), dtype=np.float32)
+        grad = dr.detach(dr.grad(self.center_values))
+        channels = [np.asarray(grad[i], dtype=np.float32) for i in range(3)]
+        return np.sqrt(channels[0] * channels[0] + channels[1] * channels[1] + channels[2] * channels[2]).astype(np.float32)
+
+    def snapshot_numpy(self) -> dict[str, np.ndarray]:
+        geometry = self.geometry_numpy()
+        return {
+            "centers": geometry["centers"],
+            "tangent_u": geometry["tangent_u"],
+            "tangent_v": geometry["tangent_v"],
+            "opacity": self.opacity_numpy(),
+            "values": self.native_values_numpy(),
+        }
+
     def build_counts(self) -> dict[str, int]:
         return {
             "train_scene": int(self.train_build_count),
@@ -604,16 +767,54 @@ class GpuSurfelFitState:
         }
 
 
+def make_fit_state(centers: np.ndarray,
+                   tangent_u: np.ndarray,
+                   tangent_v: np.ndarray,
+                   opacity: np.ndarray,
+                   initial_values: np.ndarray,
+                   args,
+                   opts: rd.SurfelTraceOptions,
+                   build_count_base: dict[str, int] | None = None) -> GpuSurfelFitState:
+    build_count_base = build_count_base or {"train_scene": 0, "preview_scene": 0}
+    return GpuSurfelFitState(
+        centers,
+        tangent_u,
+        tangent_v,
+        opacity,
+        initial_values,
+        args.sh_degree,
+        opts,
+        optimizer=args.optimizer,
+        background=args.background,
+        fit_opacity=args.fit_opacity,
+        fit_geometry=args.fit_geometry,
+        geometry_lr_scale=args.geometry_lr_scale,
+        center_bound=max(args.random_radius * 2.0, 1.0),
+        tangent_min=max(args.initial_scale * 0.05, 1e-4),
+        tangent_max=max(args.initial_scale * 8.0, args.initial_scale + 1e-4),
+        train_build_count_base=build_count_base["train_scene"],
+        preview_build_count_base=build_count_base["preview_scene"],
+    )
+
+
 def fit_color_coefficients(state: GpuSurfelFitState,
                            views: list[dict],
-                           iterations: int,
-                           lr: float,
-                           optimizer: str,
+                           args,
+                           opts: rd.SurfelTraceOptions,
                            frame_callback=None,
-                           video_every: int = 1) -> list[dict]:
-    state.optimizer = optimizer
+                           video_every: int = 1) -> tuple[GpuSurfelFitState, list[dict], list[dict]]:
+    state.optimizer = args.optimizer
     log = []
-    for iteration in range(1, iterations + 1):
+    refinement_log = []
+    densify_until = effective_densify_until_iter(args)
+    for iteration in range(1, args.iterations + 1):
+        lr = scheduled_learning_rate(
+            iteration,
+            args.lr,
+            args.lr_final,
+            args.lr_warmup_iters,
+            args.iterations,
+        )
         state.prepare_values()
         state.update_train_appearance()
         loss_sum = ad.Float([0.0])
@@ -622,12 +823,67 @@ def fit_color_coefficients(state: GpuSurfelFitState,
         loss = loss_sum / max(1, len(views))
         dr.backward(loss)
         loss_value = float(loss[0])
+        center_grad_norm = state.center_grad_norm_numpy()
         state.optimizer_step(lr)
-        log.append({"iteration": iteration, "loss": loss_value})
-        print(f"iteration {iteration:04d}: loss={log[-1]['loss']:.6f}")
-        if frame_callback is not None and (iteration % video_every == 0 or iteration == iterations):
-            frame_callback(iteration, log[-1]["loss"])
-    return log
+        entry = {
+            "iteration": iteration,
+            "loss": loss_value,
+            "lr": lr,
+            "surfel_count": int(state.surfel_count),
+        }
+
+        should_refine = (
+            args.fit_geometry
+            and int(args.densify_interval) > 0
+            and iteration >= int(args.densify_from_iter)
+            and iteration <= densify_until
+            and iteration % int(args.densify_interval) == 0
+        )
+        if should_refine:
+            snapshot = state.snapshot_numpy()
+            refined = densify_and_prune_surfel_arrays(
+                snapshot["centers"],
+                snapshot["tangent_u"],
+                snapshot["tangent_v"],
+                snapshot["opacity"],
+                snapshot["values"],
+                state.degree,
+                center_grad_norm,
+                args,
+                args.seed + iteration,
+            )
+            opacity = refined["opacity"]
+            if int(args.opacity_reset_interval) > 0 and iteration % int(args.opacity_reset_interval) == 0:
+                opacity = np.minimum(opacity, float(args.opacity_reset_value)).astype(np.float32)
+            build_count_base = state.build_counts()
+            state = make_fit_state(
+                refined["centers"],
+                refined["tangent_u"],
+                refined["tangent_v"],
+                opacity,
+                refined["values"],
+                args,
+                opts,
+                build_count_base,
+            )
+            refine_entry = dict(refined["stats"])
+            refine_entry["iteration"] = iteration
+            refinement_log.append(refine_entry)
+            entry.update({
+                "surfel_count": int(refine_entry["surfel_count"]),
+                "densified": True,
+                "pruned": int(refine_entry["pruned"]),
+                "cloned": int(refine_entry["cloned"]),
+                "split": int(refine_entry["split"]),
+            })
+        else:
+            entry["densified"] = False
+
+        log.append(entry)
+        print(f"iteration {iteration:04d}: loss={loss_value:.6f} lr={lr:.6g} surfels={state.surfel_count}")
+        if frame_callback is not None and (iteration % video_every == 0 or iteration == args.iterations):
+            frame_callback(state, iteration, log[-1]["loss"])
+    return state, log, refinement_log
 
 
 def make_convergence_frame(target: np.ndarray, pred: np.ndarray, iteration: int, loss: float) -> Image.Image:
@@ -682,8 +938,12 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=48)
     parser.add_argument("--views", type=int, default=3)
     parser.add_argument("--surfels", type=int, default=2048)
-    parser.add_argument("--iterations", type=int, default=64)
+    parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--lr-final", type=float, default=0.0005,
+                        help="Final learning rate for exponential decay after warmup.")
+    parser.add_argument("--lr-warmup-iters", type=int, default=16,
+                        help="Linearly warm up from 10%% of --lr over this many iterations.")
     parser.add_argument("--optimizer", choices=["adam", "sgd"], default="adam")
     parser.add_argument("--sh-degree", type=int, choices=[0, 1], default=1)
     parser.add_argument("--random-radius", type=float, default=1.25)
@@ -698,11 +958,28 @@ def main() -> None:
     parser.add_argument("--loss-mask", choices=["full", "foreground"], default="full",
                         help="Use full-image loss to constrain background, or only foreground pixels.")
     parser.add_argument("--max-candidate-hits", type=int, default=32)
+    parser.add_argument("--densify-from-iter", type=int, default=32)
+    parser.add_argument("--densify-until-iter", type=int, default=0,
+                        help="Last iteration that can refine surfels; 0 means 80%% of training.")
+    parser.add_argument("--densify-interval", type=int, default=16)
+    parser.add_argument("--densify-grad-threshold", type=float, default=1e-4)
+    parser.add_argument("--split-scale-threshold", type=float, default=0.18)
+    parser.add_argument("--split-scale-shrink", type=float, default=0.7)
+    parser.add_argument("--prune-opacity-threshold", type=float, default=0.01)
+    parser.add_argument("--min-scale", type=float, default=0.002)
+    parser.add_argument("--max-scale", type=float, default=0.75)
+    parser.add_argument("--max-surfels", type=int, default=0,
+                        help="Maximum surfel count after densification; 0 uses 4x the initial count.")
+    parser.add_argument("--max-new-surfels-per-refine", type=int, default=512)
+    parser.add_argument("--opacity-reset-interval", type=int, default=64)
+    parser.add_argument("--opacity-reset-value", type=float, default=0.05)
     parser.add_argument("--video-every", type=int, default=1,
                         help="Save one convergence GIF frame every N iterations.")
     parser.add_argument("--gif-duration-ms", type=int, default=120)
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
+    if args.max_surfels <= 0:
+        args.max_surfels = max(args.surfels, args.surfels * 4)
 
     dataset_reference = DXGL_REFERENCE
     if args.download_sonic_nerf:
@@ -752,37 +1029,28 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     first_view = views[0]
     frames: list[Image.Image] = []
-    state = GpuSurfelFitState(
+    state = make_fit_state(
         centers,
         tangent_u,
         tangent_v,
         opacity,
         initial_values,
-        args.sh_degree,
+        args,
         opts,
-        optimizer=args.optimizer,
-        background=args.background,
-        fit_opacity=args.fit_opacity,
-        fit_geometry=args.fit_geometry,
-        geometry_lr_scale=args.geometry_lr_scale,
-        center_bound=max(args.random_radius * 2.0, 1.0),
-        tangent_min=max(args.initial_scale * 0.05, 1e-4),
-        tangent_max=max(args.initial_scale * 8.0, args.initial_scale + 1e-4),
     )
 
-    def append_frame(iteration: int, loss: float) -> None:
-        pred_frame = state.render_preview(first_view["rays_detached"], args.size)
+    def append_frame(current_state: GpuSurfelFitState, iteration: int, loss: float) -> None:
+        pred_frame = current_state.render_preview(first_view["rays_detached"], args.size)
         frames.append(make_convergence_frame(first_view["target_image"], pred_frame, iteration, loss))
 
     initial_pred = state.render_preview(first_view["rays_detached"], args.size)
     initial_loss = float(np.mean((initial_pred - first_view["target_image"]) ** 2))
     frames.append(make_convergence_frame(first_view["target_image"], initial_pred, 0, initial_loss))
-    log = fit_color_coefficients(
+    state, log, refinement_log = fit_color_coefficients(
         state,
         views,
-        args.iterations,
-        args.lr,
-        args.optimizer,
+        args,
+        opts,
         append_frame,
         max(1, args.video_every),
     )
@@ -822,7 +1090,8 @@ def main() -> None:
         "dataset": str(scene_dir),
         "dataset_reference": dataset_reference,
         "views": [view["image_path"] for view in views],
-        "surfel_count": int(centers.shape[0]),
+        "initial_surfel_count": int(centers.shape[0]),
+        "surfel_count": int(state.surfel_count),
         "image_size": args.size,
         "sh_degree": args.sh_degree,
         "iterations": args.iterations,
@@ -830,8 +1099,27 @@ def main() -> None:
         "fit_opacity": args.fit_opacity,
         "fit_geometry": args.fit_geometry,
         "geometry_lr_scale": args.geometry_lr_scale,
+        "lr": args.lr,
+        "lr_final": args.lr_final,
+        "lr_warmup_iters": args.lr_warmup_iters,
         "background": args.background,
         "loss_mask": args.loss_mask,
+        "densification": {
+            "from_iter": args.densify_from_iter,
+            "until_iter": effective_densify_until_iter(args),
+            "interval": args.densify_interval,
+            "grad_threshold": args.densify_grad_threshold,
+            "split_scale_threshold": args.split_scale_threshold,
+            "split_scale_shrink": args.split_scale_shrink,
+            "prune_opacity_threshold": args.prune_opacity_threshold,
+            "min_scale": args.min_scale,
+            "max_scale": args.max_scale,
+            "max_surfels": args.max_surfels,
+            "max_new_surfels_per_refine": args.max_new_surfels_per_refine,
+            "opacity_reset_interval": args.opacity_reset_interval,
+            "opacity_reset_value": args.opacity_reset_value,
+            "events": refinement_log,
+        },
         "geometry": geometry_info,
         "final_loss": log[-1]["loss"] if log else None,
         "initial_loss": initial_loss,
@@ -848,6 +1136,7 @@ def main() -> None:
             "RGB and degree-1 SH color are rendered through RayD's native surfel render() path.",
             "The default full-image loss constrains transparent/background pixels as well as the foreground.",
             "Per-surfel opacity and geometry are optimized by default for random-field reconstruction.",
+            "Densification clones small high-gradient surfels and splits larger high-gradient surfels, then prunes low-opacity or out-of-range scales.",
         ],
     }
     metrics_path.write_text(json.dumps({"metrics": metrics, "log": log}, indent=2), encoding="utf-8")

@@ -128,6 +128,66 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         self.assertIn("self.rebuild_train_scene()", source)
         self.assertIn("self.center_values, self.center_momentum, self.center_velocity = self.optimizer_step_param", source)
 
+    def test_long_training_lr_schedule_warms_up_and_decays(self):
+        module = load_example_module()
+
+        start = module.scheduled_learning_rate(1, base_lr=0.01, final_lr=0.001, warmup_iters=4, total_iters=100)
+        warm = module.scheduled_learning_rate(4, base_lr=0.01, final_lr=0.001, warmup_iters=4, total_iters=100)
+        end = module.scheduled_learning_rate(100, base_lr=0.01, final_lr=0.001, warmup_iters=4, total_iters=100)
+
+        self.assertLess(start, warm)
+        self.assertAlmostEqual(warm, 0.01, places=6)
+        self.assertAlmostEqual(end, 0.001, places=6)
+
+    def test_densify_and_prune_clones_splits_and_removes_opacity_outliers(self):
+        module = load_example_module()
+        centers = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        tangent_u = np.array([
+            [0.05, 0.0, 0.0],
+            [0.4, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+        ], dtype=np.float32)
+        tangent_v = np.array([
+            [0.0, 0.05, 0.0],
+            [0.0, 0.4, 0.0],
+            [0.0, 0.1, 0.0],
+        ], dtype=np.float32)
+        opacity = np.array([0.5, 0.6, 0.001], dtype=np.float32)
+        values = np.arange(9, dtype=np.float32)
+        grad_norm = np.array([0.2, 0.3, 0.4], dtype=np.float32)
+        args = SimpleNamespace(
+            densify_grad_threshold=0.1,
+            split_scale_threshold=0.2,
+            split_scale_shrink=0.5,
+            prune_opacity_threshold=0.01,
+            min_scale=0.001,
+            max_scale=1.0,
+            max_surfels=8,
+            max_new_surfels_per_refine=8,
+        )
+
+        result = module.densify_and_prune_surfel_arrays(
+            centers,
+            tangent_u,
+            tangent_v,
+            opacity,
+            values,
+            degree=0,
+            grad_norm=grad_norm,
+            args=args,
+            seed=9,
+        )
+
+        self.assertEqual(result["stats"]["pruned"], 1)
+        self.assertGreaterEqual(result["stats"]["cloned"], 1)
+        self.assertGreaterEqual(result["stats"]["split"], 1)
+        self.assertEqual(result["centers"].shape[0], 4)
+        self.assertEqual(result["values"].shape[0], 12)
+
 
 if __name__ == "__main__":
     unittest.main()
