@@ -49,8 +49,8 @@ def make_rays(size: int, extent: float, ad_mode: bool):
 
 def make_options() -> rd.SurfelTraceOptions:
     opts = rd.SurfelTraceOptions()
-    opts.cutoff = 2.5
-    opts.primitive_mode = rd.SurfelPrimitiveMode.QuadTriangles
+    opts.alpha_min = 1.0 / 255.0
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
     return opts
 
 

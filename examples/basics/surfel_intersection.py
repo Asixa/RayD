@@ -5,8 +5,7 @@ import drjit.cuda.ad as ad
 
 def make_scene(center_z: float = 0.0) -> rd.SurfelScene:
     opts = rd.SurfelTraceOptions()
-    opts.cutoff = 1.0
-    opts.primitive_mode = rd.SurfelPrimitiveMode.QuadTriangles
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
 
     cloud = rd.SurfelCloud(
         dr.cuda.Array3f([0.0], [0.0], [center_z]),

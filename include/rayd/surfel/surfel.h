@@ -6,14 +6,20 @@
 namespace rayd {
 
 enum class SurfelPrimitiveMode : uint32_t {
-    QuadTriangles = 0,
-    SingleTriangle = 1,
+    Icosahedron20 = 0,
+    QuadTriangles = 1,
+    SingleTriangle = 2,
 };
 
 struct SurfelTraceOptions {
-    float cutoff = 3.f;
+    /// Minimum Gaussian alpha included in the proxy and final alpha compositing.
+    float alpha_min = 1.f / 255.f;
+    /// Optional local-radius cap for debugging/backward compatibility; Infinity disables it.
+    float cutoff = Infinity;
     float alpha_cap = 0.99f;
-    SurfelPrimitiveMode primitive_mode = SurfelPrimitiveMode::QuadTriangles;
+    /// Thin-proxy half thickness in world units for Icosahedron20 mode.
+    float proxy_epsilon = 1e-3f;
+    SurfelPrimitiveMode primitive_mode = SurfelPrimitiveMode::Icosahedron20;
     bool face_forward = true;
 };
 

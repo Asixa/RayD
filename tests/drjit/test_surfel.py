@@ -54,6 +54,7 @@ class SurfelCoreTests(unittest.TestCase):
                 "has_scene": hasattr(pj, "SurfelScene"),
                 "has_options": hasattr(pj, "SurfelTraceOptions"),
                 "has_mode": hasattr(pj, "SurfelPrimitiveMode"),
+                "ico_name": str(pj.SurfelPrimitiveMode.Icosahedron20),
                 "quad_name": str(pj.SurfelPrimitiveMode.QuadTriangles),
                 "single_name": str(pj.SurfelPrimitiveMode.SingleTriangle),
             }))
@@ -64,8 +65,35 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertTrue(data["has_scene"])
         self.assertTrue(data["has_options"])
         self.assertTrue(data["has_mode"])
+        self.assertIn("Icosahedron20", data["ico_name"])
         self.assertIn("QuadTriangles", data["quad_name"])
         self.assertIn("SingleTriangle", data["single_name"])
+
+    def test_default_proxy_is_twenty_triangle_icosahedron(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            scene = pj.SurfelScene(pj.SurfelCloud(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+                cuda.Float([1.0]),
+            ))
+            scene.build()
+
+            print(json.dumps({
+                "surfel_count": scene.surfel_count,
+                "triangle_count": scene.triangle_count,
+            }))
+            """
+        )
+
+        self.assertEqual(data["surfel_count"], 1)
+        self.assertEqual(data["triangle_count"], 20)
 
     def test_quad_surfel_intersection_returns_2dgs_fields(self):
         data = run_json_case(
@@ -76,7 +104,7 @@ class SurfelCoreTests(unittest.TestCase):
             import drjit.cuda as cuda
 
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 1.0
+            opts.alpha_min = math.exp(-0.5)
             opts.primitive_mode = pj.SurfelPrimitiveMode.QuadTriangles
 
             cloud = pj.SurfelCloud(
@@ -132,6 +160,7 @@ class SurfelCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
+            import math
             import rayd as pj
             import drjit.cuda as cuda
 
@@ -141,13 +170,13 @@ class SurfelCoreTests(unittest.TestCase):
             opacity = cuda.Float([1.0])
 
             quad_opts = pj.SurfelTraceOptions()
-            quad_opts.cutoff = 1.0
+            quad_opts.alpha_min = math.exp(-0.5)
             quad_opts.primitive_mode = pj.SurfelPrimitiveMode.QuadTriangles
             quad_scene = pj.SurfelScene(pj.SurfelCloud(center, tangent_u, tangent_v, opacity), quad_opts)
             quad_scene.build()
 
             single_opts = pj.SurfelTraceOptions()
-            single_opts.cutoff = 1.0
+            single_opts.alpha_min = math.exp(-0.5)
             single_opts.primitive_mode = pj.SurfelPrimitiveMode.SingleTriangle
             single_scene = pj.SurfelScene(pj.SurfelCloud(center, tangent_u, tangent_v, opacity), single_opts)
             single_scene.build()
@@ -183,11 +212,12 @@ class SurfelCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
+            import math
             import rayd as pj
             import drjit.cuda as cuda
 
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 1.0
+            opts.alpha_min = math.exp(-0.5)
 
             cloud = pj.SurfelCloud(
                 cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, -1.0]),
@@ -240,7 +270,7 @@ class SurfelCoreTests(unittest.TestCase):
             import drjit.cuda as cuda
 
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 2.5
+            opts.alpha_min = math.exp(-0.5 * (2.5 * 2.5))
             opts.alpha_cap = 0.99
 
             cloud = pj.SurfelCloud(
@@ -280,11 +310,12 @@ class SurfelCoreTests(unittest.TestCase):
         data = run_json_case(
             """
             import json
+            import math
             import rayd as pj
             import drjit.cuda as cuda
 
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 2.5
+            opts.alpha_min = math.exp(-0.5 * (2.5 * 2.5))
             opts.alpha_cap = 0.99
 
             cloud = pj.SurfelCloud(
@@ -316,10 +347,94 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["composite_alpha"], data["expected"], places=5)
         self.assertAlmostEqual(data["depth"], 1.0, places=5)
 
+    def test_alpha_composite_sorts_surfel_hits_front_to_back(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = 1.0 / 255.0
+            opts.alpha_cap = 0.99
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 0.0], [0.0, 0.0], [0.0, 0.5]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+                cuda.Float([0.5, 0.25]),
+            )
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            comp = scene.composite_alpha(ray)
+
+            print(json.dumps({
+                "alpha": float(comp.alpha[0]),
+                "expected_alpha": 1.0 - (1.0 - 0.25) * (1.0 - 0.5),
+                "depth": float(comp.depth[0]),
+                "expected_depth": (0.25 * 0.5 + 0.75 * 0.5 * 1.0) /
+                                  (0.25 + 0.75 * 0.5),
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["alpha"], data["expected_alpha"], places=5)
+        self.assertAlmostEqual(data["depth"], data["expected_depth"], places=5)
+
+    def test_alpha_min_defines_analytic_gaussian_boundary(self):
+        data = run_json_case(
+            """
+            import json
+            import math
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            opts = pj.SurfelTraceOptions()
+            opts.alpha_min = math.exp(-0.5 * 2.0 * 2.0)
+            opts.primitive_mode = pj.SurfelPrimitiveMode.QuadTriangles
+
+            scene = pj.SurfelScene(pj.SurfelCloud(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+                cuda.Float([1.0]),
+            ), opts)
+            scene.build()
+
+            edge_ray = pj.Ray(
+                cuda.Array3f([2.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            outside_ray = pj.Ray(
+                cuda.Array3f([2.1], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            edge = scene.composite_alpha(edge_ray)
+            outside = scene.composite_alpha(outside_ray)
+
+            print(json.dumps({
+                "edge_valid": bool(edge.is_valid()[0]),
+                "edge_alpha": float(edge.alpha[0]),
+                "outside_valid": bool(outside.is_valid()[0]),
+                "alpha_min": math.exp(-0.5 * 2.0 * 2.0),
+            }))
+            """
+        )
+
+        self.assertTrue(data["edge_valid"])
+        self.assertAlmostEqual(data["edge_alpha"], data["alpha_min"], places=5)
+        self.assertFalse(data["outside_valid"])
+
     def test_ad_center_gradient_flows_through_surfel_plane(self):
         data = run_json_case(
             """
             import json
+            import math
             import rayd as pj
             import drjit as dr
             import drjit.cuda.ad as ad
@@ -333,7 +448,7 @@ class SurfelCoreTests(unittest.TestCase):
                 ad.Float([1.0]),
             )
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 1.0
+            opts.alpha_min = math.exp(-0.5)
             scene = pj.SurfelScene(cloud, opts)
             scene.build()
 
@@ -417,7 +532,7 @@ class SurfelCoreTests(unittest.TestCase):
             final_rms = None
 
             opts = pj.SurfelTraceOptions()
-            opts.cutoff = 1.0
+            opts.alpha_min = math.exp(-0.5)
 
             for iteration in range(18):
                 z = ad.Float([z_value])

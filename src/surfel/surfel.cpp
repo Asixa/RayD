@@ -1,8 +1,52 @@
+#include <array>
+#include <cmath>
 #include <vector>
 
 #include <rayd/surfel/surfel.h>
 
 namespace rayd {
+
+namespace {
+
+constexpr int IcosahedronVertexCount = 12;
+constexpr int IcosahedronFaceCount = 20;
+
+const std::array<std::array<float, 3>, IcosahedronVertexCount> &icosahedron_vertices_unit_inradius() {
+    static const std::array<std::array<float, 3>, IcosahedronVertexCount> vertices = []() {
+        constexpr float Phi = 1.618033988749895f;
+        constexpr float EdgeLength = 2.f;
+        constexpr float Inradius =
+            EdgeLength * (3.f * 1.7320508075688772f + 3.872983346207417f) / 12.f;
+        constexpr float Scale = 1.f / Inradius;
+        return std::array<std::array<float, 3>, IcosahedronVertexCount> {{
+            {{-Scale,  Phi * Scale, 0.f}},
+            {{ Scale,  Phi * Scale, 0.f}},
+            {{-Scale, -Phi * Scale, 0.f}},
+            {{ Scale, -Phi * Scale, 0.f}},
+            {{0.f, -Scale,  Phi * Scale}},
+            {{0.f,  Scale,  Phi * Scale}},
+            {{0.f, -Scale, -Phi * Scale}},
+            {{0.f,  Scale, -Phi * Scale}},
+            {{ Phi * Scale, 0.f, -Scale}},
+            {{ Phi * Scale, 0.f,  Scale}},
+            {{-Phi * Scale, 0.f, -Scale}},
+            {{-Phi * Scale, 0.f,  Scale}},
+        }};
+    }();
+    return vertices;
+}
+
+const std::array<std::array<int, 3>, IcosahedronFaceCount> &icosahedron_faces() {
+    static const std::array<std::array<int, 3>, IcosahedronFaceCount> faces {{
+        {{0, 11, 5}}, {{0, 5, 1}}, {{0, 1, 7}}, {{0, 7, 10}}, {{0, 10, 11}},
+        {{1, 5, 9}}, {{5, 11, 4}}, {{11, 10, 2}}, {{10, 7, 6}}, {{7, 1, 8}},
+        {{3, 9, 4}}, {{3, 4, 2}}, {{3, 2, 6}}, {{3, 6, 8}}, {{3, 8, 9}},
+        {{4, 9, 5}}, {{2, 4, 11}}, {{6, 2, 10}}, {{8, 6, 7}}, {{9, 8, 1}},
+    }};
+    return faces;
+}
+
+} // namespace
 
 SurfelCloud::SurfelCloud(const Vector3f &center,
                          const Vector3f &tangent_u,
@@ -46,16 +90,22 @@ void SurfelCloud::initialize(const Vector3fAD &center,
 SurfelScene::SurfelScene(const SurfelCloud &cloud, const SurfelTraceOptions &options)
     : cloud_(cloud), options_(options) {
     require(cloud_.surfel_count() > 0, "SurfelScene(): cloud must contain at least one surfel.");
+    require(options_.alpha_min > 0.f && options_.alpha_min < 1.f,
+            "SurfelScene(): alpha_min must be in (0, 1).");
     require(options_.cutoff > 0.f, "SurfelScene(): cutoff must be positive.");
     require(options_.alpha_cap > 0.f && options_.alpha_cap <= 1.f,
             "SurfelScene(): alpha_cap must be in (0, 1].");
+    require(options_.proxy_epsilon > 0.f, "SurfelScene(): proxy_epsilon must be positive.");
 }
 
 void SurfelScene::build() {
     require(cloud_.surfel_count() > 0, "SurfelScene::build(): cloud is empty.");
+    require(options_.alpha_min > 0.f && options_.alpha_min < 1.f,
+            "SurfelScene::build(): alpha_min must be in (0, 1).");
     require(options_.cutoff > 0.f, "SurfelScene::build(): cutoff must be positive.");
     require(options_.alpha_cap > 0.f && options_.alpha_cap <= 1.f,
             "SurfelScene::build(): alpha_cap must be in (0, 1].");
+    require(options_.proxy_epsilon > 0.f, "SurfelScene::build(): proxy_epsilon must be positive.");
 
     build_triangle_buffers();
     eval(optix_vertex_buffer_, optix_face_buffer_, triangle_to_surfel_id_);
@@ -65,28 +115,53 @@ void SurfelScene::build() {
 
 void SurfelScene::build_triangle_buffers() {
     const int surfel_count = cloud_.surfel_count();
+    const bool use_icosahedron = options_.primitive_mode == SurfelPrimitiveMode::Icosahedron20;
     const bool use_quad = options_.primitive_mode == SurfelPrimitiveMode::QuadTriangles;
-    const int vertices_per_surfel = use_quad ? 4 : 3;
-    const int triangles_per_surfel = use_quad ? 2 : 1;
+    const int vertices_per_surfel = use_icosahedron ? IcosahedronVertexCount : (use_quad ? 4 : 3);
+    const int triangles_per_surfel = use_icosahedron ? IcosahedronFaceCount : (use_quad ? 2 : 1);
     vertex_count_ = surfel_count * vertices_per_surfel;
     triangle_count_ = surfel_count * triangles_per_surfel;
 
     Vector3fAD vertices_ad = empty<Vector3fAD>(vertex_count_);
     const IntAD base = arange<IntAD>(surfel_count) * vertices_per_surfel;
-    const FloatAD cutoff(options_.cutoff);
     const Vector3fAD &center = cloud_.center();
     const Vector3fAD &u = cloud_.tangent_u();
     const Vector3fAD &v = cloud_.tangent_v();
+    const FloatAD alpha_min(options_.alpha_min);
+    const FloatAD safe_opacity = maximum(cloud_.opacity(), alpha_min);
+    FloatAD influence_radius =
+        sqrt(maximum(FloatAD(0.f), FloatAD(2.f) * log(safe_opacity / alpha_min)));
+    if (std::isfinite(options_.cutoff)) {
+        influence_radius = minimum(influence_radius, FloatAD(options_.cutoff));
+    }
 
-    if (use_quad) {
-        scatter(vertices_ad, center - cutoff * u - cutoff * v, base + 0);
-        scatter(vertices_ad, center + cutoff * u - cutoff * v, base + 1);
-        scatter(vertices_ad, center + cutoff * u + cutoff * v, base + 2);
-        scatter(vertices_ad, center - cutoff * u + cutoff * v, base + 3);
+    if (use_icosahedron) {
+        const Vector3fAD raw_normal = cross(u, v);
+        const FloatAD normal_len_sq = squared_norm(raw_normal);
+        const Vector3fAD normal =
+            raw_normal / sqrt(select(normal_len_sq > FloatAD(1e-16f),
+                                     normal_len_sq,
+                                     FloatAD(1.f)));
+        const auto &vertices = icosahedron_vertices_unit_inradius();
+        for (int vertex = 0; vertex < IcosahedronVertexCount; ++vertex) {
+            const FloatAD local_x(vertices[static_cast<size_t>(vertex)][0]);
+            const FloatAD local_y(vertices[static_cast<size_t>(vertex)][1]);
+            const FloatAD local_z(vertices[static_cast<size_t>(vertex)][2]);
+            const Vector3fAD proxy_vertex =
+                center +
+                influence_radius * (local_x * u + local_y * v) +
+                influence_radius * FloatAD(options_.proxy_epsilon) * local_z * normal;
+            scatter(vertices_ad, proxy_vertex, base + vertex);
+        }
+    } else if (use_quad) {
+        scatter(vertices_ad, center - influence_radius * u - influence_radius * v, base + 0);
+        scatter(vertices_ad, center + influence_radius * u - influence_radius * v, base + 1);
+        scatter(vertices_ad, center + influence_radius * u + influence_radius * v, base + 2);
+        scatter(vertices_ad, center - influence_radius * u + influence_radius * v, base + 3);
     } else {
-        scatter(vertices_ad, center + (-2.f * cutoff) * u - cutoff * v, base + 0);
-        scatter(vertices_ad, center + ( 2.f * cutoff) * u - cutoff * v, base + 1);
-        scatter(vertices_ad, center + ( 3.f * cutoff) * v, base + 2);
+        scatter(vertices_ad, center + (-2.f * influence_radius) * u - influence_radius * v, base + 0);
+        scatter(vertices_ad, center + ( 2.f * influence_radius) * u - influence_radius * v, base + 1);
+        scatter(vertices_ad, center + ( 3.f * influence_radius) * v, base + 2);
     }
 
     std::vector<int> face_flat(static_cast<size_t>(triangle_count_) * 3u);
@@ -94,7 +169,17 @@ void SurfelScene::build_triangle_buffers() {
     for (int surfel_id = 0; surfel_id < surfel_count; ++surfel_id) {
         const int vertex_base = surfel_id * vertices_per_surfel;
         const int triangle_base = surfel_id * triangles_per_surfel;
-        if (use_quad) {
+        if (use_icosahedron) {
+            const auto &faces = icosahedron_faces();
+            for (int local_face = 0; local_face < IcosahedronFaceCount; ++local_face) {
+                const int tri = triangle_base + local_face;
+                for (int corner = 0; corner < 3; ++corner) {
+                    face_flat[static_cast<size_t>(tri) * 3u + static_cast<size_t>(corner)] =
+                        vertex_base + faces[static_cast<size_t>(local_face)][static_cast<size_t>(corner)];
+                }
+                triangle_to_surfel[static_cast<size_t>(tri)] = surfel_id;
+            }
+        } else if (use_quad) {
             const int tri0 = triangle_base;
             face_flat[static_cast<size_t>(tri0) * 3u + 0u] = vertex_base + 0;
             face_flat[static_cast<size_t>(tri0) * 3u + 1u] = vertex_base + 1;
@@ -199,13 +284,10 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
 
     const FloatT<Detached> local_u = (du * vv - dv * uv) / safe_basis_det;
     const FloatT<Detached> local_v = (dv * uu - du * uv) / safe_basis_det;
-    const FloatT<Detached> cutoff(options_.cutoff);
-    const MaskT<Detached> support_valid =
-        (abs(local_u) <= cutoff) && (abs(local_v) <= cutoff);
-    valid &= basis_valid && support_valid;
-
     const FloatT<Detached> gaussian =
         exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
+    const FloatT<Detached> alpha_uncapped = opacity * gaussian;
+    valid &= basis_valid && (alpha_uncapped >= FloatT<Detached>(options_.alpha_min));
     const Vector2fT<Detached> local_uv(local_u, local_v);
 
     result.t = select(valid, plane_t, result.t);
@@ -232,79 +314,113 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
     result.depth = full<FloatT<Detached>>(Infinity, ray_count);
 
     FloatT<Detached> depth_numerator = zeros<FloatT<Detached>>(ray_count);
+    FloatT<Detached> previous_t = full<FloatT<Detached>>(-Infinity, ray_count);
+    IntT<Detached> previous_id = full<IntT<Detached>>(-1, ray_count);
 
-    for (int surfel = 0; surfel < cloud_.surfel_count(); ++surfel) {
-        Vector3fT<Detached> center;
-        Vector3fT<Detached> tangent_u;
-        Vector3fT<Detached> tangent_v;
-        FloatT<Detached> opacity;
-        if constexpr (!Detached) {
-            const IntAD surfel_id = IntAD(full<Int>(surfel, ray_count));
-            center = gather<Vector3fAD>(cloud_.center(), surfel_id, active);
-            tangent_u = gather<Vector3fAD>(cloud_.tangent_u(), surfel_id, active);
-            tangent_v = gather<Vector3fAD>(cloud_.tangent_v(), surfel_id, active);
-            opacity = gather<FloatAD>(cloud_.opacity(), surfel_id, active);
-        } else {
-            const Int surfel_id = full<Int>(surfel, ray_count);
-            const Mask active_detached = detach<false>(active);
-            center = gather<Vector3f>(detach<false>(cloud_.center()), surfel_id, active_detached);
-            tangent_u = gather<Vector3f>(detach<false>(cloud_.tangent_u()), surfel_id, active_detached);
-            tangent_v = gather<Vector3f>(detach<false>(cloud_.tangent_v()), surfel_id, active_detached);
-            opacity = gather<Float>(detach<false>(cloud_.opacity()), surfel_id, active_detached);
+    for (int pick = 0; pick < cloud_.surfel_count(); ++pick) {
+        FloatT<Detached> best_t = full<FloatT<Detached>>(Infinity, ray_count);
+        FloatT<Detached> best_alpha = zeros<FloatT<Detached>>(ray_count);
+        IntT<Detached> best_id = full<IntT<Detached>>(-1, ray_count);
+
+        for (int surfel = 0; surfel < cloud_.surfel_count(); ++surfel) {
+            const IntT<Detached> surfel_id_current =
+                full<IntT<Detached>>(surfel, ray_count);
+            Vector3fT<Detached> center;
+            Vector3fT<Detached> tangent_u;
+            Vector3fT<Detached> tangent_v;
+            FloatT<Detached> opacity;
+            if constexpr (!Detached) {
+                const IntAD surfel_id = IntAD(full<Int>(surfel, ray_count));
+                center = gather<Vector3fAD>(cloud_.center(), surfel_id, active);
+                tangent_u = gather<Vector3fAD>(cloud_.tangent_u(), surfel_id, active);
+                tangent_v = gather<Vector3fAD>(cloud_.tangent_v(), surfel_id, active);
+                opacity = gather<FloatAD>(cloud_.opacity(), surfel_id, active);
+            } else {
+                const Int surfel_id = full<Int>(surfel, ray_count);
+                const Mask active_detached = detach<false>(active);
+                center = gather<Vector3f>(detach<false>(cloud_.center()), surfel_id, active_detached);
+                tangent_u = gather<Vector3f>(detach<false>(cloud_.tangent_u()), surfel_id, active_detached);
+                tangent_v = gather<Vector3f>(detach<false>(cloud_.tangent_v()), surfel_id, active_detached);
+                opacity = gather<Float>(detach<false>(cloud_.opacity()), surfel_id, active_detached);
+            }
+
+            const Vector3fT<Detached> raw_normal = cross(tangent_u, tangent_v);
+            const FloatT<Detached> normal_len_sq = squared_norm(raw_normal);
+            const MaskT<Detached> normal_valid = normal_len_sq > FloatT<Detached>(1e-16f);
+            Vector3fT<Detached> normal =
+                raw_normal / sqrt(select(normal_valid, normal_len_sq, FloatT<Detached>(1.f)));
+            if (options_.face_forward) {
+                normal = select(dot(normal, ray.d) > FloatT<Detached>(0.f), -normal, normal);
+            }
+
+            const FloatT<Detached> denom = dot(ray.d, normal);
+            const MaskT<Detached> plane_valid = abs(denom) > FloatT<Detached>(1e-8f);
+            const FloatT<Detached> safe_denom =
+                select(plane_valid, denom, FloatT<Detached>(1.f));
+            const FloatT<Detached> plane_t = dot(center - ray.o, normal) / safe_denom;
+            MaskT<Detached> valid = active &&
+                                    normal_valid &&
+                                    plane_valid &&
+                                    drjit::isfinite(plane_t) &&
+                                    (plane_t > FloatT<Detached>(RayEpsilon)) &&
+                                    (plane_t < ray.tmax);
+
+            const FloatT<Detached> safe_t =
+                select(valid, plane_t, zeros<FloatT<Detached>>(ray_count));
+            const Vector3fT<Detached> hit_point = ray(safe_t);
+            const Vector3fT<Detached> delta = hit_point - center;
+
+            const FloatT<Detached> uu = dot(tangent_u, tangent_u);
+            const FloatT<Detached> uv = dot(tangent_u, tangent_v);
+            const FloatT<Detached> vv = dot(tangent_v, tangent_v);
+            const FloatT<Detached> du = dot(delta, tangent_u);
+            const FloatT<Detached> dv = dot(delta, tangent_v);
+            const FloatT<Detached> basis_det = uu * vv - uv * uv;
+            const MaskT<Detached> basis_valid = abs(basis_det) > FloatT<Detached>(1e-16f);
+            const FloatT<Detached> safe_basis_det =
+                select(basis_valid, basis_det, FloatT<Detached>(1.f));
+
+            const FloatT<Detached> local_u = (du * vv - dv * uv) / safe_basis_det;
+            const FloatT<Detached> local_v = (dv * uu - du * uv) / safe_basis_det;
+            const FloatT<Detached> gaussian =
+                exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
+            const FloatT<Detached> alpha_uncapped = opacity * gaussian;
+            valid &= basis_valid &&
+                     (alpha_uncapped >= FloatT<Detached>(options_.alpha_min));
+
+            FloatT<Detached> alpha =
+                minimum(FloatT<Detached>(options_.alpha_cap),
+                        maximum(FloatT<Detached>(0.f), alpha_uncapped));
+            alpha = select(valid, alpha, zeros<FloatT<Detached>>(ray_count));
+
+            constexpr float SortEpsilon = 1e-6f;
+            const FloatT<Detached> order_eps(SortEpsilon);
+            const MaskT<Detached> after_previous =
+                (plane_t > previous_t + order_eps) ||
+                ((abs(plane_t - previous_t) <= order_eps) &&
+                 (surfel_id_current > previous_id));
+            const MaskT<Detached> before_best =
+                (plane_t < best_t - order_eps) ||
+                ((abs(plane_t - best_t) <= order_eps) &&
+                 ((best_id < IntT<Detached>(0)) || (surfel_id_current < best_id)));
+            const MaskT<Detached> take = valid && after_previous && before_best;
+
+            best_t = select(take, plane_t, best_t);
+            best_alpha = select(take, alpha, best_alpha);
+            best_id = select(take, surfel_id_current, best_id);
         }
 
-        const Vector3fT<Detached> raw_normal = cross(tangent_u, tangent_v);
-        const FloatT<Detached> normal_len_sq = squared_norm(raw_normal);
-        const MaskT<Detached> normal_valid = normal_len_sq > FloatT<Detached>(1e-16f);
-        Vector3fT<Detached> normal =
-            raw_normal / sqrt(select(normal_valid, normal_len_sq, FloatT<Detached>(1.f)));
-        if (options_.face_forward) {
-            normal = select(dot(normal, ray.d) > FloatT<Detached>(0.f), -normal, normal);
-        }
-
-        const FloatT<Detached> denom = dot(ray.d, normal);
-        const MaskT<Detached> plane_valid = abs(denom) > FloatT<Detached>(1e-8f);
-        const FloatT<Detached> safe_denom = select(plane_valid, denom, FloatT<Detached>(1.f));
-        const FloatT<Detached> plane_t = dot(center - ray.o, normal) / safe_denom;
-        MaskT<Detached> valid = active &&
-                                normal_valid &&
-                                plane_valid &&
-                                drjit::isfinite(plane_t) &&
-                                (plane_t > FloatT<Detached>(RayEpsilon)) &&
-                                (plane_t < ray.tmax);
-
-        const FloatT<Detached> safe_t =
-            select(valid, plane_t, zeros<FloatT<Detached>>(ray_count));
-        const Vector3fT<Detached> hit_point = ray(safe_t);
-        const Vector3fT<Detached> delta = hit_point - center;
-
-        const FloatT<Detached> uu = dot(tangent_u, tangent_u);
-        const FloatT<Detached> uv = dot(tangent_u, tangent_v);
-        const FloatT<Detached> vv = dot(tangent_v, tangent_v);
-        const FloatT<Detached> du = dot(delta, tangent_u);
-        const FloatT<Detached> dv = dot(delta, tangent_v);
-        const FloatT<Detached> basis_det = uu * vv - uv * uv;
-        const MaskT<Detached> basis_valid = abs(basis_det) > FloatT<Detached>(1e-16f);
-        const FloatT<Detached> safe_basis_det =
-            select(basis_valid, basis_det, FloatT<Detached>(1.f));
-
-        const FloatT<Detached> local_u = (du * vv - dv * uv) / safe_basis_det;
-        const FloatT<Detached> local_v = (dv * uu - du * uv) / safe_basis_det;
-        const FloatT<Detached> cutoff(options_.cutoff);
-        valid &= basis_valid && (abs(local_u) <= cutoff) && (abs(local_v) <= cutoff);
-
-        const FloatT<Detached> gaussian =
-            exp(FloatT<Detached>(-0.5f) * (local_u * local_u + local_v * local_v));
-        FloatT<Detached> alpha =
-            minimum(FloatT<Detached>(options_.alpha_cap),
-                    maximum(FloatT<Detached>(0.f), opacity * gaussian));
-        alpha = select(valid, alpha, zeros<FloatT<Detached>>(ray_count));
-
-        const FloatT<Detached> contribution = result.transmittance * alpha;
+        const MaskT<Detached> has_best = best_id >= IntT<Detached>(0);
+        best_alpha = select(has_best, best_alpha, zeros<FloatT<Detached>>(ray_count));
+        const FloatT<Detached> safe_best_t =
+            select(has_best, best_t, zeros<FloatT<Detached>>(ray_count));
+        const FloatT<Detached> contribution = result.transmittance * best_alpha;
         result.intensity += contribution;
         result.alpha += contribution;
-        depth_numerator += contribution * plane_t;
-        result.transmittance *= FloatT<Detached>(1.f) - alpha;
+        depth_numerator += contribution * safe_best_t;
+        result.transmittance *= FloatT<Detached>(1.f) - best_alpha;
+        previous_t = select(has_best, best_t, previous_t);
+        previous_id = select(has_best, best_id, previous_id);
     }
 
     const MaskT<Detached> has_alpha = result.alpha > FloatT<Detached>(0.f);
@@ -315,7 +431,7 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
 template <bool Detached>
 MaskT<Detached> SurfelScene::shadow_test(const RayT<Detached> &ray,
                                          MaskT<Detached> active) const {
-    return intersect<Detached>(ray, active).is_valid();
+    return composite_alpha<Detached>(ray, active).is_valid();
 }
 
 template <bool Detached>

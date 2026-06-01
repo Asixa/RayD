@@ -354,13 +354,16 @@ NB_MODULE(rayd, m) {
             .value("All", RayFlags::All);
 
         nb::enum_<SurfelPrimitiveMode>(m, "SurfelPrimitiveMode")
+            .value("Icosahedron20", SurfelPrimitiveMode::Icosahedron20)
             .value("QuadTriangles", SurfelPrimitiveMode::QuadTriangles)
             .value("SingleTriangle", SurfelPrimitiveMode::SingleTriangle);
 
         nb::class_<SurfelTraceOptions>(m, "SurfelTraceOptions")
             .def(nb::init<>())
+            .def_rw("alpha_min", &SurfelTraceOptions::alpha_min)
             .def_rw("cutoff", &SurfelTraceOptions::cutoff)
             .def_rw("alpha_cap", &SurfelTraceOptions::alpha_cap)
+            .def_rw("proxy_epsilon", &SurfelTraceOptions::proxy_epsilon)
             .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
             .def_rw("face_forward", &SurfelTraceOptions::face_forward);
 

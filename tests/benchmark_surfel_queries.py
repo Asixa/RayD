@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -85,7 +86,7 @@ def benchmark_mode(
     warmup: int,
 ) -> dict[str, Any]:
     opts = rd.SurfelTraceOptions()
-    opts.cutoff = 1.0
+    opts.alpha_min = 1.0 / 255.0
     opts.primitive_mode = mode
 
     dr.sync_thread()
@@ -128,7 +129,7 @@ def benchmark_mode(
 
 def prewarm_surfel_optix() -> None:
     opts = rd.SurfelTraceOptions()
-    opts.cutoff = 1.0
+    opts.alpha_min = 1.0 / 255.0
     scene = rd.SurfelScene(
         rd.SurfelCloud(
             cuda.Array3f([0.0], [0.0], [0.0]),
@@ -187,7 +188,7 @@ def fit_depth_image(width: int, height: int, output_dir: Path) -> dict[str, Any]
             ys.append(y)
 
     opts = rd.SurfelTraceOptions()
-    opts.cutoff = 1.0
+    opts.alpha_min = math.exp(-0.5 * 2.0 * 2.0)
     target_z = 0.3
     target_scene = rd.SurfelScene(
         rd.SurfelCloud(
@@ -288,6 +289,7 @@ def main() -> None:
         "ray_count": args.ray_side * args.ray_side,
         "surfel_count": args.grid_side * args.grid_side,
         "modes": [
+            benchmark_mode(rd.SurfelPrimitiveMode.Icosahedron20, cloud, rays, args.repeats, args.warmup),
             benchmark_mode(rd.SurfelPrimitiveMode.QuadTriangles, cloud, rays, args.repeats, args.warmup),
             benchmark_mode(rd.SurfelPrimitiveMode.SingleTriangle, cloud, rays, args.repeats, args.warmup),
         ],
