@@ -381,12 +381,17 @@ NB_MODULE(rayd, m) {
             .def_rw("max_candidate_hits", &SurfelTraceOptions::max_candidate_hits)
             .def_rw("primitive_mode", &SurfelTraceOptions::primitive_mode)
             .def_rw("face_forward", &SurfelTraceOptions::face_forward)
-            .def_rw("single_launch", &SurfelTraceOptions::single_launch);
+            .def_rw("single_launch", &SurfelTraceOptions::single_launch)
+            .def_rw("collect_candidate_stats", &SurfelTraceOptions::collect_candidate_stats)
+            .def_rw("opacity_aware_proxy_bounds", &SurfelTraceOptions::opacity_aware_proxy_bounds)
+            .def_rw("continue_after_full_buffer", &SurfelTraceOptions::continue_after_full_buffer)
+            .def_rw("transmittance_min", &SurfelTraceOptions::transmittance_min)
+            .def_rw("max_trace_segments", &SurfelTraceOptions::max_trace_segments);
 
         nb::class_<SurfelRenderOptions>(m, "SurfelRenderOptions")
             .def(nb::init<>())
             .def_static("rgb",
-                        [](int sh_degree, const ScalarVector3f &background_rgb) {
+                        [](int sh_degree, const ScalarVector3f &background_rgb, bool normal) {
                             SurfelRenderOptions options;
                             options.mode = SurfelRenderMode::RGB;
                             options.color_model = sh_degree > 0
@@ -395,10 +400,12 @@ NB_MODULE(rayd, m) {
                             options.sh_degree = sh_degree;
                             options.channel_count = 3;
                             options.background_rgb = background_rgb;
+                            options.normal = normal;
                             return options;
                         },
                         "sh_degree"_a = 0,
-                        "background_rgb"_a = ScalarVector3f(0.f, 0.f, 0.f))
+                        "background_rgb"_a = ScalarVector3f(0.f, 0.f, 0.f),
+                        "normal"_a = false)
             .def_static("feature",
                         [](int channel_count) {
                             SurfelRenderOptions options;
@@ -410,6 +417,7 @@ NB_MODULE(rayd, m) {
                         "channel_count"_a)
             .def_rw("mode", &SurfelRenderOptions::mode)
             .def_rw("color_model", &SurfelRenderOptions::color_model)
+            .def_rw("normal", &SurfelRenderOptions::normal)
             .def_rw("sh_degree", &SurfelRenderOptions::sh_degree)
             .def_rw("channel_count", &SurfelRenderOptions::channel_count)
             .def_rw("channel_chunk", &SurfelRenderOptions::channel_chunk)
@@ -532,31 +540,41 @@ NB_MODULE(rayd, m) {
             .def_ro("intensity", &SurfelComposite::intensity)
             .def_ro("alpha", &SurfelComposite::alpha)
             .def_ro("transmittance", &SurfelComposite::transmittance)
-            .def_ro("depth", &SurfelComposite::depth);
+            .def_ro("depth", &SurfelComposite::depth)
+            .def_ro("candidate_count", &SurfelComposite::candidate_count)
+            .def_ro("candidate_buffer_full", &SurfelComposite::candidate_buffer_full);
 
         nb::class_<SurfelCompositeAD>(m, "SurfelCompositeAD")
             .def("is_valid", &SurfelCompositeAD::is_valid)
             .def_ro("intensity", &SurfelCompositeAD::intensity)
             .def_ro("alpha", &SurfelCompositeAD::alpha)
             .def_ro("transmittance", &SurfelCompositeAD::transmittance)
-            .def_ro("depth", &SurfelCompositeAD::depth);
+            .def_ro("depth", &SurfelCompositeAD::depth)
+            .def_ro("candidate_count", &SurfelCompositeAD::candidate_count)
+            .def_ro("candidate_buffer_full", &SurfelCompositeAD::candidate_buffer_full);
 
         nb::class_<SurfelRender>(m, "SurfelRender")
             .def("is_valid", &SurfelRender::is_valid)
             .def_ro("channels", &SurfelRender::channels)
             .def_ro("rgb", &SurfelRender::rgb)
+            .def_ro("normal", &SurfelRender::normal)
             .def_ro("alpha", &SurfelRender::alpha)
             .def_ro("transmittance", &SurfelRender::transmittance)
             .def_ro("depth", &SurfelRender::depth)
+            .def_ro("candidate_count", &SurfelRender::candidate_count)
+            .def_ro("candidate_buffer_full", &SurfelRender::candidate_buffer_full)
             .def_ro("channel_count", &SurfelRender::channel_count);
 
         nb::class_<SurfelRenderAD>(m, "SurfelRenderAD")
             .def("is_valid", &SurfelRenderAD::is_valid)
             .def_ro("channels", &SurfelRenderAD::channels)
             .def_ro("rgb", &SurfelRenderAD::rgb)
+            .def_ro("normal", &SurfelRenderAD::normal)
             .def_ro("alpha", &SurfelRenderAD::alpha)
             .def_ro("transmittance", &SurfelRenderAD::transmittance)
             .def_ro("depth", &SurfelRenderAD::depth)
+            .def_ro("candidate_count", &SurfelRenderAD::candidate_count)
+            .def_ro("candidate_buffer_full", &SurfelRenderAD::candidate_buffer_full)
             .def_ro("channel_count", &SurfelRenderAD::channel_count);
 
         nb::class_<ReflectionChain>(m, "ReflectionChain")
@@ -1525,6 +1543,7 @@ NB_MODULE(rayd, m) {
                  "options"_a = SurfelTraceOptions())
             .def("build", &SurfelScene::build)
             .def("is_ready", &SurfelScene::is_ready)
+            .def("update_geometry", &SurfelScene::update_geometry, "geometry"_a)
             .def("update_appearance", &SurfelScene::update_appearance, "appearance"_a)
             .def_prop_ro("surfel_count", &SurfelScene::surfel_count)
             .def_prop_ro("triangle_count", &SurfelScene::triangle_count)

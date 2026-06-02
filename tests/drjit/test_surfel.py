@@ -91,6 +91,90 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertIn("RGB", data["rgb_mode"])
         self.assertIn("SH", data["sh_model"])
 
+    def test_surfel_native_reports_candidate_buffer_saturation(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            count = 6
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0] * count, [0.0] * count, [0.02 * i for i in range(count)]),
+                cuda.Array3f([1.0] * count, [0.0] * count, [0.0] * count),
+                cuda.Array3f([0.0] * count, [1.0] * count, [0.0] * count),
+                cuda.Float([0.5] * count),
+                cuda.Float([1.0] * count),
+            )
+            opts = pj.SurfelTraceOptions()
+            opts.max_candidate_hits = 2
+            opts.collect_candidate_stats = True
+            scene = pj.SurfelScene(cloud, opts)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, pj.SurfelRenderOptions.rgb())
+
+            print(json.dumps({
+                "alpha": float(out.alpha[0]),
+                "candidate_count": int(out.candidate_count[0]),
+                "buffer_full": bool(out.candidate_buffer_full[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["candidate_count"], 2)
+        self.assertTrue(data["buffer_full"])
+        self.assertGreater(data["alpha"], 0.0)
+
+    def test_opacity_aware_proxy_bounds_reduce_low_opacity_candidate_pressure(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0, 0.0], [0.0, 3.0], [0.0, 0.0]),
+                cuda.Array3f([1.0, 1.0], [0.0, 0.0], [0.0, 0.0]),
+                cuda.Array3f([0.0, 0.0], [1.0, 1.0], [0.0, 0.0]),
+                cuda.Float([1.0, 0.01]),
+                cuda.Float([1.0, 1.0]),
+            )
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [3.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+
+            conservative = pj.SurfelTraceOptions()
+            conservative.collect_candidate_stats = True
+            conservative.opacity_aware_proxy_bounds = False
+            conservative.max_candidate_hits = 8
+            scene_a = pj.SurfelScene(cloud, conservative)
+            scene_a.build()
+            out_a = scene_a.render(ray, pj.SurfelRenderOptions.rgb())
+
+            aware = pj.SurfelTraceOptions()
+            aware.collect_candidate_stats = True
+            aware.opacity_aware_proxy_bounds = True
+            aware.max_candidate_hits = 8
+            scene_b = pj.SurfelScene(cloud, aware)
+            scene_b.build()
+            out_b = scene_b.render(ray, pj.SurfelRenderOptions.rgb())
+
+            print(json.dumps({
+                "count_a": int(out_a.candidate_count[0]),
+                "count_b": int(out_b.candidate_count[0]),
+            }))
+            """
+        )
+
+        self.assertLessEqual(data["count_b"], data["count_a"])
+
     def test_surfel_geometry_and_rgb_appearance_render_without_rebuild(self):
         data = run_json_case(
             """
@@ -154,6 +238,47 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertEqual(data["build_count_before"], 1)
         self.assertEqual(data["build_count_after"], 1)
         self.assertEqual(data["channel_count"], 3)
+
+    def test_surfel_geometry_update_rebuilds_accel_and_updates_depth(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            geometry = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            scene = pj.SurfelScene(geometry)
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            before = scene.render(ray, pj.SurfelRenderOptions.rgb())
+
+            updated = pj.SurfelGeometry(
+                cuda.Array3f([0.0], [0.0], [0.25]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+            )
+            scene.update_geometry(updated)
+            after = scene.render(ray, pj.SurfelRenderOptions.rgb())
+
+            print(json.dumps({
+                "before_depth": float(before.depth[0]),
+                "after_depth": float(after.depth[0]),
+                "after_count": scene.build_count,
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["before_depth"], 1.0, places=5)
+        self.assertAlmostEqual(data["after_depth"], 0.75, places=5)
+        self.assertEqual(data["after_count"], 2)
 
     def test_surfel_feature_render_outputs_flat_channel_buffer(self):
         data = run_json_case(
@@ -490,6 +615,42 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["grad_opacity"], 0.2, places=5)
         self.assertAlmostEqual(data["grad_red"], 0.5, places=5)
         self.assertEqual(data["surfel_launches"], 1)
+
+    def test_surfel_render_outputs_alpha_weighted_normal(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Array3f([0.0], [1.0], [0.0]),
+                cuda.Float([0.75]),
+                cuda.Float([1.0]),
+            )
+            scene = pj.SurfelScene(cloud)
+            scene.build()
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+            out = scene.render(ray, pj.SurfelRenderOptions.rgb(normal=True))
+
+            print(json.dumps({
+                "nx": float(out.normal.x[0]),
+                "ny": float(out.normal.y[0]),
+                "nz": float(out.normal.z[0]),
+                "alpha": float(out.alpha[0]),
+            }))
+            """
+        )
+
+        self.assertGreater(data["alpha"], 0.0)
+        self.assertAlmostEqual(data["nx"], 0.0, places=5)
+        self.assertAlmostEqual(data["ny"], 0.0, places=5)
+        self.assertAlmostEqual(data["nz"], 1.0, places=5)
 
     def test_surfel_cloud_fields_are_exposed(self):
         data = run_json_case(
@@ -1013,6 +1174,56 @@ class SurfelCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["native_intensity"], data["reference_intensity"], places=5)
         self.assertAlmostEqual(data["native_depth"], data["reference_depth"], places=5)
         self.assertEqual(data["surfel_launches"], 1)
+
+    def test_continuation_matches_reference_better_than_capped_k(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd as pj
+            import drjit.cuda as cuda
+
+            count = 10
+            cloud = pj.SurfelCloud(
+                cuda.Array3f([0.0] * count, [0.0] * count, [0.03 * i for i in range(count)]),
+                cuda.Array3f([1.0] * count, [0.0] * count, [0.0] * count),
+                cuda.Array3f([0.0] * count, [1.0] * count, [0.0] * count),
+                cuda.Float([0.2] * count),
+                cuda.Float([1.0] * count),
+            )
+            ray = pj.Ray(
+                cuda.Array3f([0.0], [0.0], [1.0]),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+            )
+
+            capped_opts = pj.SurfelTraceOptions()
+            capped_opts.max_candidate_hits = 2
+            capped = pj.SurfelScene(cloud, capped_opts)
+            capped.build()
+            capped_out = capped.composite_alpha(ray)
+
+            cont_opts = pj.SurfelTraceOptions()
+            cont_opts.max_candidate_hits = 2
+            cont_opts.continue_after_full_buffer = True
+            cont_opts.max_trace_segments = 8
+            cont = pj.SurfelScene(cloud, cont_opts)
+            cont.build()
+            cont_out = cont.composite_alpha(ray)
+
+            ref_opts = pj.SurfelTraceOptions()
+            ref_opts.max_candidate_hits = 16
+            ref_opts.single_launch = False
+            ref = pj.SurfelScene(cloud, ref_opts)
+            ref.build()
+            ref_out = ref.composite_alpha_reference(ray)
+
+            print(json.dumps({
+                "capped_error": abs(float(capped_out.alpha[0]) - float(ref_out.alpha[0])),
+                "cont_error": abs(float(cont_out.alpha[0]) - float(ref_out.alpha[0])),
+            }))
+            """
+        )
+
+        self.assertLess(data["cont_error"], data["capped_error"])
 
     def test_single_launch_alpha_composite_ad_uses_native_candidates_and_gradients(self):
         data = run_json_case(

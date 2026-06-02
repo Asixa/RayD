@@ -40,6 +40,7 @@ struct SurfelTraceParams {
     int appearance_sh_degree = 0;
     int sh_degree = 0;
     int render_channel_count = 1;
+    int output_normal = 0;
     float background_rgb[3] = {0.0f, 0.0f, 0.0f};
 
     float alpha_min = 1.0f / 255.0f;
@@ -48,6 +49,10 @@ struct SurfelTraceParams {
     float tmax_fallback = 1.0e8f;
     int max_candidate_hits = 8;
     int face_forward = 1;
+    int collect_candidate_stats = 0;
+    int continue_after_full_buffer = 0;
+    float transmittance_min = 0.03f;
+    int max_trace_segments = 1;
 
     int *out_triangle_id = nullptr;
     float *out_proxy_t = nullptr;
@@ -60,9 +65,14 @@ struct SurfelTraceParams {
     float *scratch_value = nullptr;
     float *out_intensity = nullptr;
     float *out_channels = nullptr;
+    float *out_normal_x = nullptr;
+    float *out_normal_y = nullptr;
+    float *out_normal_z = nullptr;
     float *out_alpha = nullptr;
     float *out_transmittance = nullptr;
     float *out_depth = nullptr;
+    int *out_candidate_count = nullptr;
+    uint8_t *out_candidate_buffer_full = nullptr;
 };
 
 } // namespace rayd

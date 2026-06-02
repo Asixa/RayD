@@ -221,22 +221,24 @@ static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
     module_options.optLevel = RAYD_OPTIX_MODULE_OPT_LEVEL;
     module_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
-    OptixPipelineCompileOptions pipeline_options = {};
+    OptixPipelineCompileOptionsDirect pipeline_options = {};
     pipeline_options.usesMotionBlur = 0;
     pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
     pipeline_options.numPayloadValues = 1;
     pipeline_options.numAttributeValues = 2;
     pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
+    pipeline_options.pipelineLaunchParamsSizeInBytes = sizeof(SurfelTraceParams);
     pipeline_options.usesPrimitiveTypeFlags =
         static_cast<unsigned>(OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE);
     pipeline_options.allowOpacityMicromaps = 0;
+    pipeline_options.allowClusteredGeometry = 0;
 
     char log[2048];
     size_t log_size = sizeof(log);
     check_optix(optixModuleCreate(state->context,
                                   &module_options,
-                                  &pipeline_options,
+                                  direct_optix_pipeline_compile_options(pipeline_options),
                                   surfel_trace_ptx,
                                   surfel_trace_ptx_size,
                                   log,
@@ -279,7 +281,7 @@ static void ensure_surfel_trace_pipeline(SurfelOptixState *state) {
 
     log_size = sizeof(log);
     check_optix(optixPipelineCreate(state->context,
-                                    &pipeline_options,
+                                    direct_optix_pipeline_compile_options(pipeline_options),
                                     &link_options,
                                     groups,
                                     5,
@@ -329,6 +331,7 @@ void SurfelOptixComposite::reserve(int64_t size) {
         hit_capacity = 0;
         intensity = zeros<Float>(size);
         channels = Float();
+        normal = zeros<Vector3f>(size);
         alpha = zeros<Float>(size);
         transmittance = full<Float>(1.f, size);
         depth = full<Float>(Infinity, size);
@@ -336,6 +339,8 @@ void SurfelOptixComposite::reserve(int64_t size) {
         hit_t = Float();
         hit_alpha = Float();
         hit_value = Float();
+        candidate_count = zeros<Int>(size);
+        candidate_buffer_full = full<Mask>(false, size);
     }
 }
 
@@ -739,6 +744,10 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     MaskT<Detached> active) const {
     require(m_accel != nullptr, "SurfelOptixScene::composite_alpha(): scene is not built.");
@@ -797,6 +806,10 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     Float scratch_alpha = empty<Float>(scratch_count);
     Float scratch_value = empty<Float>(scratch_count);
     composite.channels = empty<Float>(ray_count);
+    Int candidate_count = collect_candidate_stats ? empty<Int>(ray_count) : zeros<Int>(ray_count);
+    Mask candidate_buffer_full = collect_candidate_stats
+        ? empty<Mask>(ray_count)
+        : full<Mask>(false, ray_count);
 
     drjit::eval(ox,
                 oy,
@@ -851,6 +864,10 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.tmax_fallback = 1.0e8f;
     params.max_candidate_hits = max_candidate_hits;
     params.face_forward = face_forward ? 1 : 0;
+    params.collect_candidate_stats = collect_candidate_stats ? 1 : 0;
+    params.continue_after_full_buffer = continue_after_full_buffer ? 1 : 0;
+    params.transmittance_min = transmittance_min;
+    params.max_trace_segments = max_trace_segments;
     params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
     params.composite_hit_capacity = k;
     params.scratch_surfel_id = scratch_surfel_id.data();
@@ -862,6 +879,10 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     params.out_alpha = composite.alpha.data();
     params.out_transmittance = composite.transmittance.data();
     params.out_depth = composite.depth.data();
+    params.out_candidate_count = collect_candidate_stats ? candidate_count.data() : nullptr;
+    params.out_candidate_buffer_full = collect_candidate_stats
+        ? reinterpret_cast<uint8_t *>(candidate_buffer_full.data())
+        : nullptr;
 
     {
         ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
@@ -873,6 +894,8 @@ SurfelOptixComposite SurfelOptixScene::composite_alpha(
     composite.hit_t = scratch_t;
     composite.hit_alpha = scratch_alpha;
     composite.hit_value = scratch_value;
+    composite.candidate_count = candidate_count;
+    composite.candidate_buffer_full = candidate_buffer_full;
     return composite;
 }
 
@@ -890,10 +913,15 @@ SurfelOptixComposite SurfelOptixScene::render(
     int appearance_sh_degree,
     int sh_degree,
     int render_channel_count,
+    bool output_normal,
     const ScalarVector3f &background_rgb,
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     MaskT<Detached> active) const {
     require(m_accel != nullptr, "SurfelOptixScene::render(): scene is not built.");
@@ -956,6 +984,11 @@ SurfelOptixComposite SurfelOptixScene::render(
     composite.channels = render_channel_count > 0
         ? empty<Float>(ray_count * render_channel_count)
         : Float();
+    composite.normal = output_normal ? empty<Vector3f>(ray_count) : zeros<Vector3f>(ray_count);
+    Int candidate_count = collect_candidate_stats ? empty<Int>(ray_count) : zeros<Int>(ray_count);
+    Mask candidate_buffer_full = collect_candidate_stats
+        ? empty<Mask>(ray_count)
+        : full<Mask>(false, ray_count);
 
     drjit::eval(ox,
                 oy,
@@ -1005,6 +1038,7 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.appearance_sh_degree = appearance_sh_degree;
     params.sh_degree = sh_degree;
     params.render_channel_count = render_channel_count;
+    params.output_normal = output_normal ? 1 : 0;
     params.background_rgb[0] = background_rgb[0];
     params.background_rgb[1] = background_rgb[1];
     params.background_rgb[2] = background_rgb[2];
@@ -1014,6 +1048,10 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.tmax_fallback = 1.0e8f;
     params.max_candidate_hits = max_candidate_hits;
     params.face_forward = face_forward ? 1 : 0;
+    params.collect_candidate_stats = collect_candidate_stats ? 1 : 0;
+    params.continue_after_full_buffer = continue_after_full_buffer ? 1 : 0;
+    params.transmittance_min = transmittance_min;
+    params.max_trace_segments = max_trace_segments;
     params.out_valid = reinterpret_cast<uint8_t *>(valid.data());
     params.composite_hit_capacity = k;
     params.scratch_surfel_id = scratch_surfel_id.data();
@@ -1022,9 +1060,16 @@ SurfelOptixComposite SurfelOptixScene::render(
     params.scratch_value = scratch_value.data();
     params.out_intensity = composite.intensity.data();
     params.out_channels = render_channel_count > 0 ? composite.channels.data() : nullptr;
+    params.out_normal_x = output_normal ? composite.normal.x().data() : nullptr;
+    params.out_normal_y = output_normal ? composite.normal.y().data() : nullptr;
+    params.out_normal_z = output_normal ? composite.normal.z().data() : nullptr;
     params.out_alpha = composite.alpha.data();
     params.out_transmittance = composite.transmittance.data();
     params.out_depth = composite.depth.data();
+    params.out_candidate_count = collect_candidate_stats ? candidate_count.data() : nullptr;
+    params.out_candidate_buffer_full = collect_candidate_stats
+        ? reinterpret_cast<uint8_t *>(candidate_buffer_full.data())
+        : nullptr;
 
     {
         ScopedNativeLaunchStage stage(NativeLaunchStage::SurfelTrace);
@@ -1036,6 +1081,8 @@ SurfelOptixComposite SurfelOptixScene::render(
     composite.hit_t = scratch_t;
     composite.hit_alpha = scratch_alpha;
     composite.hit_value = scratch_value;
+    composite.candidate_count = candidate_count;
+    composite.candidate_buffer_full = candidate_buffer_full;
     return composite;
 }
 
@@ -1078,6 +1125,10 @@ template SurfelOptixComposite SurfelOptixScene::composite_alpha<true>(
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     Mask active) const;
 template SurfelOptixComposite SurfelOptixScene::composite_alpha<false>(
@@ -1091,6 +1142,10 @@ template SurfelOptixComposite SurfelOptixScene::composite_alpha<false>(
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     MaskAD active) const;
 template SurfelOptixComposite SurfelOptixScene::render<true>(
@@ -1106,10 +1161,15 @@ template SurfelOptixComposite SurfelOptixScene::render<true>(
     int appearance_sh_degree,
     int sh_degree,
     int render_channel_count,
+    bool output_normal,
     const ScalarVector3f &background_rgb,
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     Mask active) const;
 template SurfelOptixComposite SurfelOptixScene::render<false>(
@@ -1125,10 +1185,15 @@ template SurfelOptixComposite SurfelOptixScene::render<false>(
     int appearance_sh_degree,
     int sh_degree,
     int render_channel_count,
+    bool output_normal,
     const ScalarVector3f &background_rgb,
     float alpha_min,
     float alpha_cap,
     int max_candidate_hits,
+    bool collect_candidate_stats,
+    bool continue_after_full_buffer,
+    float transmittance_min,
+    int max_trace_segments,
     bool face_forward,
     MaskAD active) const;
 

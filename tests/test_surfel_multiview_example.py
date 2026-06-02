@@ -1,9 +1,11 @@
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +48,79 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         frame = module.make_convergence_frame(target, pred, iteration=2, loss=0.25)
 
         self.assertEqual(frame.size, (4 * 3 + 32, 4 + 60))
+
+    def test_size_zero_uses_native_square_image_resolution(self):
+        module = load_example_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "native.png"
+            Image.new("RGBA", (13, 13), (255, 255, 255, 255)).save(image_path)
+            args = SimpleNamespace(size=0)
+
+            self.assertEqual(module.resolve_fit_size(args, image_path), 13)
+
+    def test_training_pixel_batch_samples_native_indices(self):
+        module = load_example_module()
+        rng = np.random.default_rng(4)
+        mask = np.zeros((16,), dtype=np.float32)
+        mask[[2, 5, 7, 11]] = 1.0
+        view = {"mask": mask, "pixel_count": 16}
+
+        indices = module.select_training_pixel_indices(
+            view,
+            batch_size=10,
+            rng=rng,
+            foreground_fraction=0.5,
+        )
+
+        self.assertEqual(indices.shape, (10,))
+        self.assertTrue(np.all(indices >= 0))
+        self.assertTrue(np.all(indices < 16))
+        self.assertGreaterEqual(int(np.isin(indices, np.flatnonzero(mask > 0.0)).sum()), 5)
+
+    def test_native_training_defaults_disable_fixed_screen_pruning(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('parser.add_argument("--max-screen-radius", type=float, default=0.0', source)
+
+    def test_metrics_record_full_resolution_mse(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('"final_full_image_mse"', source)
+        self.assertIn('"initial_full_image_mse"', source)
+
+    def test_training_writes_interrupt_safe_progress_log(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn("append_progress_entry", source)
+        self.assertIn("progress.jsonl", source)
+        self.assertIn("--progress-every", source)
+
+    def test_training_exposes_resource_stop_guards(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn("--stop-at-vram-gb", source)
+        self.assertIn("--stop-at-host-available-gb", source)
+        self.assertIn("--max-wall-seconds", source)
+
+    def test_training_batches_do_not_require_full_resolution_ad_rays(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('view["ray_origins"][indices]', source)
+        self.assertIn('rays_ad = None', source)
+        self.assertIn('target_ad = None', source)
+
+    def test_capacity_probe_can_skip_full_resolution_previews(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('choices=["none", "gif", "mp4", "both"]', source)
+        self.assertIn("--final-render", source)
+        self.assertIn("if args.video_format != \"none\"", source)
+
+    def test_dense_multiview_options_use_configurable_candidate_hits(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn("--max-candidate-hits", source)
+        self.assertIn("opts.max_candidate_hits = int(args.max_candidate_hits)", source)
 
     def test_training_loop_keeps_coefficients_gpu_resident(self):
         source = EXAMPLE.read_text(encoding="utf-8")
@@ -104,6 +179,8 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
     def test_training_render_options_keep_configured_background(self):
         source = EXAMPLE.read_text(encoding="utf-8")
         self.assertIn("background_rgb=[self.background, self.background, self.background]", source)
+        self.assertIn("--render-normals", source)
+        self.assertIn("render_normals=args.render_normals", source)
         self.assertIn("self.render_options", source)
         fit_start = source.index("def fit_color_coefficients")
         fit_end = source.index("\ndef make_convergence_frame", fit_start)
@@ -127,6 +204,22 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         self.assertIn("dr.enable_grad(self.tangent_v_values)", source)
         self.assertIn("self.rebuild_train_scene()", source)
         self.assertIn("self.center_values, self.center_momentum, self.center_velocity = self.optimizer_step_param", source)
+
+    def test_geometry_updates_use_surfel_scene_update_geometry(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn("self.train_scene.update_geometry", source)
+        self.assertIn("self.preview_scene.update_geometry", source)
+        self.assertIn("train_geometry_updates", source)
+        self.assertIn("preview_geometry_updates", source)
+
+    def test_metrics_include_reconstruction_performance_summary(self):
+        source = EXAMPLE.read_text(encoding="utf-8")
+
+        self.assertIn('"performance"', source)
+        self.assertIn('"iterations_per_second"', source)
+        self.assertIn('"train_pixels_per_second"', source)
+        self.assertIn('"geometry_update_count"', source)
 
     def test_long_training_lr_schedule_warms_up_and_decays(self):
         module = load_example_module()
@@ -158,14 +251,17 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
         ], dtype=np.float32)
         opacity = np.array([0.5, 0.6, 0.001], dtype=np.float32)
         values = np.arange(9, dtype=np.float32)
-        grad_norm = np.array([0.2, 0.3, 0.4], dtype=np.float32)
+        grad_norm = np.array([0.2, 0.3, 0.0], dtype=np.float32)
         args = SimpleNamespace(
             densify_grad_threshold=0.1,
-            split_scale_threshold=0.2,
-            split_scale_shrink=0.5,
+            percent_dense=0.1,
+            scene_extent=2.0,
+            split_child_count=2,
             prune_opacity_threshold=0.01,
             min_scale=0.001,
             max_scale=1.0,
+            max_world_scale_fraction=0.5,
+            max_screen_radius=0.0,
             max_surfels=8,
             max_new_surfels_per_refine=8,
         )
@@ -182,11 +278,48 @@ class SurfelMultiviewColorExampleTests(unittest.TestCase):
             seed=9,
         )
 
-        self.assertEqual(result["stats"]["pruned"], 1)
-        self.assertGreaterEqual(result["stats"]["cloned"], 1)
-        self.assertGreaterEqual(result["stats"]["split"], 1)
+        self.assertEqual(result["stats"]["pruned"], 2)
+        self.assertEqual(result["stats"]["cloned"], 1)
+        self.assertEqual(result["stats"]["split_parents"], 1)
+        self.assertEqual(result["stats"]["split_children"], 2)
         self.assertEqual(result["centers"].shape[0], 4)
         self.assertEqual(result["values"].shape[0], 12)
+        self.assertFalse(np.any(np.all(np.isclose(result["centers"], [1.0, 0.0, 0.0]), axis=1)))
+        self.assertLessEqual(float(module.surfel_scales(result["tangent_u"], result["tangent_v"]).max()), 0.25)
+
+    def test_auto_candidate_hit_capacity_estimates_dense_overlap(self):
+        module = load_example_module()
+        count = 300
+        centers = np.zeros((count, 3), dtype=np.float32)
+        tangent_u = np.tile(np.array([[0.2, 0.0, 0.0]], dtype=np.float32), (count, 1))
+        tangent_v = np.tile(np.array([[0.0, 0.2, 0.0]], dtype=np.float32), (count, 1))
+        opacity = np.full((count,), 0.1, dtype=np.float32)
+        views = [{
+            "ray_origins": np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+            "ray_directions": np.array([[0.0, 0.0, -1.0]], dtype=np.float32),
+        }]
+        args = SimpleNamespace(
+            max_candidate_hits=0,
+            min_candidate_hits=256,
+            max_candidate_hit_cap=512,
+            candidate_hit_sample_rays=64,
+            candidate_hit_quantile=0.99,
+            candidate_hit_safety=1.1,
+            seed=3,
+        )
+
+        estimate = module.estimate_candidate_hit_capacity(
+            centers,
+            tangent_u,
+            tangent_v,
+            opacity,
+            views,
+            args,
+        )
+
+        self.assertGreaterEqual(estimate["capacity"], 256)
+        self.assertEqual(estimate["capacity"] & (estimate["capacity"] - 1), 0)
+        self.assertEqual(estimate["hit_count_max"], count)
 
 
 if __name__ == "__main__":

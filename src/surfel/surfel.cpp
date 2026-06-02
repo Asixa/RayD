@@ -427,6 +427,10 @@ void SurfelScene::validate_trace_options(const char *context) const {
             "SurfelScene(): proxy_epsilon must be positive.");
     require(options_.max_candidate_hits > 0,
             "SurfelScene(): max_candidate_hits must be positive.");
+    require(options_.transmittance_min >= 0.f && options_.transmittance_min < 1.f,
+            "SurfelScene(): transmittance_min must be in [0, 1).");
+    require(options_.max_trace_segments > 0,
+            "SurfelScene(): max_trace_segments must be positive.");
 }
 
 void SurfelScene::refresh_detached_appearance() {
@@ -446,6 +450,30 @@ void SurfelScene::update_appearance(const SurfelAppearance &appearance) {
             "SurfelScene::update_appearance(): appearance surfel count must match geometry.");
     appearance_ = appearance;
     refresh_detached_appearance();
+}
+
+void SurfelScene::update_geometry(const SurfelGeometry &geometry) {
+    require(ready_, "SurfelScene::update_geometry(): scene is not built.");
+    require(geometry.surfel_count() == geometry_.surfel_count(),
+            "SurfelScene::update_geometry(): geometry surfel count must match the built scene.");
+    geometry_ = geometry;
+
+    build_triangle_buffers();
+    detached_center_ = detach<false>(geometry_.center());
+    detached_tangent_u_ = detach<false>(geometry_.tangent_u());
+    detached_tangent_v_ = detach<false>(geometry_.tangent_v());
+    eval(optix_vertex_buffer_,
+         optix_face_buffer_,
+         triangle_to_surfel_id_,
+         detached_center_,
+         detached_tangent_u_,
+         detached_tangent_v_);
+    optix_scene_.build(optix_vertex_buffer_,
+                       optix_face_buffer_,
+                       vertex_count_,
+                       triangle_count_,
+                       !options_.single_launch);
+    ++build_count_;
 }
 
 void SurfelScene::build() {
@@ -490,7 +518,9 @@ void SurfelScene::build_triangle_buffers() {
     const Vector3fAD &u = geometry_.tangent_u();
     const Vector3fAD &v = geometry_.tangent_v();
     const FloatAD alpha_min(options_.alpha_min);
-    const FloatAD safe_opacity = full<FloatAD>(1.f, surfel_count);
+    const FloatAD safe_opacity = options_.opacity_aware_proxy_bounds
+        ? maximum(alpha_min, appearance_.opacity())
+        : full<FloatAD>(1.f, surfel_count);
     FloatAD influence_radius =
         sqrt(maximum(FloatAD(0.f), FloatAD(2.f) * log(safe_opacity / alpha_min)));
     if (std::isfinite(options_.cutoff)) {
@@ -716,6 +746,11 @@ SurfelIntersectionT<Detached> SurfelScene::intersect(const RayT<Detached> &ray,
 template <bool Detached>
 SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ray,
                                                         MaskT<Detached> active) const {
+    if constexpr (!Detached) {
+        if (options_.continue_after_full_buffer) {
+            return composite_alpha_reference<Detached>(ray, active);
+        }
+    }
     if (options_.single_launch) {
         const SurfelOptixComposite native =
             optix_scene_.template composite_alpha<Detached>(ray,
@@ -725,17 +760,23 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
                                                             detached_tangent_v_,
                                                             detached_opacity_,
                                                             detached_value_,
-                                                            options_.alpha_min,
-                                                            options_.alpha_cap,
-                                                            options_.max_candidate_hits,
-                                                            options_.face_forward,
-                                                            active);
+                                                             options_.alpha_min,
+                                                             options_.alpha_cap,
+                                                             options_.max_candidate_hits,
+                                                             options_.collect_candidate_stats,
+                                                             options_.continue_after_full_buffer,
+                                                             options_.transmittance_min,
+                                                             options_.max_trace_segments,
+                                                             options_.face_forward,
+                                                             active);
         if constexpr (Detached) {
             SurfelCompositeT<Detached> result;
             result.intensity = native.intensity;
             result.alpha = native.alpha;
             result.transmittance = native.transmittance;
             result.depth = native.depth;
+            result.candidate_count = native.candidate_count;
+            result.candidate_buffer_full = native.candidate_buffer_full;
             return result;
         } else {
             const int ray_count = static_cast<int>(slices(ray.o));
@@ -744,6 +785,8 @@ SurfelCompositeT<Detached> SurfelScene::composite_alpha(const RayT<Detached> &ra
             result.alpha = zeros<FloatT<Detached>>(ray_count);
             result.transmittance = full<FloatT<Detached>>(1.f, ray_count);
             result.depth = full<FloatT<Detached>>(Infinity, ray_count);
+            result.candidate_count = IntAD(native.candidate_count);
+            result.candidate_buffer_full = MaskAD(native.candidate_buffer_full);
 
             FloatT<Detached> depth_numerator = zeros<FloatT<Detached>>(ray_count);
             const Int slot_base = arange<Int>(ray_count) * native.hit_capacity;
@@ -927,6 +970,7 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
         ? zeros<FloatT<Detached>>(ray_count * output_channels)
         : FloatT<Detached>();
     result.rgb = zeros<Vector3fT<Detached>>(ray_count);
+    result.normal = zeros<Vector3fT<Detached>>(ray_count);
     result.alpha = zeros<FloatT<Detached>>(ray_count);
     result.transmittance = full<FloatT<Detached>>(1.f, ray_count);
     result.depth = full<FloatT<Detached>>(Infinity, ray_count);
@@ -941,21 +985,30 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
                                                detached_appearance_values_,
                                                appearance_channel_count_,
                                                static_cast<int>(appearance_color_model_),
-                                               appearance_sh_degree_,
-                                               effective_sh_degree,
-                                               output_channels,
-                                               render_options.background_rgb,
-                                               options_.alpha_min,
-                                               options_.alpha_cap,
-                                               options_.max_candidate_hits,
-                                               options_.face_forward,
-                                               active);
+                                                appearance_sh_degree_,
+                                                effective_sh_degree,
+                                                output_channels,
+                                                render_options.normal,
+                                                render_options.background_rgb,
+                                                options_.alpha_min,
+                                                options_.alpha_cap,
+                                                options_.max_candidate_hits,
+                                                options_.collect_candidate_stats,
+                                                Detached && options_.continue_after_full_buffer,
+                                                options_.transmittance_min,
+                                                options_.max_trace_segments,
+                                                options_.face_forward,
+                                                active);
+
+    result.candidate_count = IntT<Detached>(native.candidate_count);
+    result.candidate_buffer_full = MaskT<Detached>(native.candidate_buffer_full);
 
     if constexpr (Detached) {
         result.channels = native.channels;
         result.alpha = native.alpha;
         result.transmittance = native.transmittance;
         result.depth = native.depth;
+        result.normal = native.normal;
         if (output_channels >= 3) {
             const Int channel_base = arange<Int>(ray_count) * output_channels;
             result.rgb = Vector3f(gather<Float>(result.channels, channel_base + 0),
@@ -965,6 +1018,7 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
         return result;
     } else {
         FloatT<Detached> depth_numerator = zeros<FloatT<Detached>>(ray_count);
+        Vector3fT<Detached> normal_numerator = zeros<Vector3fT<Detached>>(ray_count);
         const Vector3fT<Detached> view_dir = normalized_view_direction<Detached>(ray);
         const Int slot_base = arange<Int>(ray_count) * native.hit_capacity;
         for (int slot = 0; slot < native.hit_capacity; ++slot) {
@@ -990,8 +1044,11 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
                        zeros<FloatT<Detached>>(ray_count));
             result.alpha += contribution;
             depth_numerator += contribution * select(analytic.valid,
-                                                     analytic.t,
-                                                     zeros<FloatT<Detached>>(ray_count));
+                                                      analytic.t,
+                                                      zeros<FloatT<Detached>>(ray_count));
+            if (render_options.normal) {
+                normal_numerator += analytic.n * contribution;
+            }
             if (output_channels > 0) {
                 const IntAD out_base = IntAD(arange<Int>(ray_count) * output_channels);
                 for (int channel = 0; channel < output_channels; ++channel) {
@@ -1027,6 +1084,9 @@ SurfelRenderT<Detached> SurfelScene::render(const RayT<Detached> &ray,
         }
         const MaskT<Detached> has_alpha = result.alpha > FloatT<Detached>(0.f);
         result.depth = select(has_alpha, depth_numerator / result.alpha, result.depth);
+        if (render_options.normal) {
+            result.normal = select(has_alpha, normal_numerator / result.alpha, result.normal);
+        }
         return result;
     }
 }

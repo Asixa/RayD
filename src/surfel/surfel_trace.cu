@@ -201,6 +201,26 @@ static __forceinline__ __device__ float3 normalized_view_direction(float3 direct
     return view * rsqrtf(len_sq);
 }
 
+static __forceinline__ __device__ float3 oriented_surfel_normal(int surfel, float3 direction) {
+    const float3 tangent_u = make_float3(params.tangent_u_x[surfel],
+                                         params.tangent_u_y[surfel],
+                                         params.tangent_u_z[surfel]);
+    const float3 tangent_v = make_float3(params.tangent_v_x[surfel],
+                                         params.tangent_v_y[surfel],
+                                         params.tangent_v_z[surfel]);
+    const float3 raw_normal = cross3(tangent_u, tangent_v);
+    const float normal_len_sq = squared_norm(raw_normal);
+    if (!(normal_len_sq > 1.0e-16f)) {
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+
+    float3 normal = raw_normal * rsqrtf(normal_len_sq);
+    if (params.face_forward != 0 && dot3(normal, direction) > 0.0f) {
+        normal = -normal;
+    }
+    return normal;
+}
+
 static __forceinline__ __device__ float evaluate_appearance_channel(int surfel,
                                                                     int channel,
                                                                     float3 view) {
@@ -288,6 +308,88 @@ static __forceinline__ __device__ void insert_composite_hit(unsigned int ray,
     params.scratch_t[out] = t;
     params.scratch_alpha[out] = alpha;
     params.scratch_value[out] = value;
+}
+
+static __forceinline__ __device__ int count_candidate_buffer_for_ray(unsigned int ray, int k) {
+    int filled = 0;
+    if (k <= 0 || params.scratch_surfel_id == nullptr) {
+        return filled;
+    }
+
+    const int base = static_cast<int>(ray) * k;
+    for (int slot = 0; slot < k; ++slot) {
+        if (params.scratch_surfel_id[base + slot] >= 0) {
+            ++filled;
+        }
+    }
+    return filled;
+}
+
+static __forceinline__ __device__ void clear_candidate_buffer_for_ray(unsigned int ray, int k) {
+    if (k <= 0 || params.scratch_surfel_id == nullptr ||
+        params.scratch_t == nullptr ||
+        params.scratch_alpha == nullptr ||
+        params.scratch_value == nullptr) {
+        return;
+    }
+
+    const int base = static_cast<int>(ray) * k;
+    for (int slot = 0; slot < k; ++slot) {
+        const int index = base + slot;
+        params.scratch_surfel_id[index] = -1;
+        params.scratch_t[index] = kInvalidT;
+        params.scratch_alpha[index] = 0.0f;
+        params.scratch_value[index] = 0.0f;
+    }
+}
+
+static __forceinline__ __device__ void composite_candidate_buffer_for_ray(unsigned int ray,
+                                                                          int k,
+                                                                          int channel_count,
+                                                                          int channel_base,
+                                                                          float3 view,
+                                                                          float3 direction,
+                                                                          float &intensity,
+                                                                          float &alpha_accum,
+                                                                          float &transmittance,
+                                                                          float &depth_numerator,
+                                                                          float3 &normal_numerator) {
+    if (k <= 0 || params.scratch_surfel_id == nullptr ||
+        params.scratch_t == nullptr ||
+        params.scratch_alpha == nullptr) {
+        return;
+    }
+
+    const int base = static_cast<int>(ray) * k;
+    for (int slot = 0; slot < k; ++slot) {
+        const int index = base + slot;
+        if (params.scratch_surfel_id[index] < 0) {
+            continue;
+        }
+        const float hit_alpha = params.scratch_alpha[index];
+        if (!(hit_alpha > 0.0f)) {
+            continue;
+        }
+        const float contribution = transmittance * hit_alpha;
+        const int surfel = params.scratch_surfel_id[index];
+        const float first_channel = evaluate_appearance_channel(surfel, 0, view);
+        intensity += contribution * first_channel;
+        if (params.out_channels != nullptr) {
+            for (int channel = 0; channel < channel_count; ++channel) {
+                params.out_channels[channel_base + channel] +=
+                    contribution * evaluate_appearance_channel(surfel, channel, view);
+            }
+        }
+        if (params.output_normal != 0) {
+            normal_numerator = normal_numerator + oriented_surfel_normal(surfel, direction) * contribution;
+        }
+        alpha_accum += contribution;
+        depth_numerator += contribution * params.scratch_t[index];
+        transmittance *= 1.0f - hit_alpha;
+        if (!(transmittance > params.transmittance_min)) {
+            break;
+        }
+    }
 }
 
 static __forceinline__ __device__ void consider_intersection_hit(unsigned int ray,
@@ -432,13 +534,11 @@ extern "C" __global__ void __raygen__surfel_composite() {
         return;
     }
 
-    const int base = static_cast<int>(ray) * k;
-    for (int slot = 0; slot < k; ++slot) {
-        const int index = base + slot;
-        params.scratch_surfel_id[index] = -1;
-        params.scratch_t[index] = kInvalidT;
-        params.scratch_alpha[index] = 0.0f;
-        params.scratch_value[index] = 0.0f;
+    if (params.out_candidate_count != nullptr) {
+        params.out_candidate_count[ray] = 0;
+    }
+    if (params.out_candidate_buffer_full != nullptr) {
+        params.out_candidate_buffer_full[ray] = 0u;
     }
     const int channel_count = params.render_channel_count > 0 ? params.render_channel_count : 0;
     const int channel_base = static_cast<int>(ray) * channel_count;
@@ -459,46 +559,70 @@ extern "C" __global__ void __raygen__surfel_composite() {
     float alpha_accum = 0.0f;
     float transmittance = 1.0f;
     float depth_numerator = 0.0f;
-    const float3 view = normalized_view_direction(load_ray_direction(ray));
+    float3 normal_numerator = make_float3(0.0f, 0.0f, 0.0f);
+    const float3 ray_direction = load_ray_direction(ray);
+    const float3 view = normalized_view_direction(ray_direction);
 
     if (trace_enabled) {
         const float trace_tmax = ray_tmax(ray);
-        uint32_t dummy = 0u;
-        optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-                   load_ray_origin(ray),
-                   load_ray_direction(ray),
-                   fmaxf(params.ray_epsilon, 0.0f),
-                   trace_tmax,
-                   0.0f,
-                   255u,
-                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
-                   0,
-                   1,
-                   0,
-                   dummy);
+        float t_start = fmaxf(params.ray_epsilon, 0.0f);
+        const int segment_limit = params.continue_after_full_buffer != 0
+            ? (params.max_trace_segments > 1 ? params.max_trace_segments : 1)
+            : 1;
+        int total_filled = 0;
+        bool buffer_full = false;
 
-        for (int slot = 0; slot < k; ++slot) {
-            const int index = base + slot;
-            if (params.scratch_surfel_id[index] < 0) {
-                continue;
+        for (int segment = 0;
+             segment < segment_limit &&
+             transmittance > params.transmittance_min &&
+             t_start < trace_tmax;
+             ++segment) {
+            clear_candidate_buffer_for_ray(ray, k);
+            uint32_t dummy = 0u;
+            optixTrace(static_cast<OptixTraversableHandle>(params.handle),
+                       load_ray_origin(ray),
+                       load_ray_direction(ray),
+                       t_start,
+                       trace_tmax,
+                       0.0f,
+                       255u,
+                       OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT | OPTIX_RAY_FLAG_ENFORCE_ANYHIT,
+                       0,
+                       1,
+                       0,
+                       dummy);
+
+            const int filled = count_candidate_buffer_for_ray(ray, k);
+            total_filled += filled;
+            buffer_full = buffer_full || (filled == k);
+            if (params.out_candidate_count != nullptr) {
+                params.out_candidate_count[ray] = total_filled;
             }
-            const float hit_alpha = params.scratch_alpha[index];
-            if (!(hit_alpha > 0.0f)) {
-                continue;
+            if (params.out_candidate_buffer_full != nullptr) {
+                params.out_candidate_buffer_full[ray] = buffer_full ? 1u : 0u;
             }
-            const float contribution = transmittance * hit_alpha;
-            const int surfel = params.scratch_surfel_id[index];
-            const float first_channel = evaluate_appearance_channel(surfel, 0, view);
-            intensity += contribution * first_channel;
-            if (params.out_channels != nullptr) {
-                for (int channel = 0; channel < channel_count; ++channel) {
-                    params.out_channels[channel_base + channel] +=
-                        contribution * evaluate_appearance_channel(surfel, channel, view);
-                }
+
+            composite_candidate_buffer_for_ray(ray,
+                                               k,
+                                               channel_count,
+                                               channel_base,
+                                               view,
+                                               ray_direction,
+                                               intensity,
+                                               alpha_accum,
+                                               transmittance,
+                                               depth_numerator,
+                                               normal_numerator);
+
+            if (params.continue_after_full_buffer == 0 || filled < k) {
+                break;
             }
-            alpha_accum += contribution;
-            depth_numerator += contribution * params.scratch_t[index];
-            transmittance *= 1.0f - hit_alpha;
+            const int last_index = static_cast<int>(ray) * k + k - 1;
+            const float last_t = params.scratch_t[last_index];
+            if (!isfinite(last_t) || last_t <= t_start) {
+                break;
+            }
+            t_start = last_t + fmaxf(params.ray_epsilon, 1.0e-5f);
         }
     }
 
@@ -512,6 +636,21 @@ extern "C" __global__ void __raygen__surfel_composite() {
     params.out_alpha[ray] = alpha_accum;
     params.out_transmittance[ray] = transmittance;
     params.out_depth[ray] = alpha_accum > 0.0f ? depth_numerator / alpha_accum : infinity();
+    if (params.output_normal != 0 &&
+        params.out_normal_x != nullptr &&
+        params.out_normal_y != nullptr &&
+        params.out_normal_z != nullptr) {
+        if (alpha_accum > 0.0f) {
+            const float inv_alpha = 1.0f / alpha_accum;
+            params.out_normal_x[ray] = normal_numerator.x * inv_alpha;
+            params.out_normal_y[ray] = normal_numerator.y * inv_alpha;
+            params.out_normal_z[ray] = normal_numerator.z * inv_alpha;
+        } else {
+            params.out_normal_x[ray] = 0.0f;
+            params.out_normal_y[ray] = 0.0f;
+            params.out_normal_z[ray] = 0.0f;
+        }
+    }
     if (params.out_valid != nullptr) {
         params.out_valid[ray] = alpha_accum > 0.0f ? 1u : 0u;
     }

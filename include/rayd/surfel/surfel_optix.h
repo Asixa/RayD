@@ -26,6 +26,7 @@ struct SurfelOptixComposite {
     int hit_capacity = 0;
     Float intensity;
     Float channels;
+    Vector3f normal;
     Float alpha;
     Float transmittance;
     Float depth;
@@ -33,6 +34,8 @@ struct SurfelOptixComposite {
     Float hit_t;    ///< Flat [ray_count, hit_capacity] analytic candidate depth.
     Float hit_alpha;
     Float hit_value;
+    Int candidate_count;
+    Mask candidate_buffer_full;
 };
 
 /// Standalone OptiX triangle GAS used by the surfel module.
@@ -84,6 +87,10 @@ public:
                                          float alpha_min,
                                          float alpha_cap,
                                          int max_candidate_hits,
+                                         bool collect_candidate_stats,
+                                         bool continue_after_full_buffer,
+                                         float transmittance_min,
+                                         int max_trace_segments,
                                          bool face_forward,
                                          MaskT<Detached> active) const;
 
@@ -100,10 +107,15 @@ public:
                                 int appearance_sh_degree,
                                 int sh_degree,
                                 int render_channel_count,
+                                bool output_normal,
                                 const ScalarVector3f &background_rgb,
                                 float alpha_min,
                                 float alpha_cap,
                                 int max_candidate_hits,
+                                bool collect_candidate_stats,
+                                bool continue_after_full_buffer,
+                                float transmittance_min,
+                                int max_trace_segments,
                                 bool face_forward,
                                 MaskT<Detached> active) const;
 

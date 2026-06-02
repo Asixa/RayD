@@ -73,8 +73,8 @@ using OptixVisibilityMask = unsigned int;
 #define OPTIX_PROGRAM_GROUP_KIND_HITGROUP 0x2424
 #define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS 1
 #define OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING 2
-#define OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM (1 << 0)
-#define OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE (1 << 31)
+#define OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM (1u << 0)
+#define OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE (1u << 31)
 #define OPTIX_RAY_FLAG_DISABLE_ANYHIT 1u
 #define OPTIX_RAY_FLAG_ENFORCE_ANYHIT (1u << 1)
 #define OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT (1u << 2)
@@ -187,6 +187,27 @@ struct OptixPipelineCompileOptions {
     unsigned int usesPrimitiveTypeFlags;
     int allowOpacityMicromaps;
 };
+
+// OptiX 9.1 host calls read a larger compile-options layout than Dr.Jit's
+// jit_optix_configure_pipeline wrapper accepts. Keep the legacy struct above for
+// Dr.Jit calls and use this only with direct optixModuleCreate/optixPipelineCreate.
+struct OptixPipelineCompileOptionsDirect {
+    int usesMotionBlur;
+    unsigned int traversableGraphFlags;
+    int numPayloadValues;
+    int numAttributeValues;
+    unsigned int exceptionFlags;
+    const char *pipelineLaunchParamsVariableName;
+    size_t pipelineLaunchParamsSizeInBytes;
+    unsigned int usesPrimitiveTypeFlags;
+    int allowOpacityMicromaps;
+    int allowClusteredGeometry;
+};
+
+inline const OptixPipelineCompileOptions *direct_optix_pipeline_compile_options(
+    const OptixPipelineCompileOptionsDirect &options) {
+    return reinterpret_cast<const OptixPipelineCompileOptions *>(&options);
+}
 
 struct OptixAccelEmitDesc {
     CUdeviceptr result;

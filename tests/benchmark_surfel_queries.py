@@ -57,6 +57,102 @@ def make_surfel_grid(side: int, spacing: float) -> rd.SurfelCloud:
     )
 
 
+def make_layered_surfel_field(
+    width: int,
+    height: int,
+    layers: int,
+    layer_spacing: float,
+    scale: float,
+    opacity: float,
+) -> tuple[list[list[float]], list[list[float]], list[list[float]], list[float]]:
+    centers: list[list[float]] = []
+    tangent_u: list[list[float]] = []
+    tangent_v: list[list[float]] = []
+    values: list[float] = []
+    for layer in range(layers):
+        z = layer * layer_spacing
+        for y in range(height):
+            for x in range(width):
+                centers.append([(x - width * 0.5) * scale, (y - height * 0.5) * scale, z])
+                tangent_u.append([scale, 0.0, 0.0])
+                tangent_v.append([0.0, scale, 0.0])
+                values.append(1.0)
+    return centers, tangent_u, tangent_v, values
+
+
+def make_layered_surfel_cloud(
+    width: int,
+    height: int,
+    layers: int,
+    layer_spacing: float,
+    scale: float,
+    opacity: float,
+) -> rd.SurfelCloud:
+    centers, tangent_u, tangent_v, values = make_layered_surfel_field(
+        width,
+        height,
+        layers,
+        layer_spacing,
+        scale,
+        opacity,
+    )
+    count = len(centers)
+    return rd.SurfelCloud(
+        cuda.Array3f(
+            [point[0] for point in centers],
+            [point[1] for point in centers],
+            [point[2] for point in centers],
+        ),
+        cuda.Array3f(
+            [basis[0] for basis in tangent_u],
+            [basis[1] for basis in tangent_u],
+            [basis[2] for basis in tangent_u],
+        ),
+        cuda.Array3f(
+            [basis[0] for basis in tangent_v],
+            [basis[1] for basis in tangent_v],
+            [basis[2] for basis in tangent_v],
+        ),
+        cuda.Float([opacity] * count),
+        cuda.Float(values),
+    )
+
+
+def make_layered_surfel_geometry(
+    width: int,
+    height: int,
+    layers: int,
+    layer_spacing: float,
+    scale: float,
+    z_offset: float = 0.0,
+) -> rd.SurfelGeometry:
+    centers, tangent_u, tangent_v, _ = make_layered_surfel_field(
+        width,
+        height,
+        layers,
+        layer_spacing,
+        scale,
+        1.0,
+    )
+    return rd.SurfelGeometry(
+        cuda.Array3f(
+            [point[0] for point in centers],
+            [point[1] for point in centers],
+            [point[2] + z_offset for point in centers],
+        ),
+        cuda.Array3f(
+            [basis[0] for basis in tangent_u],
+            [basis[1] for basis in tangent_u],
+            [basis[2] for basis in tangent_u],
+        ),
+        cuda.Array3f(
+            [basis[0] for basis in tangent_v],
+            [basis[1] for basis in tangent_v],
+            [basis[2] for basis in tangent_v],
+        ),
+    )
+
+
 def make_surfel_geometry(side: int, spacing: float, ad_mode: bool = False) -> rd.SurfelGeometry:
     centers_x: list[float] = []
     centers_y: list[float] = []
@@ -109,8 +205,39 @@ def materialize(its: rd.SurfelIntersection) -> None:
     dr.eval(its.t, its.surfel_id, its.triangle_id, its.gaussian_weight)
 
 
-def materialize_render(out) -> None:
-    dr.eval(out.rgb, out.alpha, out.transmittance, out.depth)
+def materialize_render(out, include_normal: bool = False) -> None:
+    values = [
+        out.rgb,
+        out.alpha,
+        out.transmittance,
+        out.depth,
+        out.candidate_count,
+        out.candidate_buffer_full,
+    ]
+    if include_normal:
+        values.append(out.normal)
+    dr.eval(*values)
+
+
+def mean_float_array(values, count: int) -> float:
+    dr.eval(values)
+    if count <= 0:
+        return 0.0
+    return statistics.fmean(float(values[i]) for i in range(count))
+
+
+def mean_int_array(values, count: int) -> float:
+    dr.eval(values)
+    if count <= 0:
+        return 0.0
+    return statistics.fmean(int(values[i]) for i in range(count))
+
+
+def true_fraction(mask, count: int) -> float:
+    dr.eval(mask)
+    if count <= 0:
+        return 0.0
+    return statistics.fmean(1.0 if bool(mask[i]) else 0.0 for i in range(count))
 
 
 def benchmark_mode(
@@ -243,6 +370,248 @@ def benchmark_appearance_pipeline(
         "appearance_update": summarize(update_samples),
         "render": summarize(render_samples),
         "ad_replay_backward_ms": ad_ms,
+    }
+
+
+def benchmark_candidate_render(
+    cloud: rd.SurfelCloud,
+    rays: rd.Ray,
+    ray_count: int,
+    candidate_hits: int,
+    collect_candidate_stats: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    opts = rd.SurfelTraceOptions()
+    opts.max_candidate_hits = candidate_hits
+    opts.collect_candidate_stats = collect_candidate_stats
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
+    opts.single_launch = True
+
+    dr.sync_thread()
+    build_start = time.perf_counter()
+    scene = rd.SurfelScene(cloud, opts)
+    scene.build()
+    dr.sync_thread()
+    build_ms = (time.perf_counter() - build_start) * 1000.0
+
+    samples_ms: list[float] = []
+    last = None
+    for iteration in range(warmup + repeats):
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            dr.sync_thread()
+            start = time.perf_counter()
+            last = scene.render(rays, rd.SurfelRenderOptions.rgb())
+            materialize_render(last)
+            dr.sync_thread()
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+        if iteration >= warmup:
+            samples_ms.append(elapsed_ms)
+
+    alpha_mean = 0.0
+    candidate_count_mean = 0.0
+    candidate_buffer_full_fraction = 0.0
+    if last is not None:
+        alpha_mean = mean_float_array(last.alpha, ray_count)
+        candidate_count_mean = mean_int_array(last.candidate_count, ray_count)
+        candidate_buffer_full_fraction = true_fraction(last.candidate_buffer_full, ray_count)
+
+    return {
+        "candidate_hits": candidate_hits,
+        "surfel_count": int(scene.surfel_count),
+        "ray_count": int(ray_count),
+        "build_ms": build_ms,
+        "render": summarize(samples_ms),
+        "render_ms_avg": statistics.fmean(samples_ms),
+        "alpha_mean": alpha_mean,
+        "candidate_count_mean": candidate_count_mean,
+        "candidate_buffer_full_fraction": candidate_buffer_full_fraction,
+    }
+
+
+def benchmark_normal_output(
+    cloud: rd.SurfelCloud,
+    rays: rd.Ray,
+    ray_count: int,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    opts = rd.SurfelTraceOptions()
+    opts.alpha_min = 1.0 / 255.0
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
+    opts.single_launch = True
+
+    scene = rd.SurfelScene(cloud, opts)
+    scene.build()
+    dr.sync_thread()
+
+    rgb_only_samples: list[float] = []
+    normal_samples: list[float] = []
+    last_normal = None
+    for iteration in range(warmup + repeats):
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            dr.sync_thread()
+            start = time.perf_counter()
+            out_rgb = scene.render(rays, rd.SurfelRenderOptions.rgb())
+            materialize_render(out_rgb)
+            dr.sync_thread()
+            rgb_only_ms = (time.perf_counter() - start) * 1000.0
+
+            start = time.perf_counter()
+            last_normal = scene.render(rays, rd.SurfelRenderOptions.rgb(normal=True))
+            materialize_render(last_normal, include_normal=True)
+            dr.sync_thread()
+            normal_ms = (time.perf_counter() - start) * 1000.0
+
+        if iteration >= warmup:
+            rgb_only_samples.append(rgb_only_ms)
+            normal_samples.append(normal_ms)
+
+    normal_z_mean = 0.0
+    if last_normal is not None:
+        normal_z_mean = mean_float_array(last_normal.normal.z, ray_count)
+
+    rgb_only_avg = statistics.fmean(rgb_only_samples)
+    normal_avg = statistics.fmean(normal_samples)
+    return {
+        "surfel_count": int(scene.surfel_count),
+        "ray_count": ray_count,
+        "render_rgb_only": summarize(rgb_only_samples),
+        "render_with_normal": summarize(normal_samples),
+        "overhead_vs_rgb_only_ms": normal_avg - rgb_only_avg,
+        "overhead_vs_rgb_only_fraction": (
+            (normal_avg - rgb_only_avg) / rgb_only_avg if rgb_only_avg > 0.0 else 0.0
+        ),
+        "normal_z_mean": normal_z_mean,
+    }
+
+
+def benchmark_geometry_update(
+    side: int,
+    layers: int,
+    layer_spacing: float,
+    spacing: float,
+    rays: rd.Ray,
+    ray_count: int,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    opts = rd.SurfelTraceOptions()
+    opts.alpha_min = 1.0 / 255.0
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
+    opts.single_launch = True
+
+    scale = spacing * 0.48
+    surfel_count = side * side * max(1, layers)
+    geometry_a = make_layered_surfel_geometry(side, side, max(1, layers), layer_spacing, scale, 0.0)
+    geometry_b = make_layered_surfel_geometry(side, side, max(1, layers), layer_spacing, scale, 0.25 * scale)
+    appearance = make_rgb_appearance(surfel_count)
+
+    scene = rd.SurfelScene(geometry_a, opts)
+    scene.build()
+    scene.update_appearance(appearance)
+    dr.sync_thread()
+
+    update_samples: list[float] = []
+    render_samples: list[float] = []
+    for iteration in range(warmup + repeats):
+        geometry = geometry_b if iteration % 2 == 0 else geometry_a
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            dr.sync_thread()
+            start = time.perf_counter()
+            scene.update_geometry(geometry)
+            dr.sync_thread()
+            update_ms = (time.perf_counter() - start) * 1000.0
+
+            start = time.perf_counter()
+            out = scene.render(rays, rd.SurfelRenderOptions.rgb())
+            materialize_render(out)
+            dr.sync_thread()
+            render_ms = (time.perf_counter() - start) * 1000.0
+        if iteration >= warmup:
+            update_samples.append(update_ms)
+            render_samples.append(render_ms)
+
+    rebuild_samples: list[float] = []
+    for iteration in range(warmup + repeats):
+        geometry = geometry_b if iteration % 2 == 0 else geometry_a
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            dr.sync_thread()
+            start = time.perf_counter()
+            rebuild_scene = rd.SurfelScene(geometry, opts)
+            rebuild_scene.build()
+            rebuild_scene.update_appearance(appearance)
+            dr.sync_thread()
+            rebuild_ms = (time.perf_counter() - start) * 1000.0
+        if iteration >= warmup:
+            rebuild_samples.append(rebuild_ms)
+
+    return {
+        "surfel_count": surfel_count,
+        "ray_count": ray_count,
+        "semantics": "topology_stable_geometry_update_rebuilds_proxy_gas",
+        "update_geometry": summarize(update_samples),
+        "rebuild_scene": summarize(rebuild_samples),
+        "post_update_render": summarize(render_samples),
+        "scene_build_count": scene.build_count,
+    }
+
+
+def benchmark_miss_prepass(
+    cloud: rd.SurfelCloud,
+    rays: rd.Ray,
+    ray_count: int,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    opts = rd.SurfelTraceOptions()
+    opts.alpha_min = 1.0 / 255.0
+    opts.primitive_mode = rd.SurfelPrimitiveMode.Icosahedron20
+    opts.single_launch = True
+
+    scene = rd.SurfelScene(cloud, opts)
+    scene.build()
+    dr.sync_thread()
+
+    render_only_samples: list[float] = []
+    prepass_total_samples: list[float] = []
+    prepass_intersect_samples: list[float] = []
+    last_intersection = None
+    for iteration in range(warmup + repeats):
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            dr.sync_thread()
+            start = time.perf_counter()
+            out = scene.render(rays, rd.SurfelRenderOptions.rgb())
+            materialize_render(out)
+            dr.sync_thread()
+            render_only_ms = (time.perf_counter() - start) * 1000.0
+
+            start = time.perf_counter()
+            last_intersection = scene.intersect(rays)
+            materialize(last_intersection)
+            dr.sync_thread()
+            intersect_ms = (time.perf_counter() - start) * 1000.0
+
+        if iteration >= warmup:
+            render_only_samples.append(render_only_ms)
+            prepass_intersect_samples.append(intersect_ms)
+            prepass_total_samples.append(intersect_ms + render_only_ms)
+
+    hit_fraction = 0.0
+    if last_intersection is not None:
+        hit_fraction = true_fraction(last_intersection.is_valid(), ray_count)
+
+    return {
+        "surfel_count": int(scene.surfel_count),
+        "ray_count": ray_count,
+        "hit_fraction": hit_fraction,
+        "decision": "disabled_by_default",
+        "render_only": summarize(render_only_samples),
+        "prepass_intersect": summarize(prepass_intersect_samples),
+        "prepass_total_no_compaction": summarize(prepass_total_samples),
+        "overhead_vs_render_only_ms": (
+            statistics.fmean(prepass_total_samples) - statistics.fmean(render_only_samples)
+        ),
     }
 
 
@@ -390,17 +759,32 @@ def main() -> None:
     parser.add_argument("--grid-side", type=int, default=64)
     parser.add_argument("--ray-side", type=int, default=256)
     parser.add_argument("--spacing", type=float, default=0.08)
+    parser.add_argument("--candidate-hits", type=int, nargs="+", default=[8, 16])
+    parser.add_argument("--collect-candidate-stats", action="store_true")
+    parser.add_argument("--surfel-layers", type=int, default=1)
+    parser.add_argument("--layer-spacing", type=float, default=0.02)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--trace-backend", choices=["single-launch", "legacy-retrace"], default="single-launch")
     parser.add_argument("--fit-image-size", type=int, default=24)
     parser.add_argument("--skip-fit", action="store_true")
     parser.add_argument("--skip-appearance", action="store_true")
+    parser.add_argument("--skip-normal-output", action="store_true")
+    parser.add_argument("--skip-geometry-update", action="store_true")
+    parser.add_argument("--skip-miss-prepass", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--image-output-dir", type=Path, default=Path("artifacts/surfel_fit"))
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    cloud = make_surfel_grid(args.grid_side, args.spacing)
+    cloud = make_layered_surfel_cloud(
+        args.grid_side,
+        args.grid_side,
+        max(1, args.surfel_layers),
+        args.layer_spacing,
+        args.spacing * 0.48,
+        1.0,
+    )
     extent = max(1.0, args.grid_side * args.spacing * 0.55)
     rays = make_ortho_rays(args.ray_side, args.ray_side, extent)
     prewarm_surfel_optix()
@@ -408,8 +792,22 @@ def main() -> None:
     result: dict[str, Any] = {
         "prewarmed": True,
         "ray_count": args.ray_side * args.ray_side,
-        "surfel_count": args.grid_side * args.grid_side,
+        "surfel_count": args.grid_side * args.grid_side * max(1, args.surfel_layers),
+        "surfel_layers": max(1, args.surfel_layers),
+        "layer_spacing": args.layer_spacing,
         "trace_backend": args.trace_backend,
+        "candidate_render": [
+            benchmark_candidate_render(
+                cloud,
+                rays,
+                args.ray_side * args.ray_side,
+                candidate_hits,
+                args.collect_candidate_stats,
+                args.repeats,
+                args.warmup,
+            )
+            for candidate_hits in args.candidate_hits
+        ],
         "modes": [
             benchmark_mode(rd.SurfelPrimitiveMode.Icosahedron20,
                            cloud,
@@ -443,12 +841,39 @@ def main() -> None:
             args.repeats,
             args.warmup,
         )
+    if not args.skip_normal_output:
+        result["normal_output"] = benchmark_normal_output(
+            cloud,
+            rays,
+            args.ray_side * args.ray_side,
+            args.repeats,
+            args.warmup,
+        )
+    if not args.skip_geometry_update:
+        result["geometry_update"] = benchmark_geometry_update(
+            args.grid_side,
+            max(1, args.surfel_layers),
+            args.layer_spacing,
+            args.spacing,
+            rays,
+            args.ray_side * args.ray_side,
+            args.repeats,
+            args.warmup,
+        )
+    if not args.skip_miss_prepass:
+        result["miss_prepass"] = benchmark_miss_prepass(
+            cloud,
+            rays,
+            args.ray_side * args.ray_side,
+            args.repeats,
+            args.warmup,
+        )
 
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=None if args.json else 2))
 
 
 if __name__ == "__main__":

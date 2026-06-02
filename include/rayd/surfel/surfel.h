@@ -41,11 +41,20 @@ struct SurfelTraceOptions {
     /// Use the surfel native OptiX pipeline for detached intersect/composite calls.
     /// AD alpha compositing keeps the differentiable reference path.
     bool single_launch = true;
+    /// Collect per-ray candidate buffer occupancy diagnostics.
+    bool collect_candidate_stats = false;
+    /// Use per-surfel opacity when building proxy bounds.
+    bool opacity_aware_proxy_bounds = false;
+    /// Continue tracing after a full candidate buffer until transmittance is low enough.
+    bool continue_after_full_buffer = false;
+    float transmittance_min = 0.03f;
+    int max_trace_segments = 4;
 };
 
 struct SurfelRenderOptions {
     SurfelRenderMode mode = SurfelRenderMode::RGB;
     SurfelColorModel color_model = SurfelColorModel::ConstantRGB;
+    bool normal = false;
     int sh_degree = 0;
     int channel_count = 3;
     int channel_chunk = 0;
@@ -92,6 +101,7 @@ struct SurfelCompositeData {
     static constexpr bool IsDetached = std::is_same_v<Float_, Float>;
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     Mask_ is_valid() const { return alpha > Float_(0.f); }
 
@@ -99,12 +109,16 @@ struct SurfelCompositeData {
     Float_ alpha = zeros<Float_>(1);          ///< Accumulated alpha, 1 - final transmittance.
     Float_ transmittance = full<Float_>(1.f, 1);
     Float_ depth = full<Float_>(Infinity, 1); ///< Alpha-weighted depth, Infinity when empty.
+    Int_ candidate_count = zeros<Int_>(1);
+    Mask_ candidate_buffer_full = full<Mask_>(false, 1);
 
     DRJIT_STRUCT(SurfelCompositeData,
                  intensity,
                  alpha,
                  transmittance,
-                 depth)
+                 depth,
+                 candidate_count,
+                 candidate_buffer_full)
 };
 
 template <typename Float_>
@@ -113,14 +127,18 @@ struct SurfelRenderData {
 
     using Mask_ = std::conditional_t<IsDetached, Mask, MaskAD>;
     using Vec3f = std::conditional_t<IsDetached, Vector3f, Vector3fAD>;
+    using Int_ = std::conditional_t<IsDetached, Int, IntAD>;
 
     Mask_ is_valid() const { return alpha > Float_(0.f); }
 
     Float_ channels = Float();           ///< Flat [ray_count, channel_count] output buffer.
     Vec3f rgb = zeros<Vec3f>(1);         ///< Convenience RGB view for RGB/RGBDepth modes.
+    Vec3f normal = zeros<Vec3f>(1);      ///< Alpha-weighted surfel normal; zero when empty or disabled.
     Float_ alpha = zeros<Float_>(1);
     Float_ transmittance = full<Float_>(1.f, 1);
     Float_ depth = full<Float_>(Infinity, 1);
+    Int_ candidate_count = zeros<Int_>(1);
+    Mask_ candidate_buffer_full = full<Mask_>(false, 1);
     int channel_count = 0;
 };
 
@@ -250,6 +268,7 @@ public:
     int triangle_count() const { return triangle_count_; }
     int build_count() const { return build_count_; }
 
+    void update_geometry(const SurfelGeometry &geometry);
     void update_appearance(const SurfelAppearance &appearance);
 
     template <bool Detached>
