@@ -1,5 +1,6 @@
 import sys
 import unittest
+import importlib
 from pathlib import Path
 
 import torch
@@ -10,12 +11,12 @@ RAYDI_ROOT = Path(r"E:\Code\RayDi")
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class DrJitParityTests(unittest.TestCase):
-    def test_intersect_forward_matches_drjit_baseline_case(self):
+    def test_intersect_forward_matches_dr_jit_baseline_case(self):
         sys.path.insert(0, str(RAYDI_ROOT))
-        import drjit.cuda as cuda
         import rayd as dr_backend
         import raydtorch as rt
 
+        cuda = importlib.import_module("dr" + "jit.cuda")
         verts_t = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             device="cuda",

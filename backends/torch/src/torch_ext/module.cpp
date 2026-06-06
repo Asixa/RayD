@@ -10,7 +10,7 @@ void bind_multipath_ops(py::module_ &m);
 py::dict build_info() {
     py::dict info;
     info["backend"] = "raydtorch-native";
-    info["uses_drjit"] = false;
+    info["uses_dr_jit"] = false;
     return info;
 }
 

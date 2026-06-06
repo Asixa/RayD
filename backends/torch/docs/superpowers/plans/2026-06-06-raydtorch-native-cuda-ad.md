@@ -3268,7 +3268,7 @@ git commit -m "test(torch): add cross-backend parity baselines"
 - Modify: `src/torch_ext/**`
 - Modify: `tests/raydtorch_native/test_no_drjit_import.py`
 
-- [ ] **Step 1: Strengthen no-Dr.Jit subprocess test**
+- [x] **Step 1: Strengthen no-Dr.Jit subprocess test**
 
 Modify `tests/raydtorch_native/test_no_drjit_import.py`:
 
@@ -3292,7 +3292,7 @@ Modify `tests/raydtorch_native/test_no_drjit_import.py`:
         self.assertEqual(lines[-1], "False")
 ```
 
-- [ ] **Step 2: Run no-Dr.Jit tests**
+- [x] **Step 2: Run no-Dr.Jit tests**
 
 Run:
 
@@ -3302,7 +3302,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_no_drjit_imp
 
 Expected result: `OK`.
 
-- [ ] **Step 3: Audit imports**
+- [x] **Step 3: Audit imports**
 
 Run:
 
@@ -3312,7 +3312,7 @@ rg -n "drjit|dr\\.wrap|import_tensor|CUDADiffArray|CUDAArray" raydtorch include/
 
 Expected result: no matches.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add raydtorch include/raydtorch src/torch_ext tests/raydtorch_native/test_no_drjit_import.py
