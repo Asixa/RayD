@@ -3190,7 +3190,7 @@ git commit -m "feat: add raydtorch camera API"
 - Create: `tests/baselines/raydtorch_native/multipath.json`
 - Modify: `tests/baseline_utils.py`
 
-- [ ] **Step 1: Write parity tests while Dr.Jit still exists**
+- [x] **Step 1: Write parity tests while Dr.Jit still exists**
 
 Create `tests/raydtorch_native/test_drjit_parity.py`:
 
@@ -3232,7 +3232,7 @@ class DrJitParityTests(unittest.TestCase):
         self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), places=5)
 ```
 
-- [ ] **Step 2: Run parity tests**
+- [x] **Step 2: Run parity tests**
 
 Run:
 
@@ -3242,7 +3242,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_drjit_parity
 
 Expected result: `OK`.
 
-- [ ] **Step 3: Freeze raydtorch-native JSON baselines**
+- [x] **Step 3: Freeze raydtorch-native JSON baselines**
 
 Write a script in `tests/baseline_cases.py` that emits raydtorch-native baseline JSON for:
 
@@ -3254,7 +3254,7 @@ Write a script in `tests/baseline_cases.py` that emits raydtorch-native baseline
 
 Store outputs under `tests/baselines/raydtorch_native/`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add tests/raydtorch_native/test_drjit_parity.py tests/baselines/raydtorch_native tests/baseline_utils.py tests/baseline_cases.py
