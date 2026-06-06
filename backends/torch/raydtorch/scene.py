@@ -6,6 +6,7 @@ import torch
 
 from . import _C
 from .autograd import intersect as _intersect
+from .autograd import nearest_edge as _nearest_edge
 from .mesh import Mesh
 from .types import Ray
 
@@ -88,6 +89,11 @@ class Scene:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
         vertices = self._meshes[0][0].vertices
         return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
+
+    def nearest_edge(self, point: torch.Tensor):
+        handle = self._require_ready()
+        vertices = self._meshes[0][0].vertices
+        return _nearest_edge(handle, vertices, point.contiguous())
 
     def update_mesh_vertices(self, mesh_id: int, positions):
         handle = self._require_ready()

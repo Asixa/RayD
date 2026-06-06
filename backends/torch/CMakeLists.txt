@@ -95,8 +95,11 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/ops_scene.cpp
         src/torch_ext/optix_context.cpp
         src/torch_ext/ops_intersect.cpp
+        src/torch_ext/ops_edge.cpp
         src/torch_ext/kernels/geometry_forward.cu
         src/torch_ext/kernels/geometry_backward.cu
+        src/torch_ext/kernels/edge_forward.cu
+        src/torch_ext/kernels/edge_backward.cu
     )
     target_include_directories(
         _raydtorch

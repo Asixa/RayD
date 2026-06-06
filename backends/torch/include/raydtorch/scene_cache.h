@@ -39,6 +39,12 @@ struct SceneCache {
     int64_t device_index = 0;
     std::vector<MeshRecord> meshes;
     std::vector<OptixTriangleAccel> triangle_accels;
+    at::Tensor edge_v0;
+    at::Tensor edge_v1;
+    at::Tensor edge_face0;
+    at::Tensor edge_face1;
+    at::Tensor edge_shape_id;
+    at::Tensor edge_local_id;
 };
 
 int64_t create_scene(std::vector<MeshRecord> meshes);

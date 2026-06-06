@@ -2563,7 +2563,7 @@ git commit -m "feat(torch): add dynamic scene updates"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_edge_queries.py`
 
-- [ ] **Step 1: Write edge forward and gradient tests**
+- [x] **Step 1: Write edge forward and gradient tests**
 
 Create `tests/raydtorch_native/test_edge_queries.py`:
 
@@ -2595,7 +2595,7 @@ class EdgeQueryTests(unittest.TestCase):
         self.assertIsNotNone(verts.grad)
 ```
 
-- [ ] **Step 2: Run the test to verify failure**
+- [x] **Step 2: Run the test to verify failure**
 
 Run:
 
@@ -2605,7 +2605,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_edge_queries
 
 Expected result: failure because `Scene.nearest_edge` does not exist.
 
-- [ ] **Step 3: Add edge topology build to scene cache**
+- [x] **Step 3: Add edge topology build to scene cache**
 
 During `create_scene`, build scene-global edge records:
 
@@ -2618,7 +2618,7 @@ During `create_scene`, build scene-global edge records:
 
 For the first edge milestone, build this topology on host from `faces.cpu()` only during `Scene.build()`. Later replace with CUDA topology construction if build time is a bottleneck.
 
-- [ ] **Step 4: Implement exact nearest point-edge CUDA forward**
+- [x] **Step 4: Implement exact nearest point-edge CUDA forward**
 
 `edge_forward.cu` computes for each query point:
 
@@ -2635,7 +2635,7 @@ Save tape:
 - `s`
 - unclamped distance vector
 
-- [ ] **Step 5: Implement fixed-winner VJP/JVP**
+- [x] **Step 5: Implement fixed-winner VJP/JVP**
 
 For VJP:
 
@@ -2662,11 +2662,11 @@ tangent_distance = dot(d / distance, tangent_point - tangent_edge_point)
 
 For the first JVP implementation, treat clamped `s` as fixed when `s` is exactly 0 or 1.
 
-- [ ] **Step 6: Wire Python API**
+- [x] **Step 6: Wire Python API**
 
 Add `NearestPointEdge` construction in `raydtorch/autograd.py` and `Scene.nearest_edge(point)`.
 
-- [ ] **Step 7: Run edge tests**
+- [x] **Step 7: Run edge tests**
 
 Run:
 
@@ -2676,7 +2676,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_edge_queries
 
 Expected result: `OK`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add include/raydtorch/edge_kernels.h src/torch_ext/ops_edge.cpp src/torch_ext/kernels/edge_forward.cu src/torch_ext/kernels/edge_backward.cu src/torch_ext/module.cpp raydtorch/autograd.py raydtorch/scene.py tests/raydtorch_native/test_edge_queries.py

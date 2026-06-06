@@ -5,7 +5,10 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 
+#include <algorithm>
 #include <atomic>
+#include <array>
+#include <map>
 #include <stdexcept>
 
 namespace raydtorch {
@@ -139,6 +142,56 @@ void update_triangle_accel(
         nullptr,
         0));
 }
+
+void build_edge_topology(SceneCache &scene) {
+    std::vector<int32_t> edge_v0;
+    std::vector<int32_t> edge_v1;
+    std::vector<int32_t> edge_face0;
+    std::vector<int32_t> edge_face1;
+    std::vector<int32_t> edge_shape_id;
+    std::vector<int32_t> edge_local_id;
+    std::map<std::pair<int32_t, int32_t>, int32_t> edge_lookup;
+
+    for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
+        at::Tensor faces_cpu = scene.meshes[shape_id].faces.cpu();
+        const int *faces = faces_cpu.data_ptr<int>();
+        for (int32_t face_id = 0; face_id < static_cast<int32_t>(faces_cpu.size(0)); ++face_id) {
+            const int32_t tri[3] = {
+                static_cast<int32_t>(faces[face_id * 3 + 0]),
+                static_cast<int32_t>(faces[face_id * 3 + 1]),
+                static_cast<int32_t>(faces[face_id * 3 + 2]),
+            };
+            const int32_t pairs[3][2] = {{tri[0], tri[1]}, {tri[1], tri[2]}, {tri[2], tri[0]}};
+            for (int local_edge = 0; local_edge < 3; ++local_edge) {
+                int32_t a = pairs[local_edge][0];
+                int32_t b = pairs[local_edge][1];
+                auto key = std::minmax(a, b);
+                auto it = edge_lookup.find(key);
+                if (it == edge_lookup.end()) {
+                    const int32_t edge_id = static_cast<int32_t>(edge_v0.size());
+                    edge_lookup.emplace(key, edge_id);
+                    edge_v0.push_back(a);
+                    edge_v1.push_back(b);
+                    edge_face0.push_back(face_id);
+                    edge_face1.push_back(-1);
+                    edge_shape_id.push_back(shape_id);
+                    edge_local_id.push_back(edge_id);
+                } else if (edge_face1[it->second] < 0) {
+                    edge_face1[it->second] = face_id;
+                }
+            }
+        }
+    }
+
+    at::TensorOptions cpu_iopts = at::TensorOptions().device(at::kCPU).dtype(at::kInt);
+    at::Device device(at::kCUDA, scene.device_index);
+    scene.edge_v0 = at::tensor(edge_v0, cpu_iopts).to(device);
+    scene.edge_v1 = at::tensor(edge_v1, cpu_iopts).to(device);
+    scene.edge_face0 = at::tensor(edge_face0, cpu_iopts).to(device);
+    scene.edge_face1 = at::tensor(edge_face1, cpu_iopts).to(device);
+    scene.edge_shape_id = at::tensor(edge_shape_id, cpu_iopts).to(device);
+    scene.edge_local_id = at::tensor(edge_local_id, cpu_iopts).to(device);
+}
 } // namespace
 
 int64_t create_scene(std::vector<MeshRecord> meshes) {
@@ -167,6 +220,7 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
     for (const MeshRecord &mesh : scene->meshes)
         scene->triangle_accels.push_back(
             build_triangle_accel(mesh, optix_entry.optix_context, torch_ctx.stream));
+    build_edge_topology(*scene);
     const int64_t handle = scene->handle;
 
     std::lock_guard<std::mutex> lock(scenes_mutex);

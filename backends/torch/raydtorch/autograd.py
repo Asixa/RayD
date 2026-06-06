@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from . import _C
-from .types import Intersection
+from .types import Intersection, NearestPointEdge
 
 
 def _native_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -108,6 +108,68 @@ def intersect(
 ) -> Intersection:
     values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active)
     return Intersection(*values)
+
+
+class _NearestEdgeFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        outputs = _C.nearest_edge_forward(int(scene_handle), point)
+        return outputs
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        scene_handle, vertices, point = inputs
+        distance, edge_point, edge_t, shape_id, edge_id, global_edge_id, tape_edge_id, tape_s, tape_d = output
+        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
+        point = torch.autograd.forward_ad.unpack_dual(point).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d, distance)
+        ctx.save_for_forward(vertices, point, tape_edge_id, tape_s, tape_d)
+        ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
+        grad_distance = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(distance)
+        grad_edge_point = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(point)
+        grad_edge_t = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(distance)
+        grad_vertices, grad_point = _C.nearest_edge_backward(
+            ctx.scene_handle,
+            point,
+            tape_edge_id,
+            tape_s,
+            tape_d,
+            grad_distance,
+            grad_edge_point,
+            grad_edge_t,
+        )
+        return None, grad_vertices, grad_point
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_vertices, grad_point):
+        vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        if grad_vertices is None:
+            grad_vertices = torch.zeros_like(vertices)
+        if grad_point is None:
+            grad_point = torch.zeros_like(point)
+        with torch._C._DisableFuncTorch():
+            tangent_distance, tangent_edge_point, tangent_edge_t = _C.nearest_edge_jvp(
+                ctx.scene_handle,
+                _native_tensor(point),
+                _native_tensor(tape_edge_id),
+                _native_tensor(tape_s),
+                _native_tensor(tape_d),
+                _native_tensor(grad_vertices),
+                _native_tensor(grad_point),
+            )
+        return tangent_distance, tangent_edge_point, tangent_edge_t, None, None, None, None, None, None
+
+
+def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
+    values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
+    return NearestPointEdge(*values[:6])
 
 
 class NativeOpUnavailable(RuntimeError):
