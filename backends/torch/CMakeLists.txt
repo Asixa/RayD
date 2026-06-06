@@ -133,6 +133,7 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/kernels/edge_backward.cu
         src/torch_ext/kernels/visibility_backward.cu
         src/torch_ext/kernels/multipath_backward.cu
+        src/torch_ext/kernels/diffraction_accumulation_ad.cu
     )
     target_include_directories(
         _raydtorch

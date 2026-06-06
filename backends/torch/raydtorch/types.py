@@ -94,6 +94,13 @@ class ReflEpcField:
 
 
 @dataclass(frozen=True)
+class DfrDirectAccum:
+    power: torch.Tensor
+    field_x_re: torch.Tensor
+    field_x_im: torch.Tensor
+
+
+@dataclass(frozen=True)
 class SceneGlobalGeometry:
     vertices: torch.Tensor
     faces: torch.Tensor

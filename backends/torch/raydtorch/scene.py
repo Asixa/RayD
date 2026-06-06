@@ -5,6 +5,7 @@ import weakref
 import torch
 
 from . import _C
+from .autograd import accum_dfr_direct as _accum_dfr_direct
 from .autograd import intersect as _intersect
 from .autograd import nearest_edge as _nearest_edge
 from .autograd import trace_refl_epc_field as _trace_refl_epc_field
@@ -136,6 +137,13 @@ class Scene:
             active.contiguous(),
             int(max_bounces),
         )
+
+    def accum_dfr_direct(self, *, edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor):
+        self._require_ready()
+        return _accum_dfr_direct(edge_pos.contiguous(), edge_dir.contiguous(), src.contiguous())
+
+    def accum_dfr(self, *, edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor):
+        return self.accum_dfr_direct(edge_pos=edge_pos, edge_dir=edge_dir, src=src)
 
     def update_mesh_vertices(self, mesh_id: int, positions):
         handle = self._require_ready()

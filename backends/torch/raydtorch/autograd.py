@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from . import _C
-from .types import Intersection, NearestPointEdge, ReflEpcField, ReflectionChain
+from .types import DfrDirectAccum, Intersection, NearestPointEdge, ReflEpcField, ReflectionChain
 
 
 def _native_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -382,6 +382,63 @@ def trace_refl_epc_field(
         int(max_bounces),
     )
     return ReflEpcField(*values[:5])
+
+
+class _AccumDfrDirectFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.accum_dfr_direct_forward(edge_pos, edge_dir, src)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        edge_pos, edge_dir, src = inputs
+        edge_pos = torch.autograd.forward_ad.unpack_dual(edge_pos).primal
+        edge_dir = torch.autograd.forward_ad.unpack_dual(edge_dir).primal
+        src = torch.autograd.forward_ad.unpack_dual(src).primal
+        ctx.save_for_backward(edge_pos, edge_dir, src)
+        ctx.save_for_forward(edge_pos, edge_dir, src)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        edge_pos, edge_dir, src = ctx.saved_tensors
+        grad_power = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros((edge_pos.shape[0],), device=edge_pos.device, dtype=edge_pos.dtype)
+        grad_field_x_re = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(grad_power)
+        grad_field_x_im = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(grad_power)
+        grad_edge_pos, grad_edge_dir, grad_src = _C.accum_dfr_direct_backward(
+            edge_pos,
+            edge_dir,
+            src,
+            grad_power,
+            grad_field_x_re,
+            grad_field_x_im,
+        )
+        return grad_edge_pos, grad_edge_dir, grad_src
+
+    @staticmethod
+    def jvp(ctx, grad_edge_pos, grad_edge_dir, grad_src):
+        edge_pos, edge_dir, src = ctx.saved_tensors
+        if grad_edge_pos is None:
+            grad_edge_pos = torch.zeros_like(edge_pos)
+        if grad_edge_dir is None:
+            grad_edge_dir = torch.zeros_like(edge_dir)
+        if grad_src is None:
+            grad_src = torch.zeros_like(src)
+        with torch._C._DisableFuncTorch():
+            return _C.accum_dfr_direct_jvp(
+                _native_tensor(edge_pos),
+                _native_tensor(edge_dir),
+                _native_tensor(src),
+                _native_tensor(grad_edge_pos),
+                _native_tensor(grad_edge_dir),
+                _native_tensor(grad_src),
+            )
+
+
+def accum_dfr_direct(edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor) -> DfrDirectAccum:
+    values = _AccumDfrDirectFunction.apply(edge_pos, edge_dir, src)
+    return DfrDirectAccum(*values)
 
 
 class NativeOpUnavailable(RuntimeError):

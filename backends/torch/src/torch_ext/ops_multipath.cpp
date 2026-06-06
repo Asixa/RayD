@@ -248,6 +248,50 @@ py::tuple trace_refl_epc_field_jvp_op(
     return py::make_tuple(out.tangent_field_real, out.tangent_field_imag, out.tangent_path_length);
 }
 
+py::tuple accum_dfr_direct_forward_op(at::Tensor edge_pos, at::Tensor edge_dir, at::Tensor src) {
+    require_vec3f(edge_pos, "edge_pos");
+    require_vec3f(edge_dir, "edge_dir");
+    require_vec3f(src, "src");
+    require_same_batch(edge_pos, edge_dir, "accum_dfr_direct");
+    require_same_batch(edge_pos, src, "accum_dfr_direct");
+    DfrDirectForwardOutputs out = dfr_direct_forward_cuda(edge_pos, edge_dir, src);
+    return py::make_tuple(out.power, out.field_x_re, out.field_x_im);
+}
+
+py::tuple accum_dfr_direct_backward_op(
+    at::Tensor edge_pos,
+    at::Tensor edge_dir,
+    at::Tensor src,
+    at::Tensor grad_power,
+    at::Tensor grad_field_x_re,
+    at::Tensor grad_field_x_im) {
+    DfrDirectBackwardOutputs out = dfr_direct_backward_cuda(
+        edge_pos,
+        edge_dir,
+        src,
+        grad_power.contiguous(),
+        grad_field_x_re.contiguous(),
+        grad_field_x_im.contiguous());
+    return py::make_tuple(out.grad_edge_pos, out.grad_edge_dir, out.grad_src);
+}
+
+py::tuple accum_dfr_direct_jvp_op(
+    at::Tensor edge_pos,
+    at::Tensor edge_dir,
+    at::Tensor src,
+    at::Tensor tangent_edge_pos,
+    at::Tensor tangent_edge_dir,
+    at::Tensor tangent_src) {
+    DfrDirectJvpOutputs out = dfr_direct_jvp_cuda(
+        edge_pos,
+        edge_dir,
+        src,
+        tangent_edge_pos.contiguous(),
+        tangent_edge_dir.contiguous(),
+        tangent_src.contiguous());
+    return py::make_tuple(out.tangent_power, out.tangent_field_x_re, out.tangent_field_x_im);
+}
+
 void bind_multipath_ops(py::module_ &m) {
     m.def("visibility_forward", &visibility_forward_op);
     m.def("trace_reflections_forward", &trace_reflections_forward_op);
@@ -256,6 +300,12 @@ void bind_multipath_ops(py::module_ &m) {
     m.def("trace_refl_epc_field_forward", &trace_refl_epc_field_forward_op);
     m.def("trace_refl_epc_field_backward", &trace_refl_epc_field_backward_op);
     m.def("trace_refl_epc_field_jvp", &trace_refl_epc_field_jvp_op);
+    m.def("accum_dfr_direct_forward", &accum_dfr_direct_forward_op);
+    m.def("accum_dfr_direct_backward", &accum_dfr_direct_backward_op);
+    m.def("accum_dfr_direct_jvp", &accum_dfr_direct_jvp_op);
+    m.def("accum_dfr_forward", &accum_dfr_direct_forward_op);
+    m.def("accum_dfr_backward", &accum_dfr_direct_backward_op);
+    m.def("accum_dfr_jvp", &accum_dfr_direct_jvp_op);
 }
 
 } // namespace raydtorch

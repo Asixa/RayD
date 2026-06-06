@@ -2997,7 +2997,7 @@ git commit -m "feat(torch): port reflection EPC native AD"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_multipath.py`
 
-- [ ] **Step 1: Add diffraction accumulation tests**
+- [x] **Step 1: Add diffraction accumulation tests**
 
 Append to `tests/raydtorch_native/test_multipath.py`:
 
@@ -3022,7 +3022,7 @@ Append to `tests/raydtorch_native/test_multipath.py`:
         self.assertIsNotNone(src.grad)
 ```
 
-- [ ] **Step 2: Reuse existing AD math without Dr.Jit**
+- [x] **Step 2: Reuse existing AD math without Dr.Jit**
 
 Port the math from:
 
@@ -3048,7 +3048,7 @@ struct DfrDirectTorchParams {
 };
 ```
 
-- [ ] **Step 3: Implement forward, VJP, and JVP wrappers**
+- [x] **Step 3: Implement forward, VJP, and JVP wrappers**
 
 Register:
 
@@ -3061,7 +3061,7 @@ accum_dfr_backward
 accum_dfr_jvp
 ```
 
-- [ ] **Step 4: Run diffraction tests**
+- [x] **Step 4: Run diffraction tests**
 
 Run:
 
@@ -3071,7 +3071,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_multipath.Mu
 
 Expected result: `OK`.
 
-- [ ] **Step 5: Run cold-create regression**
+- [x] **Step 5: Run cold-create regression**
 
 Run:
 
@@ -3081,7 +3081,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_multipath -v
 
 Expected result: `OK`; no `OptiX error in optixPipelineCreate(multipath)`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add include/raydtorch/multipath_kernels.h src/torch_ext/ops_multipath.cpp src/torch_ext/kernels/multipath_backward.cu src/torch_ext/kernels/diffraction_accumulation_ad.cu raydtorch/types.py raydtorch/scene.py tests/raydtorch_native/test_multipath.py

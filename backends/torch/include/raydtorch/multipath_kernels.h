@@ -92,4 +92,43 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
     const at::Tensor &tangent_source,
     const at::Tensor &tangent_receiver);
 
+struct DfrDirectForwardOutputs {
+    at::Tensor power;
+    at::Tensor field_x_re;
+    at::Tensor field_x_im;
+};
+
+DfrDirectForwardOutputs dfr_direct_forward_cuda(
+    const at::Tensor &edge_pos,
+    const at::Tensor &edge_dir,
+    const at::Tensor &src);
+
+struct DfrDirectBackwardOutputs {
+    at::Tensor grad_edge_pos;
+    at::Tensor grad_edge_dir;
+    at::Tensor grad_src;
+};
+
+DfrDirectBackwardOutputs dfr_direct_backward_cuda(
+    const at::Tensor &edge_pos,
+    const at::Tensor &edge_dir,
+    const at::Tensor &src,
+    const at::Tensor &grad_power,
+    const at::Tensor &grad_field_x_re,
+    const at::Tensor &grad_field_x_im);
+
+struct DfrDirectJvpOutputs {
+    at::Tensor tangent_power;
+    at::Tensor tangent_field_x_re;
+    at::Tensor tangent_field_x_im;
+};
+
+DfrDirectJvpOutputs dfr_direct_jvp_cuda(
+    const at::Tensor &edge_pos,
+    const at::Tensor &edge_dir,
+    const at::Tensor &src,
+    const at::Tensor &tangent_edge_pos,
+    const at::Tensor &tangent_edge_dir,
+    const at::Tensor &tangent_src);
+
 } // namespace raydtorch

@@ -13,6 +13,7 @@ else:
 from .mesh import Mesh
 from .scene import Scene
 from .types import (
+    DfrDirectAccum,
     Intersection,
     NearestPointEdge,
     NearestRayEdge,
@@ -23,6 +24,7 @@ from .types import (
 )
 
 __all__ = [
+    "DfrDirectAccum",
     "Intersection",
     "Mesh",
     "NearestPointEdge",
