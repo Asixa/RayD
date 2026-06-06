@@ -85,6 +85,15 @@ class ReflectionChain:
 
 
 @dataclass(frozen=True)
+class ReflEpcField:
+    field_real: torch.Tensor
+    field_imag: torch.Tensor
+    path_length: torch.Tensor
+    valid: torch.Tensor
+    resolved_prim_ids: torch.Tensor
+
+
+@dataclass(frozen=True)
 class SceneGlobalGeometry:
     vertices: torch.Tensor
     faces: torch.Tensor

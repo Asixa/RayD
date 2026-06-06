@@ -7,6 +7,7 @@ import torch
 from . import _C
 from .autograd import intersect as _intersect
 from .autograd import nearest_edge as _nearest_edge
+from .autograd import trace_refl_epc_field as _trace_refl_epc_field
 from .autograd import trace_reflections as _trace_reflections
 from .autograd import visible as _visible
 from .mesh import Mesh
@@ -116,6 +117,22 @@ class Scene:
             ray.o,
             ray.d,
             ray.tmax,
+            active.contiguous(),
+            int(max_bounces),
+        )
+
+    def trace_refl_epc_field(self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active=None):
+        handle = self._require_ready()
+        source = source.contiguous()
+        receiver = receiver.contiguous()
+        if active is None:
+            active = torch.ones((source.shape[0],), device=source.device, dtype=torch.bool)
+        vertices = self._meshes[0][0].vertices
+        return _trace_refl_epc_field(
+            handle,
+            vertices,
+            source,
+            receiver,
             active.contiguous(),
             int(max_bounces),
         )

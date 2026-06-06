@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from . import _C
-from .types import Intersection, NearestPointEdge, ReflectionChain
+from .types import Intersection, NearestPointEdge, ReflEpcField, ReflectionChain
 
 
 def _native_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -285,6 +285,103 @@ def trace_reflections(
         int(max_bounces),
     )
     return ReflectionChain(*values[:4])
+
+
+class _TraceReflEpcFieldFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        vertices: torch.Tensor,
+        source: torch.Tensor,
+        receiver: torch.Tensor,
+        active: torch.Tensor,
+        max_bounces: int,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.trace_refl_epc_field_forward(
+            int(scene_handle),
+            source,
+            receiver,
+            active,
+            int(max_bounces),
+        )
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        scene_handle, vertices, source, receiver, active, max_bounces = inputs
+        field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, tape_t = output
+        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
+        source = torch.autograd.forward_ad.unpack_dual(source).primal
+        receiver = torch.autograd.forward_ad.unpack_dual(receiver).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.max_bounces = int(max_bounces)
+        ctx.save_for_backward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
+        ctx.save_for_forward(vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
+        ctx.mark_non_differentiable(valid, resolved_prim_ids, tape_prim_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        grad_field_real = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(tape_t)
+        grad_field_imag = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(tape_t)
+        grad_path_length = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(tape_t)
+        grad_vertices, grad_source, grad_receiver = _C.trace_refl_epc_field_backward(
+            ctx.scene_handle,
+            source,
+            receiver,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_t,
+            grad_field_real,
+            grad_field_imag,
+            grad_path_length,
+        )
+        return None, grad_vertices, grad_source, grad_receiver, None, None
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_vertices, grad_source, grad_receiver, grad_active, grad_max_bounces):
+        vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        if grad_vertices is None:
+            grad_vertices = torch.zeros_like(vertices)
+        if grad_source is None:
+            grad_source = torch.zeros_like(source)
+        if grad_receiver is None:
+            grad_receiver = torch.zeros_like(receiver)
+        with torch._C._DisableFuncTorch():
+            tangent_field_real, tangent_field_imag, tangent_path_length = _C.trace_refl_epc_field_jvp(
+                ctx.scene_handle,
+                _native_tensor(source),
+                _native_tensor(receiver),
+                _native_tensor(active),
+                _native_tensor(tape_prim_id),
+                _native_tensor(tape_barycentric),
+                _native_tensor(tape_t),
+                _native_tensor(grad_vertices),
+                _native_tensor(grad_source),
+                _native_tensor(grad_receiver),
+            )
+        return tangent_field_real, tangent_field_imag, tangent_path_length, None, None, None, None, None
+
+
+def trace_refl_epc_field(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    source: torch.Tensor,
+    receiver: torch.Tensor,
+    active: torch.Tensor,
+    max_bounces: int,
+) -> ReflEpcField:
+    values = _TraceReflEpcFieldFunction.apply(
+        scene_handle,
+        vertices,
+        source,
+        receiver,
+        active,
+        int(max_bounces),
+    )
+    return ReflEpcField(*values[:5])
 
 
 class NativeOpUnavailable(RuntimeError):

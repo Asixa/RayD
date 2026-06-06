@@ -54,4 +54,42 @@ ReflectionJvpOutputs reflection_jvp_cuda(
     const at::Tensor &tangent_ray_d,
     const at::Tensor &image_sources);
 
+struct ReflEpcBackwardOutputs {
+    at::Tensor grad_vertices;
+    at::Tensor grad_source;
+    at::Tensor grad_receiver;
+};
+
+ReflEpcBackwardOutputs refl_epc_backward_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_t,
+    const at::Tensor &grad_field_real,
+    const at::Tensor &grad_field_imag,
+    const at::Tensor &grad_path_length);
+
+struct ReflEpcJvpOutputs {
+    at::Tensor tangent_field_real;
+    at::Tensor tangent_field_imag;
+    at::Tensor tangent_path_length;
+};
+
+ReflEpcJvpOutputs refl_epc_jvp_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_t,
+    const at::Tensor &tangent_vertices,
+    const at::Tensor &tangent_source,
+    const at::Tensor &tangent_receiver);
+
 } // namespace raydtorch

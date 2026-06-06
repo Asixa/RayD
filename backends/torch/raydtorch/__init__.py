@@ -17,6 +17,7 @@ from .types import (
     NearestPointEdge,
     NearestRayEdge,
     Ray,
+    ReflEpcField,
     ReflectionChain,
     SceneGlobalGeometry,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "NearestPointEdge",
     "NearestRayEdge",
     "Ray",
+    "ReflEpcField",
     "ReflectionChain",
     "Scene",
     "SceneGlobalGeometry",

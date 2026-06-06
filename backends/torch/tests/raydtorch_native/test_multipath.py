@@ -41,3 +41,21 @@ class MultipathTests(unittest.TestCase):
         chain.t.sum().backward()
         self.assertIsNotNone(verts.grad)
         self.assertGreater(float(verts.grad.abs().sum().item()), 0.0)
+
+    def test_reflection_epc_field_backward_reaches_vertices(self):
+        verts = torch.tensor(
+            [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        source = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
+        receiver = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
+        out = scene.trace_refl_epc_field(source, receiver, max_bounces=1)
+        loss = out.field_real.sum() + out.field_imag.sum()
+        loss.backward()
+        self.assertIsNotNone(verts.grad)

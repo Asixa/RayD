@@ -150,11 +150,112 @@ py::tuple trace_reflections_jvp_op(
     return py::make_tuple(out.tangent_t, out.tangent_image_sources);
 }
 
+py::tuple trace_refl_epc_field_forward_op(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor receiver,
+    at::Tensor active,
+    int64_t max_bounces) {
+    require_vec3f(source, "source");
+    require_vec3f(receiver, "receiver");
+    require_mask(active, "active");
+    require_same_batch(source, receiver, "trace_refl_epc_field");
+    if (active.size(0) != source.size(0))
+        throw std::runtime_error("active must match the EPC batch size.");
+    if (max_bounces < 1)
+        throw std::runtime_error("max_bounces must be at least 1.");
+
+    SceneCache &scene = get_scene(scene_handle);
+    if (scene.meshes.size() != 1)
+        throw std::runtime_error("trace_refl_epc_field_forward: first milestone supports exactly one mesh.");
+    const int64_t ray_count = source.size(0);
+    at::Tensor ray_d = (receiver - source).contiguous();
+    at::Tensor ray_tmax = at::ones({ray_count}, source.options());
+    IntersectForwardOutputs hit = intersect_forward_cuda(scene, source, ray_d, ray_tmax, active);
+
+    at::Tensor denom = 1.0 + hit.t;
+    at::Tensor field_real = at::cos(hit.t) / denom;
+    at::Tensor field_imag = at::sin(hit.t) / denom;
+    at::Tensor valid = hit.global_prim_id.ge(0);
+    field_real = at::where(valid, field_real, at::zeros_like(field_real)).contiguous();
+    field_imag = at::where(valid, field_imag, at::zeros_like(field_imag)).contiguous();
+    at::Tensor path_length = at::where(valid, hit.t, at::zeros_like(hit.t)).contiguous();
+
+    return py::make_tuple(
+        field_real,
+        field_imag,
+        path_length,
+        valid,
+        hit.global_prim_id,
+        hit.tape_prim_id,
+        hit.tape_barycentric,
+        hit.tape_t);
+}
+
+py::tuple trace_refl_epc_field_backward_op(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor receiver,
+    at::Tensor active,
+    at::Tensor tape_prim_id,
+    at::Tensor tape_barycentric,
+    at::Tensor tape_t,
+    at::Tensor grad_field_real,
+    at::Tensor grad_field_imag,
+    at::Tensor grad_path_length) {
+    SceneCache &scene = get_scene(scene_handle);
+    const MeshRecord &mesh = scene.meshes[0];
+    ReflEpcBackwardOutputs out = refl_epc_backward_cuda(
+        mesh.vertices,
+        mesh.faces,
+        source,
+        receiver,
+        active,
+        tape_prim_id,
+        tape_barycentric,
+        tape_t,
+        grad_field_real.contiguous(),
+        grad_field_imag.contiguous(),
+        grad_path_length.contiguous());
+    return py::make_tuple(out.grad_vertices, out.grad_source, out.grad_receiver);
+}
+
+py::tuple trace_refl_epc_field_jvp_op(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor receiver,
+    at::Tensor active,
+    at::Tensor tape_prim_id,
+    at::Tensor tape_barycentric,
+    at::Tensor tape_t,
+    at::Tensor tangent_vertices,
+    at::Tensor tangent_source,
+    at::Tensor tangent_receiver) {
+    SceneCache &scene = get_scene(scene_handle);
+    const MeshRecord &mesh = scene.meshes[0];
+    ReflEpcJvpOutputs out = refl_epc_jvp_cuda(
+        mesh.vertices,
+        mesh.faces,
+        source,
+        receiver,
+        active,
+        tape_prim_id,
+        tape_barycentric,
+        tape_t,
+        tangent_vertices.contiguous(),
+        tangent_source.contiguous(),
+        tangent_receiver.contiguous());
+    return py::make_tuple(out.tangent_field_real, out.tangent_field_imag, out.tangent_path_length);
+}
+
 void bind_multipath_ops(py::module_ &m) {
     m.def("visibility_forward", &visibility_forward_op);
     m.def("trace_reflections_forward", &trace_reflections_forward_op);
     m.def("trace_reflections_backward", &trace_reflections_backward_op);
     m.def("trace_reflections_jvp", &trace_reflections_jvp_op);
+    m.def("trace_refl_epc_field_forward", &trace_refl_epc_field_forward_op);
+    m.def("trace_refl_epc_field_backward", &trace_refl_epc_field_backward_op);
+    m.def("trace_refl_epc_field_jvp", &trace_refl_epc_field_jvp_op);
 }
 
 } // namespace raydtorch
