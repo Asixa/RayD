@@ -25,6 +25,13 @@ class TorchNativeImportTests(unittest.TestCase):
         self.assertEqual(lines[0], "False")
         self.assertEqual(lines[1], "True")
 
+    def test_native_extension_loads(self):
+        import raydtorch as rt
+        self.assertTrue(hasattr(rt, "_C"))
+        self.assertTrue(hasattr(rt._C, "build_info"))
+        info = rt._C.build_info()
+        self.assertEqual(info["backend"], "raydtorch-native")
+
 
 if __name__ == "__main__":
     unittest.main()

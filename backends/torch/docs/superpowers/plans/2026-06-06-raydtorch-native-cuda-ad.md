@@ -752,7 +752,7 @@ git commit -m "feat(torch): define tensor ABI contract"
 - Modify: `pyproject.toml`
 - Test: `tests/raydtorch_native/test_no_drjit_import.py`
 
-- [ ] **Step 1: Write an extension availability test**
+- [x] **Step 1: Write an extension availability test**
 
 Append to `tests/raydtorch_native/test_no_drjit_import.py`:
 
@@ -765,7 +765,7 @@ Append to `tests/raydtorch_native/test_no_drjit_import.py`:
         self.assertEqual(info["backend"], "raydtorch-native")
 ```
 
-- [ ] **Step 2: Run the test to verify failure**
+- [x] **Step 2: Run the test to verify failure**
 
 Run:
 
@@ -775,7 +775,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_no_drjit_imp
 
 Expected result: failure because `_C` does not exist.
 
-- [ ] **Step 3: Add minimal extension module**
+- [x] **Step 3: Add minimal extension module**
 
 Create `src/torch_ext/module.cpp`:
 
@@ -839,7 +839,7 @@ endif()
 
 Use pybind11 only. `torch/extension.h` provides the pybind11 integration used by PyTorch C++ extensions. Do not add `nanobind_add_module`, `NB_DOMAIN`, or any nanobind dependency.
 
-- [ ] **Step 4: Build editable install**
+- [x] **Step 4: Build editable install**
 
 Run:
 
@@ -849,7 +849,7 @@ conda run -n witwin2 python -m pip install --no-build-isolation -ve .
 
 Expected result: package builds and `_raydtorch` is installed in `raydtorch`.
 
-- [ ] **Step 5: Run extension load test**
+- [x] **Step 5: Run extension load test**
 
 Run:
 
@@ -859,7 +859,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_no_drjit_imp
 
 Expected result: `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add CMakeLists.txt pyproject.toml raydtorch src/torch_ext/module.cpp
