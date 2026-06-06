@@ -1,6 +1,8 @@
 #pragma once
 
 #include <ATen/ATen.h>
+#include <optix.h>
+
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -21,12 +23,21 @@ struct MeshRecord {
     bool dynamic = false;
 };
 
+struct OptixTriangleAccel {
+    at::Tensor vertex_buffer;
+    at::Tensor index_buffer;
+    at::Tensor gas_buffer;
+    at::Tensor gas_temp_buffer;
+    OptixTraversableHandle traversable = 0;
+};
+
 struct SceneCache {
     int64_t handle = 0;
     int64_t version = 1;
     int64_t edge_version = 1;
     int64_t device_index = 0;
     std::vector<MeshRecord> meshes;
+    std::vector<OptixTriangleAccel> triangle_accels;
 };
 
 int64_t create_scene(std::vector<MeshRecord> meshes);

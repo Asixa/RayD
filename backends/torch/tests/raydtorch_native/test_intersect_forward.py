@@ -29,6 +29,27 @@ class IntersectForwardTests(unittest.TestCase):
         self.assertEqual(int(its.shape_id[1].item()), -1)
         self.assertTrue(torch.isinf(its.t[1]))
 
+    def test_two_triangles_returns_nearest_hit(self):
+        verts = torch.tensor(
+            [
+                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+                [0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [0.0, 1.0, 2.0],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2], [3, 4, 5]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        ray = rt.Ray(
+            torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+        )
+        its = scene.intersect(ray)
+        torch.testing.assert_close(its.t[0], torch.tensor(1.0, device="cuda"))
+        self.assertEqual(int(its.global_prim_id[0].item()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

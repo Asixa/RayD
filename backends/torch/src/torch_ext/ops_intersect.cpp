@@ -19,8 +19,7 @@ py::tuple intersect_forward_op(
     SceneCache &scene = get_scene(scene_handle);
     if (scene.meshes.size() != 1)
         throw std::runtime_error("intersect_forward: first milestone supports exactly one mesh.");
-    const MeshRecord &mesh = scene.meshes[0];
-    IntersectForwardOutputs out = intersect_forward_cuda(mesh.vertices, mesh.faces, ray_o, ray_d, ray_tmax, active);
+    IntersectForwardOutputs out = intersect_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
     return py::make_tuple(
         out.t,
         out.p,

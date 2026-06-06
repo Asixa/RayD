@@ -2,6 +2,8 @@
 
 #include <ATen/ATen.h>
 
+#include <raydtorch/scene_cache.h>
+
 namespace raydtorch {
 
 struct IntersectForwardOutputs {
@@ -21,8 +23,7 @@ struct IntersectForwardOutputs {
 };
 
 IntersectForwardOutputs intersect_forward_cuda(
-    const at::Tensor &vertices,
-    const at::Tensor &faces,
+    const SceneCache &scene,
     const at::Tensor &ray_o,
     const at::Tensor &ray_d,
     const at::Tensor &ray_tmax,

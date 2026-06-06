@@ -2116,7 +2116,7 @@ git commit -m "feat(torch): add native intersect VJP"
 - Modify: `src/torch_ext/kernels/geometry_forward.cu`
 - Test: `tests/raydtorch_native/test_intersect_forward.py`
 
-- [ ] **Step 1: Add multi-triangle and nearest-hit tests**
+- [x] **Step 1: Add multi-triangle and nearest-hit tests**
 
 Append to `tests/raydtorch_native/test_intersect_forward.py`:
 
@@ -2143,7 +2143,7 @@ Append to `tests/raydtorch_native/test_intersect_forward.py`:
         self.assertEqual(int(its.global_prim_id[0].item()), 0)
 ```
 
-- [ ] **Step 2: Run the tests**
+- [x] **Step 2: Run the tests**
 
 Run:
 
@@ -2153,7 +2153,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_fo
 
 Expected result: `OK` with brute force. Keep it green while replacing internals.
 
-- [ ] **Step 3: Add OptiX buffers to `SceneCache`**
+- [x] **Step 3: Add OptiX buffers to `SceneCache`**
 
 Extend `include/raydtorch/scene_cache.h`:
 
@@ -2176,7 +2176,7 @@ struct SceneCache {
 };
 ```
 
-- [ ] **Step 4: Build OptiX triangle GAS from Torch tensors**
+- [x] **Step 4: Build OptiX triangle GAS from Torch tensors**
 
 In `src/torch_ext/scene_cache.cpp`, after tensor validation, allocate `vertex_buffer`, `index_buffer`, `gas_temp_buffer`, and `gas_buffer` as Torch tensors:
 
@@ -2192,7 +2192,7 @@ Use the existing Dr.Jit implementation in `src/scene/scene_optix.cpp` as the beh
 - `jit_cuda_stream()` with `current_torch_cuda_context().stream`
 - `jit_optix_context()` with `get_optix_context(device).optix_context`
 
-- [ ] **Step 5: Replace brute-force broad phase with OptiX query**
+- [x] **Step 5: Replace brute-force broad phase with OptiX query**
 
 Add an OptiX trace launch that returns:
 
@@ -2203,7 +2203,7 @@ Add an OptiX trace launch that returns:
 
 Then run a CUDA recompute kernel that gathers vertices from original Torch tensors and recomputes `p`, `barycentric`, normals, and UV. The recompute kernel is the differentiable fixed-winner layer. The OptiX result is a non-differentiable tape.
 
-- [ ] **Step 6: Run forward and gradient tests**
+- [x] **Step 6: Run forward and gradient tests**
 
 Run:
 
@@ -2213,7 +2213,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_fo
 
 Expected result: `OK`.
 
-- [ ] **Step 7: Add a performance smoke check**
+- [x] **Step 7: Add a performance smoke check**
 
 Create a local one-off command:
 
@@ -2231,7 +2231,7 @@ PY
 
 Expected result: query time is finite and no full-device synchronization is required except the explicit benchmark synchronization.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add include/raydtorch/scene_cache.h include/raydtorch/optix_context.h src/torch_ext/scene_cache.cpp src/torch_ext/optix_context.cpp src/torch_ext/kernels/geometry_forward.cu tests/raydtorch_native/test_intersect_forward.py
