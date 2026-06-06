@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 
 from . import _C
-from .types import Intersection, NearestPointEdge
+from .types import Intersection, NearestPointEdge, ReflectionChain
 
 
 def _native_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -170,6 +170,121 @@ class _NearestEdgeFunction(torch.autograd.Function):
 def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
     return NearestPointEdge(*values[:6])
+
+
+def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    values = _C.visibility_forward(int(scene_handle), start, end, active)
+    return values[0]
+
+
+class _TraceReflectionsFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        vertices: torch.Tensor,
+        ray_o: torch.Tensor,
+        ray_d: torch.Tensor,
+        ray_tmax: torch.Tensor,
+        active: torch.Tensor,
+        max_bounces: int,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        outputs = _C.trace_reflections_forward(
+            int(scene_handle),
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            int(max_bounces),
+        )
+        return outputs
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, active, max_bounces = inputs
+        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_t = output
+        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
+        ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
+        ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
+        ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.max_bounces = int(max_bounces)
+        ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t)
+        ctx.save_for_forward(vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, image_sources)
+        ctx.mark_non_differentiable(valid, prim_ids, tape_prim_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        grad_t = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(tape_t)
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.trace_reflections_backward(
+            ctx.scene_handle,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            grad_t,
+        )
+        return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
+
+    @staticmethod
+    def jvp(
+        ctx,
+        grad_scene_handle,
+        grad_vertices,
+        grad_ray_o,
+        grad_ray_d,
+        grad_ray_tmax,
+        grad_active,
+        grad_max_bounces,
+    ):
+        vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, image_sources = ctx.saved_tensors
+        if grad_vertices is None:
+            grad_vertices = torch.zeros_like(vertices)
+        if grad_ray_o is None:
+            grad_ray_o = torch.zeros_like(ray_o)
+        if grad_ray_d is None:
+            grad_ray_d = torch.zeros_like(ray_d)
+        with torch._C._DisableFuncTorch():
+            tangent_t, tangent_image_sources = _C.trace_reflections_jvp(
+                ctx.scene_handle,
+                _native_tensor(ray_o),
+                _native_tensor(ray_d),
+                _native_tensor(active),
+                _native_tensor(tape_prim_id),
+                _native_tensor(tape_barycentric),
+                _native_tensor(grad_vertices),
+                _native_tensor(grad_ray_o),
+                _native_tensor(grad_ray_d),
+                _native_tensor(image_sources),
+            )
+        return None, tangent_t, tangent_image_sources, None, None, None, None
+
+
+def trace_reflections(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    ray_o: torch.Tensor,
+    ray_d: torch.Tensor,
+    ray_tmax: torch.Tensor,
+    active: torch.Tensor,
+    max_bounces: int,
+) -> ReflectionChain:
+    values = _TraceReflectionsFunction.apply(
+        scene_handle,
+        vertices,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        active,
+        int(max_bounces),
+    )
+    return ReflectionChain(*values[:4])
 
 
 class NativeOpUnavailable(RuntimeError):

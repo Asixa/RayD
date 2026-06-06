@@ -2784,7 +2784,7 @@ git commit -m "feat(torch): add OptiX edge broad phase"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_multipath.py`
 
-- [ ] **Step 1: Write reflection and visibility tests**
+- [x] **Step 1: Write reflection and visibility tests**
 
 Create `tests/raydtorch_native/test_multipath.py`:
 
@@ -2834,7 +2834,7 @@ class MultipathTests(unittest.TestCase):
         self.assertGreater(float(verts.grad.abs().sum().item()), 0.0)
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -2844,7 +2844,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_multipath -v
 
 Expected result: failure because `visible` and `trace_reflections` do not exist.
 
-- [ ] **Step 3: Port visibility forward**
+- [x] **Step 3: Port visibility forward**
 
 Use `src/multipath/segment_visibility.cu` and `src/scene/scene_multipath.cpp` as references. raydtorch-native visibility returns bool tensors and a non-differentiable visibility tape.
 
@@ -2854,7 +2854,7 @@ The fixed-path gradient contract:
 - Outputs that are bool/int are marked non-differentiable.
 - Future continuous visibility scores can use the same endpoint geometry VJP module.
 
-- [ ] **Step 4: Port reflection trace forward**
+- [x] **Step 4: Port reflection trace forward**
 
 Use `src/multipath/reflection_trace.cu` and `include/rayd/multipath/reflection_trace_params.h` as references. Save a compact tape:
 
@@ -2865,7 +2865,7 @@ Use `src/multipath/reflection_trace.cu` and `include/rayd/multipath/reflection_t
 - image source positions
 - valid mask
 
-- [ ] **Step 5: Implement reflection VJP/JVP**
+- [x] **Step 5: Implement reflection VJP/JVP**
 
 Use fixed primitive sequence. For each bounce:
 
@@ -2875,7 +2875,7 @@ Use fixed primitive sequence. For each bounce:
 
 Use atomic adds into `grad_vertices`. Accumulate `grad_ray_o` and `grad_ray_d` per lane.
 
-- [ ] **Step 6: Wire Python API**
+- [x] **Step 6: Wire Python API**
 
 Add:
 
@@ -2886,7 +2886,7 @@ Scene.trace_reflections(ray, max_bounces, active=None)
 
 Return `torch.bool` for visibility and `ReflectionChain` for reflection.
 
-- [ ] **Step 7: Run multipath tests**
+- [x] **Step 7: Run multipath tests**
 
 Run:
 
@@ -2896,7 +2896,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_multipath -v
 
 Expected result: `OK`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add include/raydtorch/multipath_kernels.h src/torch_ext/ops_multipath.cpp src/torch_ext/kernels/visibility_backward.cu src/torch_ext/kernels/multipath_backward.cu src/torch_ext/module.cpp raydtorch/autograd.py raydtorch/scene.py tests/raydtorch_native/test_multipath.py

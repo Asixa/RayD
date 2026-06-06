@@ -7,6 +7,8 @@ import torch
 from . import _C
 from .autograd import intersect as _intersect
 from .autograd import nearest_edge as _nearest_edge
+from .autograd import trace_reflections as _trace_reflections
+from .autograd import visible as _visible
 from .mesh import Mesh
 from .types import Ray
 
@@ -94,6 +96,29 @@ class Scene:
         handle = self._require_ready()
         vertices = self._meshes[0][0].vertices
         return _nearest_edge(handle, vertices, point.contiguous())
+
+    def visible(self, start: torch.Tensor, end: torch.Tensor, active=None):
+        handle = self._require_ready()
+        start = start.contiguous()
+        end = end.contiguous()
+        if active is None:
+            active = torch.ones((start.shape[0],), device=start.device, dtype=torch.bool)
+        return _visible(handle, start, end, active.contiguous())
+
+    def trace_reflections(self, ray: Ray, max_bounces: int, active=None):
+        handle = self._require_ready()
+        if active is None:
+            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
+        vertices = self._meshes[0][0].vertices
+        return _trace_reflections(
+            handle,
+            vertices,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            active.contiguous(),
+            int(max_bounces),
+        )
 
     def update_mesh_vertices(self, mesh_id: int, positions):
         handle = self._require_ready()
