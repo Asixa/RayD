@@ -6,7 +6,7 @@
 
 **Architecture:** Python exposes regular `torch.Tensor` data structures and `torch.autograd.Function` wrappers. C++/CUDA owns the scene cache, OptiX contexts, acceleration buffers, forward kernels, saved discrete tapes, VJP kernels, and JVP kernels. The first production target is fixed-winner differentiability for geometry queries, then edge queries, reflection/EPC, and diffraction/multipath support.
 
-**Tech Stack:** Python 3.10+, PyTorch CUDA C++ extension, ATen, CUDA Runtime/Driver API, OptiX, nanobind or pybind11 for non-op classes, CMake/scikit-build-core, unittest, finite-difference gradient tests.
+**Tech Stack:** Python 3.10+, PyTorch CUDA C++ extension, `torch/extension.h`, pybind11, ATen, CUDA Runtime/Driver API, OptiX, CMake/scikit-build-core, unittest, finite-difference gradient tests.
 
 **Repository:** This plan is for the new standalone repository `E:\Code\RayDTorch`.
 
@@ -16,6 +16,7 @@
 
 **Package Name:** The Python package and distribution name are `raydtorch`. The native extension name is `_raydtorch`. The project must not install files under `rayd`, must not expose the old `rayd.torch` namespace, and must not conflict with the original RayD package.
 
+**Binding Policy:** Use pybind11 through PyTorch's `torch/extension.h`. Do not use nanobind in RayDTorch. The original RayD nanobind setup exists to bind Dr.Jit arrays and `NB_DOMAIN drjit`; that does not apply to this package.
 ---
 
 ## Reference Model
@@ -837,7 +838,7 @@ if(RAYDTORCH_BUILD_NATIVE)
 endif()
 ```
 
-If the project does not already provide `pybind11_add_module`, use `nanobind_add_module(_raydtorch NB_DOMAIN raydtorch ...)` and link against Torch. Use the `raydtorch` binding domain so `_raydtorch` can coexist with the original RayD package if both are installed.
+Use pybind11 only. `torch/extension.h` provides the pybind11 integration used by PyTorch C++ extensions. Do not add `nanobind_add_module`, `NB_DOMAIN`, or any nanobind dependency.
 
 - [ ] **Step 4: Build editable install**
 
@@ -3467,9 +3468,9 @@ Inspect `CMakeLists.txt` and remove any copied Dr.Jit build logic if present:
 
 - Remove Dr.Jit CMake prefix lookup.
 - Remove `find_package(drjit CONFIG REQUIRED)`.
-- Remove `RAYD_NANOBIND_ARGS NB_DOMAIN drjit`.
+- Do not add `RAYD_NANOBIND_ARGS`, `NB_DOMAIN`, or nanobind targets.
 - Remove `PYRAYD_LIBRARIES drjit drjit-core drjit-extra nanothread`.
-- Keep CUDA, OptiX, Torch, and nanobind/pybind11 dependencies.
+- Keep CUDA, OptiX, Torch, and pybind11 dependencies only.
 - Build only `_raydtorch`.
 
 - [ ] **Step 4: Move Dr.Jit tests out of default discovery**
@@ -3667,6 +3668,7 @@ The project is considered migrated when all of these are true:
 - Placeholder scan: The plan contains no unresolved placeholder markers. The first milestone includes exact test files, code skeletons, commands, and expected results.
 - Type consistency: Public Python types use `torch.Tensor`; native code uses `at::Tensor`; scene handles are `int64_t`; all differentiable tensors use `float32 CUDA` unless a test explicitly rejects a different type.
 - Scope note: The full migration is large. The first executable milestone is Tasks 1-9, which produce a working raydtorch-native `Scene.intersect()` with forward, VJP, and JVP. Tasks 10-21 extend the same pattern to the rest of RayD and remove Dr.Jit.
+
 
 
 
