@@ -258,7 +258,7 @@ The tape must be stored as Torch tensors returned by the native forward op, so P
 - Create: `raydtorch/autograd.py`
 - Test: `tests/raydtorch_native/test_no_drjit_import.py`
 
-- [ ] **Step 1: Write the failing no-Dr.Jit import test**
+- [x] **Step 1: Write the failing no-Dr.Jit import test**
 
 Create `tests/raydtorch_native/test_no_drjit_import.py`:
 
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the test to verify it fails before the package exists**
+- [x] **Step 2: Run the test to verify it fails before the package exists**
 
 Run:
 
@@ -305,7 +305,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_no_drjit_imp
 
 Expected result: failure with `ModuleNotFoundError: No module named 'raydtorch'` or an assertion failure if an old bridge is present.
 
-- [ ] **Step 3: Add minimal raydtorch-native public classes**
+- [x] **Step 3: Add minimal raydtorch-native public classes**
 
 Create `raydtorch/types.py`:
 
@@ -497,7 +497,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: Run the import test**
+- [x] **Step 4: Run the import test**
 
 Run:
 
@@ -507,7 +507,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_no_drjit_imp
 
 Expected result: `OK`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add raydtorch tests/raydtorch_native/test_no_drjit_import.py
