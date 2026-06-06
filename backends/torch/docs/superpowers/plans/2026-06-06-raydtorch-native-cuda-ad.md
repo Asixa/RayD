@@ -876,7 +876,7 @@ git commit -m "feat(torch): build native torch extension"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_scene_cache.py`
 
-- [ ] **Step 1: Write failing scene cache tests**
+- [x] **Step 1: Write failing scene cache tests**
 
 Create `tests/raydtorch_native/test_scene_cache.py`:
 
@@ -923,7 +923,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the scene cache tests to verify failure**
+- [x] **Step 2: Run the scene cache tests to verify failure**
 
 Run:
 
@@ -933,7 +933,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache 
 
 Expected result: failure because `Scene.build()` is not implemented.
 
-- [ ] **Step 3: Add native scene handle types**
+- [x] **Step 3: Add native scene handle types**
 
 Create `include/raydtorch/scene_cache.h`:
 
@@ -1097,7 +1097,7 @@ PYBIND11_MODULE(_raydtorch, m) {
 }
 ```
 
-- [ ] **Step 4: Wire Python `Scene` to native handles**
+- [x] **Step 4: Wire Python `Scene` to native handles**
 
 Modify `raydtorch/scene.py`:
 
@@ -1172,7 +1172,7 @@ class Scene:
         raise RuntimeError("Scene.intersect(): native intersect op is not implemented in this milestone.")
 ```
 
-- [ ] **Step 5: Build and run scene cache tests**
+- [x] **Step 5: Build and run scene cache tests**
 
 Run:
 
@@ -1183,7 +1183,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache 
 
 Expected result: `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add include/raydtorch/scene_cache.h src/torch_ext/scene_cache.cpp src/torch_ext/ops_scene.cpp src/torch_ext/module.cpp raydtorch/scene.py tests/raydtorch_native/test_scene_cache.py

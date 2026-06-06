@@ -2,6 +2,8 @@
 
 namespace raydtorch {
 
+void bind_scene_ops(py::module_ &m);
+
 py::dict build_info() {
     py::dict info;
     info["backend"] = "raydtorch-native";
@@ -12,6 +14,7 @@ py::dict build_info() {
 PYBIND11_MODULE(_raydtorch, m) {
     m.doc() = "RayDTorch CUDA/OptiX backend.";
     m.def("build_info", &build_info);
+    bind_scene_ops(m);
 }
 
 } // namespace raydtorch
