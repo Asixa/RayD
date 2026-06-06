@@ -3328,7 +3328,7 @@ git commit -m "test(torch): enforce no DrJit imports in raydtorch path"
 - Modify: `docs/api_reference.md`
 - Modify: `tests/test_project_metadata.py`
 
-- [ ] **Step 1: Add metadata tests**
+- [x] **Step 1: Add metadata tests**
 
 Modify `tests/test_project_metadata.py` to assert:
 
@@ -3349,7 +3349,7 @@ def test_default_dependencies_require_torch_not_drjit():
     assert not any(dep.startswith("drjit") for dep in deps)
 ```
 
-- [ ] **Step 2: Run metadata tests to verify failure**
+- [x] **Step 2: Run metadata tests to verify failure**
 
 Run:
 
@@ -3359,7 +3359,7 @@ conda run -n witwin2 python -m unittest tests.test_project_metadata -v
 
 Expected result: failure until `pyproject.toml` is renamed to `raydtorch` and Dr.Jit is absent from default dependencies.
 
-- [ ] **Step 3: Update package metadata**
+- [x] **Step 3: Update package metadata**
 
 Modify `pyproject.toml`:
 
@@ -3371,7 +3371,7 @@ dependencies = ["torch"]
 
 Do not add a `legacy-drjit` extra. Cross-backend parity tests should import the original RayD from `E:\Code\RayDi` only as an external reference during development.
 
-- [ ] **Step 4: Update public import policy**
+- [x] **Step 4: Update public import policy**
 
 Modify `raydtorch/__init__.py`:
 
@@ -3404,7 +3404,7 @@ __all__ = [
 
 Do not provide `rayd` compatibility aliases. Users should be able to install both the original RayD and `raydtorch` in the same environment without namespace collisions.
 
-- [ ] **Step 5: Update docs**
+- [x] **Step 5: Update docs**
 
 In `README.md` and `docs/api_reference.md`, document:
 
@@ -3414,7 +3414,7 @@ In `README.md` and `docs/api_reference.md`, document:
 - VJP/JVP support
 - no Dr.Jit dependency in the raydtorch path
 
-- [ ] **Step 6: Run metadata and import tests**
+- [x] **Step 6: Run metadata and import tests**
 
 Run:
 
@@ -3424,7 +3424,7 @@ conda run -n witwin2 python -m unittest tests.test_project_metadata tests.raydto
 
 Expected result: `OK`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add pyproject.toml raydtorch/__init__.py README.md docs/api_reference.md tests/test_project_metadata.py
