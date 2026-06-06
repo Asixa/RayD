@@ -10,6 +10,7 @@ except ImportError as exc:
 else:
     _EXTENSION_IMPORT_ERROR = None
 
+from .camera import Camera
 from .mesh import Mesh
 from .scene import Scene
 from .types import (
@@ -25,6 +26,7 @@ from .types import (
 
 __all__ = [
     "DfrDirectAccum",
+    "Camera",
     "Intersection",
     "Mesh",
     "NearestPointEdge",

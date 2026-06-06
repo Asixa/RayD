@@ -3095,7 +3095,7 @@ git commit -m "feat(torch): port diffraction accumulation native AD"
 - Modify: `raydtorch/__init__.py`
 - Test: `tests/raydtorch_native/test_camera.py`
 
-- [ ] **Step 1: Write camera tests**
+- [x] **Step 1: Write camera tests**
 
 Create `tests/raydtorch_native/test_camera.py`:
 
@@ -3124,7 +3124,7 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(ray.tmax.shape, (2,))
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -3134,7 +3134,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_camera -v
 
 Expected result: failure because `raydtorch.Camera` does not exist.
 
-- [ ] **Step 3: Implement camera helpers in Torch Python**
+- [x] **Step 3: Implement camera helpers in Torch Python**
 
 Create `raydtorch/camera.py` with Torch tensor math for:
 
@@ -3145,7 +3145,7 @@ Create `raydtorch/camera.py` with Torch tensor math for:
 
 Keep this implementation in Python/Torch unless profiling proves it needs native CUDA. Camera math is continuous and compact, so PyTorch's own autograd is appropriate here.
 
-- [ ] **Step 4: Export Camera**
+- [x] **Step 4: Export Camera**
 
 Modify `raydtorch/__init__.py` to export `Camera`:
 
@@ -3165,7 +3165,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Run camera tests**
+- [x] **Step 5: Run camera tests**
 
 Run:
 
@@ -3175,7 +3175,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_camera -v
 
 Expected result: `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add raydtorch/camera.py raydtorch/__init__.py tests/raydtorch_native/test_camera.py
