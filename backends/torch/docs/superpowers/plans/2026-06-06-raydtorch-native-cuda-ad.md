@@ -1798,7 +1798,7 @@ git commit -m "feat(torch): add native intersect forward op"
 - Modify: `raydtorch/autograd.py`
 - Test: `tests/raydtorch_native/test_intersect_grad.py`
 
-- [ ] **Step 1: Write VJP tests**
+- [x] **Step 1: Write VJP tests**
 
 Create `tests/raydtorch_native/test_intersect_grad.py`:
 
@@ -1858,7 +1858,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run VJP tests to verify failure**
+- [x] **Step 2: Run VJP tests to verify failure**
 
 Run:
 
@@ -1868,7 +1868,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_gr
 
 Expected result: failure with `intersect backward is implemented in Task 7`.
 
-- [ ] **Step 3: Add native VJP signature**
+- [x] **Step 3: Add native VJP signature**
 
 Append to `include/raydtorch/geometry_kernels.h`:
 
@@ -1894,7 +1894,7 @@ IntersectBackwardOutputs intersect_backward_cuda(
     const at::Tensor &grad_barycentric);
 ```
 
-- [ ] **Step 4: Implement first VJP kernel for `t` and `p`**
+- [x] **Step 4: Implement first VJP kernel for `t` and `p`**
 
 Create `src/torch_ext/kernels/geometry_backward.cu`:
 
@@ -2004,7 +2004,7 @@ IntersectBackwardOutputs intersect_backward_cuda(
 
 This first VJP kernel is intentionally exact for the axis-aligned tests and establishes the autograd plumbing. Later tasks replace it with the full Moller-Trumbore implicit derivative for arbitrary triangle/ray orientation.
 
-- [ ] **Step 5: Add VJP op wrapper**
+- [x] **Step 5: Add VJP op wrapper**
 
 Append to `src/torch_ext/ops_intersect.cpp`:
 
@@ -2046,7 +2046,7 @@ Register it inside `bind_intersect_ops`:
 m.def("intersect_backward", &intersect_backward_op);
 ```
 
-- [ ] **Step 6: Wire Python backward**
+- [x] **Step 6: Wire Python backward**
 
 Modify `_IntersectFunction.backward` in `raydtorch/autograd.py`:
 
@@ -2088,7 +2088,7 @@ return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None
 
 Modify `Scene.intersect` to pass `self._meshes[0][0].vertices`.
 
-- [ ] **Step 7: Build and run gradient tests**
+- [x] **Step 7: Build and run gradient tests**
 
 Run:
 
@@ -2099,7 +2099,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_gr
 
 Expected result: `OK`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add include/raydtorch/geometry_kernels.h src/torch_ext/ops_intersect.cpp src/torch_ext/kernels/geometry_backward.cu raydtorch/autograd.py raydtorch/scene.py tests/raydtorch_native/test_intersect_grad.py

@@ -11,6 +11,7 @@ class _IntersectFunction(torch.autograd.Function):
     def forward(
         ctx,
         scene_handle: int,
+        vertices: torch.Tensor,
         ray_o: torch.Tensor,
         ray_d: torch.Tensor,
         ray_tmax: torch.Tensor,
@@ -41,17 +42,36 @@ class _IntersectFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grad_outputs):
-        raise RuntimeError("intersect backward is implemented in Task 7.")
+        ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        grad_t = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(tape_t)
+        grad_p = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(ray_o)
+        grad_barycentric = (
+            grad_outputs[5].contiguous() if grad_outputs[5] is not None else torch.zeros_like(tape_barycentric)
+        )
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward(
+            ctx.scene_handle,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            grad_t,
+            grad_p,
+            grad_barycentric,
+        )
+        return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None
 
 
 def intersect(
     scene_handle: int,
+    vertices: torch.Tensor,
     ray_o: torch.Tensor,
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
     active: torch.Tensor,
 ) -> Intersection:
-    values = _IntersectFunction.apply(scene_handle, ray_o, ray_d, ray_tmax, active)
+    values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active)
     return Intersection(*values)
 
 

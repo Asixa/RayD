@@ -71,4 +71,5 @@ class Scene:
         handle = self._require_ready()
         if active is None:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        return _intersect(handle, ray.o, ray.d, ray.tmax, active.contiguous())
+        vertices = self._meshes[0][0].vertices
+        return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
