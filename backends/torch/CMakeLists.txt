@@ -62,6 +62,7 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/tensor_check.cpp
         src/torch_ext/scene_cache.cpp
         src/torch_ext/ops_scene.cpp
+        src/torch_ext/optix_context.cpp
     )
     target_include_directories(
         _raydtorch
@@ -70,7 +71,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             ${CUDAToolkit_INCLUDE_DIRS}
             ${OPTIX_INCLUDE_DIR}
     )
-    target_link_libraries(_raydtorch PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart)
+    target_link_libraries(_raydtorch PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
     target_compile_features(_raydtorch PRIVATE cxx_std_17)
     install(TARGETS _raydtorch LIBRARY DESTINATION raydtorch RUNTIME DESTINATION raydtorch)
 endif()

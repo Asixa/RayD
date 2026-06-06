@@ -1198,7 +1198,7 @@ git commit -m "feat(torch): add native scene handles"
 - Modify: `src/torch_ext/scene_cache.cpp`
 - Test: `tests/raydtorch_native/test_scene_cache.py`
 
-- [ ] **Step 1: Add a CUDA stream smoke test**
+- [x] **Step 1: Add a CUDA stream smoke test**
 
 Append to `tests/raydtorch_native/test_scene_cache.py`:
 
@@ -1213,7 +1213,7 @@ Append to `tests/raydtorch_native/test_scene_cache.py`:
         self.assertTrue(scene.is_ready())
 ```
 
-- [ ] **Step 2: Run the test to record current behavior**
+- [x] **Step 2: Run the test to record current behavior**
 
 Run:
 
@@ -1223,7 +1223,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache.
 
 Expected result: test passes before OptiX is used; it protects the later stream contract.
 
-- [ ] **Step 3: Implement OptiX context cache without Dr.Jit**
+- [x] **Step 3: Implement OptiX context cache without Dr.Jit**
 
 Create `include/raydtorch/optix_context.h`:
 
@@ -1321,7 +1321,7 @@ void optix_check(OptixResult result, const char *expr, const char *file, int lin
 } // namespace raydtorch
 ```
 
-- [ ] **Step 4: Use the context from scene build**
+- [x] **Step 4: Use the context from scene build**
 
 Modify `src/torch_ext/scene_cache.cpp` inside `create_scene` after `device_index` is known:
 
@@ -1338,7 +1338,7 @@ Add includes:
 #include <raydtorch/optix_context.h>
 ```
 
-- [ ] **Step 5: Build and run scene cache tests**
+- [x] **Step 5: Build and run scene cache tests**
 
 Run:
 
@@ -1349,7 +1349,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache 
 
 Expected result: `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add include/raydtorch/optix_context.h src/torch_ext/optix_context.cpp src/torch_ext/scene_cache.cpp tests/raydtorch_native/test_scene_cache.py

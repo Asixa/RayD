@@ -35,6 +35,15 @@ class SceneCacheTests(unittest.TestCase):
                 )
             )
 
+    def test_build_uses_current_torch_stream(self):
+        scene = rt.Scene()
+        scene.add_mesh(self._mesh())
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            scene.build()
+        stream.synchronize()
+        self.assertTrue(scene.is_ready())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 #include <raydtorch/scene_cache.h>
+#include <raydtorch/optix_context.h>
 #include <raydtorch/tensor_check.h>
 
 #include <atomic>
@@ -17,6 +18,11 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
         throw std::runtime_error("Scene.build(): at least one mesh is required.");
 
     const int64_t device_index = meshes[0].vertices.get_device();
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    if (torch_ctx.device_index != device_index)
+        throw std::runtime_error("Scene.build(): current CUDA device does not match mesh tensors.");
+    get_optix_context(static_cast<int>(device_index));
+
     for (const MeshRecord &mesh : meshes) {
         require_vec3f(mesh.vertices, "mesh.vertices");
         require_vec3i(mesh.faces, "mesh.faces");
