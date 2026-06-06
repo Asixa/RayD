@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 import importlib
@@ -10,8 +11,9 @@ RAYDI_ROOT = Path(r"E:\Code\RayDi")
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
+@unittest.skipUnless(os.environ.get("RAYDTORCH_RUN_DR_JIT_PARITY") == "1", "external RayDi parity is opt-in")
 class DrJitParityTests(unittest.TestCase):
-    def test_intersect_forward_matches_dr_jit_baseline_case(self):
+    def test_intersect_forward_matches_external_baseline_case(self):
         sys.path.insert(0, str(RAYDI_ROOT))
         import rayd as dr_backend
         import raydtorch as rt

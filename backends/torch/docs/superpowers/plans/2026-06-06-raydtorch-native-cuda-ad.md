@@ -3441,7 +3441,7 @@ git commit -m "feat: finalize standalone raydtorch public API"
 - Reference only: `E:\Code\RayDi\src\scene\scene_custom_op.cpp`
 - Reference only: `E:\Code\RayDi\include\rayd/**`
 
-- [ ] **Step 1: Verify RayDTorch test suite is complete**
+- [x] **Step 1: Verify RayDTorch test suite is complete**
 
 Run:
 
@@ -3451,7 +3451,7 @@ conda run -n witwin2 python -m unittest discover tests.raydtorch_native -v
 
 Expected result: `OK`.
 
-- [ ] **Step 2: Audit remaining Dr.Jit references**
+- [x] **Step 2: Audit remaining Dr.Jit references**
 
 Run:
 
@@ -3461,7 +3461,7 @@ rg -n "drjit|CUDADiffArray|CUDAArray|DRJIT_STRUCT|jit_" include src raydtorch te
 
 Expected result: no matches in supported RayDTorch source or tests, except explicit test strings that verify Dr.Jit is absent or parity code that imports `E:\Code\RayDi` as an external reference.
 
-- [ ] **Step 3: Verify Dr.Jit is absent from the build system**
+- [x] **Step 3: Verify Dr.Jit is absent from the build system**
 
 Inspect `CMakeLists.txt` and remove any copied Dr.Jit build logic if present:
 
@@ -3472,11 +3472,11 @@ Inspect `CMakeLists.txt` and remove any copied Dr.Jit build logic if present:
 - Keep CUDA, OptiX, Torch, and pybind11 dependencies only.
 - Build only `_raydtorch`.
 
-- [ ] **Step 4: Move Dr.Jit tests out of default discovery**
+- [x] **Step 4: Move Dr.Jit tests out of default discovery**
 
 Do not copy `tests/drjit` into RayDTorch as supported tests. Keep Dr.Jit parity checks in `tests/raydtorch_native/test_drjit_parity.py` and treat `E:\Code\RayDi\tests\drjit` only as an external reference during development.
 
-- [ ] **Step 5: Run full supported test suite**
+- [x] **Step 5: Run full supported test suite**
 
 Run:
 
@@ -3486,7 +3486,7 @@ conda run -n witwin2 python -m unittest discover tests -v
 
 Expected result: `OK`; no test imports Dr.Jit.
 
-- [ ] **Step 6: Build clean wheel**
+- [x] **Step 6: Build clean wheel**
 
 Run:
 
@@ -3496,7 +3496,7 @@ conda run -n witwin2 python -m pip wheel . -w artifacts/wheels
 
 Expected result: wheel builds without installing Dr.Jit.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add -A
