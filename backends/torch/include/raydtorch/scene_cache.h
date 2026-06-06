@@ -32,6 +32,14 @@ struct OptixTriangleAccel {
     OptixTraversableHandle traversable = 0;
 };
 
+struct OptixEdgeAccel {
+    at::Tensor aabb_buffer;
+    at::Tensor gas_buffer;
+    at::Tensor gas_temp_buffer;
+    OptixTraversableHandle traversable = 0;
+    float search_radius = 0.0f;
+};
+
 struct SceneCache {
     int64_t handle = 0;
     int64_t version = 1;
@@ -45,6 +53,7 @@ struct SceneCache {
     at::Tensor edge_face1;
     at::Tensor edge_shape_id;
     at::Tensor edge_local_id;
+    OptixEdgeAccel edge_accel;
 };
 
 int64_t create_scene(std::vector<MeshRecord> meshes);

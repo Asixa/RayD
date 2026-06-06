@@ -28,11 +28,21 @@ struct OptixDeviceContextEntry {
     at::Tensor intersect_raygen_record;
     at::Tensor intersect_miss_record;
     at::Tensor intersect_hitgroup_record;
+    OptixModule edge_module = nullptr;
+    OptixPipeline edge_pipeline = nullptr;
+    OptixProgramGroup edge_raygen_group = nullptr;
+    OptixProgramGroup edge_miss_group = nullptr;
+    OptixProgramGroup edge_hitgroup = nullptr;
+    OptixShaderBindingTable edge_sbt = {};
+    at::Tensor edge_raygen_record;
+    at::Tensor edge_miss_record;
+    at::Tensor edge_hitgroup_record;
 };
 
 TorchCudaContext current_torch_cuda_context();
 OptixDeviceContextEntry &get_optix_context(int device_index);
 void ensure_intersect_pipeline(OptixDeviceContextEntry &entry);
+void ensure_edge_pipeline(OptixDeviceContextEntry &entry);
 void optix_check(OptixResult result, const char *expr, const char *file, int line);
 
 } // namespace raydtorch

@@ -4,12 +4,14 @@
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>
 #include <array>
 #include <map>
 #include <stdexcept>
+#include <string>
 
 namespace raydtorch {
 
@@ -17,6 +19,13 @@ namespace {
 std::atomic<int64_t> next_handle{1};
 std::mutex scenes_mutex;
 std::unordered_map<int64_t, std::unique_ptr<SceneCache>> scenes;
+
+void cuda_check(cudaError_t result, const char *expr) {
+    if (result == cudaSuccess)
+        return;
+    throw std::runtime_error(
+        std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
+}
 
 OptixTriangleAccel build_triangle_accel(
     const MeshRecord &mesh,
@@ -192,6 +201,83 @@ void build_edge_topology(SceneCache &scene) {
     scene.edge_shape_id = at::tensor(edge_shape_id, cpu_iopts).to(device);
     scene.edge_local_id = at::tensor(edge_local_id, cpu_iopts).to(device);
 }
+
+void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+    const int64_t edge_count = scene.edge_v0.size(0);
+    if (edge_count == 0)
+        return;
+
+    constexpr float search_radius = 1.0e10f;
+    at::Tensor vertices_cpu = scene.meshes[0].vertices.cpu();
+    at::Tensor edge_v0_cpu = scene.edge_v0.cpu();
+    at::Tensor edge_v1_cpu = scene.edge_v1.cpu();
+    const float *vertices = vertices_cpu.data_ptr<float>();
+    const int *edge_v0 = edge_v0_cpu.data_ptr<int>();
+    const int *edge_v1 = edge_v1_cpu.data_ptr<int>();
+
+    std::vector<float> aabb_host(static_cast<size_t>(edge_count) * 6);
+    for (int64_t edge = 0; edge < edge_count; ++edge) {
+        const int i0 = edge_v0[edge];
+        const int i1 = edge_v1[edge];
+        for (int axis = 0; axis < 3; ++axis) {
+            const float a = vertices[i0 * 3 + axis];
+            const float b = vertices[i1 * 3 + axis];
+            aabb_host[edge * 6 + axis] = std::min(a, b) - search_radius;
+            aabb_host[edge * 6 + 3 + axis] = std::max(a, b) + search_radius;
+        }
+    }
+
+    at::TensorOptions byte_options =
+        at::TensorOptions().device(at::Device(at::kCUDA, scene.device_index)).dtype(at::kByte);
+    scene.edge_accel.aabb_buffer =
+        at::empty({static_cast<int64_t>(aabb_host.size() * sizeof(float))}, byte_options);
+    cuda_check(
+        cudaMemcpyAsync(
+            scene.edge_accel.aabb_buffer.data_ptr<uint8_t>(),
+            aabb_host.data(),
+            aabb_host.size() * sizeof(float),
+            cudaMemcpyHostToDevice,
+            stream),
+        "cudaMemcpyAsync(edge AABB)");
+
+    CUdeviceptr aabb_buffer =
+        reinterpret_cast<CUdeviceptr>(scene.edge_accel.aabb_buffer.data_ptr<uint8_t>());
+    uint32_t input_flags = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
+    OptixBuildInput build_input = {};
+    build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+    build_input.customPrimitiveArray.aabbBuffers = &aabb_buffer;
+    build_input.customPrimitiveArray.numPrimitives = static_cast<unsigned int>(edge_count);
+    build_input.customPrimitiveArray.strideInBytes = sizeof(float) * 6;
+    build_input.customPrimitiveArray.flags = &input_flags;
+    build_input.customPrimitiveArray.numSbtRecords = 1;
+
+    OptixAccelBuildOptions accel_options = {};
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+
+    OptixAccelBufferSizes buffer_sizes = {};
+    raydtorch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+
+    scene.edge_accel.gas_temp_buffer =
+        at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
+    scene.edge_accel.gas_buffer =
+        at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+    raydtorch_OPTIX_CHECK(optixAccelBuild(
+        optix_context,
+        stream,
+        &accel_options,
+        &build_input,
+        1,
+        reinterpret_cast<CUdeviceptr>(scene.edge_accel.gas_temp_buffer.data_ptr<uint8_t>()),
+        buffer_sizes.tempSizeInBytes,
+        reinterpret_cast<CUdeviceptr>(scene.edge_accel.gas_buffer.data_ptr<uint8_t>()),
+        buffer_sizes.outputSizeInBytes,
+        &scene.edge_accel.traversable,
+        nullptr,
+        0));
+    scene.edge_accel.search_radius = search_radius;
+}
 } // namespace
 
 int64_t create_scene(std::vector<MeshRecord> meshes) {
@@ -221,6 +307,7 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
         scene->triangle_accels.push_back(
             build_triangle_accel(mesh, optix_entry.optix_context, torch_ctx.stream));
     build_edge_topology(*scene);
+    build_edge_accel(*scene, optix_entry.optix_context, torch_ctx.stream);
     const int64_t handle = scene->handle;
 
     std::lock_guard<std::mutex> lock(scenes_mutex);

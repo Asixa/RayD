@@ -58,6 +58,8 @@ if(RAYDTORCH_BUILD_NATIVE)
 
     set(RAYDTORCH_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/optix_intersect.ptx")
     set(RAYDTORCH_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/optix_intersect_ptx.h")
+    set(RAYDTORCH_EDGE_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix.ptx")
+    set(RAYDTORCH_EDGE_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/edge_optix_ptx.h")
     add_custom_command(
         OUTPUT "${RAYDTORCH_OPTIX_PTX}"
         COMMAND
@@ -86,6 +88,34 @@ if(RAYDTORCH_BUILD_NATIVE)
             src/torch_ext/embed_ptx.py
     )
     add_custom_target(raydtorch_optix_ptx DEPENDS "${RAYDTORCH_OPTIX_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/edge_optix.cu"
+            -o "${RAYDTORCH_EDGE_OPTIX_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/edge_optix.cu
+            include/raydtorch/edge_optix_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_EDGE_OPTIX_PTX}"
+            "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}"
+            raydtorch_edge_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_EDGE_OPTIX_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_edge_optix_ptx DEPENDS "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}")
 
     pybind11_add_module(
         _raydtorch
@@ -109,7 +139,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             ${CUDAToolkit_INCLUDE_DIRS}
             ${OPTIX_INCLUDE_DIR}
     )
-    add_dependencies(_raydtorch raydtorch_optix_ptx)
+    add_dependencies(_raydtorch raydtorch_optix_ptx raydtorch_edge_optix_ptx)
     target_link_libraries(_raydtorch PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
     target_compile_features(_raydtorch PRIVATE cxx_std_17)
     install(TARGETS _raydtorch LIBRARY DESTINATION raydtorch RUNTIME DESTINATION raydtorch)

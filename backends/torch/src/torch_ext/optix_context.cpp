@@ -5,6 +5,7 @@
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
+#include <raydtorch/edge_optix_ptx.h>
 #include <raydtorch/optix_intersect_ptx.h>
 
 #include <mutex>
@@ -206,6 +207,122 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
         reinterpret_cast<CUdeviceptr>(entry.intersect_hitgroup_record.data_ptr<uint8_t>());
     entry.intersect_sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     entry.intersect_sbt.hitgroupRecordCount = 1;
+}
+
+void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
+    if (entry.edge_pipeline != nullptr)
+        return;
+
+    c10::cuda::CUDAGuard guard(entry.device_index);
+
+    OptixModuleCompileOptions module_options = {};
+    module_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
+    module_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
+
+    OptixPipelineCompileOptions pipeline_options = {};
+    pipeline_options.usesMotionBlur = false;
+    pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+    pipeline_options.numPayloadValues = 1;
+    pipeline_options.numAttributeValues = 0;
+    pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
+    pipeline_options.pipelineLaunchParamsVariableName = "params";
+    pipeline_options.usesPrimitiveTypeFlags =
+        static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM);
+
+    char log[8192] = {};
+    size_t log_size = sizeof(log);
+    raydtorch_OPTIX_CHECK(optixModuleCreate(
+        entry.optix_context,
+        &module_options,
+        &pipeline_options,
+        raydtorch_edge_optix_ptx,
+        sizeof(raydtorch_edge_optix_ptx),
+        log,
+        &log_size,
+        &entry.edge_module));
+
+    OptixProgramGroupDesc raygen_desc = {};
+    raygen_desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    raygen_desc.raygen.module = entry.edge_module;
+    raygen_desc.raygen.entryFunctionName = "__raygen__edge_point";
+    create_program_group(entry.optix_context, raygen_desc, &entry.edge_raygen_group);
+
+    OptixProgramGroupDesc miss_desc = {};
+    miss_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+    miss_desc.miss.module = entry.edge_module;
+    miss_desc.miss.entryFunctionName = "__miss__edge_point";
+    create_program_group(entry.optix_context, miss_desc, &entry.edge_miss_group);
+
+    OptixProgramGroupDesc hitgroup_desc = {};
+    hitgroup_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    hitgroup_desc.hitgroup.moduleCH = entry.edge_module;
+    hitgroup_desc.hitgroup.entryFunctionNameCH = "__closesthit__edge_point";
+    hitgroup_desc.hitgroup.moduleIS = entry.edge_module;
+    hitgroup_desc.hitgroup.entryFunctionNameIS = "__intersection__edge_point";
+    create_program_group(entry.optix_context, hitgroup_desc, &entry.edge_hitgroup);
+
+    OptixProgramGroup program_groups[] = {
+        entry.edge_raygen_group,
+        entry.edge_miss_group,
+        entry.edge_hitgroup,
+    };
+
+    OptixPipelineLinkOptions link_options = {};
+    link_options.maxTraceDepth = 1;
+    log_size = sizeof(log);
+    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+        entry.optix_context,
+        &pipeline_options,
+        &link_options,
+        program_groups,
+        3,
+        log,
+        &log_size,
+        &entry.edge_pipeline));
+
+    OptixStackSizes stack_sizes = {};
+    for (OptixProgramGroup group : program_groups)
+        raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.edge_pipeline));
+    uint32_t direct_callable_stack_from_traversal = 0;
+    uint32_t direct_callable_stack_from_state = 0;
+    uint32_t continuation_stack = 0;
+    raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
+        &stack_sizes,
+        1,
+        0,
+        1,
+        &direct_callable_stack_from_traversal,
+        &direct_callable_stack_from_state,
+        &continuation_stack));
+    raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
+        entry.edge_pipeline,
+        direct_callable_stack_from_traversal,
+        direct_callable_stack_from_state,
+        continuation_stack,
+        1));
+
+    at::TensorOptions byte_options =
+        at::TensorOptions().device(at::Device(at::kCUDA, entry.device_index)).dtype(at::kByte);
+    entry.edge_raygen_record = at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
+    entry.edge_miss_record = at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
+    entry.edge_hitgroup_record = at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
+
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(entry.device_index).stream();
+    copy_sbt_record(entry.edge_raygen_group, entry.edge_raygen_record, stream);
+    copy_sbt_record(entry.edge_miss_group, entry.edge_miss_record, stream);
+    copy_sbt_record(entry.edge_hitgroup, entry.edge_hitgroup_record, stream);
+
+    entry.edge_sbt = {};
+    entry.edge_sbt.raygenRecord =
+        reinterpret_cast<CUdeviceptr>(entry.edge_raygen_record.data_ptr<uint8_t>());
+    entry.edge_sbt.missRecordBase =
+        reinterpret_cast<CUdeviceptr>(entry.edge_miss_record.data_ptr<uint8_t>());
+    entry.edge_sbt.missRecordStrideInBytes = sizeof(EmptySbtRecord);
+    entry.edge_sbt.missRecordCount = 1;
+    entry.edge_sbt.hitgroupRecordBase =
+        reinterpret_cast<CUdeviceptr>(entry.edge_hitgroup_record.data_ptr<uint8_t>());
+    entry.edge_sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
+    entry.edge_sbt.hitgroupRecordCount = 1;
 }
 
 void optix_check(OptixResult result, const char *expr, const char *file, int line) {

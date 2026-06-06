@@ -2692,7 +2692,7 @@ git commit -m "feat(torch): add nearest-edge native AD"
 - Modify: `src/torch_ext/kernels/edge_forward.cu`
 - Test: `tests/raydtorch_native/test_edge_queries.py`
 
-- [ ] **Step 1: Add large-grid parity test**
+- [x] **Step 1: Add large-grid parity test**
 
 Append to `tests/raydtorch_native/test_edge_queries.py`:
 
@@ -2723,7 +2723,7 @@ Append to `tests/raydtorch_native/test_edge_queries.py`:
         self.assertTrue(torch.isfinite(out.distance).all().item())
 ```
 
-- [ ] **Step 2: Run the test**
+- [x] **Step 2: Run the test**
 
 Run:
 
@@ -2733,7 +2733,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_edge_queries
 
 Expected result: passes with brute force but may be slow.
 
-- [ ] **Step 3: Port OptiX custom-AABB edge backend**
+- [x] **Step 3: Port OptiX custom-AABB edge backend**
 
 Use these existing files as behavioral reference:
 
@@ -2750,11 +2750,11 @@ Replace Dr.Jit dependencies:
 - Dr.Jit masks become `bool*`.
 - `drjit::eval` is removed; Torch stream sequencing is used.
 
-- [ ] **Step 4: Keep exact recompute after broad phase**
+- [x] **Step 4: Keep exact recompute after broad phase**
 
 The OptiX custom-AABB kernel returns only candidate edge ids. The differentiable forward output must still be recomputed from original Torch vertices in CUDA so VJP/JVP sees the fixed winner but uses live geometry values.
 
-- [ ] **Step 5: Run edge tests and pressure benchmark**
+- [x] **Step 5: Run edge tests and pressure benchmark**
 
 Run:
 
@@ -2765,7 +2765,7 @@ conda run -n witwin2 python -m tests.benchmark_edge_queries --backend raydtorch-
 
 Expected result: tests pass; benchmark reports finite build/query times.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add include/raydtorch src/torch_ext tests/raydtorch_native/test_edge_queries.py
