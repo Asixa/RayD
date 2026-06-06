@@ -3510,7 +3510,7 @@ git commit -m "refactor: remove DrJit backend"
 - Create: `docs/raydtorch_native_performance.md`
 - Modify: `tests/benchmark_support.py`
 
-- [ ] **Step 1: Add benchmark script**
+- [x] **Step 1: Add benchmark script**
 
 Create `tests/benchmark_raydtorch_native.py`:
 
@@ -3591,7 +3591,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Run benchmark**
+- [x] **Step 2: Run benchmark**
 
 Run:
 
@@ -3601,7 +3601,7 @@ conda run -n witwin2 python -m tests.benchmark_raydtorch_native --grid 192 --que
 
 Expected result: JSON with finite `build_ms`, `intersect_ms`, and `nearest_edge_ms`.
 
-- [ ] **Step 3: Write performance notes**
+- [x] **Step 3: Write performance notes**
 
 Create `docs/raydtorch_native_performance.md` with:
 
@@ -3612,7 +3612,7 @@ Create `docs/raydtorch_native_performance.md` with:
 - dynamic sync time
 - comparison to the last Dr.Jit performance snapshot
 
-- [ ] **Step 4: Acceptance gate**
+- [x] **Step 4: Acceptance gate**
 
 Run:
 
@@ -3628,7 +3628,7 @@ Expected result:
 - benchmark completes
 - `rg` reports no supported-path Dr.Jit references
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add tests/benchmark_raydtorch_native.py docs/raydtorch_native_performance.md tests/benchmark_support.py
