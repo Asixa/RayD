@@ -1367,7 +1367,7 @@ git commit -m "feat(torch): add torch-owned CUDA and OptiX context layer"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_intersect_forward.py`
 
-- [ ] **Step 1: Write forward tests for one triangle**
+- [x] **Step 1: Write forward tests for one triangle**
 
 Create `tests/raydtorch_native/test_intersect_forward.py`:
 
@@ -1408,7 +1408,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the forward test to verify failure**
+- [x] **Step 2: Run the forward test to verify failure**
 
 Run:
 
@@ -1418,7 +1418,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_fo
 
 Expected result: failure with `native intersect op is not implemented`.
 
-- [ ] **Step 3: Add native intersect forward signature**
+- [x] **Step 3: Add native intersect forward signature**
 
 Create `include/raydtorch/geometry_kernels.h`:
 
@@ -1655,7 +1655,7 @@ IntersectForwardOutputs intersect_forward_cuda(
 } // namespace raydtorch
 ```
 
-- [ ] **Step 4: Add ATen op wrapper**
+- [x] **Step 4: Add ATen op wrapper**
 
 Create `src/torch_ext/ops_intersect.cpp`:
 
@@ -1709,7 +1709,7 @@ void bind_intersect_ops(py::module_ &m) {
 
 Modify `src/torch_ext/module.cpp` to call `bind_intersect_ops(m)`.
 
-- [ ] **Step 5: Wire Python intersect**
+- [x] **Step 5: Wire Python intersect**
 
 Modify `raydtorch/autograd.py`:
 
@@ -1771,7 +1771,7 @@ from .autograd import intersect as _intersect
 
 Add `import torch`.
 
-- [ ] **Step 6: Build and run forward tests**
+- [x] **Step 6: Build and run forward tests**
 
 Run:
 
@@ -1782,7 +1782,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_fo
 
 Expected result: `OK`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add include/raydtorch/geometry_kernels.h src/torch_ext/ops_intersect.cpp src/torch_ext/kernels/geometry_forward.cu src/torch_ext/module.cpp raydtorch/autograd.py raydtorch/scene.py tests/raydtorch_native/test_intersect_forward.py

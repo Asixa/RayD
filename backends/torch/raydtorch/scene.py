@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import weakref
 
+import torch
+
 from . import _C
+from .autograd import intersect as _intersect
 from .mesh import Mesh
 from .types import Ray
 
@@ -64,6 +67,8 @@ class Scene:
         handle = self._require_ready()
         return int(_C.scene_version(handle))
 
-    def intersect(self, ray: Ray):
-        self._require_ready()
-        raise RuntimeError("Scene.intersect(): native intersect op is not implemented in this milestone.")
+    def intersect(self, ray: Ray, active=None):
+        handle = self._require_ready()
+        if active is None:
+            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
+        return _intersect(handle, ray.o, ray.d, ray.tmax, active.contiguous())
