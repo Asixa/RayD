@@ -16,8 +16,7 @@
 
 **Package Name:** The Python package and distribution name are `raydtorch`. The native extension name is `_raydtorch`. The project must not install files under `rayd`, must not expose the old `rayd.torch` namespace, and must not conflict with the original RayD package.
 
-**Binding Policy:** Use pybind11 through PyTorch's `torch/extension.h`. Do not use nanobind in RayDTorch. The original RayD nanobind setup exists to bind Dr.Jit arrays and `NB_DOMAIN drjit`; that does not apply to this package.
----
+**Binding Policy:** Use pybind11 through PyTorch's `torch/extension.h`. Do not use nanobind in RayDTorch. The original RayD nanobind setup exists to bind Dr.Jit arrays and `NB_DOMAIN drjit`; that does not apply to this package.`r`n`r`n---
 
 ## Reference Model
 
@@ -3668,6 +3667,7 @@ The project is considered migrated when all of these are true:
 - Placeholder scan: The plan contains no unresolved placeholder markers. The first milestone includes exact test files, code skeletons, commands, and expected results.
 - Type consistency: Public Python types use `torch.Tensor`; native code uses `at::Tensor`; scene handles are `int64_t`; all differentiable tensors use `float32 CUDA` unless a test explicitly rejects a different type.
 - Scope note: The full migration is large. The first executable milestone is Tasks 1-9, which produce a working raydtorch-native `Scene.intersect()` with forward, VJP, and JVP. Tasks 10-21 extend the same pattern to the rest of RayD and remove Dr.Jit.
+
 
 
 
