@@ -523,7 +523,7 @@ git commit -m "feat(torch): add native torch package skeleton"
 - Modify: `raydtorch/mesh.py`
 - Modify: `raydtorch/types.py`
 
-- [ ] **Step 1: Write failing Python-level contract tests**
+- [x] **Step 1: Write failing Python-level contract tests**
 
 Create `tests/raydtorch_native/test_tensor_contract.py`:
 
@@ -561,7 +561,7 @@ class TensorContractTests(unittest.TestCase):
         self.assertEqual(ray.tmax.device.type, "cuda")
 ```
 
-- [ ] **Step 2: Run the contract tests to verify failure**
+- [x] **Step 2: Run the contract tests to verify failure**
 
 Run:
 
@@ -571,7 +571,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_tensor_contr
 
 Expected result: at least one failure because dtype/device checks are incomplete.
 
-- [ ] **Step 3: Add Python tensor validators**
+- [x] **Step 3: Add Python tensor validators**
 
 Modify `raydtorch/mesh.py` to include:
 
@@ -618,7 +618,7 @@ def _require_float_cuda_tensor(value: torch.Tensor, name: str, shape_last: int |
 
 Call it from `Ray.__post_init__`.
 
-- [ ] **Step 4: Add native tensor validators**
+- [x] **Step 4: Add native tensor validators**
 
 Create `include/raydtorch/tensor_check.h`:
 
@@ -727,7 +727,7 @@ void require_mask(const at::Tensor &tensor, std::string_view name) {
 } // namespace raydtorch
 ```
 
-- [ ] **Step 5: Run the contract tests**
+- [x] **Step 5: Run the contract tests**
 
 Run:
 
@@ -737,7 +737,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_tensor_contr
 
 Expected result: `OK`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add raydtorch include/raydtorch/tensor_check.h src/torch_ext/tensor_check.cpp tests/raydtorch_native/test_tensor_contract.py

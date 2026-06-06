@@ -4,6 +4,17 @@ from dataclasses import dataclass
 import torch
 
 
+def _require_float_cuda_tensor(value: torch.Tensor, name: str, shape_last: int | None) -> None:
+    if value.device.type != "cuda":
+        raise TypeError(f"{name} must be CUDA.")
+    if value.dtype != torch.float32:
+        raise TypeError(f"{name} must be torch.float32.")
+    if not value.is_contiguous():
+        raise ValueError(f"{name} must be contiguous.")
+    if shape_last is not None and (value.ndim != 2 or value.shape[1] != shape_last):
+        raise ValueError(f"{name} must have shape (N, {shape_last}).")
+
+
 @dataclass(frozen=True)
 class Ray:
     o: torch.Tensor
@@ -11,10 +22,8 @@ class Ray:
     tmax: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
-        if self.o.ndim != 2 or self.o.shape[1] != 3:
-            raise ValueError("Ray.o must have shape (N, 3).")
-        if self.d.ndim != 2 or self.d.shape[1] != 3:
-            raise ValueError("Ray.d must have shape (N, 3).")
+        _require_float_cuda_tensor(self.o, "Ray.o", 3)
+        _require_float_cuda_tensor(self.d, "Ray.d", 3)
         if self.o.shape[0] != self.d.shape[0]:
             raise ValueError("Ray.o and Ray.d must have the same batch size.")
         if self.tmax is None:
@@ -23,8 +32,10 @@ class Ray:
                 "tmax",
                 torch.full((self.o.shape[0],), float("inf"), device=self.o.device, dtype=self.o.dtype),
             )
-        elif self.tmax.ndim != 1 or self.tmax.shape[0] != self.o.shape[0]:
-            raise ValueError("Ray.tmax must have shape (N,).")
+        else:
+            _require_float_cuda_tensor(self.tmax, "Ray.tmax", None)
+            if self.tmax.ndim != 1 or self.tmax.shape[0] != self.o.shape[0]:
+                raise ValueError("Ray.tmax must have shape (N,).")
 
 
 @dataclass(frozen=True)
