@@ -2247,7 +2247,7 @@ git commit -m "feat(torch): use OptiX broad phase for native intersect"
 - Modify: `raydtorch/autograd.py`
 - Test: `tests/raydtorch_native/test_intersect_grad.py`
 
-- [ ] **Step 1: Add arbitrary-orientation finite-difference VJP tests**
+- [x] **Step 1: Add arbitrary-orientation finite-difference VJP tests**
 
 Append to `tests/raydtorch_native/test_intersect_grad.py`:
 
@@ -2279,7 +2279,7 @@ Append to `tests/raydtorch_native/test_intersect_grad.py`:
         torch.testing.assert_close(analytic, fd[0], atol=5e-3, rtol=5e-3)
 ```
 
-- [ ] **Step 2: Add forward-mode JVP test**
+- [x] **Step 2: Add forward-mode JVP test**
 
 Append to `tests/raydtorch_native/test_intersect_grad.py`:
 
@@ -2312,7 +2312,7 @@ Append to `tests/raydtorch_native/test_intersect_grad.py`:
         torch.testing.assert_close(jvp, torch.tensor([0.5], device="cuda"), atol=1e-5, rtol=1e-5)
 ```
 
-- [ ] **Step 3: Run tests to verify failures**
+- [x] **Step 3: Run tests to verify failures**
 
 Run:
 
@@ -2322,7 +2322,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_gr
 
 Expected result: arbitrary finite-difference or JVP test fails.
 
-- [ ] **Step 4: Implement full implicit derivative**
+- [x] **Step 4: Implement full implicit derivative**
 
 Replace the Task 7 axis-aligned VJP with the derivative of:
 
@@ -2353,7 +2353,7 @@ Compute `M_inv` per hit in CUDA, propagate adjoints to:
 
 Use atomic adds for vertex gradients because many rays can hit the same vertex.
 
-- [ ] **Step 5: Implement native JVP**
+- [x] **Step 5: Implement native JVP**
 
 Append to `include/raydtorch/geometry_kernels.h`:
 
@@ -2402,7 +2402,7 @@ Register `intersect_jvp` in `src/torch_ext/ops_intersect.cpp` and call it from `
         return tangent_t, tangent_p, tangent_n, tangent_geo_n, tangent_uv, tangent_barycentric, zero_i, zero_i, zero_i, zero_i
 ```
 
-- [ ] **Step 6: Run all intersect tests**
+- [x] **Step 6: Run all intersect tests**
 
 Run:
 
@@ -2412,7 +2412,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_intersect_fo
 
 Expected result: `OK`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add include/raydtorch/geometry_kernels.h src/torch_ext/ops_intersect.cpp src/torch_ext/kernels/geometry_backward.cu raydtorch/autograd.py tests/raydtorch_native/test_intersect_grad.py

@@ -10,6 +10,17 @@ from .mesh import Mesh
 from .types import Ray
 
 
+def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
+    value = torch.autograd.forward_ad.unpack_dual(value).primal
+    if torch._C._functorch.is_functorch_wrapped_tensor(value) or torch._C._functorch.is_gradtrackingtensor(value):
+        value = torch._C._functorch.get_unwrapped(value)
+    try:
+        value.data_ptr()
+    except RuntimeError:
+        value = value.detach().clone()
+    return value
+
+
 class Scene:
     def __init__(self) -> None:
         self._meshes: list[tuple[Mesh, bool]] = []
@@ -29,12 +40,12 @@ class Scene:
 
     def _mesh_spec(self, mesh: Mesh, dynamic: bool) -> dict[str, object]:
         return {
-            "vertices": mesh.vertices,
-            "faces": mesh.faces,
-            "uv": mesh.uv,
-            "face_uv": mesh.face_uv,
-            "to_world_left": mesh.to_world_left,
-            "to_world_right": mesh.to_world_right,
+            "vertices": _native_scene_tensor(mesh.vertices),
+            "faces": _native_scene_tensor(mesh.faces),
+            "uv": _native_scene_tensor(mesh.uv),
+            "face_uv": _native_scene_tensor(mesh.face_uv),
+            "to_world_left": _native_scene_tensor(mesh.to_world_left),
+            "to_world_right": _native_scene_tensor(mesh.to_world_right),
             "use_face_normals": mesh.use_face_normals,
             "edges_enabled": mesh.edges_enabled,
             "dynamic": dynamic,
@@ -44,7 +55,8 @@ class Scene:
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
         specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
-        handle = int(_C.create_scene(specs))
+        with torch._C._DisableFuncTorch():
+            handle = int(_C.create_scene(specs))
         self._native_handle = handle
         self._finalizer = weakref.finalize(self, _C.destroy_scene, handle)
         self._ready = True
