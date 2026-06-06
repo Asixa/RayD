@@ -44,6 +44,29 @@ class SceneCacheTests(unittest.TestCase):
         stream.synchronize()
         self.assertTrue(scene.is_ready())
 
+    def test_dynamic_vertex_update_changes_intersection(self):
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        mesh_id = scene.add_mesh(rt.Mesh(verts, faces), dynamic=True)
+        scene.build()
+        ray = rt.Ray(
+            torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+        )
+        first = scene.intersect(ray).t.detach()
+        shifted = verts.clone()
+        shifted[:, 2] += 1.0
+        scene.update_mesh_vertices(mesh_id, shifted)
+        self.assertTrue(scene.has_pending_updates())
+        scene.sync()
+        second = scene.intersect(ray).t.detach()
+        torch.testing.assert_close(second - first, torch.tensor([1.0], device="cuda"))
+
 
 if __name__ == "__main__":
     unittest.main()

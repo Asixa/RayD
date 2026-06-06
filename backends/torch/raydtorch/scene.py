@@ -27,6 +27,7 @@ class Scene:
         self._native_handle: int | None = None
         self._finalizer: weakref.finalize | None = None
         self._ready = False
+        self._pending_updates = False
 
     def add_mesh(self, mesh: Mesh, dynamic: bool = False) -> int:
         if not isinstance(mesh, Mesh):
@@ -36,6 +37,7 @@ class Scene:
             self._native_handle = None
         self._meshes.append((mesh, bool(dynamic)))
         self._ready = False
+        self._pending_updates = False
         return len(self._meshes) - 1
 
     def _mesh_spec(self, mesh: Mesh, dynamic: bool) -> dict[str, object]:
@@ -60,6 +62,7 @@ class Scene:
         self._native_handle = handle
         self._finalizer = weakref.finalize(self, _C.destroy_scene, handle)
         self._ready = True
+        self._pending_updates = False
 
     def _require_ready(self) -> int:
         if not self._ready or self._native_handle is None:
@@ -85,3 +88,22 @@ class Scene:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
         vertices = self._meshes[0][0].vertices
         return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
+
+    def update_mesh_vertices(self, mesh_id: int, positions):
+        handle = self._require_ready()
+        mesh, dynamic = self._meshes[mesh_id]
+        if not dynamic:
+            raise RuntimeError("Scene.update_mesh_vertices(): target mesh is not dynamic.")
+        mesh.vertices = positions.contiguous()
+        with torch._C._DisableFuncTorch():
+            _C.update_mesh_vertices(handle, int(mesh_id), _native_scene_tensor(mesh.vertices))
+        self._pending_updates = True
+
+    def sync(self) -> None:
+        handle = self._require_ready()
+        with torch._C._DisableFuncTorch():
+            _C.sync_scene(handle)
+        self._pending_updates = False
+
+    def has_pending_updates(self) -> bool:
+        return bool(self._pending_updates)

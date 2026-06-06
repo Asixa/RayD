@@ -2428,7 +2428,7 @@ git commit -m "feat(torch): implement full intersect VJP and JVP"
 - Modify: `raydtorch/scene.py`
 - Test: `tests/raydtorch_native/test_scene_cache.py`
 
-- [ ] **Step 1: Add dynamic update tests**
+- [x] **Step 1: Add dynamic update tests**
 
 Append to `tests/raydtorch_native/test_scene_cache.py`:
 
@@ -2457,7 +2457,7 @@ Append to `tests/raydtorch_native/test_scene_cache.py`:
         torch.testing.assert_close(second - first, torch.tensor([1.0], device="cuda"))
 ```
 
-- [ ] **Step 2: Run dynamic update test to verify failure**
+- [x] **Step 2: Run dynamic update test to verify failure**
 
 Run:
 
@@ -2467,7 +2467,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache.
 
 Expected result: failure because update/sync methods do not exist.
 
-- [ ] **Step 3: Add native update functions**
+- [x] **Step 3: Add native update functions**
 
 Add to `include/raydtorch/scene_cache.h`:
 
@@ -2501,7 +2501,7 @@ void sync_scene(int64_t handle) {
 
 Register wrappers in `src/torch_ext/ops_scene.cpp`.
 
-- [ ] **Step 4: Add Python update/sync API**
+- [x] **Step 4: Add Python update/sync API**
 
 Modify `raydtorch/scene.py`:
 
@@ -2524,7 +2524,7 @@ Modify `raydtorch/scene.py`:
         return bool(getattr(self, "_pending_updates", False))
 ```
 
-- [ ] **Step 5: Rebuild GAS refit path**
+- [x] **Step 5: Rebuild GAS refit path**
 
 Replace the placeholder `sync_scene` implementation with OptiX GAS refit:
 
@@ -2534,7 +2534,7 @@ Replace the placeholder `sync_scene` implementation with OptiX GAS refit:
 
 Use current `Scene::sync()` behavior in `src/scene/scene.cpp` as the reference for version increments and refit vs rebuild decisions.
 
-- [ ] **Step 6: Run scene and intersect tests**
+- [x] **Step 6: Run scene and intersect tests**
 
 Run:
 
@@ -2544,7 +2544,7 @@ conda run -n witwin2 python -m unittest tests.raydtorch_native.test_scene_cache 
 
 Expected result: `OK`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add include/raydtorch/scene_cache.h src/torch_ext/scene_cache.cpp src/torch_ext/ops_scene.cpp raydtorch/scene.py tests/raydtorch_native/test_scene_cache.py

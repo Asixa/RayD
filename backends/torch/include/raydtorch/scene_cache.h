@@ -21,6 +21,7 @@ struct MeshRecord {
     bool use_face_normals = false;
     bool edges_enabled = true;
     bool dynamic = false;
+    bool pending_update = false;
 };
 
 struct OptixTriangleAccel {
@@ -45,5 +46,7 @@ void destroy_scene(int64_t handle);
 SceneCache &get_scene(int64_t handle);
 int64_t scene_version(int64_t handle);
 int64_t scene_num_meshes(int64_t handle);
+void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices);
+void sync_scene(int64_t handle);
 
 } // namespace raydtorch

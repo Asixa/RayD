@@ -29,6 +29,8 @@ void bind_scene_ops(py::module_ &m) {
     m.def("destroy_scene", &destroy_scene);
     m.def("scene_version", &scene_version);
     m.def("scene_num_meshes", &scene_num_meshes);
+    m.def("update_mesh_vertices", &update_mesh_vertices);
+    m.def("sync_scene", &sync_scene);
 }
 
 } // namespace raydtorch
