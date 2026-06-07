@@ -11,6 +11,81 @@
 > - Known-slow paths per [raydtorch_native_performance.md](raydtorch_native_performance.md):
 >   **scene build > reflection trace > nearest-edge**.
 
+## Current implementation status (2026-06-07)
+
+Implemented in the current worktree:
+
+- CUDA build defaults now target modern GPUs instead of stale `sm_52`:
+  `75-real;80-real;86-real;89-real;120-real;120-virtual`.
+- OptiX PTX builds use fast math behind `RAYDTORCH_OPTIX_FAST_MATH`.
+- `Scene.intersect(ray, flags=...)` now exposes RayD-compatible
+  `RayFlags.None/Geometric/ShadingN/UV/All`. There is no public
+  `Scene.intersect_t()` API; the t-only/minimal path is reached through
+  `flags=getattr(rt.RayFlags, "None")`.
+- No-AD `intersect` uses an on-demand native path:
+  - `None`: launches OptiX and returns only `t`.
+  - `Geometric`: returns `t`, `p`, barycentric, ids, and `geo_n`.
+  - `ShadingN`: returns `t` and `n`.
+  - `UV`: returns `t` and `uv`.
+  - `All`: returns the full legacy intersection fields.
+  Reverse-mode and forward-mode AD keep the full existing autograd path.
+- Edge-search radii no longer copy six full edge SoA tensors back to CPU;
+  a CUDA reduction returns only bbox/max-length partials.
+- The edge topology path is explicitly named `build_edge_topology_cpu_fallback`.
+  It still uses CPU fallback semantics, but now uses `unordered_map` plus sorted
+  keys for deterministic edge ids.
+- Reflection no-AD tracing avoids allocating/writing autograd tape-only arrays.
+- Visibility-style OptiX traces use first-hit termination where ignore lists are
+  not required.
+- Diffraction path export uses warp-aggregated path-slot reservation and a
+  single primary-scene launch for order-1 export.
+
+Fallbacks that remain intentionally present:
+
+- Edge topology construction is still a CPU fallback because the full GPU
+  sort/segmented-reduction implementation is not yet in this patch.
+- Intersect AD/JVP/VJP still uses the full legacy field path; the selective
+  RayFlags path is no-AD only.
+- Diffraction direct/chain AD paths keep their existing full-output contract.
+
+Latest verification:
+
+- Incremental native build succeeded via `scripts/dev_build_native.ps1`.
+- `python -m unittest discover tests.raydtorch_native -v`: 62 passed, 12 skipped.
+- Opt-in RayD parity:
+  `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
+  12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
+- `git diff --check`: no whitespace errors.
+
+Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
+`warmup=8`, `repeat=60`, RayD package resolved to `E:\Code\RayDi\rayd`:
+
+| Operation | RayD ms | RayDTorch ms | Status |
+|---|---:|---:|---|
+| build | 2270.554 | 1521.943 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1198 | 0.0373 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1358 | 0.0474 | RayDTorch faster |
+| nearest edge | 1.2326 | 1.0820 | RayDTorch faster |
+| reflection trace | 0.2448 | 0.1752 | RayDTorch faster |
+| diffraction direct | 0.3364 | 0.3874 | RayDTorch slower |
+| diffraction paths | 0.2456 | 0.3420 | RayDTorch slower |
+
+Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`, `repeat=20`:
+
+| Operation | RayD ms | RayDTorch ms | Status |
+|---|---:|---:|---|
+| build | 2299.382 | 1542.196 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1144 | 0.0393 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1244 | 0.0500 | RayDTorch faster |
+| nearest edge | 1.1812 | 1.0330 | RayDTorch faster |
+| reflection trace | 0.2165 | 0.1772 | RayDTorch faster |
+| diffraction direct | 0.3706 | 0.4162 | RayDTorch slower |
+| diffraction paths | 0.2787 | 0.2892 | near parity, RayDTorch slightly slower |
+
+Remaining performance work should focus on diffraction direct/paths. Intersect
+and reflection now meet the current RayD-comparison target for this benchmark
+shape.
+
 ## Contents
 
 - [Executive summary](#executive-summary)

@@ -6,9 +6,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
+set(RAYDTORCH_DEFAULT_CUDA_ARCHITECTURES "75-real;80-real;86-real;89-real;120-real;120-virtual")
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
+   OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
+   OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        "${RAYDTORCH_DEFAULT_CUDA_ARCHITECTURES}"
+        CACHE STRING
+        "CUDA architectures for RayDTorch native kernels."
+        FORCE)
+endif()
+
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 option(RAYDTORCH_BUILD_NATIVE "Build the RayDTorch extension." ON)
+option(RAYDTORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
+
+set(RAYDTORCH_OPTIX_NVCC_FLAGS --std=c++17)
+if(RAYDTORCH_OPTIX_FAST_MATH)
+    list(APPEND RAYDTORCH_OPTIX_NVCC_FLAGS --use_fast_math)
+endif()
 
 if(RAYDTORCH_BUILD_NATIVE)
     find_package(CUDAToolkit 11.0 REQUIRED)
@@ -82,7 +100,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/scene/optix_intersect.cu
             include/raydtorch/scene/optix_intersect_params.h
@@ -110,7 +128,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/edge/edge_optix.cu
             include/raydtorch/common/math.cuh
@@ -139,7 +157,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/reflection/trace_optix.cu
             include/raydtorch/common/math.cuh
@@ -168,7 +186,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/reflection/visibility_optix.cu
             include/raydtorch/common/math.cuh
@@ -197,7 +215,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/reflection/epc_optix.cu
             include/raydtorch/common/math.cuh
@@ -226,7 +244,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/reflection/accum_optix.cu
             include/raydtorch/common/complex.cuh
@@ -256,7 +274,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/diffraction/paths_optix.cu
             include/raydtorch/common/math.cuh
@@ -286,7 +304,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
-            --std=c++17
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/diffraction/accum_optix.cu
             include/raydtorch/common/math.cuh

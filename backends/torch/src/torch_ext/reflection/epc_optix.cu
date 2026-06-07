@@ -173,6 +173,11 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility_handle(
     const float3 origin = start + kRayBias * direction;
     const float tmax = fmaxf(length - 2.f * kRayBias, 0.f);
     unsigned int mode = kTraceModeVisibility;
+    const bool has_ignore =
+        ignore0 != kInvalidPrim || ignore1 != kInvalidPrim || ignore2 != kInvalidPrim;
+    const unsigned int ray_flags =
+        OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+        (has_ignore ? 0u : OPTIX_RAY_FLAG_DISABLE_ANYHIT);
 
     optixTrace(handle,
                origin,
@@ -181,7 +186,7 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility_handle(
                tmax,
                0.0f,
                255u,
-               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+               ray_flags,
                0,
                1,
                0,

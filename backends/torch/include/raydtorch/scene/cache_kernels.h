@@ -6,6 +6,17 @@
 
 namespace raydtorch {
 
+struct EdgeSearchStats {
+    bool has_edges = false;
+    float min_x = 0.0f;
+    float min_y = 0.0f;
+    float min_z = 0.0f;
+    float max_x = 0.0f;
+    float max_y = 0.0f;
+    float max_z = 0.0f;
+    float max_edge_length = 0.0f;
+};
+
 void compute_triangle_soa_cuda(
     int64_t triangle_count,
     const at::Tensor &vertices,
@@ -34,5 +45,14 @@ void compute_edge_soa_cuda(
     at::Tensor &edge_e1_x,
     at::Tensor &edge_e1_y,
     at::Tensor &edge_e1_z);
+
+EdgeSearchStats compute_edge_search_stats_cuda(
+    int64_t edge_count,
+    const at::Tensor &edge_p0_x,
+    const at::Tensor &edge_p0_y,
+    const at::Tensor &edge_p0_z,
+    const at::Tensor &edge_e1_x,
+    const at::Tensor &edge_e1_y,
+    const at::Tensor &edge_e1_z);
 
 } // namespace raydtorch

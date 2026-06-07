@@ -59,12 +59,18 @@ extern "C" __global__ void __raygen__intersect() {
         }
     }
 
-    params.out_t[ray_idx] = t;
-    params.out_shape_id[ray_idx] = shape_id;
-    params.out_local_prim_id[ray_idx] = local_prim_id;
-    params.out_global_prim_id[ray_idx] = global_prim_id;
-    params.out_bary_uv[ray_idx * 2 + 0] = u;
-    params.out_bary_uv[ray_idx * 2 + 1] = v;
+    if (params.out_t != nullptr)
+        params.out_t[ray_idx] = t;
+    if (params.out_shape_id != nullptr)
+        params.out_shape_id[ray_idx] = shape_id;
+    if (params.out_local_prim_id != nullptr)
+        params.out_local_prim_id[ray_idx] = local_prim_id;
+    if (params.out_global_prim_id != nullptr)
+        params.out_global_prim_id[ray_idx] = global_prim_id;
+    if (params.out_bary_uv != nullptr) {
+        params.out_bary_uv[ray_idx * 2 + 0] = u;
+        params.out_bary_uv[ray_idx * 2 + 1] = v;
+    }
 }
 
 extern "C" __global__ void __miss__intersect() {

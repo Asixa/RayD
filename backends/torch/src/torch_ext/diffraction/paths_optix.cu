@@ -173,6 +173,21 @@ static __forceinline__ __device__ void write_point(float *x,
     z[idx] = value.z;
 }
 
+static __forceinline__ __device__ int reserve_path_slot() {
+    const unsigned int mask = __activemask();
+    unsigned int lane = 0u;
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane));
+    const int leader = __ffs(mask) - 1;
+    const int rank = __popc(mask & ((1u << lane) - 1u));
+    const int count = __popc(mask);
+    int base = 0;
+    if (static_cast<int>(lane) == leader) {
+        base = atomicAdd(params.out_count, count);
+    }
+    base = __shfl_sync(mask, base, leader);
+    return base + rank;
+}
+
 } // namespace
 
 extern "C" {
@@ -247,7 +262,7 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
         return;
     }
 
-    const int out_idx = atomicAdd(params.out_count, 1);
+    const int out_idx = reserve_path_slot();
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }
@@ -391,7 +406,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
         return;
     }
 
-    const int out_idx = atomicAdd(params.out_count, 1);
+    const int out_idx = reserve_path_slot();
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }

@@ -41,8 +41,9 @@ def _time_dr(fn, dr, warmup: int, repeat: int) -> float:
     return (time.perf_counter() - t0) * 1000.0 / repeat
 
 
-def _load_rayd():
-    sys.path.insert(0, str(RAYDI_ROOT))
+def _load_rayd(source: str, root: Path):
+    if source == "local":
+        sys.path.insert(0, str(root))
     import rayd as rayd
 
     cuda = importlib.import_module("dr" + "jit.cuda")
@@ -191,6 +192,21 @@ def _rayd_dfr_case(rayd, cuda):
     return states, grid, material, options
 
 
+def _rayd_dfr_path_options(rayd):
+    options = rayd.DfrPathOptions()
+    options.wavelength = 0.125
+    options.k = 50.26548245743669
+    options.seed = 17
+    options.max_order = 1
+    options.max_paths = 4
+    options.max_rx = 1
+    options.strategy_mask = rayd.RAYD_DFR_DIRECT
+    options.sample_count = 1
+    options.return_geom = 1
+    options.receiver_model = rayd.RAYD_DFR_MATCHED_ISO
+    return options
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--grid", type=int, default=64)
@@ -198,11 +214,20 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--dynamic", action="store_true")
+    parser.add_argument(
+        "--rayd-source",
+        choices=("package", "local"),
+        default="package",
+        help="Use the installed RayD package by default, or a local checkout via --rayd-root.",
+    )
+    parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA torch is required")
 
-    rayd, cuda, dr = _load_rayd()
+    rayd, cuda, dr = _load_rayd(args.rayd_source, args.rayd_root)
+    rayd_flags_none = getattr(rayd.RayFlags, "None")
+    raydtorch_flags_none = getattr(rt.RayFlags, "None")
     torch.manual_seed(17)
     verts, faces = _grid_data(args.grid)
     scene_t, torch_build_ms = _torch_scene(verts, faces, args.dynamic)
@@ -221,9 +246,21 @@ def main() -> None:
 
     dfr_states_t, dfr_grid_t, dfr_material_t = _torch_dfr_case()
     dfr_states_d, dfr_grid_d, dfr_material_d, dfr_options_d = _rayd_dfr_case(rayd, cuda)
+    dfr_tx_t = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
+    dfr_rx_t = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
+    dfr_active_t = torch.ones((dfr_states_t.state_count,), device="cuda", dtype=torch.bool)
+    dfr_tx_d = cuda.Array3f([0.0], [0.0], [1.0])
+    dfr_rx_d = cuda.Array3f([0.0], [0.0], [-1.0])
+    dfr_active_d = cuda.Bool([True])
+    dfr_path_options_d = _rayd_dfr_path_options(rayd)
 
     torch_result = {
         "build_ms": torch_build_ms,
+        "intersect_flags_none_ms": _time_torch(
+            lambda: scene_t.intersect(ray_t, flags=raydtorch_flags_none).t,
+            args.warmup,
+            args.repeat,
+        ),
         "intersect_ms": _time_torch(lambda: scene_t.intersect(ray_t).t, args.warmup, args.repeat),
         "nearest_edge_ms": _time_torch(lambda: scene_t.nearest_edge(points).distance, args.warmup, args.repeat),
         "reflection_trace_ms": _time_torch(
@@ -243,10 +280,29 @@ def main() -> None:
             args.warmup,
             args.repeat,
         ),
+        "diffraction_paths_ms": _time_torch(
+            lambda: scene_t.trace_dfr_paths(
+                tx_positions=dfr_tx_t,
+                rx_positions=dfr_rx_t,
+                states=dfr_states_t,
+                material=dfr_material_t,
+                active=dfr_active_t,
+                max_paths=4,
+                wavelength=0.125,
+            ).count,
+            args.warmup,
+            args.repeat,
+        ),
     }
 
     rayd_result = {
         "build_ms": rayd_build_ms,
+        "intersect_flags_none_ms": _time_dr(
+            lambda: scene_d.intersect(ray_djit, flags=rayd_flags_none).t,
+            dr,
+            args.warmup,
+            args.repeat,
+        ),
         "intersect_ms": _time_dr(lambda: scene_d.intersect(ray_djit).t, dr, args.warmup, args.repeat),
         "nearest_edge_ms": _time_dr(lambda: scene_d.nearest_edge(points_d).distance, dr, args.warmup, args.repeat),
         "reflection_trace_ms": _time_dr(
@@ -267,6 +323,19 @@ def main() -> None:
             args.warmup,
             args.repeat,
         ),
+        "diffraction_paths_ms": _time_dr(
+            lambda: scene_d.trace_dfr_paths(
+                dfr_tx_d,
+                dfr_rx_d,
+                dfr_states_d,
+                dfr_material_d,
+                dfr_path_options_d,
+                dfr_active_d,
+            ).count,
+            dr,
+            args.warmup,
+            args.repeat,
+        ),
     }
 
     print(
@@ -275,6 +344,9 @@ def main() -> None:
                 "grid": args.grid,
                 "queries": args.queries,
                 "dynamic": args.dynamic,
+                "rayd_source": args.rayd_source,
+                "rayd_root": str(args.rayd_root) if args.rayd_source == "local" else None,
+                "rayd_module": getattr(rayd, "__file__", None),
                 "warmup": args.warmup,
                 "repeat": args.repeat,
                 "raydtorch": torch_result,

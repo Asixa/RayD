@@ -14,9 +14,9 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace raydtorch {
@@ -302,7 +302,21 @@ void update_triangle_accel(
         0));
 }
 
-void build_edge_topology(SceneCache &scene) {
+uint64_t edge_key(int32_t a, int32_t b) {
+    const uint32_t lo = static_cast<uint32_t>(std::min(a, b));
+    const uint32_t hi = static_cast<uint32_t>(std::max(a, b));
+    return (static_cast<uint64_t>(lo) << 32) | static_cast<uint64_t>(hi);
+}
+
+int32_t edge_key_v0(uint64_t key) {
+    return static_cast<int32_t>(key >> 32);
+}
+
+int32_t edge_key_v1(uint64_t key) {
+    return static_cast<int32_t>(key & 0xffffffffu);
+}
+
+void build_edge_topology_cpu_fallback(SceneCache &scene) {
     std::vector<int32_t> edge_v0;
     std::vector<int32_t> edge_v1;
     std::vector<int32_t> edge_face0;
@@ -321,7 +335,8 @@ void build_edge_topology(SceneCache &scene) {
         }
         at::Tensor faces_cpu = mesh.faces.cpu();
         const int *faces = faces_cpu.data_ptr<int>();
-        std::map<std::pair<int32_t, int32_t>, std::vector<std::pair<int32_t, int32_t>>> edge_map;
+        std::unordered_map<uint64_t, std::vector<std::pair<int32_t, int32_t>>> edge_map;
+        edge_map.reserve(static_cast<size_t>(faces_cpu.size(0)) * 3);
         for (int32_t face_id = 0; face_id < static_cast<int32_t>(faces_cpu.size(0)); ++face_id) {
             const int32_t tri[3] = {
                 static_cast<int32_t>(faces[face_id * 3 + 0]),
@@ -335,18 +350,22 @@ void build_edge_topology(SceneCache &scene) {
                 const int32_t start_vertex = tri[start_corner];
                 const int32_t end_vertex = tri[end_corner];
                 const int32_t opposite_vertex = tri[opposite_corner];
-                const auto edge_key = start_vertex < end_vertex
-                    ? std::make_pair(start_vertex, end_vertex)
-                    : std::make_pair(end_vertex, start_vertex);
-                edge_map[edge_key].emplace_back(face_id, opposite_vertex);
+                edge_map[edge_key(start_vertex, end_vertex)].emplace_back(face_id, opposite_vertex);
             }
         }
-        for (const auto &entry : edge_map) {
-            const auto &edge_vertices = entry.first;
-            const auto &faces_on_edge = entry.second;
+        std::vector<uint64_t> sorted_edge_keys;
+        sorted_edge_keys.reserve(edge_map.size());
+        for (const auto &entry : edge_map)
+            sorted_edge_keys.push_back(entry.first);
+        std::sort(sorted_edge_keys.begin(), sorted_edge_keys.end());
+
+        for (uint64_t key : sorted_edge_keys) {
+            const int32_t v0 = edge_key_v0(key);
+            const int32_t v1 = edge_key_v1(key);
+            const auto &faces_on_edge = edge_map.find(key)->second;
             if (faces_on_edge.size() == 1) {
-                edge_v0.push_back(edge_vertices.first + vertex_offset);
-                edge_v1.push_back(edge_vertices.second + vertex_offset);
+                edge_v0.push_back(v0 + vertex_offset);
+                edge_v1.push_back(v1 + vertex_offset);
                 edge_face0.push_back(faces_on_edge[0].first);
                 edge_face1.push_back(-1);
                 edge_opposite.push_back(faces_on_edge[0].second + vertex_offset);
@@ -356,8 +375,8 @@ void build_edge_topology(SceneCache &scene) {
             }
             for (size_t i = 0; i < faces_on_edge.size(); ++i) {
                 for (size_t j = i + 1; j < faces_on_edge.size(); ++j) {
-                    edge_v0.push_back(edge_vertices.first + vertex_offset);
-                    edge_v1.push_back(edge_vertices.second + vertex_offset);
+                    edge_v0.push_back(v0 + vertex_offset);
+                    edge_v1.push_back(v1 + vertex_offset);
                     edge_face0.push_back(faces_on_edge[i].first);
                     edge_face1.push_back(faces_on_edge[j].first);
                     edge_opposite.push_back(faces_on_edge[i].second + vertex_offset);
@@ -381,48 +400,15 @@ void build_edge_topology(SceneCache &scene) {
 }
 
 std::vector<float> compute_edge_search_radii(
-    const std::vector<float> &p0_x,
-    const std::vector<float> &p0_y,
-    const std::vector<float> &p0_z,
-    const std::vector<float> &e1_x,
-    const std::vector<float> &e1_y,
-    const std::vector<float> &e1_z) {
-    const int64_t edge_count = static_cast<int64_t>(p0_x.size());
-    if (edge_count <= 0)
+    const EdgeSearchStats &stats) {
+    if (!stats.has_edges)
         return {};
 
-    float min_x = std::numeric_limits<float>::infinity();
-    float min_y = std::numeric_limits<float>::infinity();
-    float min_z = std::numeric_limits<float>::infinity();
-    float max_x = -std::numeric_limits<float>::infinity();
-    float max_y = -std::numeric_limits<float>::infinity();
-    float max_z = -std::numeric_limits<float>::infinity();
-    float max_edge_length = 0.0f;
-
-    for (int64_t edge = 0; edge < edge_count; ++edge) {
-        const float x0 = p0_x[edge];
-        const float y0 = p0_y[edge];
-        const float z0 = p0_z[edge];
-        const float ex = e1_x[edge];
-        const float ey = e1_y[edge];
-        const float ez = e1_z[edge];
-        const float x1 = x0 + ex;
-        const float y1 = y0 + ey;
-        const float z1 = z0 + ez;
-        min_x = std::min(min_x, std::min(x0, x1));
-        min_y = std::min(min_y, std::min(y0, y1));
-        min_z = std::min(min_z, std::min(z0, z1));
-        max_x = std::max(max_x, std::max(x0, x1));
-        max_y = std::max(max_y, std::max(y0, y1));
-        max_z = std::max(max_z, std::max(z0, z1));
-        max_edge_length = std::max(max_edge_length, std::sqrt(ex * ex + ey * ey + ez * ez));
-    }
-
-    const float dx = std::max(max_x - min_x, 0.0f);
-    const float dy = std::max(max_y - min_y, 0.0f);
-    const float dz = std::max(max_z - min_z, 0.0f);
+    const float dx = std::max(stats.max_x - stats.min_x, 0.0f);
+    const float dy = std::max(stats.max_y - stats.min_y, 0.0f);
+    const float dz = std::max(stats.max_z - stats.min_z, 0.0f);
     const float full_radius = std::max(std::sqrt(dx * dx + dy * dy + dz * dz), 1.0e-3f);
-    const float edge_scale = std::max(max_edge_length, full_radius * 1.0e-4f);
+    const float edge_scale = std::max(stats.max_edge_length, full_radius * 1.0e-4f);
 
     std::vector<float> radii;
     radii.reserve(3);
@@ -481,20 +467,15 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
         return;
     }
 
-    std::vector<float> p0_x(edge_count);
-    std::vector<float> p0_y(edge_count);
-    std::vector<float> p0_z(edge_count);
-    std::vector<float> e1_x(edge_count);
-    std::vector<float> e1_y(edge_count);
-    std::vector<float> e1_z(edge_count);
-    std::memcpy(p0_x.data(), scene.edge_p0_x.cpu().data_ptr<float>(), p0_x.size() * sizeof(float));
-    std::memcpy(p0_y.data(), scene.edge_p0_y.cpu().data_ptr<float>(), p0_y.size() * sizeof(float));
-    std::memcpy(p0_z.data(), scene.edge_p0_z.cpu().data_ptr<float>(), p0_z.size() * sizeof(float));
-    std::memcpy(e1_x.data(), scene.edge_e1_x.cpu().data_ptr<float>(), e1_x.size() * sizeof(float));
-    std::memcpy(e1_y.data(), scene.edge_e1_y.cpu().data_ptr<float>(), e1_y.size() * sizeof(float));
-    std::memcpy(e1_z.data(), scene.edge_e1_z.cpu().data_ptr<float>(), e1_z.size() * sizeof(float));
-
-    std::vector<float> radii = compute_edge_search_radii(p0_x, p0_y, p0_z, e1_x, e1_y, e1_z);
+    const EdgeSearchStats stats = compute_edge_search_stats_cuda(
+        edge_count,
+        scene.edge_p0_x,
+        scene.edge_p0_y,
+        scene.edge_p0_z,
+        scene.edge_e1_x,
+        scene.edge_e1_y,
+        scene.edge_e1_z);
+    std::vector<float> radii = compute_edge_search_radii(stats);
     scene.edge_accels.resize(radii.size());
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
@@ -585,7 +566,7 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
         scene->triangle_accels.push_back(
             build_triangle_accel(mesh, optix_entry.optix_context, torch_ctx.stream));
     build_triangle_ias(*scene, optix_entry.optix_context, torch_ctx.stream);
-    build_edge_topology(*scene);
+    build_edge_topology_cpu_fallback(*scene);
     build_edge_accel(*scene, optix_entry.optix_context, torch_ctx.stream);
     const int64_t handle = scene->handle;
 

@@ -16,7 +16,7 @@ from .autograd import trace_dfr_paths_order1_native as _trace_dfr_paths_order1_n
 from .autograd import trace_reflections as _trace_reflections
 from .autograd import visible as _visible
 from .mesh import Mesh
-from .types import DfrGrid, DfrMaterial, DfrStates, Ray
+from .types import DfrGrid, DfrMaterial, DfrStates, Intersection, Ray, RayFlags
 
 
 def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -28,6 +28,14 @@ def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
     except RuntimeError:
         value = value.detach().clone()
     return value
+
+
+def _has_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
+    for value in values:
+        unpacked = torch.autograd.forward_ad.unpack_dual(value)
+        if unpacked.primal.requires_grad or unpacked.tangent is not None:
+            return True
+    return False
 
 
 class Scene:
@@ -96,11 +104,22 @@ class Scene:
         handle = self._require_ready()
         return int(_C.scene_version(handle))
 
-    def intersect(self, ray: Ray, active=None):
+    def intersect(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
         handle = self._require_ready()
         if active is None:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
         vertices = self._vertices_for_ad()
+        flags = RayFlags(flags)
+        if not _has_reverse_or_forward_ad(vertices, ray.o, ray.d, ray.tmax):
+            values = _C.intersect_forward_flags(
+                handle,
+                ray.o,
+                ray.d,
+                ray.tmax,
+                active.contiguous(),
+                int(flags),
+            )
+            return Intersection(*values)
         return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
 
     def nearest_edge(self, point: torch.Tensor | Ray):

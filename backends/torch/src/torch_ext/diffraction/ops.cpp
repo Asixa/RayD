@@ -387,8 +387,7 @@ py::tuple diffraction_paths_order1_forward_op(
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
-    pipeline->launch(2, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
-    pipeline->launch(3, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
+    pipeline->launch(0, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
 
     return py::make_tuple(
         out_count,

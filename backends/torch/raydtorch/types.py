@@ -1,7 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntFlag
 import torch
+
+
+RayFlags = IntFlag(
+    "RayFlags",
+    {
+        "None": 0x00,
+        "Geometric": 0x01,
+        "ShadingN": 0x02,
+        "UV": 0x04,
+        "All": 0x01 | 0x02 | 0x04,
+    },
+)
 
 
 def _require_float_cuda_tensor(value: torch.Tensor, name: str, shape_last: int | None) -> None:
@@ -52,6 +65,8 @@ class Intersection:
     global_prim_id: torch.Tensor
 
     def is_valid(self) -> torch.Tensor:
+        if self.shape_id.numel() != self.t.numel():
+            return torch.isfinite(self.t)
         return self.shape_id >= 0
 
 

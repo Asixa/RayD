@@ -29,6 +29,14 @@ IntersectForwardOutputs intersect_forward_cuda(
     const at::Tensor &ray_tmax,
     const at::Tensor &active);
 
+IntersectForwardOutputs intersect_forward_flags_cuda(
+    const SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active,
+    int64_t flags);
+
 struct IntersectBackwardOutputs {
     at::Tensor grad_vertices;
     at::Tensor grad_ray_o;

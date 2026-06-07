@@ -66,6 +66,11 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
 
     uint32_t visible = 1u;
     uint32_t blocker = 0xFFFFFFFFu;
+    const unsigned int ray_flags =
+        OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+        ((params.ignore_prim_ids == nullptr || params.ignore_k <= 0)
+             ? OPTIX_RAY_FLAG_DISABLE_ANYHIT
+             : 0u);
     optixTrace(static_cast<OptixTraversableHandle>(params.handle),
                origin,
                direction,
@@ -73,7 +78,7 @@ static __forceinline__ __device__ uint32_t trace_segment(float3 start,
                tmax,
                0.0f,
                255u,
-               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+               ray_flags,
                0,
                1,
                0,
