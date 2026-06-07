@@ -2,6 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status correction, 2026-06-06:** This plan's checked boxes are historical
+> execution notes and must not be read as proof that RayDTorch has achieved
+> complete RayD multipath, diffraction, AD parity, or performance parity. The
+> repository currently lacks a Torch-native rewrite of RayD's `src/multipath`
+> pipeline and kernels. Treat Tasks 13-15, Task 17 parity, and Task 21
+> performance acceptance as incomplete for completion-quality RayD parity. See
+> `docs/raydtorch_native_gap_analysis.md` for the current gap list.
+
 **Goal:** Build the standalone `raydtorch` package in `E:\Code\RayDTorch` by reimplementing RayD's Dr.Jit-backed behavior with a Torch-native public API backed by RayDTorch-owned CUDA/OptiX kernels and explicit VJP/JVP implementations.
 
 **Architecture:** Python exposes regular `torch.Tensor` data structures and `torch.autograd.Function` wrappers. C++/CUDA owns the scene cache, OptiX contexts, acceleration buffers, forward kernels, saved discrete tapes, VJP kernels, and JVP kernels. The first production target is fixed-winner differentiability for geometry queries, then edge queries, reflection/EPC, and diffraction/multipath support.
@@ -56,7 +64,7 @@ The migration is split into independently testable milestones:
 
 The first milestone does not support BSDFs, emitters, integrators, image I/O, scene loaders, or a material-light-integrator framework. RayDTorch remains a geometry, edge-query, camera-ray, and multipath primitive package.
 
-RayDTorch scope is limited to geometry queries, edge queries, camera-ray helpers, and multipath primitives. The first milestone does not implement differentiability through discrete topology choices. Hit primitive ids, edge ids, visibility decisions, and reflection path choices are treated as fixed winners in VJP/JVP, matching the existing RayD fixed-winner AD contract.
+RayDTorch scope is limited to geometry queries, edge queries, camera-ray helpers, and planned multipath primitives. The first milestone does not implement differentiability through discrete topology choices. Hit primitive ids, edge ids, visibility decisions, and reflection path choices are treated as fixed winners in VJP/JVP, matching the existing RayD fixed-winner AD contract.
 
 ## File Structure
 

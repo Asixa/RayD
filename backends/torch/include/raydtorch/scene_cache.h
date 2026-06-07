@@ -40,6 +40,13 @@ struct OptixEdgeAccel {
     float search_radius = 0.0f;
 };
 
+struct OptixInstanceAccel {
+    at::Tensor instance_buffer;
+    at::Tensor ias_buffer;
+    at::Tensor ias_temp_buffer;
+    OptixTraversableHandle traversable = 0;
+};
+
 struct SceneCache {
     int64_t handle = 0;
     int64_t version = 1;
@@ -47,13 +54,22 @@ struct SceneCache {
     int64_t device_index = 0;
     std::vector<MeshRecord> meshes;
     std::vector<OptixTriangleAccel> triangle_accels;
+    OptixInstanceAccel triangle_ias;
     at::Tensor edge_v0;
     at::Tensor edge_v1;
     at::Tensor edge_face0;
     at::Tensor edge_face1;
     at::Tensor edge_shape_id;
     at::Tensor edge_local_id;
+    at::Tensor edge_p0_x;
+    at::Tensor edge_p0_y;
+    at::Tensor edge_p0_z;
+    at::Tensor edge_e1_x;
+    at::Tensor edge_e1_y;
+    at::Tensor edge_e1_z;
+    at::Tensor edge_mask;
     OptixEdgeAccel edge_accel;
+    std::vector<OptixEdgeAccel> edge_accels;
 };
 
 int64_t create_scene(std::vector<MeshRecord> meshes);

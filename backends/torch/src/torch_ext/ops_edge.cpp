@@ -49,6 +49,34 @@ py::tuple nearest_edge_backward_op(
     return py::make_tuple(out.grad_vertices, out.grad_point);
 }
 
+py::tuple nearest_edge_ray_forward_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    at::Tensor active) {
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_scalar_f(ray_tmax, "ray_tmax");
+    require_mask(active, "active");
+    if (ray_d.size(0) != ray_o.size(0) || ray_tmax.size(0) != ray_o.size(0) || active.size(0) != ray_o.size(0))
+        throw std::runtime_error("ray_d, ray_tmax, and active must match ray_o batch size.");
+    SceneCache &scene = get_scene(scene_handle);
+    if (scene.meshes.size() != 1)
+        throw std::runtime_error("nearest_edge_ray_forward: first milestone supports exactly one mesh.");
+    EdgeRayForwardOutputs out = edge_ray_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
+    return py::make_tuple(
+        out.distance,
+        out.ray_t,
+        out.point,
+        out.edge_t,
+        out.edge_point,
+        out.shape_id,
+        out.edge_id,
+        out.global_edge_id,
+        out.tape_edge_id);
+}
+
 py::tuple nearest_edge_jvp_op(
     int64_t scene_handle,
     at::Tensor point,
@@ -74,6 +102,7 @@ py::tuple nearest_edge_jvp_op(
 
 void bind_edge_ops(py::module_ &m) {
     m.def("nearest_edge_forward", &nearest_edge_forward_op);
+    m.def("nearest_edge_ray_forward", &nearest_edge_ray_forward_op);
     m.def("nearest_edge_backward", &nearest_edge_backward_op);
     m.def("nearest_edge_jvp", &nearest_edge_jvp_op);
 }

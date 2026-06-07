@@ -60,6 +60,18 @@ if(RAYDTORCH_BUILD_NATIVE)
     set(RAYDTORCH_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/optix_intersect_ptx.h")
     set(RAYDTORCH_EDGE_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix.ptx")
     set(RAYDTORCH_EDGE_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/edge_optix_ptx.h")
+    set(RAYDTORCH_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_optix.ptx")
+    set(RAYDTORCH_REFLECTION_TRACE_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/reflection_trace_optix_ptx.h")
+    set(RAYDTORCH_SEGMENT_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_optix.ptx")
+    set(RAYDTORCH_SEGMENT_VISIBILITY_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/segment_visibility_optix_ptx.h")
+    set(RAYDTORCH_REFLECTION_EPC_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_optix.ptx")
+    set(RAYDTORCH_REFLECTION_EPC_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/reflection_epc_optix_ptx.h")
+    set(RAYDTORCH_REFLECTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation_optix.ptx")
+    set(RAYDTORCH_REFLECTION_ACCUMULATION_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/reflection_accumulation_optix_ptx.h")
+    set(RAYDTORCH_DIFFRACTION_PATHS_PTX "${CMAKE_CURRENT_BINARY_DIR}/diffraction_paths_optix.ptx")
+    set(RAYDTORCH_DIFFRACTION_PATHS_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/diffraction_paths_optix_ptx.h")
+    set(RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_optix.ptx")
+    set(RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/diffraction_accumulation_optix_ptx.h")
     add_custom_command(
         OUTPUT "${RAYDTORCH_OPTIX_PTX}"
         COMMAND
@@ -116,12 +128,185 @@ if(RAYDTORCH_BUILD_NATIVE)
             src/torch_ext/embed_ptx.py
     )
     add_custom_target(raydtorch_edge_optix_ptx DEPENDS "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_TRACE_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/reflection_trace_optix.cu"
+            -o "${RAYDTORCH_REFLECTION_TRACE_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/reflection_trace_optix.cu
+            include/raydtorch/reflection_trace_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_TRACE_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_REFLECTION_TRACE_PTX}"
+            "${RAYDTORCH_REFLECTION_TRACE_PTX_HEADER}"
+            raydtorch_reflection_trace_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_REFLECTION_TRACE_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_reflection_trace_optix_ptx DEPENDS "${RAYDTORCH_REFLECTION_TRACE_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_SEGMENT_VISIBILITY_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/segment_visibility_optix.cu"
+            -o "${RAYDTORCH_SEGMENT_VISIBILITY_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/segment_visibility_optix.cu
+            include/raydtorch/segment_visibility_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_SEGMENT_VISIBILITY_PTX}"
+            "${RAYDTORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
+            raydtorch_segment_visibility_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_SEGMENT_VISIBILITY_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_segment_visibility_optix_ptx DEPENDS "${RAYDTORCH_SEGMENT_VISIBILITY_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_EPC_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/reflection_epc_optix.cu"
+            -o "${RAYDTORCH_REFLECTION_EPC_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/reflection_epc_optix.cu
+            include/raydtorch/reflection_epc_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_EPC_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_REFLECTION_EPC_PTX}"
+            "${RAYDTORCH_REFLECTION_EPC_PTX_HEADER}"
+            raydtorch_reflection_epc_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_REFLECTION_EPC_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_reflection_epc_optix_ptx DEPENDS "${RAYDTORCH_REFLECTION_EPC_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/reflection_accumulation_optix.cu"
+            -o "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/reflection_accumulation_optix.cu
+            include/raydtorch/reflection_accumulation_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX}"
+            "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"
+            raydtorch_reflection_accumulation_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_reflection_accumulation_optix_ptx DEPENDS "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_DIFFRACTION_PATHS_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/diffraction_paths_optix.cu"
+            -o "${RAYDTORCH_DIFFRACTION_PATHS_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/diffraction_paths_optix.cu
+            include/raydtorch/diffraction_common.h
+            include/raydtorch/diffraction_paths_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_DIFFRACTION_PATHS_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_DIFFRACTION_PATHS_PTX}"
+            "${RAYDTORCH_DIFFRACTION_PATHS_PTX_HEADER}"
+            raydtorch_diffraction_paths_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_DIFFRACTION_PATHS_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_diffraction_paths_optix_ptx DEPENDS "${RAYDTORCH_DIFFRACTION_PATHS_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/kernels/diffraction_accumulation_optix.cu"
+            -o "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+        DEPENDS
+            src/torch_ext/kernels/diffraction_accumulation_optix.cu
+            include/raydtorch/diffraction_common.h
+            include/raydtorch/diffraction_accumulation_params.h
+            include/utd/utd_math.h
+            include/utd/utd_types.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX}"
+            "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"
+            raydtorch_diffraction_accumulation_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(raydtorch_diffraction_accumulation_optix_ptx DEPENDS "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}")
 
     pybind11_add_module(
         _raydtorch
         src/torch_ext/module.cpp
         src/torch_ext/tensor_check.cpp
         src/torch_ext/scene_cache.cpp
+        src/torch_ext/multipath_pipeline.cpp
         src/torch_ext/ops_scene.cpp
         src/torch_ext/optix_context.cpp
         src/torch_ext/ops_intersect.cpp
@@ -133,7 +318,10 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/kernels/edge_backward.cu
         src/torch_ext/kernels/visibility_backward.cu
         src/torch_ext/kernels/multipath_backward.cu
+        src/torch_ext/kernels/reflection_dedup.cu
+        src/torch_ext/kernels/reflection_epc_field.cu
         src/torch_ext/kernels/diffraction_accumulation_ad.cu
+        src/torch_ext/kernels/diffraction_accumulation_ad_native.cu
     )
     target_include_directories(
         _raydtorch
@@ -143,7 +331,16 @@ if(RAYDTORCH_BUILD_NATIVE)
             ${CUDAToolkit_INCLUDE_DIRS}
             ${OPTIX_INCLUDE_DIR}
     )
-    add_dependencies(_raydtorch raydtorch_optix_ptx raydtorch_edge_optix_ptx)
+    add_dependencies(
+        _raydtorch
+        raydtorch_optix_ptx
+        raydtorch_edge_optix_ptx
+        raydtorch_reflection_trace_optix_ptx
+        raydtorch_segment_visibility_optix_ptx
+        raydtorch_reflection_epc_optix_ptx
+        raydtorch_reflection_accumulation_optix_ptx
+        raydtorch_diffraction_paths_optix_ptx
+        raydtorch_diffraction_accumulation_optix_ptx)
     target_link_libraries(_raydtorch PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
     target_compile_features(_raydtorch PRIVATE cxx_std_17)
     install(TARGETS _raydtorch LIBRARY DESTINATION raydtorch RUNTIME DESTINATION raydtorch)

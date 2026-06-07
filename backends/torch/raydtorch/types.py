@@ -69,8 +69,9 @@ class NearestPointEdge:
 class NearestRayEdge:
     distance: torch.Tensor
     ray_t: torch.Tensor
-    edge_point: torch.Tensor
+    point: torch.Tensor
     edge_t: torch.Tensor
+    edge_point: torch.Tensor
     shape_id: torch.Tensor
     edge_id: torch.Tensor
     global_edge_id: torch.Tensor
@@ -98,6 +99,135 @@ class DfrDirectAccum:
     power: torch.Tensor
     field_x_re: torch.Tensor
     field_x_im: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DfrGrid:
+    axis: int = 2
+    position: float = 0.0
+    coord0_min: float = -1.0
+    coord0_max: float = 1.0
+    coord1_min: float = -1.0
+    coord1_max: float = 1.0
+    resolution0: int = 1
+    resolution1: int = 1
+    cell_area: float | None = None
+
+    def resolved_cell_area(self) -> float:
+        if self.cell_area is not None:
+            return float(self.cell_area)
+        span0 = float(self.coord0_max) - float(self.coord0_min)
+        span1 = float(self.coord1_max) - float(self.coord1_min)
+        return abs(span0 * span1) / float(int(self.resolution0) * int(self.resolution1))
+
+
+@dataclass(frozen=True)
+class DfrMaterial:
+    eta_r: torch.Tensor
+    sigma: torch.Tensor
+    mu_r: torch.Tensor
+    gain: torch.Tensor
+    valid: torch.Tensor
+
+    @staticmethod
+    def default(count: int, *, device: torch.device, dtype: torch.dtype = torch.float32) -> "DfrMaterial":
+        return DfrMaterial(
+            eta_r=torch.ones((count,), device=device, dtype=dtype),
+            sigma=torch.zeros((count,), device=device, dtype=dtype),
+            mu_r=torch.ones((count,), device=device, dtype=dtype),
+            gain=torch.ones((count,), device=device, dtype=dtype),
+            valid=torch.ones((count,), device=device, dtype=torch.bool),
+        )
+
+
+@dataclass(frozen=True)
+class DfrStates:
+    edge_index: torch.Tensor
+    edge_pos: torch.Tensor
+    edge_dir: torch.Tensor
+    edge_t_min: torch.Tensor
+    edge_t_max: torch.Tensor
+    n0: torch.Tensor
+    n1: torch.Tensor
+    prim0: torch.Tensor
+    prim1: torch.Tensor
+    exterior_angle: torch.Tensor
+    src: torch.Tensor
+    src_power: torch.Tensor
+    wi: torch.Tensor | None = None
+    d0: torch.Tensor | None = None
+    count: int | None = None
+
+    @property
+    def state_count(self) -> int:
+        return int(self.edge_index.shape[0] if self.count is None else self.count)
+
+    def with_default_vectors(self) -> "DfrStates":
+        wi = self.wi
+        d0 = self.d0
+        if wi is None:
+            wi = torch.zeros_like(self.edge_pos)
+        if d0 is None:
+            d0 = torch.zeros_like(self.edge_pos)
+        return DfrStates(
+            self.edge_index,
+            self.edge_pos,
+            self.edge_dir,
+            self.edge_t_min,
+            self.edge_t_max,
+            self.n0,
+            self.n1,
+            self.prim0,
+            self.prim1,
+            self.exterior_angle,
+            self.src,
+            self.src_power,
+            wi,
+            d0,
+            self.count,
+        )
+
+
+@dataclass(frozen=True)
+class DfrAccum:
+    grid_cell_count: int
+    power: torch.Tensor
+    field_x_re: torch.Tensor
+    field_x_im: torch.Tensor
+    field_y_re: torch.Tensor
+    field_y_im: torch.Tensor
+    field_z_re: torch.Tensor
+    field_z_im: torch.Tensor
+    direct_count: torch.Tensor
+    keller_count: torch.Tensor
+    suffix_count: torch.Tensor
+    vis_rejects: torch.Tensor
+    edge_vis_rejects: torch.Tensor
+    utd_rejects: torch.Tensor
+    edge_uses: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DfrPaths:
+    capacity: int
+    count: torch.Tensor
+    valid: torch.Tensor
+    tx_id: torch.Tensor
+    rx_id: torch.Tensor
+    order: torch.Tensor
+    edge0: torch.Tensor
+    edge1: torch.Tensor
+    edge2: torch.Tensor
+    delay: torch.Tensor
+    field_x_re: torch.Tensor
+    field_x_im: torch.Tensor
+    field_y_re: torch.Tensor
+    field_y_im: torch.Tensor
+    field_z_re: torch.Tensor
+    field_z_im: torch.Tensor
+    p0: torch.Tensor
+    p1: torch.Tensor
+    p2: torch.Tensor
 
 
 @dataclass(frozen=True)

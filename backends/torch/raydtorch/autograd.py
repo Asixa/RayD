@@ -3,7 +3,19 @@ from __future__ import annotations
 import torch
 
 from . import _C
-from .types import DfrDirectAccum, Intersection, NearestPointEdge, ReflEpcField, ReflectionChain
+from .types import (
+    DfrAccum,
+    DfrDirectAccum,
+    DfrGrid,
+    DfrMaterial,
+    DfrPaths,
+    DfrStates,
+    Intersection,
+    NearestPointEdge,
+    NearestRayEdge,
+    ReflEpcField,
+    ReflectionChain,
+)
 
 
 def _native_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -134,7 +146,11 @@ class _NearestEdgeFunction(torch.autograd.Function):
         point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
         grad_distance = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(distance)
         grad_edge_point = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(point)
-        grad_edge_t = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(distance)
+        grad_edge_t = torch.zeros_like(distance)
+        if grad_outputs[2] is not None:
+            grad_edge_t = grad_edge_t + grad_outputs[2].contiguous()
+        if len(grad_outputs) > 7 and grad_outputs[7] is not None:
+            grad_edge_t = grad_edge_t + grad_outputs[7].contiguous()
         grad_vertices, grad_point = _C.nearest_edge_backward(
             ctx.scene_handle,
             point,
@@ -170,6 +186,42 @@ class _NearestEdgeFunction(torch.autograd.Function):
 def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
     return NearestPointEdge(*values[:6])
+
+
+class _NearestEdgeRayFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        vertices: torch.Tensor,
+        ray_o: torch.Tensor,
+        ray_d: torch.Tensor,
+        ray_tmax: torch.Tensor,
+        active: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.nearest_edge_ray_forward(int(scene_handle), ray_o, ray_d, ray_tmax, active)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        distance, ray_t, point, edge_t, edge_point, shape_id, edge_id, global_edge_id, tape_edge_id = output
+        ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        return None, None, None, None, None, None
+
+
+def nearest_edge_ray(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    ray_o: torch.Tensor,
+    ray_d: torch.Tensor,
+    ray_tmax: torch.Tensor,
+    active: torch.Tensor,
+) -> NearestRayEdge:
+    values = _NearestEdgeRayFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active)
+    return NearestRayEdge(*values[:8])
 
 
 def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
@@ -439,6 +491,134 @@ class _AccumDfrDirectFunction(torch.autograd.Function):
 def accum_dfr_direct(edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor) -> DfrDirectAccum:
     values = _AccumDfrDirectFunction.apply(edge_pos, edge_dir, src)
     return DfrDirectAccum(*values)
+
+
+def _contig_states(states: DfrStates) -> DfrStates:
+    states = states.with_default_vectors()
+    n = states.state_count
+    return DfrStates(
+        edge_index=states.edge_index[:n].contiguous(),
+        edge_pos=states.edge_pos[:n].contiguous(),
+        edge_dir=states.edge_dir[:n].contiguous(),
+        edge_t_min=states.edge_t_min[:n].contiguous(),
+        edge_t_max=states.edge_t_max[:n].contiguous(),
+        n0=states.n0[:n].contiguous(),
+        n1=states.n1[:n].contiguous(),
+        prim0=states.prim0[:n].contiguous(),
+        prim1=states.prim1[:n].contiguous(),
+        exterior_angle=states.exterior_angle[:n].contiguous(),
+        src=states.src[:n].contiguous(),
+        src_power=states.src_power[:n].contiguous(),
+        wi=states.wi[:n].contiguous(),
+        d0=states.d0[:n].contiguous(),
+        count=states.count,
+    )
+
+
+def _contig_material(material: DfrMaterial) -> DfrMaterial:
+    return DfrMaterial(
+        eta_r=material.eta_r.contiguous(),
+        sigma=material.sigma.contiguous(),
+        mu_r=material.mu_r.contiguous(),
+        gain=material.gain.contiguous(),
+        valid=material.valid.contiguous(),
+    )
+
+
+def trace_dfr_paths_order1_native(
+    scene_handle: int,
+    tx_positions: torch.Tensor,
+    rx_positions: torch.Tensor,
+    states: DfrStates,
+    material: DfrMaterial,
+    *,
+    active: torch.Tensor,
+    max_paths: int,
+    wavelength: float,
+) -> DfrPaths:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    states = _contig_states(states)
+    material = _contig_material(material)
+    state_limit = min(states.state_count, int(max_paths))
+    capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
+    values = _C.diffraction_paths_order1_forward(
+        int(scene_handle),
+        tx_positions.contiguous(),
+        rx_positions.contiguous(),
+        active.contiguous(),
+        states.edge_index,
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.n0,
+        states.n1,
+        states.prim0,
+        states.prim1,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        material.gain,
+        material.valid,
+        capacity,
+        float(wavelength),
+    )
+    return DfrPaths(capacity, *values)
+
+
+def accum_dfr_direct_native(
+    scene_handle: int,
+    states: DfrStates,
+    grid: DfrGrid,
+    material: DfrMaterial,
+    *,
+    active: torch.Tensor,
+    wavelength: float,
+    direct_samples: int,
+    keller_samples: int = 0,
+) -> DfrAccum:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    states = _contig_states(states)
+    material = _contig_material(material)
+    values = _C.diffraction_accumulation_forward(
+        int(scene_handle),
+        active.contiguous(),
+        states.edge_index,
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.n0,
+        states.n1,
+        states.prim0,
+        states.prim1,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        states.wi,
+        states.d0,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+        int(grid.axis),
+        float(grid.position),
+        float(grid.coord0_min),
+        float(grid.coord0_max),
+        float(grid.coord1_min),
+        float(grid.coord1_max),
+        int(grid.resolution0),
+        int(grid.resolution1),
+        grid.resolved_cell_area(),
+        float(wavelength),
+        int(direct_samples),
+        int(keller_samples),
+    )
+    grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+    return DfrAccum(grid_cell_count, *values[:14])
 
 
 class NativeOpUnavailable(RuntimeError):

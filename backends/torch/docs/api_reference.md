@@ -17,13 +17,20 @@ import raydtorch as rt
 
 - `Scene.intersect(ray, active=None)` returns `Intersection`.
 - `Scene.nearest_edge(point)` returns `NearestPointEdge`.
+- `Scene.nearest_edge(ray)` returns `NearestRayEdge`; ray-query VJP/JVP parity is still incomplete.
 - `Scene.visible(start, end, active=None)` returns a `torch.bool` visibility tensor.
 
 ## Multipath
 
-- `Scene.trace_reflections(ray, max_bounces, active=None)` returns `ReflectionChain`.
-- `Scene.trace_refl_epc_field(source, receiver, max_bounces, active=None)` returns `ReflEpcField`.
-- `Scene.accum_dfr_direct(edge_pos=..., edge_dir=..., src=...)` returns `DfrDirectAccum`.
+- `Scene.trace_reflections(ray, max_bounces, active=None)` returns `ReflectionChain`; the forward path uses a RayD-source-ported single OptiX launch with the bounce loop inside raygen.
+- `Scene.trace_refl_epc_field(source, receiver, max_bounces, active=None)` returns `ReflEpcField`; the forward path uses RayD-source-ported reflection EPC plus EPC field kernels with simplified default material/options at the Python API boundary.
+- `Scene.accum_dfr_direct(edge_pos=..., edge_dir=..., src=...)` returns `DfrDirectAccum`, but the current CUDA kernel is a simplified direct accumulation placeholder.
+
+These APIs are not yet full RayD multipath/diffraction parity. Reflection-side
+segment visibility, trace, EPC, EPC field, dedup, and accumulation kernels have
+native CUDA/OptiX source ports, but full RayD scene split/IAS behavior,
+reflection AD parity, diffraction path search, and diffraction accumulation
+kernels still need completion-quality implementations and parity tests.
 
 ## Tensor ABI
 
@@ -34,3 +41,6 @@ All native geometry and multipath inputs are CUDA tensors. Continuous vector inp
 Native operators support VJP and JVP for continuous Torch inputs. Discrete choices such as primitive id, edge id, visibility, and fixed path sequence are non-differentiable and are held fixed from the forward pass. Continuous outputs are recomputed from the fixed winner and live geometry tensors during AD.
 
 RayDTorch does not import or depend on Dr.Jit in the `raydtorch` package path.
+
+See `docs/raydtorch_native_gap_analysis.md` for the current incomplete parity
+items.

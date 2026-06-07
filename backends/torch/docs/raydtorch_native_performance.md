@@ -12,11 +12,11 @@ Current RayDTorch-native result:
 
 ```json
 {
-  "build_ms": 83.49,
-  "dynamic_sync_ms": 0.20,
+  "build_ms": 1550.21,
+  "dynamic_sync_ms": 2.29,
   "grid": 192,
-  "intersect_ms": 0.103,
-  "nearest_edge_ms": 162.48,
+  "intersect_ms": 0.241,
+  "nearest_edge_ms": 0.423,
   "queries": 65536
 }
 ```
@@ -34,12 +34,12 @@ Known same-scale RayD edge benchmark snapshot:
 
 Current interpretation:
 
-- RayDTorch scene build is faster for this benchmark shape.
-- RayDTorch dynamic sync appears faster, but the two paths must be checked for identical update work before treating this as a performance win.
-- RayDTorch `nearest_edge` is significantly slower than RayD default treelet traversal and slower than the RayD HLBVH experiment.
+- RayDTorch scene build is currently slower for this benchmark shape.
+- RayDTorch dynamic sync now rebuilds the edge acceleration data after dynamic vertex updates, so it should not be compared to the earlier stale-edge-accel timing.
+- RayDTorch `nearest_edge` no longer shows the previous all-edge-scan-scale regression in this benchmark.
 - There is no same-script RayD `intersect` baseline checked into this repository, so `intersect_ms` cannot yet be used to claim a RayD speedup.
 
-The current implementation should be treated as runnable but not yet proven performance-equivalent or performance-superior to RayD. The largest known regression is nearest-edge query throughput.
+The current implementation should be treated as runnable but not yet proven performance-equivalent or performance-superior to RayD. A same-script RayD/RayDTorch benchmark is still required for completion-quality performance acceptance.
 
 ## Parity Coverage Status
 
@@ -61,3 +61,14 @@ It still does not prove parity for:
 - diffraction accumulation forward/VJP/JVP
 
 A completion-quality parity/performance gate needs to run RayD and RayDTorch on the same scene, same query tensors, same batch sizes, and same machine for those APIs.
+
+## Multipath Implementation Status
+
+RayDTorch now contains source ports for the RayD reflection-side `src/multipath`
+execution path: segment visibility, reflection trace, reflection EPC, EPC
+field, reflection dedup, and reflection accumulation. This still should not be
+read as completed RayD parity until the same-script RayD/RayDTorch numerical and
+performance gates cover those kernels. Diffraction path search and diffraction
+accumulation remain incomplete.
+
+See `docs/raydtorch_native_gap_analysis.md` for the tracked gap list.

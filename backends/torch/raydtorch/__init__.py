@@ -14,7 +14,12 @@ from .camera import Camera
 from .mesh import Mesh
 from .scene import Scene
 from .types import (
+    DfrAccum,
     DfrDirectAccum,
+    DfrGrid,
+    DfrMaterial,
+    DfrPaths,
+    DfrStates,
     Intersection,
     NearestPointEdge,
     NearestRayEdge,
@@ -25,7 +30,12 @@ from .types import (
 )
 
 __all__ = [
+    "DfrAccum",
     "DfrDirectAccum",
+    "DfrGrid",
+    "DfrMaterial",
+    "DfrPaths",
+    "DfrStates",
     "Camera",
     "Intersection",
     "Mesh",

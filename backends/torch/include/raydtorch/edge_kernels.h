@@ -20,6 +20,25 @@ struct EdgeForwardOutputs {
 
 EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &point);
 
+struct EdgeRayForwardOutputs {
+    at::Tensor distance;
+    at::Tensor ray_t;
+    at::Tensor point;
+    at::Tensor edge_t;
+    at::Tensor edge_point;
+    at::Tensor shape_id;
+    at::Tensor edge_id;
+    at::Tensor global_edge_id;
+    at::Tensor tape_edge_id;
+};
+
+EdgeRayForwardOutputs edge_ray_forward_cuda(
+    const SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active);
+
 struct EdgeBackwardOutputs {
     at::Tensor grad_vertices;
     at::Tensor grad_point;

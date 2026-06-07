@@ -10,6 +10,12 @@
 
 namespace raydtorch {
 
+enum class EdgeOptixLaunchKind {
+    Point,
+    Ray,
+    PointTopK,
+};
+
 struct TorchCudaContext {
     int device_index = 0;
     cudaStream_t stream = nullptr;
@@ -30,19 +36,38 @@ struct OptixDeviceContextEntry {
     at::Tensor intersect_hitgroup_record;
     OptixModule edge_module = nullptr;
     OptixPipeline edge_pipeline = nullptr;
-    OptixProgramGroup edge_raygen_group = nullptr;
+    OptixProgramGroup edge_raygen_point_group = nullptr;
+    OptixProgramGroup edge_raygen_ray_group = nullptr;
+    OptixProgramGroup edge_raygen_topk_group = nullptr;
     OptixProgramGroup edge_miss_group = nullptr;
-    OptixProgramGroup edge_hitgroup = nullptr;
-    OptixShaderBindingTable edge_sbt = {};
-    at::Tensor edge_raygen_record;
+    OptixProgramGroup edge_hit_point_group = nullptr;
+    OptixProgramGroup edge_hit_ray_group = nullptr;
+    OptixProgramGroup edge_hit_topk_group = nullptr;
+    OptixShaderBindingTable edge_point_sbt = {};
+    OptixShaderBindingTable edge_ray_sbt = {};
+    OptixShaderBindingTable edge_topk_sbt = {};
+    at::Tensor edge_raygen_point_record;
+    at::Tensor edge_raygen_ray_record;
+    at::Tensor edge_raygen_topk_record;
     at::Tensor edge_miss_record;
-    at::Tensor edge_hitgroup_record;
+    at::Tensor edge_hitgroup_records;
+    OptixModule reflection_trace_module = nullptr;
+    OptixPipeline reflection_trace_pipeline = nullptr;
+    OptixProgramGroup reflection_trace_raygen_group = nullptr;
+    OptixProgramGroup reflection_trace_miss_group = nullptr;
+    OptixProgramGroup reflection_trace_hitgroup = nullptr;
+    OptixShaderBindingTable reflection_trace_sbt = {};
+    at::Tensor reflection_trace_raygen_record;
+    at::Tensor reflection_trace_miss_record;
+    at::Tensor reflection_trace_hitgroup_record;
 };
 
 TorchCudaContext current_torch_cuda_context();
 OptixDeviceContextEntry &get_optix_context(int device_index);
 void ensure_intersect_pipeline(OptixDeviceContextEntry &entry);
 void ensure_edge_pipeline(OptixDeviceContextEntry &entry);
+const OptixShaderBindingTable &edge_sbt(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind);
+void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry);
 void optix_check(OptixResult result, const char *expr, const char *file, int line);
 
 } // namespace raydtorch

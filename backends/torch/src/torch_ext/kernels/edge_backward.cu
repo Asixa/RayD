@@ -34,13 +34,16 @@ __device__ void atomic_add3(float *base, int index, float3 value) {
 }
 
 __global__ void edge_backward_kernel(
+    const float *__restrict__ vertices,
     const int *__restrict__ edge_v0,
     const int *__restrict__ edge_v1,
+    const float *__restrict__ point,
     const int *__restrict__ tape_edge_id,
     const float *__restrict__ tape_s,
     const float *__restrict__ tape_d,
     const float *__restrict__ grad_distance,
     const float *__restrict__ grad_edge_point,
+    const float *__restrict__ grad_edge_t,
     int64_t point_count,
     float *__restrict__ grad_vertices,
     float *__restrict__ grad_point) {
@@ -55,6 +58,10 @@ __global__ void edge_backward_kernel(
 
     const int i0 = edge_v0[edge_id];
     const int i1 = edge_v1[edge_id];
+    const float3 p = make_f3(point + point_idx * 3);
+    const float3 a = make_f3(vertices + i0 * 3);
+    const float3 b = make_f3(vertices + i1 * 3);
+    const float3 edge = sub3(b, a);
     const float s = tape_s[point_idx];
     const float3 d = make_f3(tape_d + point_idx * 3);
     const float dist = sqrtf(fmaxf(dot3(d, d), 1e-20f));
@@ -67,6 +74,22 @@ __global__ void edge_backward_kernel(
     grad_point[point_idx * 3 + 2] += gd.z;
     atomic_add3(grad_vertices, i0, mul3(1.f - s, edge_point_bar));
     atomic_add3(grad_vertices, i1, mul3(s, edge_point_bar));
+
+    float s_bar = grad_edge_t[point_idx] + dot3(edge_point_bar, edge);
+    if (s_bar != 0.f && s > 0.f && s < 1.f) {
+        const float denom = fmaxf(dot3(edge, edge), 1e-20f);
+        const float3 point_term = mul3(s_bar / denom, edge);
+        grad_point[point_idx * 3 + 0] += point_term.x;
+        grad_point[point_idx * 3 + 1] += point_term.y;
+        grad_point[point_idx * 3 + 2] += point_term.z;
+
+        const float3 pa = sub3(p, a);
+        const float numer = dot3(pa, edge);
+        const float3 edge_term =
+            mul3(s_bar, sub3(mul3(1.f / denom, pa), mul3((2.f * numer) / (denom * denom), edge)));
+        atomic_add3(grad_vertices, i0, mul3(-1.f, add3(point_term, edge_term)));
+        atomic_add3(grad_vertices, i1, edge_term);
+    }
 }
 
 __global__ void edge_jvp_kernel(
@@ -140,7 +163,6 @@ EdgeBackwardOutputs edge_backward_cuda(
     const at::Tensor &grad_distance,
     const at::Tensor &grad_edge_point,
     const at::Tensor &grad_edge_t) {
-    (void)grad_edge_t;
     const int64_t point_count = point.size(0);
     EdgeBackwardOutputs out;
     out.grad_vertices = at::zeros_like(vertices);
@@ -150,13 +172,16 @@ EdgeBackwardOutputs edge_backward_cuda(
     const int blocks = static_cast<int>((point_count + threads - 1) / threads);
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(point.get_device()).stream();
     edge_backward_kernel<<<blocks, threads, 0, stream>>>(
+        vertices.data_ptr<float>(),
         edge_v0.data_ptr<int>(),
         edge_v1.data_ptr<int>(),
+        point.data_ptr<float>(),
         tape_edge_id.data_ptr<int>(),
         tape_s.data_ptr<float>(),
         tape_d.data_ptr<float>(),
         grad_distance.data_ptr<float>(),
         grad_edge_point.data_ptr<float>(),
+        grad_edge_t.data_ptr<float>(),
         point_count,
         out.grad_vertices.data_ptr<float>(),
         out.grad_point.data_ptr<float>());
