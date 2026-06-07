@@ -92,6 +92,35 @@ class _IntersectFunction(torch.autograd.Function):
     def backward(ctx, *grad_outputs):
         ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
         grad_t = _grad_or_zeros(grad_outputs[0], tape_t)
+        if ctx.flags == 0:
+            need_grad_vertices = bool(ctx.needs_input_grad[1])
+            need_grad_ray_o = bool(ctx.needs_input_grad[2])
+            need_grad_ray_d = bool(ctx.needs_input_grad[3])
+            need_grad_ray_tmax = bool(ctx.needs_input_grad[4])
+            if not (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax):
+                return None, None, None, None, None, None, None
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward_t(
+                ctx.scene_handle,
+                ray_o,
+                ray_d,
+                active,
+                tape_prim_id,
+                tape_barycentric,
+                grad_t,
+                need_grad_vertices,
+                need_grad_ray_o,
+                need_grad_ray_d,
+                need_grad_ray_tmax,
+            )
+            return (
+                None,
+                grad_vertices if need_grad_vertices else None,
+                grad_ray_o if need_grad_ray_o else None,
+                grad_ray_d if need_grad_ray_d else None,
+                grad_ray_tmax if need_grad_ray_tmax else None,
+                None,
+                None,
+            )
         grad_p = _grad_or_zeros(grad_outputs[1], ray_o)
         grad_n = _grad_or_zeros(grad_outputs[2], ray_o)
         grad_geo_n = _grad_or_zeros(grad_outputs[3], ray_o)

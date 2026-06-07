@@ -37,6 +37,11 @@ Implemented in the current worktree:
   Differentiable calls still keep hidden hit tape for VJP/JVP, but the tape is
   reduced to `global_prim_id + (u,v) + t`; `RayFlags.None` no longer
   materializes public `p/n/uv/bary/ids`.
+- `RayFlags.None` reverse-mode AD now uses a dedicated t-only backward native
+  path. It does not allocate or pass full public-output gradient tensors for
+  `p/n/geo_n/uv/barycentric`, skips unused ray/tmax gradient outputs via
+  `ctx.needs_input_grad`, and uses warp-labeled aggregation for the t-only
+  `grad_vertices` scatter.
 - Edge topology construction is now fully GPU-side for the build path:
   per-face edge candidates are emitted on CUDA, sorted with CUB by canonical
   edge key, segmented, scanned, and expanded into the RayD-compatible boundary /
@@ -95,10 +100,11 @@ Implemented in the current worktree:
 
 Intentional non-fast paths that remain:
 
-- Intersect AD/JVP/VJP still routes through the generic dense backward/JVP
-  kernels. `RayFlags.None` avoids public output materialization and uses a
-  2-float hidden barycentric tape, but static AD backward is still slower than
-  RayD on the measured differentiable `sum(t)` workload.
+- Intersect `RayFlags.All` AD still routes through the generic dense
+  backward/JVP kernels because the public contract includes `p/n/geo_n/uv`
+  and barycentric gradients. `RayFlags.None` now has a t-only backward kernel,
+  but static differentiable `sum(t)` remains slower than RayD on some measured
+  shapes because RayDTorch still returns a dense PyTorch `grad_vertices`.
 - Diffraction direct/chain AD paths keep their existing full-output contract.
   The no-tape direct path is only selected when neither reverse-mode nor
   forward-mode AD is active.
@@ -124,6 +130,11 @@ Latest verification:
 - Reflection staged accumulation path compiles and is wired behind a high-contention
   threshold. Current public native smoke uses default air-air material parameters, so
   reflection accumulation remains zero and does not yet prove a speedup for that path.
+- Multipath smoke benchmark:
+  `python -m tests.benchmark_raydtorch_rayd_mitsuba_multipath --preset smoke --rayd-source local --rayd-root E:\Code\RayDi`
+  completed for RayDTorch, RayD path, and Mitsuba path; outputs are under
+  `artifacts/benchmarks/multipath/smoke_all/` and contain JSON, CSV, and one
+  PNG grouped-bar chart only.
 - `git diff --check`: no whitespace errors; Git only reported existing LF/CRLF
   conversion warnings for touched files.
 
@@ -232,6 +243,22 @@ where the public contract is just `t`, RayDTorch is faster than RayD throughout
 the extreme sweep and faster than Mitsuba's public minimal API; Mitsuba
 `ray_intersect_preliminary` remains the strongest lower-level t-only baseline.
 
+Latest multipath path-export benchmark:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_multipath `
+  --preset smoke --rayd-source local --rayd-root E:\Code\RayDi
+```
+
+This is the RayD latest-style multipath path benchmark, not the Sionna solver
+benchmark: `reflection_trace` uses the parallel-reflector scene with minimal
+path export, and `diffraction_export` uses the synthetic single-edge state path.
+The script writes `multipath.json`, `multipath.csv`, and
+`time_ms_multipath.png` to one output folder and does not emit SVG or throughput
+plots. The smoke run is only a path/plot validation because it uses two timed
+samples; release claims should use higher repeats and larger `ray_count` /
+`state_count` sweeps.
+
 Latest AD backward coverage:
 
 ```powershell
@@ -255,7 +282,7 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorc
   --output-dir artifacts\benchmarks\scaling\ad_uv_tape_r30_256_65k
 ```
 
-| 131K triangles / 65.5K rays | RayDTorch | RayD | Status |
+| 131K triangles / 65.5K rays, historical high-repeat | RayDTorch | RayD | Status |
 |---|---:|---:|---|
 | Static forward full | 0.0643 ms | 0.1318 ms | RayDTorch faster |
 | Static forward reduced | 0.0504 ms | 0.1332 ms | RayDTorch faster |
@@ -264,13 +291,19 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorc
 | Dynamic backward `t_sum_full` | 0.8601 ms | 2.8418 ms | RayDTorch faster, but dynamic update costs differ by backend |
 | Dynamic backward `t_sum_reduced` | 0.6820 ms | 2.8144 ms | RayDTorch faster, but dynamic update costs differ by backend |
 
-Conclusion for AD: the new RayDTorch `RayFlags.None` AD path is semantically
-correct and removes public output materialization, but static backward remains
-RayD's clearest advantage. The remaining RayDTorch cost is the dense PyTorch
-autograd bridge plus a generic CUDA backward that zeros/allocates full gradient
-outputs and uses atomics into `grad_vertices`. Closing this gap likely needs a
-specialized `sum(t)` / t-only backward kernel or a narrower autograd return path,
-not more forward-output flagging alone.
+After the dedicated t-only backward kernel, the same single-backend RayDTorch
+shape measured:
+
+| RayDTorch-only check | Static `t_sum_reduced` | Dynamic `t_sum_reduced` |
+|---|---:|---:|
+| 8.19K triangles / 65.5K rays | 0.3140 ms | 0.6306 ms |
+| 131K triangles / 65.5K rays | 0.3718 ms | 0.6902 ms |
+
+Conclusion for AD: `RayFlags.None` AD now has the right specialized backward
+shape and no longer pays the full public-output gradient bridge. It narrows the
+gap, especially at larger mesh sizes, but RayD can still be faster for static
+backward because RayDTorch must materialize a dense PyTorch `grad_vertices`
+tensor and still scatters per-hit vertex gradients.
 
 ## Contents
 

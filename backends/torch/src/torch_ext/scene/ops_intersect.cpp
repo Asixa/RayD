@@ -107,8 +107,8 @@ py::tuple intersect_backward_op(
     at::Tensor grad_p,
     at::Tensor grad_n,
     at::Tensor grad_geo_n,
-        at::Tensor grad_uv,
-        at::Tensor grad_barycentric) {
+    at::Tensor grad_uv,
+    at::Tensor grad_barycentric) {
     SceneCache &scene = get_scene(scene_handle);
     IntersectBackwardOutputs out = intersect_backward_cuda(
         scene.global_vertices,
@@ -128,6 +128,45 @@ py::tuple intersect_backward_op(
     return py::make_tuple(out.grad_vertices, out.grad_ray_o, out.grad_ray_d, out.grad_ray_tmax);
 }
 
+py::tuple intersect_backward_t_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor active,
+    at::Tensor tape_prim_id,
+    at::Tensor tape_barycentric,
+    at::Tensor grad_t,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax) {
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_mask(active, "active");
+    require_contiguous(tape_prim_id, "tape_prim_id");
+    require_dtype(tape_prim_id, at::kInt, "tape_prim_id");
+    require_rank(tape_prim_id, 1, "tape_prim_id");
+    require_contiguous(tape_barycentric, "tape_barycentric");
+    require_dtype(tape_barycentric, at::kFloat, "tape_barycentric");
+    require_rank(tape_barycentric, 2, "tape_barycentric");
+    require_scalar_f(grad_t, "grad_t");
+    SceneCache &scene = get_scene(scene_handle);
+    IntersectBackwardOutputs out = intersect_backward_t_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        active,
+        tape_prim_id,
+        tape_barycentric,
+        grad_t.contiguous(),
+        need_grad_vertices,
+        need_grad_ray_o,
+        need_grad_ray_d,
+        need_grad_ray_tmax);
+    return py::make_tuple(out.grad_vertices, out.grad_ray_o, out.grad_ray_d, out.grad_ray_tmax);
+}
+
 py::tuple intersect_jvp_op(
     int64_t scene_handle,
     at::Tensor ray_o,
@@ -135,9 +174,9 @@ py::tuple intersect_jvp_op(
     at::Tensor active,
     at::Tensor tape_prim_id,
     at::Tensor tape_barycentric,
-        at::Tensor tangent_vertices,
-        at::Tensor tangent_ray_o,
-        at::Tensor tangent_ray_d) {
+    at::Tensor tangent_vertices,
+    at::Tensor tangent_ray_o,
+    at::Tensor tangent_ray_d) {
     SceneCache &scene = get_scene(scene_handle);
     IntersectJvpOutputs out = intersect_jvp_cuda(
         scene.global_vertices,
@@ -164,6 +203,7 @@ void bind_intersect_ops(py::module_ &m) {
     m.def("intersect_forward_flags", &intersect_forward_flags_op);
     m.def("intersect_forward_ad_flags", &intersect_forward_ad_flags_op);
     m.def("intersect_backward", &intersect_backward_op);
+    m.def("intersect_backward_t", &intersect_backward_t_op);
     m.def("intersect_jvp", &intersect_jvp_op);
 }
 

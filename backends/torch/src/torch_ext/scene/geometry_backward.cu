@@ -2,6 +2,8 @@
 #include <raydtorch/common/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 #include <cuda_runtime.h>
 
 namespace raydtorch {
@@ -12,6 +14,18 @@ __device__ void add_to3(float *base, int index, float3 value) {
     base[index * 3 + 0] += value.x;
     base[index * 3 + 1] += value.y;
     base[index * 3 + 2] += value.z;
+}
+
+__device__ void atomic_add3_warp_labeled(float *base, int index, float3 value) {
+    namespace cg = cooperative_groups;
+    cg::coalesced_group active = cg::coalesced_threads();
+    auto group = cg::labeled_partition(active, index);
+    const float x = cg::reduce(group, value.x, cg::plus<float>());
+    const float y = cg::reduce(group, value.y, cg::plus<float>());
+    const float z = cg::reduce(group, value.z, cg::plus<float>());
+    if (group.thread_rank() == 0) {
+        atomic_add3(base, index, make_float3(x, y, z));
+    }
 }
 
 __device__ float det3(float3 c0, float3 c1, float3 c2) {
@@ -148,6 +162,71 @@ __global__ void intersect_backward_kernel(
     atomic_add3(grad_vertices, i0, g_vertices0);
     atomic_add3(grad_vertices, i1, g_vertices1);
     atomic_add3(grad_vertices, i2, g_vertices2);
+}
+
+__global__ void intersect_backward_t_kernel(
+    const float *__restrict__ vertices,
+    const int *__restrict__ faces,
+    const float *__restrict__ ray_o,
+    const float *__restrict__ ray_d,
+    const bool *__restrict__ active,
+    const int *__restrict__ tape_prim_id,
+    const float *__restrict__ tape_bary,
+    int tape_bary_width,
+    const float *__restrict__ grad_t,
+    int64_t ray_count,
+    float *__restrict__ grad_vertices,
+    float *__restrict__ grad_ray_o,
+    float *__restrict__ grad_ray_d,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d) {
+    const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ray_idx >= ray_count)
+        return;
+    if (!active[ray_idx])
+        return;
+    const int prim_id = tape_prim_id[ray_idx];
+    if (prim_id < 0)
+        return;
+    const float gt = grad_t[ray_idx];
+    if (gt == 0.f)
+        return;
+
+    const int i0 = faces[prim_id * 3 + 0];
+    const int i1 = faces[prim_id * 3 + 1];
+    const int i2 = faces[prim_id * 3 + 2];
+    const float3 v0 = make_f3(vertices + i0 * 3);
+    const float3 v1 = make_f3(vertices + i1 * 3);
+    const float3 v2 = make_f3(vertices + i2 * 3);
+    const float3 e1 = sub3(v1, v0);
+    const float3 e2 = sub3(v2, v0);
+    const float3 d = make_f3(ray_d + ray_idx * 3);
+    const float3 c0 = mul3(-1.f, d);
+    const float3 lambda = solve_transpose_columns(c0, e1, e2, make_float3(gt, 0.f, 0.f));
+
+    if (need_grad_ray_o) {
+        add_to3(grad_ray_o, ray_idx, lambda);
+    }
+    if (need_grad_ray_d) {
+        const float solved_t = solve_columns(c0, e1, e2, sub3(make_f3(ray_o + ray_idx * 3), v0)).x;
+        add_to3(grad_ray_d, ray_idx, mul3(solved_t, lambda));
+    }
+    if (!need_grad_vertices) {
+        return;
+    }
+
+    float3 bary;
+    if (tape_bary_width == 2) {
+        const float u = tape_bary[ray_idx * 2 + 0];
+        const float v = tape_bary[ray_idx * 2 + 1];
+        bary = make_float3(1.f - u - v, u, v);
+    } else {
+        bary = make_f3(tape_bary + ray_idx * 3);
+    }
+    atomic_add3_warp_labeled(grad_vertices, i0, mul3(-bary.x, lambda));
+    atomic_add3_warp_labeled(grad_vertices, i1, mul3(-bary.y, lambda));
+    atomic_add3_warp_labeled(grad_vertices, i2, mul3(-bary.z, lambda));
 }
 
 __global__ void intersect_jvp_kernel(
@@ -293,6 +372,53 @@ IntersectBackwardOutputs intersect_backward_cuda(
         out.grad_ray_o.data_ptr<float>(),
         out.grad_ray_d.data_ptr<float>(),
         out.grad_ray_tmax.data_ptr<float>());
+    return out;
+}
+
+IntersectBackwardOutputs intersect_backward_t_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &grad_t,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax) {
+    const int64_t ray_count = ray_d.size(0);
+    IntersectBackwardOutputs out;
+    out.grad_vertices = need_grad_vertices ? at::zeros_like(vertices) : at::empty({0}, vertices.options());
+    out.grad_ray_o = need_grad_ray_o ? at::zeros_like(ray_d) : at::empty({0, 3}, ray_d.options());
+    out.grad_ray_d = need_grad_ray_d ? at::zeros_like(ray_d) : at::empty({0, 3}, ray_d.options());
+    out.grad_ray_tmax = need_grad_ray_tmax ? at::zeros({ray_count}, ray_d.options()) : at::empty({0}, ray_d.options());
+
+    if (ray_count == 0 || (!need_grad_vertices && !need_grad_ray_o && !need_grad_ray_d)) {
+        return out;
+    }
+
+    const int threads = 128;
+    const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    intersect_backward_t_kernel<<<blocks, threads, 0, stream>>>(
+        vertices.data_ptr<float>(),
+        faces.data_ptr<int>(),
+        ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(),
+        active.data_ptr<bool>(),
+        tape_prim_id.data_ptr<int>(),
+        tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)),
+        grad_t.data_ptr<float>(),
+        ray_count,
+        need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
+        need_grad_ray_o ? out.grad_ray_o.data_ptr<float>() : nullptr,
+        need_grad_ray_d ? out.grad_ray_d.data_ptr<float>() : nullptr,
+        need_grad_vertices,
+        need_grad_ray_o,
+        need_grad_ray_d);
     return out;
 }
 

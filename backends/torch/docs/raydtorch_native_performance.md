@@ -87,6 +87,23 @@ Current scaling interpretation:
   Mitsuba dynamic scene updates perform additional work not directly comparable
   to RayD/RayDTorch.
 
+RayD latest-style multipath path export is covered separately:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_multipath `
+  --preset smoke --rayd-source local --rayd-root E:\Code\RayDi
+```
+
+This benchmark adds RayDTorch to RayD's path-level Mitsuba comparison for:
+
+- `reflection_trace`: parallel reflectors, minimal path export.
+- `diffraction_export`: synthetic single-edge diffraction path export.
+
+It writes all outputs under one folder, for example
+`artifacts/benchmarks/multipath/smoke_all/`, with `multipath.json`,
+`multipath.csv`, and `time_ms_multipath.png`. The plot is a grouped bar chart of
+absolute average time in ms only; no SVG or throughput plot is emitted.
+
 AD backward is measured with `--include-backward`; plots are absolute projected
 time grouped by backend, not throughput or speedup plots:
 
@@ -109,8 +126,18 @@ High-repeat static AD point, 131K triangles / 65.5K rays:
 | backward `t_sum_reduced` | 0.4936 | 0.2065 | RayD faster |
 
 This is the main remaining RayD advantage found so far: static differentiable
-intersection backward, even after RayDTorch's public `RayFlags.None` AD path was
-added and hidden tape was reduced to `(global_prim_id, u, v, t)`.
+intersection backward. RayDTorch now has a dedicated `RayFlags.None` t-only
+backward kernel that skips full public-output gradient tensors and unused
+ray/tmax gradient returns, plus warp-labeled aggregation for the t-only
+`grad_vertices` scatter. The latest RayDTorch-only checks after that change are:
+
+| Shape | Static `t_sum_reduced` | Dynamic `t_sum_reduced` |
+|---|---:|---:|
+| 8.19K triangles / 65.5K rays | 0.3140 ms | 0.6306 ms |
+| 131K triangles / 65.5K rays | 0.3718 ms | 0.6902 ms |
+
+This narrows the static AD gap but does not remove it: RayDTorch still returns a
+dense PyTorch `grad_vertices` tensor and scatters per-hit vertex gradients.
 
 Current same-script static-vs-static result:
 

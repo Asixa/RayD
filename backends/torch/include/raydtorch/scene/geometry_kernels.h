@@ -68,6 +68,20 @@ IntersectBackwardOutputs intersect_backward_cuda(
     const at::Tensor &grad_uv,
     const at::Tensor &grad_barycentric);
 
+IntersectBackwardOutputs intersect_backward_t_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &grad_t,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax);
+
 struct IntersectJvpOutputs {
     at::Tensor tangent_t;
     at::Tensor tangent_p;
