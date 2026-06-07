@@ -24,6 +24,62 @@ class EdgeQueryTests(unittest.TestCase):
         self.assertIsNotNone(point.grad)
         self.assertIsNotNone(verts.grad)
 
+    def test_multi_mesh_nearest_edge_gradient_routes_to_hit_mesh(self):
+        verts0 = torch.tensor(
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        verts1 = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts0, faces))
+        scene.add_mesh(rt.Mesh(verts1, faces))
+        scene.build()
+        scene.nearest_edge(point).distance.sum().backward()
+        self.assertIsNotNone(verts0.grad)
+        self.assertIsNotNone(verts1.grad)
+        torch.testing.assert_close(verts0.grad, torch.zeros_like(verts0), atol=1e-5, rtol=1e-5)
+        self.assertGreater(float(verts1.grad.abs().sum().item()), 0.0)
+
+    def test_multi_mesh_nearest_edge_jvp_uses_global_vertices(self):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32)
+
+        def fn(verts0, verts1):
+            scene = rt.Scene()
+            scene.add_mesh(rt.Mesh(verts0, faces))
+            scene.add_mesh(rt.Mesh(verts1, faces))
+            scene.build()
+            return scene.nearest_edge(point).edge_point
+
+        verts0 = torch.tensor(
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        verts1 = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        tangent0 = torch.zeros_like(verts0)
+        tangent1 = torch.tensor(
+            [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        primal, jvp = torch.func.jvp(fn, (verts0, verts1), (tangent0, tangent1))
+        torch.testing.assert_close(primal, torch.tensor([[0.5, 0.0, 0.0]], device="cuda"), atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(jvp, torch.tensor([[0.0, 0.0, 1.0]], device="cuda"), atol=1e-5, rtol=1e-5)
+
     def test_nearest_edge_point_edge_t_vjp_matches_interior_edge(self):
         verts = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],

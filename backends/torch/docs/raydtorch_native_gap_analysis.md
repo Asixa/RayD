@@ -1,21 +1,21 @@
 # RayDTorch Native Gap Analysis
 
-Status: RayDTorch is still not a complete Torch-native port of every RayD
-multipath/diffraction derivative and performance path, but the native extension
-now contains RayD-style OptiX PTX pipelines for scene intersection, edge query,
-reflection, and diffraction forward paths. Full completion still requires the
-remaining VJP/JVP parity work and same-script performance acceptance.
+Status: RayDTorch now contains RayD-style OptiX PTX pipelines for scene
+intersection, edge query, reflection, and diffraction paths. The current code
+also includes Torch VJP/JVP kernels for the supported continuous outputs under
+the fixed-winner contract. Full completion still requires performance
+acceptance: the same-script RayD/RayDTorch benchmark exists, but current results
+do not yet show performance parity across the covered kernels.
 
 ## Current Multipath Implementation
 
-The current code should be treated as an in-progress source-port, not completed
-RayD multipath parity:
+The current code should be treated as a source-port with active performance
+work remaining:
 
 - `src/torch_ext/common/optix_pipeline.cpp` owns the shared OptiX launch
   pipeline/cache.
-- `src/torch_ext/common/ops_multipath.cpp` currently owns the cross-domain
-  Torch/PyBind multipath bindings while the reflection/diffraction host binding
-  code is being split further.
+- `src/torch_ext/reflection/ops.cpp` owns reflection Torch/PyBind bindings.
+- `src/torch_ext/diffraction/ops.cpp` owns diffraction Torch/PyBind bindings.
 - `src/torch_ext/reflection/pipeline.cpp` and
   `src/torch_ext/diffraction/pipeline.cpp` own the reflection and diffraction
   PTX entry configurations separately.
@@ -25,45 +25,41 @@ RayD multipath parity:
   contain the diffraction path search, accumulation, and direct AD kernels.
 - `CMakeLists.txt` builds scene, edge, reflection, and diffraction PTX targets.
 
-## Missing RayD Multipath Kernel Coverage
+## RayD Multipath Kernel Coverage
 
 The corresponding RayD source files exist in `E:\Code\RayDi`. Reflection and
-diffraction forward kernels now have RayDTorch source ports. The remaining gap
-is completion-quality derivative/performance parity, not the absence of
-diffraction PTX targets:
+diffraction forward kernels now have RayDTorch source ports, including:
 
+- `E:\Code\RayDi\src\multipath\segment_visibility.cu`
+- `E:\Code\RayDi\src\multipath\reflection_trace.cu`
+- `E:\Code\RayDi\src\multipath\reflection_accumulation.cu`
+- `E:\Code\RayDi\src\multipath\reflection_dedup.cu`
+- `E:\Code\RayDi\src\multipath\reflection_epc.cu`
+- `E:\Code\RayDi\src\multipath\reflection_epc_field.cu`
 - `E:\Code\RayDi\src\multipath\diffraction_paths.cu`
 - `E:\Code\RayDi\src\multipath\diffraction_accumulation.cu`
 - `E:\Code\RayDi\src\multipath\diffraction_accumulation_ad.cu`
 
 These RayD files should remain the parity source of truth when extending the
-current ports beyond the covered forward/direct-AD cases.
+current ports.
 
-## Not Yet Completion-Quality
+## Not Yet Completion-Quality Performance
 
-These areas are still open and must not be counted as complete RayD parity:
+These areas are still open and must not be counted as performance complete:
 
-- `intersect` VJP/JVP parity against RayD.
-- ray `nearest_edge` forward support and VJP/JVP parity against RayD.
-- reflection VJP/JVP parity against RayD.
-- EPC forward/VJP/JVP parity against RayD.
-- diffraction forward/VJP/JVP parity against RayD.
-- Same-script, same-data, same-batch RayD vs RayDTorch performance comparisons.
-- Same-script RayD/RayDTorch nearest-edge performance acceptance. The previous
-  RayDTorch-only nearest-edge regression from an overly large AABB/search radius
-  has been reduced, but a completion-quality comparison still needs the same
-  script, scene, query tensors, batch size, and machine for both backends.
+- Same-script, same-data, same-batch RayD vs RayDTorch performance comparison
+  is implemented in `tests/benchmark_rayd_vs_raydtorch.py`.
+- Current same-script results show RayDTorch is faster for `intersect` and close
+  for `nearest_edge`, but slower for scene build, reflection trace, and
+  diffraction direct accumulation on the recorded quick benchmark shape.
+- Completion-quality performance work should focus on reflection trace and
+  diffraction direct throughput first, then scene build.
 
 ## Required Acceptance Gate
 
 Before this work can be considered complete, RayDTorch needs:
 
-1. Failing parity tests that exercise the missing RayD behaviors on identical
-   scene/query tensors.
-2. Torch-native rewrites of the RayD multipath pipeline and CUDA kernels.
-3. Explicit VJP and JVP implementations for the continuous values under the
-   fixed-winner contract.
-4. A nearest-edge broad-phase fix with a benchmark proving the regression is
-   addressed.
-5. Same-script RayD/RayDTorch benchmarks for intersect, nearest-edge,
-   reflection/EPC, and diffraction.
+1. Same-script RayD/RayDTorch performance runs for the release benchmark shapes.
+2. Performance fixes or accepted thresholds for scene build, reflection trace,
+   and diffraction direct accumulation.
+3. Full native and opt-in RayD parity test runs after any performance changes.

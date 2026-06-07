@@ -54,6 +54,36 @@ ReflectionJvpOutputs reflection_jvp_cuda(
     const at::Tensor &tangent_ray_d,
     const at::Tensor &image_sources);
 
+ReflectionBackwardOutputs reflection_chain_backward_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_hit_points,
+    const at::Tensor &tape_normals,
+    const at::Tensor &image_sources,
+    const at::Tensor &grad_t,
+    const at::Tensor &grad_image_sources);
+
+ReflectionJvpOutputs reflection_chain_jvp_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_hit_points,
+    const at::Tensor &tape_normals,
+    const at::Tensor &tangent_vertices,
+    const at::Tensor &tangent_ray_o,
+    const at::Tensor &tangent_ray_d,
+    const at::Tensor &image_sources);
+
 struct ReflEpcBackwardOutputs {
     at::Tensor grad_vertices;
     at::Tensor grad_source;

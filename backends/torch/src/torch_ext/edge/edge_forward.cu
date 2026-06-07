@@ -53,6 +53,28 @@ void cuda_check(cudaError_t result, const char *expr) {
         std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
+void require_edge_cache_dtype(const at::Tensor &tensor, at::ScalarType dtype, const char *name) {
+    if (tensor.scalar_type() != dtype)
+        throw std::runtime_error(
+            std::string("edge cache tensor ") + name + " has dtype " +
+            std::string(c10::toString(tensor.scalar_type())) + ", expected " +
+            std::string(c10::toString(dtype)) + ".");
+}
+
+void require_edge_cache_dtypes(const SceneCache &scene) {
+    require_edge_cache_dtype(scene.edge_v0, at::kInt, "edge_v0");
+    require_edge_cache_dtype(scene.edge_v1, at::kInt, "edge_v1");
+    require_edge_cache_dtype(scene.edge_shape_id, at::kInt, "edge_shape_id");
+    require_edge_cache_dtype(scene.edge_local_id, at::kInt, "edge_local_id");
+    require_edge_cache_dtype(scene.edge_p0_x, at::kFloat, "edge_p0_x");
+    require_edge_cache_dtype(scene.edge_p0_y, at::kFloat, "edge_p0_y");
+    require_edge_cache_dtype(scene.edge_p0_z, at::kFloat, "edge_p0_z");
+    require_edge_cache_dtype(scene.edge_e1_x, at::kFloat, "edge_e1_x");
+    require_edge_cache_dtype(scene.edge_e1_y, at::kFloat, "edge_e1_y");
+    require_edge_cache_dtype(scene.edge_e1_z, at::kFloat, "edge_e1_z");
+    require_edge_cache_dtype(scene.edge_mask, at::kByte, "edge_mask");
+}
+
 __global__ void init_edge_point_outputs_kernel(
     int64_t point_count,
     float *__restrict__ distance,
@@ -258,6 +280,7 @@ void launch_edge_query(
 } // namespace
 
 EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &point) {
+    require_edge_cache_dtypes(scene);
     const int64_t point_count = point.size(0);
     const int64_t edge_count = scene.edge_v0.size(0);
     auto fopts = point.options();
@@ -366,6 +389,7 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     const at::Tensor &ray_d,
     const at::Tensor &ray_tmax,
     const at::Tensor &active) {
+    require_edge_cache_dtypes(scene);
     const int64_t ray_count = ray_o.size(0);
     const int64_t edge_count = scene.edge_v0.size(0);
     auto fopts = ray_o.options();

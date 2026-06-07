@@ -60,6 +60,18 @@ struct SceneCache {
     at::Tensor face_offsets;
     at::Tensor face_shape_id;
     at::Tensor face_local_id;
+    at::Tensor tri_p0_x;
+    at::Tensor tri_p0_y;
+    at::Tensor tri_p0_z;
+    at::Tensor tri_e1_x;
+    at::Tensor tri_e1_y;
+    at::Tensor tri_e1_z;
+    at::Tensor tri_e2_x;
+    at::Tensor tri_e2_y;
+    at::Tensor tri_e2_z;
+    at::Tensor tri_fn_x;
+    at::Tensor tri_fn_y;
+    at::Tensor tri_fn_z;
     at::Tensor edge_v0;
     at::Tensor edge_v1;
     at::Tensor edge_face0;

@@ -78,6 +78,11 @@ class Scene:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_handle
 
+    def _vertices_for_ad(self) -> torch.Tensor:
+        if len(self._meshes) == 1:
+            return self._meshes[0][0].vertices
+        return torch.cat([mesh.vertices for mesh, _dynamic in self._meshes], dim=0).contiguous()
+
     def is_ready(self) -> bool:
         return self._ready
 
@@ -95,12 +100,12 @@ class Scene:
         handle = self._require_ready()
         if active is None:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        vertices = self._meshes[0][0].vertices
+        vertices = self._vertices_for_ad()
         return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
 
     def nearest_edge(self, point: torch.Tensor | Ray):
         handle = self._require_ready()
-        vertices = self._meshes[0][0].vertices
+        vertices = self._vertices_for_ad()
         if isinstance(point, Ray):
             active = torch.ones((point.o.shape[0],), device=point.o.device, dtype=torch.bool)
             return _nearest_edge_ray(
@@ -125,7 +130,7 @@ class Scene:
         handle = self._require_ready()
         if active is None:
             active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        vertices = self._meshes[0][0].vertices
+        vertices = self._vertices_for_ad()
         return _trace_reflections(
             handle,
             vertices,
@@ -142,7 +147,7 @@ class Scene:
         receiver = receiver.contiguous()
         if active is None:
             active = torch.ones((source.shape[0],), device=source.device, dtype=torch.bool)
-        vertices = self._meshes[0][0].vertices
+        vertices = self._vertices_for_ad()
         return _trace_refl_epc_field(
             handle,
             vertices,
@@ -153,7 +158,7 @@ class Scene:
         )
 
     def _default_dfr_material(self, *, device: torch.device, dtype: torch.dtype) -> DfrMaterial:
-        face_count = int(self._meshes[0][0].faces.shape[0])
+        face_count = sum(int(mesh.faces.shape[0]) for mesh, _dynamic in self._meshes)
         return DfrMaterial.default(face_count, device=device, dtype=dtype)
 
     def trace_dfr_paths(

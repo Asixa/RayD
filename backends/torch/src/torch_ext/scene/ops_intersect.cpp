@@ -46,15 +46,12 @@ py::tuple intersect_backward_op(
     at::Tensor grad_p,
     at::Tensor grad_n,
     at::Tensor grad_geo_n,
-    at::Tensor grad_uv,
-    at::Tensor grad_barycentric) {
+        at::Tensor grad_uv,
+        at::Tensor grad_barycentric) {
     SceneCache &scene = get_scene(scene_handle);
-    if (scene.meshes.size() != 1)
-        throw std::runtime_error("intersect_backward: first milestone supports exactly one mesh.");
-    const MeshRecord &mesh = scene.meshes[0];
     IntersectBackwardOutputs out = intersect_backward_cuda(
-        mesh.vertices,
-        mesh.faces,
+        scene.global_vertices,
+        scene.global_faces,
         ray_o,
         ray_d,
         ray_tmax,
@@ -77,16 +74,13 @@ py::tuple intersect_jvp_op(
     at::Tensor active,
     at::Tensor tape_prim_id,
     at::Tensor tape_barycentric,
-    at::Tensor tangent_vertices,
-    at::Tensor tangent_ray_o,
-    at::Tensor tangent_ray_d) {
+        at::Tensor tangent_vertices,
+        at::Tensor tangent_ray_o,
+        at::Tensor tangent_ray_d) {
     SceneCache &scene = get_scene(scene_handle);
-    if (scene.meshes.size() != 1)
-        throw std::runtime_error("intersect_jvp: first milestone supports exactly one mesh.");
-    const MeshRecord &mesh = scene.meshes[0];
     IntersectJvpOutputs out = intersect_jvp_cuda(
-        mesh.vertices,
-        mesh.faces,
+        scene.global_vertices,
+        scene.global_faces,
         ray_o,
         ray_d,
         active,

@@ -205,6 +205,26 @@ void refresh_global_geometry(SceneCache &scene) {
         face_offsets,
         at::TensorOptions().device(at::kCPU).dtype(at::kInt)).to(
             at::Device(at::kCUDA, scene.device_index));
+
+    at::Tensor faces_i64 = scene.global_faces.to(at::kLong);
+    at::Tensor v0 = scene.global_vertices.index_select(0, faces_i64.select(1, 0)).contiguous();
+    at::Tensor v1 = scene.global_vertices.index_select(0, faces_i64.select(1, 1)).contiguous();
+    at::Tensor v2 = scene.global_vertices.index_select(0, faces_i64.select(1, 2)).contiguous();
+    at::Tensor e1 = (v1 - v0).contiguous();
+    at::Tensor e2 = (v2 - v0).contiguous();
+    at::Tensor fn = at::cross(e1, e2, 1).contiguous();
+    scene.tri_p0_x = v0.select(1, 0).contiguous();
+    scene.tri_p0_y = v0.select(1, 1).contiguous();
+    scene.tri_p0_z = v0.select(1, 2).contiguous();
+    scene.tri_e1_x = e1.select(1, 0).contiguous();
+    scene.tri_e1_y = e1.select(1, 1).contiguous();
+    scene.tri_e1_z = e1.select(1, 2).contiguous();
+    scene.tri_e2_x = e2.select(1, 0).contiguous();
+    scene.tri_e2_y = e2.select(1, 1).contiguous();
+    scene.tri_e2_z = e2.select(1, 2).contiguous();
+    scene.tri_fn_x = fn.select(1, 0).contiguous();
+    scene.tri_fn_y = fn.select(1, 1).contiguous();
+    scene.tri_fn_z = fn.select(1, 2).contiguous();
 }
 
 void update_triangle_accel(
@@ -279,6 +299,7 @@ void build_edge_topology(SceneCache &scene) {
     std::vector<int32_t> local_edge_counts(scene.meshes.size(), 0);
     std::map<std::tuple<int32_t, int32_t, int32_t>, int32_t> edge_lookup;
 
+    int32_t vertex_offset = 0;
     for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
         at::Tensor faces_cpu = scene.meshes[shape_id].faces.cpu();
         const int *faces = faces_cpu.data_ptr<int>();
@@ -298,8 +319,8 @@ void build_edge_topology(SceneCache &scene) {
                 if (it == edge_lookup.end()) {
                     const int32_t edge_id = static_cast<int32_t>(edge_v0.size());
                     edge_lookup.emplace(key, edge_id);
-                    edge_v0.push_back(a);
-                    edge_v1.push_back(b);
+                    edge_v0.push_back(a + vertex_offset);
+                    edge_v1.push_back(b + vertex_offset);
                     edge_face0.push_back(face_id);
                     edge_face1.push_back(-1);
                     edge_shape_id.push_back(shape_id);
@@ -309,6 +330,7 @@ void build_edge_topology(SceneCache &scene) {
                 }
             }
         }
+        vertex_offset += static_cast<int32_t>(scene.meshes[shape_id].vertices.size(0));
     }
 
     at::TensorOptions cpu_iopts = at::TensorOptions().device(at::kCPU).dtype(at::kInt);
@@ -393,15 +415,11 @@ void refresh_edge_soa(SceneCache &scene) {
     const int64_t edge_count = scene.edge_v0.size(0);
     at::Tensor edge_v0_cpu = scene.edge_v0.cpu();
     at::Tensor edge_v1_cpu = scene.edge_v1.cpu();
-    at::Tensor edge_shape_cpu = scene.edge_shape_id.cpu();
     const int *edge_v0 = edge_v0_cpu.data_ptr<int>();
     const int *edge_v1 = edge_v1_cpu.data_ptr<int>();
-    const int *edge_shape = edge_shape_cpu.data_ptr<int>();
 
-    std::vector<at::Tensor> vertices_cpu;
-    vertices_cpu.reserve(scene.meshes.size());
-    for (const MeshRecord &mesh : scene.meshes)
-        vertices_cpu.push_back(mesh.vertices.cpu());
+    at::Tensor vertices_cpu = scene.global_vertices.cpu();
+    const float *vertices = vertices_cpu.data_ptr<float>();
 
     std::vector<float> p0_x(edge_count);
     std::vector<float> p0_y(edge_count);
@@ -410,8 +428,6 @@ void refresh_edge_soa(SceneCache &scene) {
     std::vector<float> e1_y(edge_count);
     std::vector<float> e1_z(edge_count);
     for (int64_t edge = 0; edge < edge_count; ++edge) {
-        const int shape_id = edge_shape[edge];
-        const float *vertices = vertices_cpu[shape_id].data_ptr<float>();
         const int i0 = edge_v0[edge];
         const int i1 = edge_v1[edge];
         const float x0 = vertices[i0 * 3 + 0];

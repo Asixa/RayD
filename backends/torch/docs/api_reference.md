@@ -17,20 +17,21 @@ import raydtorch as rt
 
 - `Scene.intersect(ray, active=None)` returns `Intersection`.
 - `Scene.nearest_edge(point)` returns `NearestPointEdge`.
-- `Scene.nearest_edge(ray)` returns `NearestRayEdge`; ray-query VJP/JVP parity is still incomplete.
+- `Scene.nearest_edge(ray)` returns `NearestRayEdge`.
 - `Scene.visible(start, end, active=None)` returns a `torch.bool` visibility tensor.
 
 ## Multipath
 
 - `Scene.trace_reflections(ray, max_bounces, active=None)` returns `ReflectionChain`; the forward path uses a RayD-source-ported single OptiX launch with the bounce loop inside raygen.
 - `Scene.trace_refl_epc_field(source, receiver, max_bounces, active=None)` returns `ReflEpcField`; the forward path uses RayD-source-ported reflection EPC plus EPC field kernels with simplified default material/options at the Python API boundary.
-- `Scene.accum_dfr_direct(edge_pos=..., edge_dir=..., src=...)` returns `DfrDirectAccum`, but the current CUDA kernel is a simplified direct accumulation placeholder.
+- `Scene.trace_dfr_paths(tx_positions=..., rx_positions=..., states=..., material=..., active=..., max_paths=..., wavelength=...)` returns `DfrPaths`.
+- `Scene.accum_dfr_direct(states=..., grid=..., material=..., active=..., wavelength=..., direct_samples=..., keller_samples=..., suffix_samples=..., seed=...)` returns `DfrAccum`.
+- `Scene.accum_dfr(initial_states=..., recursive_states=..., grid=..., material=..., active=..., recursive_active=..., wavelength=..., direct_samples=..., keller_samples=..., suffix_samples=..., seed=..., max_order=...)` returns `DfrAccum` for order-2/order-3 chain accumulation.
+- `Scene.accum_dfr_coherent_direct(states=..., grid=..., material=..., active=..., wavelength=..., select_diffraction_point=..., prefilter_visibility=...)` returns `DfrCoherentAccum`.
 
-These APIs are not yet full RayD multipath/diffraction parity. Reflection-side
-segment visibility, trace, EPC, EPC field, dedup, and accumulation kernels have
-native CUDA/OptiX source ports, but full RayD scene split/IAS behavior,
-reflection AD parity, diffraction path search, and diffraction accumulation
-kernels still need completion-quality implementations and parity tests.
+These APIs use native CUDA/OptiX source ports for the reflection and diffraction
+multipath execution paths. Current completion risk is performance parity, not
+placeholder kernel coverage.
 
 ## Tensor ABI
 
@@ -42,5 +43,4 @@ Native operators support VJP and JVP for continuous Torch inputs. Discrete choic
 
 RayDTorch does not import or depend on Dr.Jit in the `raydtorch` package path.
 
-See `docs/raydtorch_native_gap_analysis.md` for the current incomplete parity
-items.
+See `docs/raydtorch_native_gap_analysis.md` for current acceptance status.

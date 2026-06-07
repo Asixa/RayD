@@ -25,50 +25,77 @@ The benchmark covers native scene build, dynamic vertex sync, OptiX triangle int
 
 ## RayD Comparison Status
 
-Known same-scale RayD edge benchmark snapshot:
+Same-script benchmark command:
 
-- RayD default treelet build: 138.4 ms
-- RayD default treelet sync: 3.69 ms
-- RayD default treelet nearest-edge query: 9.99 ms
-- RayD HLBVH nearest-edge experiment: 102.9 ms
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 3 --repeat 10
+```
+
+Current same-script result:
+
+```json
+{
+  "grid": 64,
+  "queries": 4096,
+  "rayd": {
+    "build_ms": 63.655,
+    "diffraction_direct_ms": 0.493,
+    "intersect_ms": 0.249,
+    "nearest_edge_ms": 1.363,
+    "reflection_trace_ms": 0.291
+  },
+  "raydtorch": {
+    "build_ms": 99.065,
+    "diffraction_direct_ms": 0.756,
+    "intersect_ms": 0.082,
+    "nearest_edge_ms": 1.302,
+    "reflection_trace_ms": 0.737
+  }
+}
+```
 
 Current interpretation:
 
-- RayDTorch scene build is currently slower for this benchmark shape.
-- RayDTorch dynamic sync now rebuilds the edge acceleration data after dynamic vertex updates, so it should not be compared to the earlier stale-edge-accel timing.
-- RayDTorch `nearest_edge` no longer shows the previous all-edge-scan-scale regression in this benchmark.
-- There is no same-script RayD `intersect` baseline checked into this repository, so `intersect_ms` cannot yet be used to claim a RayD speedup.
+- RayDTorch `intersect` is faster in this run.
+- RayDTorch `nearest_edge` is close to RayD and no longer shows the previous
+  all-edge-scan-scale regression.
+- RayDTorch scene build, reflection trace, and diffraction direct accumulation
+  are slower in this run.
 
-The current implementation should be treated as runnable but not yet proven performance-equivalent or performance-superior to RayD. A same-script RayD/RayDTorch benchmark is still required for completion-quality performance acceptance.
+The implementation is now benchmarkable against RayD in one script, but should
+not yet be treated as performance-equivalent or performance-superior across the
+requested multipath/diffraction surface.
 
 ## Parity Coverage Status
 
-The current opt-in external RayD parity test covers simple same-scene forward cases for:
+The current opt-in external RayD parity test covers same-scene forward cases for:
 
 - `intersect`
+- multi-mesh global ids
 - point `nearest_edge`
 - visibility
 - reflection tracing
+- diffraction paths
+- direct, Keller, suffix, order-2, and order-3 diffraction accumulation
+- coherent direct diffraction accumulation
 
-It still does not prove parity for:
+Torch-native AD tests cover fixed-winner VJP/JVP for:
 
 - `intersect` VJP/JVP
-- ray `nearest_edge`
 - point/ray `nearest_edge` VJP/JVP
-- visibility gradients for future continuous visibility outputs
 - reflection trace VJP/JVP
 - reflection EPC forward/VJP/JVP
 - diffraction accumulation forward/VJP/JVP
 
-A completion-quality parity/performance gate needs to run RayD and RayDTorch on the same scene, same query tensors, same batch sizes, and same machine for those APIs.
+Visibility returns a discrete bool and has no continuous gradient contract.
 
 ## Multipath Implementation Status
 
-RayDTorch now contains source ports for the RayD reflection-side `src/multipath`
-execution path: segment visibility, reflection trace, reflection EPC, EPC
-field, reflection dedup, and reflection accumulation. This still should not be
-read as completed RayD parity until the same-script RayD/RayDTorch numerical and
-performance gates cover those kernels. Diffraction path search and diffraction
-accumulation remain incomplete.
+RayDTorch now contains source ports for the RayD reflection and diffraction
+`src/multipath` execution paths, including segment visibility, reflection trace,
+reflection EPC, EPC field, reflection dedup, reflection accumulation,
+diffraction path search, diffraction accumulation, chain accumulation, suffix
+reflection, and coherent direct accumulation. Performance remains the active
+completion risk.
 
 See `docs/raydtorch_native_gap_analysis.md` for the tracked gap list.

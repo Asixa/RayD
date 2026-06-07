@@ -1,7 +1,7 @@
 # RayDTorch
 
 RayDTorch is a Torch-native CUDA/OptiX package for RayD geometry primitives and
-in-progress multipath kernels.
+RayD-style multipath/diffraction kernels.
 
 ```python
 import raydtorch as rt
@@ -21,16 +21,25 @@ Intersection, edge, reflection, EPC, and diffraction operators use a fixed-winne
 
 The native operators support Torch reverse-mode VJP and forward-mode JVP for the supported continuous inputs where explicit kernels have been implemented. CUDA work is launched on the current Torch CUDA stream.
 
-## Current Limitations
+## Current Status
 
-RayDTorch now source-ports the RayD reflection-side `src/multipath` execution
-path for segment visibility, reflection trace, reflection EPC, EPC field,
-reflection dedup, and reflection accumulation into native CUDA/OptiX targets.
-The remaining incomplete areas are full RayD scene split/IAS parity, reflection
-AD parity, diffraction path/accumulation kernels, and same-script RayD vs
-RayDTorch numerical/performance acceptance. See
-`docs/raydtorch_native_gap_analysis.md` for the current gap list and acceptance
-gate.
+RayDTorch now builds separate native scene, edge, reflection, and diffraction
+Torch extension bindings. The native build includes OptiX PTX pipelines for
+scene intersection, edge queries, reflection tracing/EPC/visibility/
+accumulation, and diffraction path/accumulation/coherent direct execution.
+
+Current opt-in RayD parity tests cover forward cases for scene intersection,
+multi-mesh global ids, nearest-edge, visibility, reflection tracing,
+diffraction paths, direct/Keller/suffix diffraction accumulation, order-2 and
+order-3 diffraction chains, and coherent direct accumulation. Torch VJP/JVP
+coverage exists for geometry, edge, reflection trace, EPC, and diffraction
+accumulation under the fixed-winner contract.
+
+The remaining completion risk is performance acceptance: the same-script
+RayD/RayDTorch benchmark now exists, but current measurements still show
+RayDTorch slower for build, reflection trace, and diffraction direct on the
+recorded benchmark shape. See `docs/raydtorch_native_gap_analysis.md` and
+`docs/raydtorch_native_performance.md`.
 
 ## Dependencies
 

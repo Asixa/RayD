@@ -180,7 +180,17 @@ class _NearestEdgeFunction(torch.autograd.Function):
                 _native_tensor(grad_vertices),
                 _native_tensor(grad_point),
             )
-        return tangent_distance, tangent_edge_point, tangent_edge_t, None, None, None, None, None, None
+        return (
+            tangent_distance,
+            tangent_edge_point,
+            tangent_edge_t,
+            None,
+            None,
+            None,
+            None,
+            torch.zeros_like(tape_s),
+            torch.zeros_like(tape_d),
+        )
 
 
 def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
@@ -231,6 +241,15 @@ def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: t
     return values[0]
 
 
+def _needs_trace_reflection_ad(*values: torch.Tensor) -> bool:
+    for value in values:
+        if value.requires_grad:
+            return True
+        if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
+            return True
+    return False
+
+
 class _TraceReflectionsFunction(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -257,21 +276,64 @@ class _TraceReflectionsFunction(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         scene_handle, vertices, ray_o, ray_d, ray_tmax, active, max_bounces = inputs
-        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_t = output
+        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_t, tape_hits, tape_normals = output
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
         ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
         ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
         ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
         ctx.scene_handle = int(scene_handle)
         ctx.max_bounces = int(max_bounces)
-        ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t)
-        ctx.save_for_forward(vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, image_sources)
-        ctx.mark_non_differentiable(valid, prim_ids, tape_prim_id)
+        ctx.save_for_backward(
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_t,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        )
+        ctx.save_for_forward(
+            vertices,
+            ray_o,
+            ray_d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        )
+        ctx.mark_non_differentiable(
+            valid,
+            prim_ids,
+            tape_prim_id,
+            tape_barycentric,
+            tape_t,
+            tape_hits,
+            tape_normals,
+        )
 
     @staticmethod
     def backward(ctx, *grad_outputs):
-        ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        (
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_t,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        ) = ctx.saved_tensors
         grad_t = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(tape_t)
+        grad_image_sources = (
+            grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(image_sources)
+        )
         grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.trace_reflections_backward(
             ctx.scene_handle,
             ray_o,
@@ -280,7 +342,11 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             active,
             tape_prim_id,
             tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
             grad_t,
+            grad_image_sources,
         )
         return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
 
@@ -295,7 +361,17 @@ class _TraceReflectionsFunction(torch.autograd.Function):
         grad_active,
         grad_max_bounces,
     ):
-        vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, image_sources = ctx.saved_tensors
+        (
+            vertices,
+            ray_o,
+            ray_d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        ) = ctx.saved_tensors
         if grad_vertices is None:
             grad_vertices = torch.zeros_like(vertices)
         if grad_ray_o is None:
@@ -310,12 +386,14 @@ class _TraceReflectionsFunction(torch.autograd.Function):
                 _native_tensor(active),
                 _native_tensor(tape_prim_id),
                 _native_tensor(tape_barycentric),
+                _native_tensor(tape_hits),
+                _native_tensor(tape_normals),
                 _native_tensor(grad_vertices),
                 _native_tensor(grad_ray_o),
                 _native_tensor(grad_ray_d),
                 _native_tensor(image_sources),
             )
-        return None, tangent_t, tangent_image_sources, None, None, None, None
+        return None, tangent_t, tangent_image_sources, None, None, None, None, None, None
 
 
 def trace_reflections(
@@ -327,6 +405,18 @@ def trace_reflections(
     active: torch.Tensor,
     max_bounces: int,
 ) -> ReflectionChain:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    if not _needs_trace_reflection_ad(vertices, ray_o, ray_d, ray_tmax):
+        values = _C.trace_reflections_forward_noad(
+            int(scene_handle),
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            int(max_bounces),
+        )
+        return ReflectionChain(*values)
     values = _TraceReflectionsFunction.apply(
         scene_handle,
         vertices,
@@ -822,6 +912,280 @@ def accum_dfr_direct_native(
     return DfrAccum(grid_cell_count, *values[:14])
 
 
+class _DfrChainAccumFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(*args):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.diffraction_accumulation_forward(*args)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.scene_handle = int(inputs[0])
+        ctx.grid_axis = int(inputs[21])
+        ctx.grid_position = float(inputs[22])
+        ctx.grid_coord0_min = float(inputs[23])
+        ctx.grid_coord0_max = float(inputs[24])
+        ctx.grid_coord1_min = float(inputs[25])
+        ctx.grid_coord1_max = float(inputs[26])
+        ctx.grid_resolution0 = int(inputs[27])
+        ctx.grid_resolution1 = int(inputs[28])
+        ctx.grid_cell_area = float(inputs[29])
+        ctx.wavelength = float(inputs[30])
+        ctx.direct_samples = int(inputs[31])
+        ctx.keller_samples = int(inputs[32])
+        ctx.suffix_samples = int(inputs[33])
+        ctx.seed = int(inputs[34])
+        ctx.max_order = int(inputs[35])
+        saved = (
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            inputs[6],
+            inputs[9],
+            inputs[10],
+            inputs[11],
+            inputs[12],
+            inputs[13],
+            inputs[19],
+            inputs[20],
+            inputs[37],
+            inputs[38],
+            inputs[39],
+            inputs[40],
+            inputs[41],
+            inputs[44],
+            inputs[45],
+            inputs[46],
+            output[14],
+            output[16],
+        )
+        ctx.save_for_backward(*saved)
+        ctx.save_for_forward(*saved)
+        ctx.mark_non_differentiable(*output[7:19])
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        (
+            state_edge_index,
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            material_gain,
+            material_valid,
+            recursive_state_edge_index,
+            recursive_state_edge_pos,
+            recursive_state_edge_dir,
+            recursive_state_edge_t_min,
+            recursive_state_edge_t_max,
+            recursive_state_prim0,
+            recursive_state_prim1,
+            recursive_state_exterior_angle,
+            tape_active,
+            tape_cell,
+        ) = ctx.saved_tensors
+        grad_power = grad_outputs[0]
+        if grad_power is None:
+            grad_power = torch.zeros(
+                (ctx.grid_resolution1, ctx.grid_resolution0),
+                device=state_edge_pos.device,
+                dtype=state_edge_pos.dtype,
+            )
+        grad_field_x_re = grad_outputs[1]
+        if grad_field_x_re is None:
+            grad_field_x_re = torch.zeros(
+                (ctx.grid_resolution1, ctx.grid_resolution0),
+                device=state_edge_pos.device,
+                dtype=state_edge_pos.dtype,
+            )
+        (
+            grad_state_edge_pos,
+            grad_state_edge_dir,
+            grad_state_edge_t_min,
+            grad_state_edge_t_max,
+            grad_state_src,
+            grad_state_src_power,
+            grad_state_exterior_angle,
+            grad_recursive_state_edge_pos,
+            grad_recursive_state_edge_dir,
+            grad_recursive_state_edge_t_min,
+            grad_recursive_state_edge_t_max,
+            grad_recursive_state_exterior_angle,
+            grad_material_gain,
+        ) = _C.diffraction_accumulation_chain_backward(
+            ctx.scene_handle,
+            tape_active,
+            tape_cell,
+            state_edge_index,
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            recursive_state_edge_index,
+            recursive_state_edge_pos,
+            recursive_state_edge_dir,
+            recursive_state_edge_t_min,
+            recursive_state_edge_t_max,
+            recursive_state_prim0,
+            recursive_state_prim1,
+            recursive_state_exterior_angle,
+            material_gain,
+            material_valid,
+            ctx.grid_axis,
+            ctx.grid_position,
+            ctx.grid_coord0_min,
+            ctx.grid_coord0_max,
+            ctx.grid_coord1_min,
+            ctx.grid_coord1_max,
+            ctx.grid_resolution0,
+            ctx.grid_resolution1,
+            ctx.grid_cell_area,
+            ctx.wavelength,
+            ctx.direct_samples,
+            ctx.keller_samples,
+            ctx.suffix_samples,
+            ctx.seed,
+            ctx.max_order,
+            grad_power.contiguous(),
+            grad_field_x_re.contiguous(),
+        )
+        grads = [None] * 47
+        grads[3] = grad_state_edge_pos
+        grads[4] = grad_state_edge_dir
+        grads[5] = grad_state_edge_t_min
+        grads[6] = grad_state_edge_t_max
+        grads[11] = grad_state_exterior_angle
+        grads[12] = grad_state_src
+        grads[13] = grad_state_src_power
+        grads[19] = grad_material_gain
+        grads[38] = grad_recursive_state_edge_pos
+        grads[39] = grad_recursive_state_edge_dir
+        grads[40] = grad_recursive_state_edge_t_min
+        grads[41] = grad_recursive_state_edge_t_max
+        grads[46] = grad_recursive_state_exterior_angle
+        return tuple(grads)
+
+    @staticmethod
+    def jvp(ctx, *grad_inputs):
+        (
+            state_edge_index,
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            material_gain,
+            material_valid,
+            recursive_state_edge_index,
+            recursive_state_edge_pos,
+            recursive_state_edge_dir,
+            recursive_state_edge_t_min,
+            recursive_state_edge_t_max,
+            recursive_state_prim0,
+            recursive_state_prim1,
+            recursive_state_exterior_angle,
+            tape_active,
+            tape_cell,
+        ) = ctx.saved_tensors
+
+        def tangent_at(index: int, primal: torch.Tensor) -> torch.Tensor:
+            tangent = grad_inputs[index] if index < len(grad_inputs) else None
+            return torch.zeros_like(primal) if tangent is None else tangent
+
+        with torch._C._DisableFuncTorch():
+            dot_power, dot_field_x_re = _C.diffraction_accumulation_chain_jvp(
+                ctx.scene_handle,
+                _native_tensor(tape_active),
+                _native_tensor(tape_cell),
+                _native_tensor(state_edge_index),
+                _native_tensor(state_edge_pos),
+                _native_tensor(state_edge_dir),
+                _native_tensor(state_edge_t_min),
+                _native_tensor(state_edge_t_max),
+                _native_tensor(state_prim0),
+                _native_tensor(state_prim1),
+                _native_tensor(state_exterior_angle),
+                _native_tensor(state_src),
+                _native_tensor(state_src_power),
+                _native_tensor(recursive_state_edge_index),
+                _native_tensor(recursive_state_edge_pos),
+                _native_tensor(recursive_state_edge_dir),
+                _native_tensor(recursive_state_edge_t_min),
+                _native_tensor(recursive_state_edge_t_max),
+                _native_tensor(recursive_state_prim0),
+                _native_tensor(recursive_state_prim1),
+                _native_tensor(recursive_state_exterior_angle),
+                _native_tensor(material_gain),
+                _native_tensor(material_valid),
+                ctx.grid_axis,
+                ctx.grid_position,
+                ctx.grid_coord0_min,
+                ctx.grid_coord0_max,
+                ctx.grid_coord1_min,
+                ctx.grid_coord1_max,
+                ctx.grid_resolution0,
+                ctx.grid_resolution1,
+                ctx.grid_cell_area,
+                ctx.wavelength,
+                ctx.direct_samples,
+                ctx.keller_samples,
+                ctx.suffix_samples,
+                ctx.seed,
+                ctx.max_order,
+                _native_tensor(tangent_at(3, state_edge_pos)),
+                _native_tensor(tangent_at(4, state_edge_dir)),
+                _native_tensor(tangent_at(5, state_edge_t_min)),
+                _native_tensor(tangent_at(6, state_edge_t_max)),
+                _native_tensor(tangent_at(11, state_exterior_angle)),
+                _native_tensor(tangent_at(12, state_src)),
+                _native_tensor(tangent_at(13, state_src_power)),
+                _native_tensor(tangent_at(38, recursive_state_edge_pos)),
+                _native_tensor(tangent_at(39, recursive_state_edge_dir)),
+                _native_tensor(tangent_at(40, recursive_state_edge_t_min)),
+                _native_tensor(tangent_at(41, recursive_state_edge_t_max)),
+                _native_tensor(tangent_at(46, recursive_state_exterior_angle)),
+                _native_tensor(tangent_at(19, material_gain)),
+            )
+        zero = torch.zeros_like(dot_power)
+        return (
+            dot_power,
+            dot_field_x_re,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
 def accum_dfr_chain_native(
     scene_handle: int,
     initial_states: DfrStates,
@@ -843,7 +1207,7 @@ def accum_dfr_chain_native(
     initial_states = _contig_states(initial_states)
     recursive_states = _contig_states(recursive_states)
     material = _contig_material(material)
-    values = _C.diffraction_accumulation_forward(
+    values = _DfrChainAccumFunction.apply(
         int(scene_handle),
         active.contiguous(),
         initial_states.edge_index,

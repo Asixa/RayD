@@ -9,8 +9,6 @@ namespace raydtorch {
 py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
     require_vec3f(point, "point");
     SceneCache &scene = get_scene(scene_handle);
-    if (scene.meshes.size() != 1)
-        throw std::runtime_error("nearest_edge_forward: first milestone supports exactly one mesh.");
     EdgeForwardOutputs out = edge_forward_cuda(scene, point);
     return py::make_tuple(
         out.distance,
@@ -32,11 +30,10 @@ py::tuple nearest_edge_backward_op(
     at::Tensor tape_d,
     at::Tensor grad_distance,
     at::Tensor grad_edge_point,
-    at::Tensor grad_edge_t) {
+        at::Tensor grad_edge_t) {
     SceneCache &scene = get_scene(scene_handle);
-    const MeshRecord &mesh = scene.meshes[0];
     EdgeBackwardOutputs out = edge_backward_cuda(
-        mesh.vertices,
+        scene.global_vertices,
         scene.edge_v0,
         scene.edge_v1,
         point,
@@ -62,8 +59,6 @@ py::tuple nearest_edge_ray_forward_op(
     if (ray_d.size(0) != ray_o.size(0) || ray_tmax.size(0) != ray_o.size(0) || active.size(0) != ray_o.size(0))
         throw std::runtime_error("ray_d, ray_tmax, and active must match ray_o batch size.");
     SceneCache &scene = get_scene(scene_handle);
-    if (scene.meshes.size() != 1)
-        throw std::runtime_error("nearest_edge_ray_forward: first milestone supports exactly one mesh.");
     EdgeRayForwardOutputs out = edge_ray_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
     return py::make_tuple(
         out.distance,
@@ -84,11 +79,10 @@ py::tuple nearest_edge_jvp_op(
     at::Tensor tape_s,
     at::Tensor tape_d,
     at::Tensor tangent_vertices,
-    at::Tensor tangent_point) {
+        at::Tensor tangent_point) {
     SceneCache &scene = get_scene(scene_handle);
-    const MeshRecord &mesh = scene.meshes[0];
     EdgeJvpOutputs out = edge_jvp_cuda(
-        mesh.vertices,
+        scene.global_vertices,
         scene.edge_v0,
         scene.edge_v1,
         point,
