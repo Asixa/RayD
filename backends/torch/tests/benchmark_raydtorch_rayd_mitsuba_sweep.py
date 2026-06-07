@@ -17,9 +17,12 @@ from .benchmark_raydtorch_rayd_mitsuba_stress import (
     _load_rayd,
     _make_grid_mesh_data,
     _make_ray_data,
+    _mitsuba_backward_performance,
     _mitsuba_forward_performance,
+    _rayd_backward_performance,
     _rayd_forward_performance,
     _speedups,
+    _torch_backward_performance,
     _torch_forward_performance,
     _try_import_mitsuba,
 )
@@ -55,6 +58,9 @@ PRESETS: dict[str, dict[str, Any]] = {
         "warmup": 2,
     },
 }
+
+
+PHASES = ("forward_static", "forward_dynamic", "backward_static", "backward_dynamic")
 
 
 def _parse_int_list(values: list[str] | None, default: list[int]) -> list[int]:
@@ -99,7 +105,7 @@ def _augment_perf(
     execute_total_rays: bool,
 ) -> dict[str, Any]:
     effective_total_rays = ray_batch_size * batch_count
-    for phase_name in ("forward_static", "forward_dynamic"):
+    for phase_name in PHASES:
         phase = result.get(phase_name)
         if not phase:
             continue
@@ -156,6 +162,27 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 warmup=args.warmup,
             ),
         }
+        if args.include_backward:
+            backends["raydtorch"]["backward_static"] = _torch_backward_performance(
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=False,
+                edges_enabled=args.edges,
+                repeats=repeats,
+                warmup=args.warmup,
+            )
+            backends["raydtorch"]["backward_dynamic"] = _torch_backward_performance(
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=True,
+                edges_enabled=args.edges,
+                repeats=repeats,
+                warmup=args.warmup,
+            )
         _augment_perf(
             backends["raydtorch"],
             requested_total_rays=requested_total_rays,
@@ -194,6 +221,31 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 warmup=args.warmup,
             ),
         }
+        if args.include_backward:
+            backends["rayd"]["backward_static"] = _rayd_backward_performance(
+                rayd,
+                cuda,
+                dr,
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=False,
+                repeats=repeats,
+                warmup=args.warmup,
+            )
+            backends["rayd"]["backward_dynamic"] = _rayd_backward_performance(
+                rayd,
+                cuda,
+                dr,
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=True,
+                repeats=repeats,
+                warmup=args.warmup,
+            )
         _augment_perf(
             backends["rayd"],
             requested_total_rays=requested_total_rays,
@@ -238,6 +290,29 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                     warmup=args.warmup,
                 ),
             }
+            if args.include_backward:
+                backends["mitsuba"]["backward_static"] = _mitsuba_backward_performance(
+                    mi,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=False,
+                    repeats=repeats,
+                    warmup=args.warmup,
+                )
+                backends["mitsuba"]["backward_dynamic"] = _mitsuba_backward_performance(
+                    mi,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=True,
+                    repeats=repeats,
+                    warmup=args.warmup,
+                )
             _augment_perf(
                 backends["mitsuba"],
                 requested_total_rays=requested_total_rays,
@@ -276,7 +351,9 @@ def _rows(results: dict[str, Any]) -> list[dict[str, Any]]:
         for backend, backend_result in case["backends"].items():
             if "error" in backend_result:
                 continue
-            for phase in ("forward_static", "forward_dynamic"):
+            for phase in PHASES:
+                if phase not in backend_result:
+                    continue
                 phase_result = backend_result[phase]
                 for mode, stats in phase_result["performance"].items():
                     rows.append(
@@ -322,162 +399,128 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         return []
 
     written: list[str] = []
-    backends = sorted({row["backend"] for row in rows})
-    phases = ["forward_static", "forward_dynamic"]
-    modes = ["full", "reduced"]
+    backend_order = ["raydtorch", "rayd", "mitsuba"]
+    backends = [backend for backend in backend_order if any(row["backend"] == backend for row in rows)]
+    phases = [phase for phase in PHASES if any(row["phase"] == phase for row in rows)]
     colors = {"raydtorch": "#2563eb", "rayd": "#16a34a", "mitsuba": "#c2410c"}
-    markers = {"raydtorch": "o", "rayd": "s", "mitsuba": "^"}
 
     def save(fig: Any, name: str) -> None:
         png = output_dir / f"{name}.png"
-        svg = output_dir / f"{name}.svg"
         fig.tight_layout()
         fig.savefig(png, dpi=180)
-        fig.savefig(svg)
         plt.close(fig)
-        written.extend([str(png), str(svg)])
+        written.append(str(png))
+
+    def subplot_shape(count: int) -> tuple[int, int]:
+        cols = 2 if count > 1 else 1
+        rows_count = int(math.ceil(count / cols))
+        return rows_count, cols
+
+    phase_titles = {
+        "forward_static": "Static intersection forward time",
+        "forward_dynamic": "Dynamic intersection forward time",
+        "backward_static": "Static AD backward time",
+        "backward_dynamic": "Dynamic AD backward time",
+    }
+    mode_titles = {
+        "full": "Forward: full public outputs (RayFlags.All)",
+        "reduced": "Forward: t-only public output (RayFlags.None / Minimal)",
+        "preliminary": "Forward: t-only preliminary intersection",
+        "t_sum_full": "AD backward: loss=sum(t), full public outputs (RayFlags.All)",
+        "t_sum_reduced": "AD backward: loss=sum(t), t-only public output (RayFlags.None)",
+    }
+
+    def mode_title(mode: str, mode_backends: list[str]) -> str:
+        title = mode_titles.get(mode, mode)
+        if len(mode_backends) == 1:
+            title = f"{title}\n{mode_backends[0]} only"
+        return title
 
     build_seen: dict[tuple[str, int], dict[str, Any]] = {}
     for row in rows:
         key = (row["backend"], int(row["triangle_count"]))
         if key not in build_seen:
             build_seen[key] = row
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for backend in backends:
-        pts = sorted(
-            [row for (row_backend, _tri), row in build_seen.items() if row_backend == backend],
-            key=lambda item: item["triangle_count"],
-        )
-        if not pts:
-            continue
-        ax.plot(
-            [p["triangle_count"] for p in pts],
-            [p["build_ms"] for p in pts],
-            label=backend,
-            color=colors.get(backend),
-            marker=markers.get(backend, "o"),
-        )
-    ax.set_xscale("log")
-    ax.set_yscale("log")
+    build_cases = sorted({int(row["triangle_count"]) for row in build_seen.values()})
+    fig, ax = plt.subplots(figsize=(max(8, 1.2 * len(build_cases)), 5))
+    width = 0.78 / max(1, len(backends))
+    for backend_index, backend in enumerate(backends):
+        values = []
+        for triangle_count in build_cases:
+            row = build_seen.get((backend, triangle_count))
+            values.append(float(row["build_ms"]) if row else float("nan"))
+        offsets = [
+            case_index + (backend_index - (len(backends) - 1) / 2) * width
+            for case_index in range(len(build_cases))
+        ]
+        ax.bar(offsets, values, width=width, label=backend, color=colors.get(backend))
+    ax.set_xticks(range(len(build_cases)))
+    ax.set_xticklabels([_format_count(value) for value in build_cases], rotation=25, ha="right")
     ax.set_xlabel("Triangles")
     ax.set_ylabel("Build time (ms)")
-    ax.set_title("Build scaling")
-    ax.grid(True, which="both", alpha=0.25)
+    ax.set_title("Build time by scene size")
+    ax.grid(True, axis="y", alpha=0.25)
     ax.legend()
-    save(fig, "build_vs_triangles")
+    save(fig, "build_time_ms")
+
+    def plot_phase(phase: str) -> None:
+        modes = sorted({row["mode"] for row in rows if row["phase"] == phase})
+        if not modes:
+            return
+        fig_rows, fig_cols = subplot_shape(len(modes))
+        fig, axes = plt.subplots(fig_rows, fig_cols, figsize=(7.4 * fig_cols, 4.8 * fig_rows), squeeze=False)
+        for mode_index, mode in enumerate(modes):
+            ax = axes[mode_index // fig_cols][mode_index % fig_cols]
+            phase_mode_rows = [row for row in rows if row["phase"] == phase and row["mode"] == mode]
+            cases = sorted(
+                {
+                    (int(row["triangle_count"]), int(row["requested_total_rays"]))
+                    for row in phase_mode_rows
+                }
+            )
+            mode_backends = [
+                backend for backend in backends if any(row["backend"] == backend for row in phase_mode_rows)
+            ]
+            if not cases or not mode_backends:
+                ax.axis("off")
+                continue
+            width = 0.78 / len(mode_backends)
+            for backend_index, backend in enumerate(mode_backends):
+                values = []
+                for triangle_count, requested_total_rays in cases:
+                    match = next(
+                        (
+                            row
+                            for row in phase_mode_rows
+                            if row["backend"] == backend
+                            and int(row["triangle_count"]) == triangle_count
+                            and int(row["requested_total_rays"]) == requested_total_rays
+                        ),
+                        None,
+                    )
+                    values.append(float(match["projected_total_ms"]) if match else float("nan"))
+                offsets = [
+                    case_index + (backend_index - (len(mode_backends) - 1) / 2) * width
+                    for case_index in range(len(cases))
+                ]
+                ax.bar(offsets, values, width=width, label=backend, color=colors.get(backend))
+            labels = [
+                f"{_format_count(triangle_count)} tri\n{_format_count(requested_total_rays)} rays"
+                for triangle_count, requested_total_rays in cases
+            ]
+            ax.set_xticks(range(len(cases)))
+            ax.set_xticklabels(labels, rotation=30, ha="right")
+            ax.set_ylabel("Time (ms; projected for multi-batch cases)")
+            ax.set_title(mode_title(mode, mode_backends))
+            ax.grid(True, axis="y", alpha=0.25)
+            ax.legend(fontsize=8)
+        for idx in range(len(modes), fig_rows * fig_cols):
+            axes[idx // fig_cols][idx % fig_cols].axis("off")
+        fig.suptitle(phase_titles.get(phase, phase))
+        save(fig, f"time_ms_{phase}")
 
     for phase in phases:
-        for mode in modes:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            for backend in backends:
-                for requested_total_rays in sorted({row["requested_total_rays"] for row in rows}):
-                    pts = sorted(
-                        [
-                            row
-                            for row in rows
-                            if row["backend"] == backend
-                            and row["phase"] == phase
-                            and row["mode"] == mode
-                            and row["requested_total_rays"] == requested_total_rays
-                        ],
-                        key=lambda item: item["triangle_count"],
-                    )
-                    if len(pts) < 2:
-                        continue
-                    ax.plot(
-                        [p["triangle_count"] for p in pts],
-                        [p["qps_m"] for p in pts],
-                        label=f"{backend} rays={_format_count(int(requested_total_rays))}",
-                        color=colors.get(backend),
-                        marker=markers.get(backend, "o"),
-                        alpha=0.82,
-                    )
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.set_xlabel("Triangles")
-            ax.set_ylabel("Throughput (M rays/s)")
-            ax.set_title(f"Throughput vs triangles: {phase} {mode}")
-            ax.grid(True, which="both", alpha=0.25)
-            ax.legend(fontsize=8)
-            save(fig, f"throughput_vs_triangles_{phase}_{mode}")
-
-            fig, ax = plt.subplots(figsize=(8, 5))
-            for backend in backends:
-                for triangle_count in sorted({row["triangle_count"] for row in rows}):
-                    pts = sorted(
-                        [
-                            row
-                            for row in rows
-                            if row["backend"] == backend
-                            and row["phase"] == phase
-                            and row["mode"] == mode
-                            and row["triangle_count"] == triangle_count
-                        ],
-                        key=lambda item: item["requested_total_rays"],
-                    )
-                    if len(pts) < 2:
-                        continue
-                    ax.plot(
-                        [p["requested_total_rays"] for p in pts],
-                        [p["qps_m"] for p in pts],
-                        label=f"{backend} tri={_format_count(int(triangle_count))}",
-                        color=colors.get(backend),
-                        marker=markers.get(backend, "o"),
-                        alpha=0.82,
-                    )
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.set_xlabel("Requested total rays")
-            ax.set_ylabel("Throughput (M rays/s)")
-            ax.set_title(f"Throughput vs total rays: {phase} {mode}")
-            ax.grid(True, which="both", alpha=0.25)
-            ax.legend(fontsize=8)
-            save(fig, f"throughput_vs_total_rays_{phase}_{mode}")
-
-    speedup_rows = [row for row in rows if row["backend"] != "raydtorch" and row["mode"] in modes]
-    for phase in phases:
-        for mode in modes:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            for backend in sorted({row["backend"] for row in speedup_rows}):
-                for requested_total_rays in sorted({row["requested_total_rays"] for row in speedup_rows}):
-                    pts: list[tuple[int, float]] = []
-                    for row in speedup_rows:
-                        if row["backend"] != backend or row["phase"] != phase or row["mode"] != mode:
-                            continue
-                        if row["requested_total_rays"] != requested_total_rays:
-                            continue
-                        torch_match = next(
-                            (
-                                base
-                                for base in rows
-                                if base["backend"] == "raydtorch"
-                                and base["phase"] == phase
-                                and base["mode"] == mode
-                                and base["triangle_count"] == row["triangle_count"]
-                                and base["requested_total_rays"] == row["requested_total_rays"]
-                            ),
-                            None,
-                        )
-                        if torch_match is not None:
-                            pts.append((int(row["triangle_count"]), float(row["avg_ms"]) / float(torch_match["avg_ms"])))
-                    pts.sort()
-                    if len(pts) < 2:
-                        continue
-                    ax.plot(
-                        [p[0] for p in pts],
-                        [p[1] for p in pts],
-                        label=f"{backend}/RayDTorch rays={_format_count(int(requested_total_rays))}",
-                        color=colors.get(backend),
-                        marker=markers.get(backend, "o"),
-                    )
-            ax.axhline(1.0, color="#111827", linewidth=1.0, linestyle="--")
-            ax.set_xscale("log")
-            ax.set_xlabel("Triangles")
-            ax.set_ylabel("Speedup over RayDTorch avg ms ratio")
-            ax.set_title(f"RayDTorch speedup vs scale: {phase} {mode}")
-            ax.grid(True, which="both", alpha=0.25)
-            ax.legend(fontsize=8)
-            save(fig, f"speedup_vs_triangles_{phase}_{mode}")
+        plot_phase(phase)
 
     return written
 
@@ -506,6 +549,7 @@ def main() -> None:
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
+    parser.add_argument("--include-backward", action="store_true")
     parser.add_argument("--require-mitsuba", action="store_true")
     parser.add_argument("--dynamic-x-offset", type=float, default=2.0)
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -517,9 +561,9 @@ def main() -> None:
     preset = PRESETS[args.preset]
     args.mesh_resolutions = _parse_int_list(args.mesh_resolution, preset["mesh_resolutions"])
     args.total_rays_values = _parse_int_list(args.total_rays, preset["total_rays"])
-    args.ray_batch_side = int(args.ray_batch_side or preset["ray_batch_side"])
-    args.repeats = int(args.repeats or preset["repeats"])
-    args.warmup = int(args.warmup or preset["warmup"])
+    args.ray_batch_side = int(args.ray_batch_side if args.ray_batch_side is not None else preset["ray_batch_side"])
+    args.repeats = int(args.repeats if args.repeats is not None else preset["repeats"])
+    args.warmup = int(args.warmup if args.warmup is not None else preset["warmup"])
     output_dir = args.output_dir or _default_output_dir(args.preset)
     json_output = args.json_output or (output_dir / "sweep.json")
     csv_output = args.csv_output or (output_dir / "sweep.csv")
@@ -547,6 +591,7 @@ def main() -> None:
             "rayd_root": str(args.rayd_root) if args.rayd_source == "local" else None,
             "mitsuba_variant": args.mitsuba_variant if "mitsuba" in args.backends else None,
             "mitsuba_preliminary": args.mitsuba_preliminary,
+            "include_backward": args.include_backward,
         },
         "cases": cases,
     }

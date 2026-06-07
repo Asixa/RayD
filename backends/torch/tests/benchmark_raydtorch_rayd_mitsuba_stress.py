@@ -286,6 +286,64 @@ def _torch_forward_performance(
     }
 
 
+def _clear_torch_grads(*values: torch.Tensor) -> None:
+    for value in values:
+        if value.grad is not None:
+            value.grad = None
+
+
+def _torch_backward_performance(
+    mesh_data: dict[str, list[float] | list[int]],
+    updated_mesh_data: dict[str, list[float] | list[int]],
+    ray_data: dict[str, list[float]],
+    updated_ray_data: dict[str, list[float]],
+    *,
+    dynamic: bool,
+    edges_enabled: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    base_positions, faces = _torch_mesh(mesh_data)
+    updated_positions, _ = _torch_mesh(updated_mesh_data)
+    base_positions.requires_grad_(True)
+    updated_positions.requires_grad_(True)
+    scene = rt.Scene()
+    mesh_id = scene.add_mesh(rt.Mesh(base_positions, faces, edges_enabled=edges_enabled), dynamic=dynamic)
+    _, build_ms = _time_build(scene.build, torch.cuda.synchronize)
+    rays = _torch_ray(ray_data)
+    updated_rays = _torch_ray(updated_ray_data)
+    flags_none = getattr(rt.RayFlags, "None")
+
+    def make_run(mode: str):
+        use_updated = False
+
+        def run():
+            nonlocal use_updated
+            _clear_torch_grads(base_positions, updated_positions)
+            current_rays = rays
+            if dynamic:
+                use_updated = not use_updated
+                scene.update_mesh_vertices(mesh_id, updated_positions if use_updated else base_positions)
+                scene.sync()
+                current_rays = updated_rays if use_updated else rays
+            flags = rt.RayFlags.All if mode == "t_sum_full" else flags_none
+            its = scene.intersect(current_rays, flags=flags)
+            loss = its.t.sum()
+            loss.backward()
+            return loss
+
+        return run
+
+    query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    return {
+        "build_ms": build_ms,
+        "performance": {
+            mode: _summarize(_measure(make_run(mode), torch.cuda.synchronize, repeats, warmup), query_count)
+            for mode in ("t_sum_full", "t_sum_reduced")
+        },
+    }
+
+
 def _rayd_ray(rayd: Any, cuda: Any, ray_data: dict[str, list[float]]) -> Any:
     return rayd.Ray(
         cuda.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
@@ -357,6 +415,77 @@ def _rayd_forward_performance(
         "performance": {
             mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count)
             for mode in ("full", "reduced")
+        },
+    }
+
+
+def _rayd_ray_ad(rayd: Any, ad: Any, ray_data: dict[str, list[float]]) -> Any:
+    return rayd.RayAD(
+        ad.Array3f(ray_data["ox"], ray_data["oy"], ray_data["oz"]),
+        ad.Array3f(ray_data["dx"], ray_data["dy"], ray_data["dz"]),
+    )
+
+
+def _rayd_backward_performance(
+    rayd: Any,
+    cuda: Any,
+    dr: Any,
+    mesh_data: dict[str, list[float] | list[int]],
+    updated_mesh_data: dict[str, list[float] | list[int]],
+    ray_data: dict[str, list[float]],
+    updated_ray_data: dict[str, list[float]],
+    *,
+    dynamic: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    ad = importlib.import_module("drjit.cuda.ad")
+    mesh = rayd.Mesh(
+        cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+        cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
+    )
+    base_positions = ad.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
+    updated_positions = ad.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
+    dr.enable_grad(base_positions)
+    dr.enable_grad(updated_positions)
+    if not dynamic:
+        mesh.vertex_positions = base_positions
+    scene = rayd.Scene()
+    mesh_id = scene.add_mesh(mesh, dynamic=dynamic)
+    _, build_ms = _time_build(scene.build, dr.sync_thread)
+    rays = _rayd_ray_ad(rayd, ad, ray_data)
+    updated_rays = _rayd_ray_ad(rayd, ad, updated_ray_data)
+    flags_none = getattr(rayd.RayFlags, "None")
+
+    def make_run(mode: str):
+        use_updated = False
+
+        def run():
+            nonlocal use_updated
+            dr.set_grad(base_positions, 0)
+            dr.set_grad(updated_positions, 0)
+            current_positions = base_positions
+            current_rays = rays
+            if dynamic:
+                use_updated = not use_updated
+                current_positions = updated_positions if use_updated else base_positions
+                current_rays = updated_rays if use_updated else rays
+                scene.update_mesh_vertices(mesh_id, current_positions)
+                scene.sync()
+            flags = rayd.RayFlags.All if mode == "t_sum_full" else flags_none
+            its = scene.intersect(current_rays, flags=flags)
+            loss = dr.sum(its.t)
+            dr.backward(loss)
+            dr.eval(dr.grad(current_positions))
+
+        return run
+
+    query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    return {
+        "build_ms": build_ms,
+        "performance": {
+            mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count)
+            for mode in ("t_sum_full", "t_sum_reduced")
         },
     }
 
@@ -443,12 +572,64 @@ def _mitsuba_forward_performance(
     }
 
 
+def _mitsuba_backward_performance(
+    mi: Any,
+    dr: Any,
+    mesh_data: dict[str, list[float] | list[int]],
+    updated_mesh_data: dict[str, list[float] | list[int]],
+    ray_data: dict[str, list[float]],
+    updated_ray_data: dict[str, list[float]],
+    *,
+    dynamic: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    scene, params, build_ms = _mitsuba_scene_timed(mi, dr, mesh_data)
+    base_positions = dr.ravel(mi.Point3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]))
+    updated_positions = dr.ravel(mi.Point3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"]))
+    dr.enable_grad(base_positions)
+    dr.enable_grad(updated_positions)
+    if not dynamic:
+        params["mesh.vertex_positions"] = base_positions
+        params.set_dirty("mesh.vertex_positions")
+        params.update()
+    rays = _mitsuba_ray(mi, ray_data)
+    updated_rays = _mitsuba_ray(mi, updated_ray_data)
+    use_updated = False
+
+    def run():
+        nonlocal use_updated
+        dr.set_grad(base_positions, 0)
+        dr.set_grad(updated_positions, 0)
+        current_positions = base_positions
+        current_rays = rays
+        if dynamic:
+            use_updated = not use_updated
+            current_positions = updated_positions if use_updated else base_positions
+            current_rays = updated_rays if use_updated else rays
+            params["mesh.vertex_positions"] = current_positions
+            params.set_dirty("mesh.vertex_positions")
+            params.update()
+        its = scene.ray_intersect(current_rays)
+        loss = dr.sum(its.t)
+        dr.backward(loss)
+        dr.eval(dr.grad(current_positions))
+
+    query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    return {
+        "build_ms": build_ms,
+        "performance": {
+            "t_sum_full": _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count),
+        },
+    }
+
+
 def _speedups(backends: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     torch_backend = backends.get("raydtorch")
     if not torch_backend:
         return out
-    for phase in ("forward_static", "forward_dynamic"):
+    for phase in ("forward_static", "forward_dynamic", "backward_static", "backward_dynamic"):
         torch_phase = torch_backend.get(phase, {}).get("performance", {})
         phase_out: dict[str, Any] = {}
         for other_name, other_backend in backends.items():
@@ -499,6 +680,27 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 warmup=args.warmup,
             ),
         }
+        if args.include_backward:
+            backends["raydtorch"]["backward_static"] = _torch_backward_performance(
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=False,
+                edges_enabled=args.edges,
+                repeats=args.repeats,
+                warmup=args.warmup,
+            )
+            backends["raydtorch"]["backward_dynamic"] = _torch_backward_performance(
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=True,
+                edges_enabled=args.edges,
+                repeats=args.repeats,
+                warmup=args.warmup,
+            )
         _cleanup_torch()
 
     rayd = cuda = dr = None
@@ -530,6 +732,31 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 warmup=args.warmup,
             ),
         }
+        if args.include_backward:
+            backends["rayd"]["backward_static"] = _rayd_backward_performance(
+                rayd,
+                cuda,
+                dr,
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=False,
+                repeats=args.repeats,
+                warmup=args.warmup,
+            )
+            backends["rayd"]["backward_dynamic"] = _rayd_backward_performance(
+                rayd,
+                cuda,
+                dr,
+                mesh_data,
+                updated_mesh_data,
+                ray_data,
+                updated_ray_data,
+                dynamic=True,
+                repeats=args.repeats,
+                warmup=args.warmup,
+            )
         _cleanup_drjit(dr)
 
     if "mitsuba" in args.backends:
@@ -567,6 +794,29 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                     warmup=args.warmup,
                 ),
             }
+            if args.include_backward:
+                backends["mitsuba"]["backward_static"] = _mitsuba_backward_performance(
+                    mi,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=False,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
+                backends["mitsuba"]["backward_dynamic"] = _mitsuba_backward_performance(
+                    mi,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=True,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
             _cleanup_drjit(dr)
 
     return {
@@ -580,6 +830,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 "full": "RayDTorch/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
                 "reduced": "RayDTorch/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
                 "preliminary": "Mitsuba-only ray_intersect_preliminary t-only when --mitsuba-preliminary is set.",
+                "t_sum_full": "AD forward plus backward of sum(intersection.t), using full public intersection outputs.",
+                "t_sum_reduced": "AD forward plus backward of sum(intersection.t), using RayFlags.None t-only public outputs where available.",
             },
         },
         "backends": backends,
@@ -608,6 +860,7 @@ def main() -> None:
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
+    parser.add_argument("--include-backward", action="store_true")
     parser.add_argument("--require-mitsuba", action="store_true")
     parser.add_argument("--json-output", type=Path, default=None)
     args = parser.parse_args()
@@ -632,6 +885,7 @@ def main() -> None:
             "warmup": args.warmup,
             "dynamic_x_offset": args.dynamic_x_offset,
             "backends": args.backends,
+            "include_backward": args.include_backward,
         },
         "scenarios": [_run_scenario(args, scenario) for scenario in scenarios],
     }

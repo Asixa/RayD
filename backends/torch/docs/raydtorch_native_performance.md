@@ -60,7 +60,7 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
   --mitsuba-preliminary
 ```
 
-The sweep emits `sweep.json`, `sweep.csv`, and PNG/SVG plots under
+The sweep emits `sweep.json`, `sweep.csv`, and PNG grouped-bar plots under
 `artifacts/benchmarks/scaling/<preset>/`. Presets:
 
 - `smoke`: quick script/plot validation.
@@ -72,6 +72,45 @@ Large ray counts are represented by a fixed ray batch plus a batch count. By
 default the script measures per-batch throughput and projects total time for the
 requested ray count. Add `--execute-total-rays` when the goal is to actually run
 all batches for the 10M/100M ray entries.
+
+Current scaling interpretation:
+
+- In `artifacts/benchmarks/scaling/extreme/sweep.json`, RayD is faster than
+  RayDTorch in most static `full` intersection points. At 2.10M triangles and
+  100.66M requested rays, static full is RayDTorch 0.3991 ms/batch, RayD
+  0.3723 ms/batch, and Mitsuba public full 0.5856 ms/batch.
+- In the same extreme static t-only/reduced case, RayDTorch is faster than RayD
+  and Mitsuba public minimal: RayDTorch 0.1840 ms/batch, RayD 0.1999 ms/batch,
+  Mitsuba public reduced 0.2583 ms/batch. Mitsuba preliminary is a lower-level
+  baseline at 0.1785 ms/batch.
+- Dynamic Mitsuba numbers are recorded, but they are not the primary comparison:
+  Mitsuba dynamic scene updates perform additional work not directly comparable
+  to RayD/RayDTorch.
+
+AD backward is measured with `--include-backward`; plots are absolute projected
+time grouped by backend, not throughput or speedup plots:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+  --preset smoke --mesh-resolution 64 --mesh-resolution 128 --mesh-resolution 256 `
+  --total-rays 16384 --total-rays 65536 --ray-batch-side 256 `
+  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\RayDi `
+  --mitsuba-preliminary --include-backward `
+  --output-dir artifacts\benchmarks\scaling\ad_uv_tape
+```
+
+High-repeat static AD point, 131K triangles / 65.5K rays:
+
+| Mode | RayDTorch ms | RayD ms | Status |
+|---|---:|---:|---|
+| forward full | 0.0643 | 0.1318 | RayDTorch faster |
+| forward reduced | 0.0504 | 0.1332 | RayDTorch faster |
+| backward `t_sum_full` | 0.5326 | 0.1915 | RayD faster |
+| backward `t_sum_reduced` | 0.4936 | 0.2065 | RayD faster |
+
+This is the main remaining RayD advantage found so far: static differentiable
+intersection backward, even after RayDTorch's public `RayFlags.None` AD path was
+added and hidden tape was reduced to `(global_prim_id, u, v, t)`.
 
 Current same-script static-vs-static result:
 
@@ -169,6 +208,7 @@ The current opt-in external RayD parity test covers same-scene forward cases for
 Torch-native AD tests cover fixed-winner VJP/JVP for:
 
 - `intersect` VJP/JVP
+- `intersect(..., flags=RayFlags.None)` VJP/JVP through hidden tape
 - point/ray `nearest_edge` VJP/JVP
 - reflection trace VJP/JVP
 - reflection EPC forward/VJP/JVP

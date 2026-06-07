@@ -120,7 +120,7 @@ class Scene:
                 int(flags),
             )
             return Intersection(*values)
-        return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous())
+        return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous(), int(flags))
 
     def nearest_edge(self, point: torch.Tensor | Ray):
         handle = self._require_ready()

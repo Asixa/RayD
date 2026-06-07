@@ -65,6 +65,36 @@ py::tuple intersect_forward_flags_op(
     return intersection_public_tuple(out);
 }
 
+py::tuple intersect_forward_ad_flags_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    at::Tensor active,
+    int64_t flags) {
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_scalar_f(ray_tmax, "ray_tmax");
+    require_mask(active, "active");
+    SceneCache &scene = get_scene(scene_handle);
+    IntersectForwardOutputs out =
+        intersect_forward_ad_flags_cuda(scene, ray_o, ray_d, ray_tmax, active, flags);
+    return py::make_tuple(
+        out.t,
+        out.p,
+        out.n,
+        out.geo_n,
+        out.uv,
+        out.barycentric,
+        out.shape_id,
+        out.prim_id,
+        out.local_prim_id,
+        out.global_prim_id,
+        out.tape_prim_id,
+        out.tape_barycentric,
+        out.tape_t);
+}
+
 py::tuple intersect_backward_op(
     int64_t scene_handle,
     at::Tensor ray_o,
@@ -132,6 +162,7 @@ py::tuple intersect_jvp_op(
 void bind_intersect_ops(py::module_ &m) {
     m.def("intersect_forward", &intersect_forward_op);
     m.def("intersect_forward_flags", &intersect_forward_flags_op);
+    m.def("intersect_forward_ad_flags", &intersect_forward_ad_flags_op);
     m.def("intersect_backward", &intersect_backward_op);
     m.def("intersect_jvp", &intersect_jvp_op);
 }

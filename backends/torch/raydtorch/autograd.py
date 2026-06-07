@@ -33,6 +33,18 @@ def _needs_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
     return False
 
 
+_RAY_FLAG_GEOMETRIC = 0x01
+_RAY_FLAG_SHADING_N = 0x02
+_RAY_FLAG_UV = 0x04
+_RAY_FLAG_ALL = _RAY_FLAG_GEOMETRIC | _RAY_FLAG_SHADING_N | _RAY_FLAG_UV
+
+
+def _grad_or_zeros(value: torch.Tensor | None, like: torch.Tensor) -> torch.Tensor:
+    if value is not None and value.numel() != 0:
+        return value.contiguous()
+    return torch.zeros_like(like)
+
+
 class _IntersectFunction(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -42,39 +54,54 @@ class _IntersectFunction(torch.autograd.Function):
         ray_d: torch.Tensor,
         ray_tmax: torch.Tensor,
         active: torch.Tensor,
+        flags: int,
     ):
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
-        outputs = _C.intersect_forward(int(scene_handle), ray_o, ray_d, ray_tmax, active)
-        return outputs[:10]
+        outputs = _C.intersect_forward_ad_flags(int(scene_handle), ray_o, ray_d, ray_tmax, active, int(flags))
+        return outputs[:12]
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        scene_handle, vertices, ray_o, ray_d, ray_tmax, active = inputs
-        t, _p, _n, _geo_n, _uv, barycentric, shape_id, prim_id, local_prim_id, global_prim_id = output
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, active, flags = inputs
+        (
+            t,
+            _p,
+            _n,
+            _geo_n,
+            _uv,
+            _barycentric,
+            shape_id,
+            prim_id,
+            local_prim_id,
+            global_prim_id,
+            tape_prim_id,
+            tape_barycentric,
+        ) = output
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
         ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
         ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
         ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
         ctx.scene_handle = int(scene_handle)
-        ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, global_prim_id, barycentric, t)
-        ctx.save_for_forward(vertices, ray_o, ray_d, active, global_prim_id, barycentric, t)
-        ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id)
+        ctx.flags = int(flags)
+        ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, t)
+        ctx.save_for_forward(vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, t)
+        ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric)
 
     @staticmethod
     def backward(ctx, *grad_outputs):
         ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
-        grad_t = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(tape_t)
-        grad_p = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(ray_o)
-        grad_n = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(ray_o)
-        grad_geo_n = grad_outputs[3].contiguous() if grad_outputs[3] is not None else torch.zeros_like(ray_o)
-        grad_uv = (
-            grad_outputs[4].contiguous()
-            if grad_outputs[4] is not None
-            else torch.zeros((ray_o.shape[0], 2), device=ray_o.device, dtype=ray_o.dtype)
+        grad_t = _grad_or_zeros(grad_outputs[0], tape_t)
+        grad_p = _grad_or_zeros(grad_outputs[1], ray_o)
+        grad_n = _grad_or_zeros(grad_outputs[2], ray_o)
+        grad_geo_n = _grad_or_zeros(grad_outputs[3], ray_o)
+        grad_uv = _grad_or_zeros(
+            grad_outputs[4],
+            torch.empty((ray_o.shape[0], 2), device=ray_o.device, dtype=ray_o.dtype),
         )
-        grad_barycentric = (
-            grad_outputs[5].contiguous() if grad_outputs[5] is not None else torch.zeros_like(tape_barycentric)
+        grad_barycentric = _grad_or_zeros(
+            grad_outputs[5],
+            torch.empty((ray_o.shape[0], 3), device=ray_o.device, dtype=ray_o.dtype),
         )
         grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward(
             ctx.scene_handle,
@@ -91,10 +118,10 @@ class _IntersectFunction(torch.autograd.Function):
             grad_uv,
             grad_barycentric,
         )
-        return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None
+        return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
 
     @staticmethod
-    def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active):
+    def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active, grad_flags):
         vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
         if grad_vertices is None:
             grad_vertices = torch.zeros_like(vertices)
@@ -115,7 +142,23 @@ class _IntersectFunction(torch.autograd.Function):
                 _native_tensor(grad_ray_d),
             )
         tangent_t, tangent_p, tangent_n, tangent_geo_n, tangent_uv, tangent_barycentric = values
-        return tangent_t, tangent_p, tangent_n, tangent_geo_n, tangent_uv, tangent_barycentric, None, None, None, None
+        empty_vec3 = tangent_p.new_empty((0, 3))
+        empty_uv = tangent_uv.new_empty((0, 2))
+        flags = ctx.flags
+        return (
+            tangent_t,
+            tangent_p if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
+            tangent_n if flags & _RAY_FLAG_SHADING_N else empty_vec3,
+            tangent_geo_n if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
+            tangent_uv if flags & _RAY_FLAG_UV else empty_uv,
+            tangent_barycentric if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def intersect(
@@ -125,9 +168,10 @@ def intersect(
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
     active: torch.Tensor,
+    flags: int = _RAY_FLAG_ALL,
 ) -> Intersection:
-    values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active)
-    return Intersection(*values)
+    values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
+    return Intersection(*values[:10])
 
 
 class _NearestEdgeFunction(torch.autograd.Function):

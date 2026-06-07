@@ -59,6 +59,7 @@ __global__ void intersect_backward_kernel(
     const bool *__restrict__ active,
     const int *__restrict__ tape_prim_id,
     const float *__restrict__ tape_bary,
+    int tape_bary_width,
     const float *__restrict__ grad_t,
     const float *__restrict__ grad_p,
     const float *__restrict__ grad_n,
@@ -94,7 +95,14 @@ __global__ void intersect_backward_kernel(
     const float3 e2 = sub3(v2, v0);
     const float3 d = make_f3(ray_d + ray_idx * 3);
     const float3 c0 = mul3(-1.f, d);
-    const float3 bary = make_f3(tape_bary + ray_idx * 3);
+    float3 bary;
+    if (tape_bary_width == 2) {
+        const float u = tape_bary[ray_idx * 2 + 0];
+        const float v = tape_bary[ray_idx * 2 + 1];
+        bary = make_float3(1.f - u - v, u, v);
+    } else {
+        bary = make_f3(tape_bary + ray_idx * 3);
+    }
 
     float3 g_vertices0 = make_float3(0.f, 0.f, 0.f);
     float3 g_vertices1 = make_float3(0.f, 0.f, 0.f);
@@ -150,6 +158,7 @@ __global__ void intersect_jvp_kernel(
     const bool *__restrict__ active,
     const int *__restrict__ tape_prim_id,
     const float *__restrict__ tape_bary,
+    int tape_bary_width,
     const float *__restrict__ tangent_vertices,
     const float *__restrict__ tangent_ray_o,
     const float *__restrict__ tangent_ray_d,
@@ -194,7 +203,14 @@ __global__ void intersect_jvp_kernel(
     const float3 d = make_f3(ray_d + ray_idx * 3);
     const float3 dd = make_f3(tangent_ray_d + ray_idx * 3);
     const float3 dorigin = make_f3(tangent_ray_o + ray_idx * 3);
-    const float3 bary = make_f3(tape_bary + ray_idx * 3);
+    float3 bary;
+    if (tape_bary_width == 2) {
+        const float u = tape_bary[ray_idx * 2 + 0];
+        const float v = tape_bary[ray_idx * 2 + 1];
+        bary = make_float3(1.f - u - v, u, v);
+    } else {
+        bary = make_f3(tape_bary + ray_idx * 3);
+    }
     const float solved_t = solve_columns(
                                mul3(-1.f, d),
                                e1,
@@ -265,6 +281,7 @@ IntersectBackwardOutputs intersect_backward_cuda(
         active.data_ptr<bool>(),
         tape_prim_id.data_ptr<int>(),
         tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)),
         grad_t.data_ptr<float>(),
         grad_p.data_ptr<float>(),
         grad_n.data_ptr<float>(),
@@ -310,6 +327,7 @@ IntersectJvpOutputs intersect_jvp_cuda(
         active.data_ptr<bool>(),
         tape_prim_id.data_ptr<int>(),
         tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)),
         tangent_vertices.data_ptr<float>(),
         tangent_ray_o.data_ptr<float>(),
         tangent_ray_d.data_ptr<float>(),

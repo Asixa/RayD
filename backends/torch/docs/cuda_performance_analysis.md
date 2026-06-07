@@ -33,7 +33,10 @@ Implemented in the current worktree:
   - `ShadingN`: returns `t` and `n`.
   - `UV`: returns `t` and `uv`.
   - `All`: returns the full legacy intersection fields.
-  Reverse-mode and forward-mode AD keep the full existing autograd path.
+- Reverse-mode and forward-mode AD now use the same public RayFlags contract.
+  Differentiable calls still keep hidden hit tape for VJP/JVP, but the tape is
+  reduced to `global_prim_id + (u,v) + t`; `RayFlags.None` no longer
+  materializes public `p/n/uv/bary/ids`.
 - Edge topology construction is now fully GPU-side for the build path:
   per-face edge candidates are emitted on CUDA, sorted with CUB by canonical
   edge key, segmented, scanned, and expanded into the RayD-compatible boundary /
@@ -92,8 +95,10 @@ Implemented in the current worktree:
 
 Intentional non-fast paths that remain:
 
-- Intersect AD/JVP/VJP still uses the full legacy field path; the selective
-  RayFlags path is no-AD only.
+- Intersect AD/JVP/VJP still routes through the generic dense backward/JVP
+  kernels. `RayFlags.None` avoids public output materialization and uses a
+  2-float hidden barycentric tape, but static AD backward is still slower than
+  RayD on the measured differentiable `sum(t)` workload.
 - Diffraction direct/chain AD paths keep their existing full-output contract.
   The no-tape direct path is only selected when neither reverse-mode nor
   forward-mode AD is active.
@@ -105,7 +110,7 @@ Latest verification:
 - Incremental native build succeeded via `scripts/dev_build_native.ps1`.
 - `python -m unittest tests.raydtorch_native.test_edge_queries -v`: 9 passed.
 - `python -m unittest tests.raydtorch_native.test_multipath -v`: 20 passed.
-- `python -m unittest discover tests.raydtorch_native -v`: 62 passed, 12 skipped.
+- `python -m unittest discover tests.raydtorch_native -v`: 64 passed, 12 skipped.
 - Opt-in RayD parity:
   `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
@@ -202,12 +207,70 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
   --mitsuba-preliminary
 ```
 
-The sweep script writes JSON, CSV, and PNG/SVG plots under
+The sweep script writes JSON, CSV, and PNG grouped-bar plots under
 `artifacts/benchmarks/scaling/<preset>/`. The `large` preset reaches about
 2.10M triangles and 10M requested rays; `extreme` includes a 100,663,296-ray
 entry. For 10M/100M requested rays, the default mode measures a fixed ray batch
 and projects total time from the required batch count. Add `--execute-total-rays`
 to run every batch explicitly.
+
+Latest scaling findings from `artifacts/benchmarks/scaling/extreme/sweep.json`:
+
+| Case | RayDTorch | RayD | Mitsuba | Interpretation |
+|---|---:|---:|---:|---|
+| Static full, 2.10M tris / 100.66M requested rays | 0.3991 ms/batch | 0.3723 ms/batch | 0.5856 ms/batch | RayD is ~7% faster than RayDTorch; both beat Mitsuba public full. |
+| Static reduced/t-only, same case | 0.1840 ms/batch | 0.1999 ms/batch | 0.2583 ms/batch | RayDTorch is fastest among public APIs. |
+| Mitsuba preliminary, same case | n/a | n/a | 0.1785 ms/batch | Lower-level preliminary API can slightly beat RayDTorch reduced here. |
+
+Across the 15 extreme static/full points, RayD is faster than RayDTorch in 13
+points; the largest observed RayD advantage is about 33% at 524K triangles /
+1.05M requested rays. The cause is not traversal quality alone: RayDTorch
+`RayFlags.All` materializes the legacy Torch `Intersection` surface
+(`p`, `n`, `geo_n`, `uv`, barycentric and four id arrays), while the RayD/Mitsuba
+comparison path is closer to a lean public hit record. In static/reduced mode,
+where the public contract is just `t`, RayDTorch is faster than RayD throughout
+the extreme sweep and faster than Mitsuba's public minimal API; Mitsuba
+`ray_intersect_preliminary` remains the strongest lower-level t-only baseline.
+
+Latest AD backward coverage:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+  --preset smoke --mesh-resolution 64 --mesh-resolution 128 --mesh-resolution 256 `
+  --total-rays 16384 --total-rays 65536 --ray-batch-side 256 `
+  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\RayDi `
+  --mitsuba-preliminary --include-backward `
+  --output-dir artifacts\benchmarks\scaling\ad_uv_tape
+```
+
+The sweep plots absolute time only. Operation charts use grouped bars with one
+subplot per mode and backend bars per case; throughput is still present in JSON
+as a derived field but is not plotted. Representative high-repeat static AD point:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+  --preset smoke --mesh-resolution 256 --total-rays 65536 --ray-batch-side 256 `
+  --repeats 30 --warmup 8 --rayd-source local --rayd-root E:\Code\RayDi `
+  --include-backward --backends raydtorch rayd `
+  --output-dir artifacts\benchmarks\scaling\ad_uv_tape_r30_256_65k
+```
+
+| 131K triangles / 65.5K rays | RayDTorch | RayD | Status |
+|---|---:|---:|---|
+| Static forward full | 0.0643 ms | 0.1318 ms | RayDTorch faster |
+| Static forward reduced | 0.0504 ms | 0.1332 ms | RayDTorch faster |
+| Static backward `t_sum_full` | 0.5326 ms | 0.1915 ms | RayD faster |
+| Static backward `t_sum_reduced` | 0.4936 ms | 0.2065 ms | RayD faster |
+| Dynamic backward `t_sum_full` | 0.8601 ms | 2.8418 ms | RayDTorch faster, but dynamic update costs differ by backend |
+| Dynamic backward `t_sum_reduced` | 0.6820 ms | 2.8144 ms | RayDTorch faster, but dynamic update costs differ by backend |
+
+Conclusion for AD: the new RayDTorch `RayFlags.None` AD path is semantically
+correct and removes public output materialization, but static backward remains
+RayD's clearest advantage. The remaining RayDTorch cost is the dense PyTorch
+autograd bridge plus a generic CUDA backward that zeros/allocates full gradient
+outputs and uses atomics into `grad_vertices`. Closing this gap likely needs a
+specialized `sum(t)` / t-only backward kernel or a narrower autograd return path,
+not more forward-output flagging alone.
 
 ## Contents
 

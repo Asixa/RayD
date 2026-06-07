@@ -341,4 +341,81 @@ IntersectForwardOutputs intersect_forward_flags_cuda(
     return out;
 }
 
+IntersectForwardOutputs intersect_forward_ad_flags_cuda(
+    const SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active,
+    int64_t flags) {
+    const int64_t ray_count = ray_o.size(0);
+    auto fopts = scene.global_vertices.options();
+    auto iopts = scene.global_faces.options();
+    const bool want_geometric = (flags & kRayFlagsGeometric) != 0;
+    const bool want_shading = (flags & kRayFlagsShadingN) != 0;
+    const bool want_uv = (flags & kRayFlagsUV) != 0;
+
+    IntersectForwardOutputs out;
+    out.t = at::empty({ray_count}, fopts);
+    out.p = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.n = at::empty({want_shading ? ray_count : 0, 3}, fopts);
+    out.geo_n = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.uv = at::empty({want_uv ? ray_count : 0, 2}, fopts);
+    out.barycentric = at::empty({want_geometric ? ray_count : 0, 3}, fopts);
+    out.shape_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.local_prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+    out.global_prim_id = at::empty({want_geometric ? ray_count : 0}, iopts);
+
+    at::Tensor optix_shape_id = at::empty({ray_count}, iopts);
+    at::Tensor optix_local_prim_id = at::empty({ray_count}, iopts);
+    at::Tensor optix_global_prim_id = at::empty({ray_count}, iopts);
+    at::Tensor optix_bary_uv = at::empty({ray_count, 2}, fopts);
+    out.tape_prim_id = optix_global_prim_id;
+    out.tape_barycentric = optix_bary_uv;
+    out.tape_t = out.t;
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    launch_intersect_optix(
+        scene,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        active,
+        out.t,
+        optix_shape_id.data_ptr<int>(),
+        optix_local_prim_id.data_ptr<int>(),
+        optix_global_prim_id.data_ptr<int>(),
+        optix_bary_uv.data_ptr<float>(),
+        torch_ctx.stream);
+
+    if (flags != 0) {
+        const int threads = 128;
+        const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
+        intersect_recompute_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+            scene.global_vertices.data_ptr<float>(),
+            scene.global_faces.data_ptr<int>(),
+            ray_o.data_ptr<float>(),
+            ray_d.data_ptr<float>(),
+            active.data_ptr<bool>(),
+            ray_count,
+            out.t.data_ptr<float>(),
+            optix_shape_id.data_ptr<int>(),
+            optix_local_prim_id.data_ptr<int>(),
+            optix_global_prim_id.data_ptr<int>(),
+            optix_bary_uv.data_ptr<float>(),
+            want_geometric ? out.p.data_ptr<float>() : nullptr,
+            want_shading ? out.n.data_ptr<float>() : nullptr,
+            want_geometric ? out.geo_n.data_ptr<float>() : nullptr,
+            want_uv ? out.uv.data_ptr<float>() : nullptr,
+            want_geometric ? out.barycentric.data_ptr<float>() : nullptr,
+            want_geometric ? out.shape_id.data_ptr<int>() : nullptr,
+            want_geometric ? out.prim_id.data_ptr<int>() : nullptr,
+            want_geometric ? out.local_prim_id.data_ptr<int>() : nullptr,
+            want_geometric ? out.global_prim_id.data_ptr<int>() : nullptr,
+            flags);
+    }
+    return out;
+}
+
 } // namespace raydtorch

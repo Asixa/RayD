@@ -32,6 +32,37 @@ class IntersectGradientTests(unittest.TestCase):
         torch.testing.assert_close(verts.grad[:, 0], torch.zeros(3, device="cuda"))
         torch.testing.assert_close(verts.grad[:, 1], torch.zeros(3, device="cuda"))
 
+    def test_rayflags_none_backward_through_t_uses_hidden_tape(self):
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        ray = rt.Ray(
+            torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+        )
+        flags_none = getattr(rt.RayFlags, "None")
+
+        its = scene.intersect(ray, flags=flags_none)
+        self.assertEqual(tuple(its.p.shape), (0, 3))
+        self.assertEqual(tuple(its.shape_id.shape), (0,))
+        its.t.sum().backward()
+
+        torch.testing.assert_close(
+            verts.grad[:, 2],
+            torch.tensor([0.5, 0.25, 0.25], device="cuda"),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        torch.testing.assert_close(verts.grad[:, 0], torch.zeros(3, device="cuda"))
+        torch.testing.assert_close(verts.grad[:, 1], torch.zeros(3, device="cuda"))
+
     def test_ray_origin_gradient_through_t(self):
         verts = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -94,6 +125,34 @@ class IntersectGradientTests(unittest.TestCase):
             scene.add_mesh(rt.Mesh(verts, faces))
             scene.build()
             return scene.intersect(ray).t
+
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        tangent = torch.tensor(
+            [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        primal, jvp = torch.func.jvp(fn, (verts,), (tangent,))
+        torch.testing.assert_close(primal, torch.tensor([1.0], device="cuda"))
+        torch.testing.assert_close(jvp, torch.tensor([0.5], device="cuda"), atol=1e-5, rtol=1e-5)
+
+    def test_rayflags_none_intersect_jvp(self):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        ray = rt.Ray(
+            torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+        )
+        flags_none = getattr(rt.RayFlags, "None")
+
+        def fn(verts):
+            scene = rt.Scene()
+            scene.add_mesh(rt.Mesh(verts, faces))
+            scene.build()
+            return scene.intersect(ray, flags=flags_none).t
 
         verts = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
