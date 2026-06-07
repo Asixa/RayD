@@ -81,6 +81,16 @@ extern "C" {
 __constant__ ReflectionTraceParams params;
 }
 
+namespace {
+
+static __forceinline__ __device__ int output_slot(unsigned int ray_index, int bounce) {
+    if (params.output_layout != 0)
+        return bounce * params.n_rays + static_cast<int>(ray_index);
+    return static_cast<int>(ray_index) * params.max_bounces + bounce;
+}
+
+} // namespace
+
 extern "C" __global__ void __closesthit__reflection() {
     HitPayload payload;
     payload.hit = 1u;
@@ -108,7 +118,6 @@ extern "C" __global__ void __raygen__reflection_trace() {
     }
 
     const int B = params.max_bounces;
-    const int base = static_cast<int>(ray_index) * B;
 
     float3 origin = make_f3(
         params.ray_ox[ray_index],
@@ -184,7 +193,7 @@ extern "C" __global__ void __raygen__reflection_trace() {
             image_source = image_source - 2.0f * image_distance * geo_normal;
         }
 
-        const int slot = base + bounce;
+        const int slot = output_slot(ray_index, bounce);
         if (params.out_shape_ids != nullptr)
             params.out_shape_ids[slot] = shape_id;
         if (params.out_prim_ids != nullptr)

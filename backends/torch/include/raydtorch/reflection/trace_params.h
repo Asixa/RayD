@@ -40,6 +40,7 @@ struct ReflectionTraceParams {
     int max_bounces = 0;
     int export_mode = 0;
     int return_trailing = 0;
+    int output_layout = 0;  ///< 0 = ray-major [ray, bounce], 1 = bounce-major [bounce, ray].
 
     int *out_bounce_count = nullptr;
     int *out_shape_ids = nullptr;

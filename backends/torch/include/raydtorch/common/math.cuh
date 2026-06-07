@@ -108,4 +108,64 @@ __forceinline__ __device__ void atomic_add3(float *base, int index, float3 value
     atomicAdd(&base[index * 3 + 2], value.z);
 }
 
+__forceinline__ __device__ float warp_sum_masked(unsigned int mask, float value) {
+    float sum = 0.0f;
+    for (int lane = 0; lane < 32; ++lane) {
+        if ((mask & (1u << lane)) != 0u)
+            sum += __shfl_sync(mask, value, lane);
+    }
+    return sum;
+}
+
+__forceinline__ __device__ int warp_sum_masked(unsigned int mask, int value) {
+    int sum = 0;
+    for (int lane = 0; lane < 32; ++lane) {
+        if ((mask & (1u << lane)) != 0u)
+            sum += __shfl_sync(mask, value, lane);
+    }
+    return sum;
+}
+
+__forceinline__ __device__ bool warp_mask_leader(unsigned int mask) {
+    return static_cast<int>(threadIdx.x & 31u) == (__ffs(mask) - 1);
+}
+
+__forceinline__ __device__ void atomic_add_same_cell(float *base, int index, float value) {
+    const unsigned int active = __activemask();
+    const unsigned int peers = __match_any_sync(active, index);
+    if (__popc(peers) == 1) {
+        atomicAdd(base + index, value);
+        return;
+    }
+    const float sum = warp_sum_masked(peers, value);
+    if (warp_mask_leader(peers))
+        atomicAdd(base + index, sum);
+}
+
+__forceinline__ __device__ void atomic_add_same_cell(int *base, int index, int value) {
+    const unsigned int active = __activemask();
+    const unsigned int peers = __match_any_sync(active, index);
+    if (__popc(peers) == 1) {
+        atomicAdd(base + index, value);
+        return;
+    }
+    const int sum = warp_sum_masked(peers, value);
+    if (warp_mask_leader(peers))
+        atomicAdd(base + index, sum);
+}
+
+__forceinline__ __device__ void atomic_add_warp(float *base, float value) {
+    const unsigned int active = __activemask();
+    const float sum = warp_sum_masked(active, value);
+    if (warp_mask_leader(active))
+        atomicAdd(base, sum);
+}
+
+__forceinline__ __device__ void atomic_add_warp(int *base, int value) {
+    const unsigned int active = __activemask();
+    const int sum = warp_sum_masked(active, value);
+    if (warp_mask_leader(active))
+        atomicAdd(base, sum);
+}
+
 } // namespace raydtorch

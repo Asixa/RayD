@@ -249,15 +249,18 @@ py::tuple trace_reflections_forward_impl(
     const int64_t ray_count = ray_o.size(0);
     auto fopts = ray_o.options();
     auto iopts = scene.global_faces.options();
-    at::Tensor t = at::full(
-        {ray_count, max_bounces},
+    const bool bounce_major_outputs = ray_count > 0 && max_bounces > 1;
+    const int64_t trace_rows = bounce_major_outputs ? max_bounces : ray_count;
+    const int64_t trace_cols = bounce_major_outputs ? ray_count : max_bounces;
+    at::Tensor t_storage = at::full(
+        {trace_rows, trace_cols},
         std::numeric_limits<float>::infinity(),
         fopts);
-    at::Tensor prim_ids = at::full({ray_count, max_bounces}, -1, iopts);
+    at::Tensor prim_ids_storage = at::full({trace_rows, trace_cols}, -1, iopts);
     at::Tensor bounce_count = at::zeros({ray_count}, iopts);
-    at::Tensor img_x = at::zeros({ray_count, max_bounces}, fopts);
-    at::Tensor img_y = at::zeros({ray_count, max_bounces}, fopts);
-    at::Tensor img_z = at::zeros({ray_count, max_bounces}, fopts);
+    at::Tensor img_x_storage = at::zeros({trace_rows, trace_cols}, fopts);
+    at::Tensor img_y_storage = at::zeros({trace_rows, trace_cols}, fopts);
+    at::Tensor img_z_storage = at::zeros({trace_rows, trace_cols}, fopts);
     at::Tensor local_prim_ids;
     at::Tensor shape_ids;
     at::Tensor bary_u;
@@ -269,22 +272,22 @@ py::tuple trace_reflections_forward_impl(
     at::Tensor norm_y;
     at::Tensor norm_z;
     if (export_tape) {
-        local_prim_ids = at::full({ray_count, max_bounces}, -1, iopts);
-        shape_ids = at::zeros({ray_count, max_bounces}, iopts);
-        bary_u = at::zeros({ray_count, max_bounces}, fopts);
-        bary_v = at::zeros({ray_count, max_bounces}, fopts);
-        hit_x = at::zeros({ray_count, max_bounces}, fopts);
-        hit_y = at::zeros({ray_count, max_bounces}, fopts);
-        hit_z = at::zeros({ray_count, max_bounces}, fopts);
-        norm_x = at::zeros({ray_count, max_bounces}, fopts);
-        norm_y = at::zeros({ray_count, max_bounces}, fopts);
-        norm_z = at::zeros({ray_count, max_bounces}, fopts);
+        local_prim_ids = at::full({trace_rows, trace_cols}, -1, iopts);
+        shape_ids = at::zeros({trace_rows, trace_cols}, iopts);
+        bary_u = at::zeros({trace_rows, trace_cols}, fopts);
+        bary_v = at::zeros({trace_rows, trace_cols}, fopts);
+        hit_x = at::zeros({trace_rows, trace_cols}, fopts);
+        hit_y = at::zeros({trace_rows, trace_cols}, fopts);
+        hit_z = at::zeros({trace_rows, trace_cols}, fopts);
+        norm_x = at::zeros({trace_rows, trace_cols}, fopts);
+        norm_y = at::zeros({trace_rows, trace_cols}, fopts);
+        norm_z = at::zeros({trace_rows, trace_cols}, fopts);
     }
     if (ray_count == 0) {
         at::Tensor valid = at::zeros({ray_count, max_bounces}, active.options());
         at::Tensor image_sources = at::zeros({ray_count, max_bounces, 3}, fopts);
         if (!export_tape)
-            return py::make_tuple(valid, t, image_sources, prim_ids);
+            return py::make_tuple(valid, t_storage, image_sources, prim_ids_storage);
         at::Tensor tape_prim_id = at::full({ray_count, max_bounces}, -1, iopts);
         at::Tensor tape_barycentric = at::zeros({ray_count, max_bounces, 3}, fopts);
         at::Tensor tape_t = at::full(
@@ -295,9 +298,9 @@ py::tuple trace_reflections_forward_impl(
         at::Tensor tape_normals = at::zeros({ray_count, max_bounces, 3}, fopts);
         return py::make_tuple(
             valid,
-            t,
+            t_storage,
             image_sources,
-            prim_ids,
+            prim_ids_storage,
             tape_prim_id,
             tape_barycentric,
             tape_t,
@@ -344,11 +347,12 @@ py::tuple trace_reflections_forward_impl(
     params.max_bounces = static_cast<int32_t>(max_bounces);
     params.export_mode = 0;
     params.return_trailing = 0;
+    params.output_layout = bounce_major_outputs ? 1 : 0;
     params.out_bounce_count = bounce_count.data_ptr<int>();
     params.out_shape_ids = export_tape ? shape_ids.data_ptr<int>() : nullptr;
     params.out_prim_ids = export_tape ? local_prim_ids.data_ptr<int>() : nullptr;
-    params.out_global_prim_ids = prim_ids.data_ptr<int>();
-    params.out_t = t.data_ptr<float>();
+    params.out_global_prim_ids = prim_ids_storage.data_ptr<int>();
+    params.out_t = t_storage.data_ptr<float>();
     params.out_bary_u = export_tape ? bary_u.data_ptr<float>() : nullptr;
     params.out_bary_v = export_tape ? bary_v.data_ptr<float>() : nullptr;
     params.out_hit_x = export_tape ? hit_x.data_ptr<float>() : nullptr;
@@ -357,9 +361,9 @@ py::tuple trace_reflections_forward_impl(
     params.out_norm_x = export_tape ? norm_x.data_ptr<float>() : nullptr;
     params.out_norm_y = export_tape ? norm_y.data_ptr<float>() : nullptr;
     params.out_norm_z = export_tape ? norm_z.data_ptr<float>() : nullptr;
-    params.out_img_x = img_x.data_ptr<float>();
-    params.out_img_y = img_y.data_ptr<float>();
-    params.out_img_z = img_z.data_ptr<float>();
+    params.out_img_x = img_x_storage.data_ptr<float>();
+    params.out_img_y = img_y_storage.data_ptr<float>();
+    params.out_img_z = img_z_storage.data_ptr<float>();
 
     optix_pipeline_for_scene(scene, reflection_trace_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
@@ -368,9 +372,27 @@ py::tuple trace_reflections_forward_impl(
         at::arange(max_bounces, at::TensorOptions().device(ray_o.device()).dtype(at::kLong))
             .reshape({1, max_bounces});
     at::Tensor valid = bounce_index.lt(bounce_count.to(at::kLong).reshape({ray_count, 1}));
+    auto ray_major = [&](const at::Tensor &tensor) {
+        return bounce_major_outputs ? tensor.transpose(0, 1).contiguous() : tensor;
+    };
+    at::Tensor t = ray_major(t_storage);
+    at::Tensor prim_ids = ray_major(prim_ids_storage);
+    at::Tensor img_x = ray_major(img_x_storage);
+    at::Tensor img_y = ray_major(img_y_storage);
+    at::Tensor img_z = ray_major(img_z_storage);
     at::Tensor image_sources = at::stack({img_x, img_y, img_z}, 2).contiguous();
     if (!export_tape)
         return py::make_tuple(valid, t, image_sources, prim_ids);
+    local_prim_ids = ray_major(local_prim_ids);
+    shape_ids = ray_major(shape_ids);
+    bary_u = ray_major(bary_u);
+    bary_v = ray_major(bary_v);
+    hit_x = ray_major(hit_x);
+    hit_y = ray_major(hit_y);
+    hit_z = ray_major(hit_z);
+    norm_x = ray_major(norm_x);
+    norm_y = ray_major(norm_y);
+    norm_z = ray_major(norm_z);
     at::Tensor tape_prim_id = prim_ids.contiguous();
     at::Tensor tape_barycentric = at::stack(
         {

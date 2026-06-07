@@ -302,6 +302,14 @@ void update_triangle_accel(
         0));
 }
 
+bool scene_has_dynamic_edges(const SceneCache &scene) {
+    for (const MeshRecord &mesh : scene.meshes) {
+        if (mesh.dynamic && mesh.edges_enabled)
+            return true;
+    }
+    return false;
+}
+
 uint64_t edge_key(int32_t a, int32_t b) {
     const uint32_t lo = static_cast<uint32_t>(std::min(a, b));
     const uint32_t hi = static_cast<uint32_t>(std::max(a, b));
@@ -536,6 +544,93 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
     }
     scene.edge_accel = scene.edge_accels.back();
 }
+
+bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
+    const int64_t edge_count = scene.edge_v0.size(0);
+    if (edge_count == 0) {
+        scene.edge_accels.clear();
+        scene.edge_accel = {};
+        return true;
+    }
+    if (!scene_has_dynamic_edges(scene) || scene.edge_accels.empty())
+        return false;
+
+    refresh_edge_soa(scene);
+    const EdgeSearchStats stats = compute_edge_search_stats_cuda(
+        edge_count,
+        scene.edge_p0_x,
+        scene.edge_p0_y,
+        scene.edge_p0_z,
+        scene.edge_e1_x,
+        scene.edge_e1_y,
+        scene.edge_e1_z);
+    std::vector<float> radii = compute_edge_search_radii(stats);
+    if (radii.size() != scene.edge_accels.size())
+        return false;
+
+    at::Device device(at::kCUDA, scene.device_index);
+    at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
+    for (size_t gas_index = 0; gas_index < radii.size(); ++gas_index) {
+        OptixEdgeAccel &accel = scene.edge_accels[gas_index];
+        if (!accel.aabb_buffer.defined() || accel.aabb_buffer.size(0) != edge_count ||
+            !accel.gas_buffer.defined()) {
+            return false;
+        }
+
+        const float radius = radii[gas_index];
+        compute_edge_optix_aabbs_cuda(
+            edge_count,
+            scene.edge_p0_x,
+            scene.edge_p0_y,
+            scene.edge_p0_z,
+            scene.edge_e1_x,
+            scene.edge_e1_y,
+            scene.edge_e1_z,
+            radius,
+            accel.aabb_buffer);
+
+        CUdeviceptr aabb_buffer =
+            reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
+        uint32_t input_flags = OPTIX_GEOMETRY_FLAG_NONE;
+        OptixBuildInput build_input = {};
+        build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+        build_input.customPrimitiveArray.aabbBuffers = &aabb_buffer;
+        build_input.customPrimitiveArray.numPrimitives = static_cast<unsigned int>(edge_count);
+        build_input.customPrimitiveArray.strideInBytes = sizeof(float) * 6;
+        build_input.customPrimitiveArray.flags = &input_flags;
+        build_input.customPrimitiveArray.numSbtRecords = 1;
+
+        OptixAccelBuildOptions accel_options = {};
+        accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+        accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+
+        OptixAccelBufferSizes buffer_sizes = {};
+        raydtorch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+            optix_context, &accel_options, &build_input, 1, &buffer_sizes));
+        const size_t temp_bytes = buffer_sizes.tempSizeInBytes;
+        if (accel.gas_buffer.numel() < static_cast<int64_t>(buffer_sizes.outputSizeInBytes))
+            return false;
+        if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
+            accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
+
+        raydtorch_OPTIX_CHECK(optixAccelBuild(
+            optix_context,
+            stream,
+            &accel_options,
+            &build_input,
+            1,
+            reinterpret_cast<CUdeviceptr>(accel.gas_temp_buffer.data_ptr<uint8_t>()),
+            temp_bytes,
+            reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
+            static_cast<size_t>(accel.gas_buffer.numel()),
+            &accel.traversable,
+            nullptr,
+            0));
+        accel.search_radius = radius;
+    }
+    scene.edge_accel = scene.edge_accels.back();
+    return true;
+}
 } // namespace
 
 int64_t create_scene(std::vector<MeshRecord> meshes) {
@@ -642,7 +737,8 @@ void sync_scene(int64_t handle) {
     if (changed) {
         refresh_global_geometry(scene);
         build_triangle_ias(scene, optix_entry.optix_context, torch_ctx.stream);
-        build_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream);
+        if (!update_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream))
+            build_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream);
         scene.version += 1;
         scene.edge_version += 1;
     }

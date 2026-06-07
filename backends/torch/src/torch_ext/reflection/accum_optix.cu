@@ -374,14 +374,14 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
         return false;
     }
 
-    atomicAdd(params.out_field_x_re + cell, contribution_field.x.r);
-    atomicAdd(params.out_field_x_im + cell, contribution_field.x.i);
-    atomicAdd(params.out_field_y_re + cell, contribution_field.y.r);
-    atomicAdd(params.out_field_y_im + cell, contribution_field.y.i);
-    atomicAdd(params.out_field_z_re + cell, contribution_field.z.r);
-    atomicAdd(params.out_field_z_im + cell, contribution_field.z.i);
-    atomicAdd(params.out_reflection_power + cell, contribution_power);
-    atomicAdd(params.out_reflection_count, 1);
+    atomic_add_same_cell(params.out_field_x_re, cell, contribution_field.x.r);
+    atomic_add_same_cell(params.out_field_x_im, cell, contribution_field.x.i);
+    atomic_add_same_cell(params.out_field_y_re, cell, contribution_field.y.r);
+    atomic_add_same_cell(params.out_field_y_im, cell, contribution_field.y.i);
+    atomic_add_same_cell(params.out_field_z_re, cell, contribution_field.z.r);
+    atomic_add_same_cell(params.out_field_z_im, cell, contribution_field.z.i);
+    atomic_add_same_cell(params.out_reflection_power, cell, contribution_power);
+    atomic_add_warp(params.out_reflection_count, 1);
     return true;
 }
 

@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayDTorch native targets." FORCE)
+endif()
+
 set(RAYDTORCH_DEFAULT_CUDA_ARCHITECTURES "75-real;80-real;86-real;89-real;120-real;120-virtual")
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
@@ -23,7 +27,7 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 option(RAYDTORCH_BUILD_NATIVE "Build the RayDTorch extension." ON)
 option(RAYDTORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
 
-set(RAYDTORCH_OPTIX_NVCC_FLAGS --std=c++17)
+set(RAYDTORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)
 if(RAYDTORCH_OPTIX_FAST_MATH)
     list(APPEND RAYDTORCH_OPTIX_NVCC_FLAGS --use_fast_math)
 endif()

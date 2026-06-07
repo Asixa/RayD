@@ -442,21 +442,21 @@ static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int 
     }
     const int owner = params.coherent_owner_code != nullptr ? params.coherent_owner_code[state_idx] : 0;
     if (owner == utd::OWNERSHIP_MIXED) {
-        atomicAdd(params.out_multi_field_x_re + cell, out.vectorField.x.re);
-        atomicAdd(params.out_multi_field_x_im + cell, out.vectorField.x.im);
-        atomicAdd(params.out_multi_field_y_re + cell, out.vectorField.y.re);
-        atomicAdd(params.out_multi_field_y_im + cell, out.vectorField.y.im);
-        atomicAdd(params.out_multi_field_z_re + cell, out.vectorField.z.re);
-        atomicAdd(params.out_multi_field_z_im + cell, out.vectorField.z.im);
-        if (params.out_multi_count != nullptr) atomicAdd(params.out_multi_count + cell, 1);
+        atomic_add_same_cell(params.out_multi_field_x_re, cell, out.vectorField.x.re);
+        atomic_add_same_cell(params.out_multi_field_x_im, cell, out.vectorField.x.im);
+        atomic_add_same_cell(params.out_multi_field_y_re, cell, out.vectorField.y.re);
+        atomic_add_same_cell(params.out_multi_field_y_im, cell, out.vectorField.y.im);
+        atomic_add_same_cell(params.out_multi_field_z_re, cell, out.vectorField.z.re);
+        atomic_add_same_cell(params.out_multi_field_z_im, cell, out.vectorField.z.im);
+        if (params.out_multi_count != nullptr) atomic_add_same_cell(params.out_multi_count, cell, 1);
     } else {
-        atomicAdd(params.out_direct_field_x_re + cell, out.vectorField.x.re);
-        atomicAdd(params.out_direct_field_x_im + cell, out.vectorField.x.im);
-        atomicAdd(params.out_direct_field_y_re + cell, out.vectorField.y.re);
-        atomicAdd(params.out_direct_field_y_im + cell, out.vectorField.y.im);
-        atomicAdd(params.out_direct_field_z_re + cell, out.vectorField.z.re);
-        atomicAdd(params.out_direct_field_z_im + cell, out.vectorField.z.im);
-        if (params.out_direct_count != nullptr) atomicAdd(params.out_direct_count + cell, 1);
+        atomic_add_same_cell(params.out_direct_field_x_re, cell, out.vectorField.x.re);
+        atomic_add_same_cell(params.out_direct_field_x_im, cell, out.vectorField.x.im);
+        atomic_add_same_cell(params.out_direct_field_y_re, cell, out.vectorField.y.re);
+        atomic_add_same_cell(params.out_direct_field_y_im, cell, out.vectorField.y.im);
+        atomic_add_same_cell(params.out_direct_field_z_re, cell, out.vectorField.z.re);
+        atomic_add_same_cell(params.out_direct_field_z_im, cell, out.vectorField.z.im);
+        if (params.out_direct_count != nullptr) atomic_add_same_cell(params.out_direct_count, cell, 1);
     }
 }
 
@@ -980,24 +980,24 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         }
     }
 
-    atomicAdd(params.out_power + cell, contribution);
-    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomic_add_same_cell(params.out_power, cell, contribution);
+    atomic_add_same_cell(params.out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
-        atomicAdd(params.out_direct_count, 1);
+        atomic_add_warp(params.out_direct_count, 1);
     } else {
         if constexpr (IncludeKeller) {
             if (is_keller) {
-                atomicAdd(params.out_keller_count, 1);
+                atomic_add_warp(params.out_keller_count, 1);
             }
         }
         if constexpr (IncludeSuffix) {
             if (is_suffix) {
-                atomicAdd(params.out_suffix_count, 1);
+                atomic_add_warp(params.out_suffix_count, 1);
             }
         }
     }
     if (params.collect_edge_use != 0) {
-        atomicAdd(params.out_edge_uses, 1);
+        atomic_add_warp(params.out_edge_uses, 1);
     }
 }
 
@@ -1157,15 +1157,15 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
         }
     }
 
-    atomicAdd(params.out_power + cell, contribution);
-    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomic_add_same_cell(params.out_power, cell, contribution);
+    atomic_add_same_cell(params.out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
-        atomicAdd(params.out_direct_count, 1);
+        atomic_add_warp(params.out_direct_count, 1);
     } else {
-        atomicAdd(params.out_keller_count, 1);
+        atomic_add_warp(params.out_keller_count, 1);
     }
     if (params.collect_edge_use != 0) {
-        atomicAdd(params.out_edge_uses, 1);
+        atomic_add_warp(params.out_edge_uses, 1);
     }
 }
 
@@ -1365,11 +1365,11 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
         }
     }
 
-    atomicAdd(params.out_power + cell, contribution);
-    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
-    atomicAdd(params.out_suffix_count, 1);
+    atomic_add_same_cell(params.out_power, cell, contribution);
+    atomic_add_same_cell(params.out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomic_add_warp(params.out_suffix_count, 1);
     if (params.collect_edge_use != 0) {
-        atomicAdd(params.out_edge_uses, 1);
+        atomic_add_warp(params.out_edge_uses, 1);
     }
 }
 
@@ -1463,19 +1463,19 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
 
     if (is_multi) {
         if (params.out_multi_field_x_re != nullptr) {
-            atomicAdd(params.out_multi_field_x_re + cell, field_re);
-            atomicAdd(params.out_multi_field_x_im + cell, field_im);
+            atomic_add_same_cell(params.out_multi_field_x_re, cell, field_re);
+            atomic_add_same_cell(params.out_multi_field_x_im, cell, field_im);
         }
         if (params.out_multi_count != nullptr) {
-            atomicAdd(params.out_multi_count + cell, 1);
+            atomic_add_same_cell(params.out_multi_count, cell, 1);
         }
     } else {
         if (params.out_direct_field_x_re != nullptr) {
-            atomicAdd(params.out_direct_field_x_re + cell, field_re);
-            atomicAdd(params.out_direct_field_x_im + cell, field_im);
+            atomic_add_same_cell(params.out_direct_field_x_re, cell, field_re);
+            atomic_add_same_cell(params.out_direct_field_x_im, cell, field_im);
         }
         if (params.out_direct_count != nullptr) {
-            atomicAdd(params.out_direct_count + cell, 1);
+            atomic_add_same_cell(params.out_direct_count, cell, 1);
         }
     }
 }
@@ -1759,17 +1759,17 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
         }
     }
 
-    atomicAdd(params.out_power + cell, contribution);
-    atomicAdd(params.out_field_x_re + cell, sqrtf(fmaxf(contribution, 0.f)));
+    atomic_add_same_cell(params.out_power, cell, contribution);
+    atomic_add_same_cell(params.out_field_x_re, cell, sqrtf(fmaxf(contribution, 0.f)));
     if (is_direct) {
-        atomicAdd(params.out_direct_count, 1);
+        atomic_add_warp(params.out_direct_count, 1);
     } else if (is_keller) {
-        atomicAdd(params.out_keller_count, 1);
+        atomic_add_warp(params.out_keller_count, 1);
     } else {
-        atomicAdd(params.out_suffix_count, 1);
+        atomic_add_warp(params.out_suffix_count, 1);
     }
     if (params.collect_edge_use != 0) {
-        atomicAdd(params.out_edge_uses, 1);
+        atomic_add_warp(params.out_edge_uses, 1);
     }
 }
 

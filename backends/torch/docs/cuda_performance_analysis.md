@@ -17,7 +17,11 @@ Implemented in the current worktree:
 
 - CUDA build defaults now target modern GPUs instead of stale `sm_52`:
   `75-real;80-real;86-real;89-real;120-real;120-virtual`.
-- OptiX PTX builds use fast math behind `RAYDTORCH_OPTIX_FAST_MATH`.
+- Single-config native builds default to `Release` when the caller did not set
+  `CMAKE_BUILD_TYPE`.
+- OptiX PTX builds use fast math behind `RAYDTORCH_OPTIX_FAST_MATH` and now
+  compile explicit `compute_75` PTX instead of relying on nvcc's old default
+  virtual architecture.
 - `Scene.intersect(ray, flags=...)` now exposes the RayD-compatible
   `RayFlags.None/Geometric/ShadingN/UV/All` contract. The t-only/minimal
   path is reached through `flags=getattr(rt.RayFlags, "None")`.
@@ -34,13 +38,24 @@ Implemented in the current worktree:
   It still uses CPU fallback semantics, but now uses `unordered_map` plus sorted
   keys for deterministic edge ids.
 - Reflection no-AD tracing avoids allocating/writing autograd tape-only arrays.
+- Reflection trace uses bounce-major internal output storage when
+  `max_bounces > 1`, then returns the existing public `[ray, bounce]` tensors.
+  This targets coalesced per-bounce stores without changing the Python or AD
+  contract. `max_bounces == 1` keeps the original layout to avoid a pointless
+  transpose in the RayD comparison benchmark.
 - Visibility-style OptiX traces use first-hit termination where ignore lists are
   not required.
+- Reflection and diffraction accumulation now use warp-aggregated same-cell
+  atomics for the hot complex/power field scatter paths.
 - Diffraction path export uses warp-aggregated path-slot reservation and a
   single primary-scene launch for order-1 export. It also avoids redundant
   zero-field stores and skips unused p1/p2 component writes for order-1 paths.
 - Diffraction direct no-AD accumulation bypasses autograd tape export; AD/JVP/VJP
   still uses the full tape-producing path.
+- Dynamic edge sync reuses compatible edge GAS/AABB/temp buffers and rebuilds
+  in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested but caused
+  a severe post-sync nearest-edge traversal regression on the benchmark shape,
+  so it is not retained.
 
 Fallbacks that remain intentionally present:
 
@@ -51,6 +66,8 @@ Fallbacks that remain intentionally present:
 - Diffraction direct/chain AD paths keep their existing full-output contract.
   The no-tape direct path is only selected when neither reverse-mode nor
   forward-mode AD is active.
+- Edge GAS true refit remains a guarded backlog item. Current sync uses
+  rebuild-in-place when compatible, otherwise full `build_edge_accel` fallback.
 
 Latest verification:
 
@@ -68,25 +85,40 @@ Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2304.980 | 1543.822 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1326 | 0.0412 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1344 | 0.0553 | RayDTorch faster |
-| nearest edge | 1.5010 | 1.0620 | RayDTorch faster |
-| reflection trace | 0.9430 | 0.2127 | RayDTorch faster |
-| diffraction direct | 0.4528 | 0.3509 | RayDTorch faster |
-| diffraction paths | 0.4157 | 0.2430 | RayDTorch faster |
+| build | 2287.357 | 1527.668 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1194 | 0.0387 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1257 | 0.0469 | RayDTorch faster |
+| nearest edge | 1.1977 | 1.0324 | RayDTorch faster |
+| reflection trace | 0.2248 | 0.1738 | RayDTorch faster |
+| diffraction direct | 0.3921 | 0.2734 | RayDTorch faster |
+| diffraction paths | 0.3042 | 0.2366 | RayDTorch faster |
 
 Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=8`, `repeat=60`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2295.566 | 1544.259 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1302 | 0.0400 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1327 | 0.0490 | RayDTorch faster |
-| nearest edge | 1.2432 | 1.0781 | RayDTorch faster |
-| reflection trace | 0.2752 | 0.1795 | RayDTorch faster |
-| diffraction direct | 0.3596 | 0.3040 | RayDTorch faster |
-| diffraction paths | 0.2775 | 0.2752 | RayDTorch slightly faster |
+| build | 2298.370 | 1521.933 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1274 | 0.0463 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1372 | 0.0505 | RayDTorch faster |
+| nearest edge | 1.2131 | 1.0659 | RayDTorch faster |
+| reflection trace | 0.2249 | 0.1944 | RayDTorch faster |
+| diffraction direct | 0.5026 | 0.3033 | RayDTorch faster |
+| diffraction paths | 0.2601 | 0.2250 | RayDTorch faster |
+
+Latest RayDTorch-native multi-bounce check, `grid=64`, `queries=4096`,
+`warmup=8`, `repeat=60`, `max_bounces=4`:
+
+| Operation | RayDTorch ms |
+|---|---:|
+| build | 1522.405 |
+| dynamic sync | 0.882 |
+| reflection trace | 0.2250 |
+| diffraction direct | 0.2331 |
+| diffraction paths | 0.2805 |
+
+The native benchmark's `nearest_edge` uses random 3D points after a dynamic sync,
+which drives many queries to the full-radius edge tier; it is not the same
+near-surface edge-query shape as the RayD comparison benchmark above.
 
 For this benchmark shape, RayDTorch now meets the current RayD-comparison target:
 intersect and reflection are substantially faster; nearest-edge, direct
@@ -119,9 +151,10 @@ The three slowest paths each have a clear primary suspect that is provable from 
    by a **6× D2H copy + serial CPU bounding-box reduction** to derive edge search radii.
    Almost none of the build work that *could* run on the GPU does.
 
-2. **Reflection trace** writes its per-bounce outputs in a **ray-major layout**
-   (`slot = ray*B + bounce`) across ~17–24 separate SoA arrays, producing **strided,
-   uncoalesced global stores** — the most likely cause of its slowdown versus RayD.
+2. **Reflection trace** originally wrote per-bounce outputs in a **ray-major layout**
+   (`slot = ray*B + bounce`) across ~17–24 separate SoA arrays. The current worktree now
+   uses bounce-major internal storage for `max_bounces > 1`, while returning the same public
+   `[ray, bounce]` tensors. Nsight should still verify store coalescing and transpose cost.
 
 3. **Nearest-edge query** issues **one OptiX launch + one finalize kernel + one params
    H2D copy per radius tier** (up to 3), always over the full query width, and the shared
@@ -142,11 +175,11 @@ This document is a backlog, not a patch set. Confirm impact ordering with the
 
 | Level | Items | One-liner |
 |---|---|---|
-| **P0** | 1, 2, 3 | Built as `sm_52`, build type, no fast-math — config-only fixes |
-| **P1 build** | 4, 5, 6, 7 | CPU edge topology + D2H radii + 3× GAS rebuild + no compaction |
+| **P0** | 1, 2, 3 | Architecture, build type, fast-math/PTX arch fixes landed |
+| **P1 build** | 4, 5, 6, 7 | CPU edge topology + D2H radii fixed; edge sync partially improved; no compaction |
 | **P1 edge** | 11, 12 | Per-tier launches + 16-payload occupancy hit |
-| **P1 refl** | 15, 16, 17 | Ray-major outputs are uncoalesced (most likely slow cause) |
-| **P2 accum** | 19, 20, 25, 26 | Complex-field atomic contention + occlusion-ray flag audit |
+| **P1 refl** | 15, 16, 17 | Bounce-major trace writes landed for B>1; hit gather and split traces remain |
+| **P2 accum** | 19, 20, 25, 26 | Same-cell warp atomics and path-counter aggregation landed; deeper reductions remain |
 
 Impact legend: **High** = likely measurable on the benchmark; **Med** = real but
 secondary; **Low** = correctness-neutral cleanup / small constant.
@@ -191,23 +224,25 @@ Highest leverage, smallest change. Do these first; they may shift the whole rank
     Blackwell 120 above).
 - Risk: none for correctness. Re-measure the whole benchmark — this can move every number.
 
-### 2. `CMAKE_BUILD_TYPE` absent / empty in the cache `[needs confirmation] — Med`
+### 2. `CMAKE_BUILD_TYPE` absent / empty in the cache `[implemented] — Med`
 
 - Evidence: `CMAKE_BUILD_TYPE` does not appear in `artifacts/skbuild/CMakeCache.txt`.
 - Impact: host glue (`scene_cache.cpp`, the `ops.cpp` files — heavy STL + tensor code) may
   compile without `/O2`. This directly touches the build path, which is CPU-bound.
-- Fix direction: pin `CMAKE_BUILD_TYPE=Release` (scikit-build-core defaults to Release, but
-  the cache does not show it — verify the actually-installed wheel was built optimized).
+- Implemented: single-config native builds now default to `Release` when
+  `CMAKE_BUILD_TYPE` was not explicitly provided. Multi-config Visual Studio builds still
+  use the requested configuration.
 
-### 3. OptiX PTX compiled without `--use_fast_math` (and no arch flag) `[verified] — Med`
+### 3. OptiX PTX compiled without `--use_fast_math` (and no arch flag) `[implemented] — Med`
 
 - Evidence: every `--ptx` custom command in [CMakeLists.txt:75-310](../CMakeLists.txt#L75)
   passes only `--std=c++17`.
 - Impact: the diffraction / accumulation kernels do many `sincosf` / `sqrtf` / divides (see
   items 28, 19) at full precision. OptiX re-optimizes the PTX, but fast-math semantics must be
   set at the source compile.
-- Fix direction: add `--use_fast_math` to the PTX builds; gate behind the parity tests since
-  it changes the float contract. Optionally add `-lineinfo` for profiling builds only.
+- Implemented: PTX custom commands use `RAYDTORCH_OPTIX_NVCC_FLAGS`, which includes
+  `--gpu-architecture=compute_75` and, by default, `--use_fast_math`. The explicit PTX
+  architecture was required for warp intrinsics such as `__match_any_sync`.
 
 ---
 
@@ -238,16 +273,19 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Fix direction: compute the bounding box and max edge length on-device (a reduction kernel
   or `at::aminmax`/`cub`), returning a handful of scalars instead of full arrays.
 
-### 6. Up to 3 edge GAS rebuilt on every build *and* every sync `[verified] — Med-High`
+### 6. Up to 3 edge GAS rebuilt on every build *and* every sync `[partial] — Med-High`
 
 - Location: [scene_cache.cpp:498-556](../src/torch_ext/scene/scene_cache.cpp#L498) — loops
   `radii.size()` times, each iteration `optixAccelComputeMemoryUsage` + `optixAccelBuild`.
-- Problem: three custom-primitive GAS are sized and built serially. `sync_scene`
-  ([scene_cache.cpp:661-667](../src/torch_ext/scene/scene_cache.cpp#L661)) calls
-  `build_edge_accel` again — a full rebuild of all tiers on every dynamic update.
+- Problem: three custom-primitive GAS are sized and built serially. Historically
+  `sync_scene` called `build_edge_accel` again, reallocating and rebuilding every tier.
 - Fix direction: (a) reassess whether 3 radius tiers are needed or whether one GAS with
   raygen-side tiered `tmax` suffices; (b) for the dynamic path, refit with `ALLOW_UPDATE` +
   `OPTIX_BUILD_OPERATION_UPDATE` instead of full rebuilds.
+- Current state: compatible dynamic syncs reuse edge AABB/GAS/temp buffers and rebuild
+  the GAS in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested and rejected
+  because it made post-sync nearest-edge traversal much slower on the native benchmark.
+  Single-GAS/tier-collapse work remains open.
 
 ### 7. No acceleration-structure compaction anywhere `[verified] — Med`
 
@@ -323,17 +361,18 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 
 ## P1 — Reflection trace
 
-### 15. Ray-major output layout → strided, uncoalesced stores `[verified] — High`
+### 15. Ray-major output layout → strided, uncoalesced stores `[implemented for B>1] — High`
 
 - Location: [trace_optix.cu:187-216](../src/torch_ext/reflection/trace_optix.cu#L187), feeding
   ~24 independent SoA output arrays defined in
   [trace_params.h:44-67](../include/raydtorch/reflection/trace_params.h#L44).
-- Problem: outputs are indexed `slot = ray_index * B + bounce`. For a fixed bounce, adjacent
-  threads (adjacent rays) write addresses that differ by `B`, so each warp store degenerates
-  to ~32 transactions — multiplied by up to ~17 output arrays per bounce. This is the most
-  probable reason reflection trace trails RayD.
-- Fix direction: switch to a bounce-major layout (`bounce * n_rays + ray`) so adjacent rays
-  are contiguous and stores coalesce; or pack the per-bounce fields into structured writes.
+- Original problem: outputs were indexed `slot = ray_index * B + bounce`. For a fixed
+  bounce, adjacent threads wrote addresses that differed by `B`, so each warp store could
+  degenerate into many transactions.
+- Implemented: for `max_bounces > 1`, raygen writes bounce-major storage
+  (`bounce * n_rays + ray`) and host glue transposes back to public ray-major tensors.
+  `max_bounces == 1` keeps ray-major storage because both layouts are contiguous and a
+  transpose would only add overhead.
 - Confirm with `l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_st.ratio` on
   `__raygen__reflection_trace`.
 
@@ -365,13 +404,15 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 > Mostly from a focused sub-agent read of the accumulation modules; treat impact as
 > `[needs Nsight]` unless noted.
 
-### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[needs Nsight] — High`
+### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[implemented warp aggregation] — High`
 
 - Location: `accum_optix.cu:377-384`, coherent branch `:445-460`.
 - Problem: many threads atomically add into the same cell — serialized, complex-valued
   (re/im split into separate atomics per component).
-- Fix direction: warp-reduce first (`__shfl` / `__reduce_add_sync`) then a single atomic, or
-  sort by cell and do a segmented reduction.
+- Implemented: hot reflection and diffraction field/power scatter paths now use same-cell
+  warp aggregation before the global atomic. This changes same-warp floating-point addition
+  order, so parity tests are the correctness guard. A sort/segmented-reduction design is
+  still a possible larger follow-up for heavy cell contention.
 
 ### 20. Audit occlusion/visibility ray flags for `TERMINATE_ON_FIRST_HIT | DISABLE_ANYHIT` `[needs check] — High if confirmed`
 
@@ -410,17 +451,19 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 
 ## P2 — Diffraction
 
-### 25. Path counter is a single global `atomicAdd(out_count, 1)` `[needs Nsight] — High`
+### 25. Path counter is a single global `atomicAdd(out_count, 1)` `[implemented warp aggregation] — High`
 
 - Location: `paths_optix.cu:250` / `:394`.
 - Problem: a global atomic serializes all hit-writes.
-- Fix direction: warp-aggregate (`__ballot_sync` + one atomic to claim a base index) or a
-  prefix-sum allocation.
+- Implemented: path export reserves output slots per warp using one `atomicAdd` per active
+  warp group. Prefix-sum allocation remains a larger alternative.
 
-### 26. Coherent UTD atomics per cell (6 complex components + counters) `[needs Nsight] — High`
+### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation] — High`
 
 - Location: `accum_optix.cu:445-460` (same class of issue as item 19).
-- Fix direction: warp/block reduction before the atomic.
+- Implemented: coherent direct/multi field outputs now use same-cell warp aggregation for
+  the field components and per-cell counts. Block-level or sorted reductions remain open
+  for very high contention workloads.
 
 ### 27. Path output scatters 12 SoA complex components via `out_idx` `[needs Nsight] — Med`
 
@@ -500,8 +543,8 @@ What to look for:
 
 - Build: in the `nsys` timeline, a large CPU gap with no GPU work during build confirms
   items 4/5 dominate (the `std::map` loop + the six `.cpu()` syncs).
-- Reflection trace: `...op_st.ratio` well above ~4 sectors/request confirms the uncoalesced
-  stores of item 15.
+- Reflection trace: compare `...op_st.ratio` for `max_bounces > 1` before/after the
+  bounce-major internal layout to verify the expected store coalescing and transpose cost.
 - Edge: `launch__occupancy_limit_registers` being the limiter confirms the 16-payload cost
   of item 12.
 
@@ -509,13 +552,16 @@ What to look for:
 
 ## Suggested execution order
 
-1. **Item 1** (pin CUDA architecture) — zero risk, may lift everything; re-baseline.
-2. **`nsys`** the build to confirm items 4 and 5 own the ~1550 ms, then GPU-ize edge
-   topology + on-device radii.
-3. **`ncu`** reflection trace to confirm item 15, then flip to a bounce-major output layout.
-4. **Edge**: split the top-k pipeline (item 12) and collapse the tiered launches (item 11).
-5. **P2 accumulation/diffraction**: tackle atomic contention (items 19, 25, 26) and audit
-   occlusion-ray flags (item 20), guarded by the parity tests.
+1. **Nsight validate landed changes**: PTX fast-math/arch, bounce-major reflection
+   trace (`max_bounces > 1`), and warp-aggregated accumulation atomics.
+2. **Build path**: GPU-ize edge topology (item 4) and consider AS compaction (item 7)
+   only after measuring build/traversal trade-offs.
+3. **Edge query**: split the top-k pipeline (item 12) and collapse or compact the tiered
+   launches (item 11).
+4. **Reflection remaining work**: pack triangle data or otherwise reduce the 12 scattered
+   hit-gather loads (item 16), then revisit split-scene double traces (item 17).
+5. **Accumulation next level**: if Nsight still shows atomic pressure after warp
+   aggregation, evaluate block-level or sort/segmented reductions for items 19/26.
 
 Accuracy guard: items 3, 19, 25, 26, 28 (fast-math, reassociated/atomic reductions) change
 the floating-point contract. Keep the native AD and opt-in RayD parity tests green after each.
