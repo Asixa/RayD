@@ -22,6 +22,19 @@ py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
         out.tape_d);
 }
 
+py::tuple nearest_edge_forward_noad_op(int64_t scene_handle, at::Tensor point) {
+    require_vec3f(point, "point");
+    SceneCache &scene = get_scene(scene_handle);
+    EdgeForwardPublicOutputs out = edge_forward_noad_cuda(scene, point);
+    return py::make_tuple(
+        out.distance,
+        out.edge_point,
+        out.edge_t,
+        out.shape_id,
+        out.edge_id,
+        out.global_edge_id);
+}
+
 py::tuple nearest_edge_backward_op(
     int64_t scene_handle,
     at::Tensor point,
@@ -96,6 +109,7 @@ py::tuple nearest_edge_jvp_op(
 
 void bind_edge_ops(py::module_ &m) {
     m.def("nearest_edge_forward", &nearest_edge_forward_op);
+    m.def("nearest_edge_forward_noad", &nearest_edge_forward_noad_op);
     m.def("nearest_edge_ray_forward", &nearest_edge_ray_forward_op);
     m.def("nearest_edge_backward", &nearest_edge_backward_op);
     m.def("nearest_edge_jvp", &nearest_edge_jvp_op);

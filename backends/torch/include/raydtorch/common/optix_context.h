@@ -51,6 +51,7 @@ struct OptixDeviceContextEntry {
     at::Tensor edge_raygen_topk_record;
     at::Tensor edge_miss_record;
     at::Tensor edge_hitgroup_records;
+    at::Tensor edge_params_buffer;
     OptixModule reflection_trace_module = nullptr;
     OptixPipeline reflection_trace_pipeline = nullptr;
     OptixProgramGroup reflection_trace_raygen_group = nullptr;

@@ -2,6 +2,7 @@
 #include <raydtorch/common/optix_context.h>
 #include <raydtorch/common/tensor_check.h>
 #include <raydtorch/edge/bvh.h>
+#include <raydtorch/scene/cache_kernels.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -16,7 +17,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#include <tuple>
+#include <utility>
 
 namespace raydtorch {
 
@@ -207,25 +208,36 @@ void refresh_global_geometry(SceneCache &scene) {
         at::TensorOptions().device(at::kCPU).dtype(at::kInt)).to(
             at::Device(at::kCUDA, scene.device_index));
 
-    at::Tensor faces_i64 = scene.global_faces.to(at::kLong);
-    at::Tensor v0 = scene.global_vertices.index_select(0, faces_i64.select(1, 0)).contiguous();
-    at::Tensor v1 = scene.global_vertices.index_select(0, faces_i64.select(1, 1)).contiguous();
-    at::Tensor v2 = scene.global_vertices.index_select(0, faces_i64.select(1, 2)).contiguous();
-    at::Tensor e1 = (v1 - v0).contiguous();
-    at::Tensor e2 = (v2 - v0).contiguous();
-    at::Tensor fn = at::cross(e1, e2, 1).contiguous();
-    scene.tri_p0_x = v0.select(1, 0).contiguous();
-    scene.tri_p0_y = v0.select(1, 1).contiguous();
-    scene.tri_p0_z = v0.select(1, 2).contiguous();
-    scene.tri_e1_x = e1.select(1, 0).contiguous();
-    scene.tri_e1_y = e1.select(1, 1).contiguous();
-    scene.tri_e1_z = e1.select(1, 2).contiguous();
-    scene.tri_e2_x = e2.select(1, 0).contiguous();
-    scene.tri_e2_y = e2.select(1, 1).contiguous();
-    scene.tri_e2_z = e2.select(1, 2).contiguous();
-    scene.tri_fn_x = fn.select(1, 0).contiguous();
-    scene.tri_fn_y = fn.select(1, 1).contiguous();
-    scene.tri_fn_z = fn.select(1, 2).contiguous();
+    const int64_t triangle_count = scene.global_faces.size(0);
+    at::TensorOptions fopts = scene.global_vertices.options();
+    scene.tri_p0_x = at::empty({triangle_count}, fopts);
+    scene.tri_p0_y = at::empty({triangle_count}, fopts);
+    scene.tri_p0_z = at::empty({triangle_count}, fopts);
+    scene.tri_e1_x = at::empty({triangle_count}, fopts);
+    scene.tri_e1_y = at::empty({triangle_count}, fopts);
+    scene.tri_e1_z = at::empty({triangle_count}, fopts);
+    scene.tri_e2_x = at::empty({triangle_count}, fopts);
+    scene.tri_e2_y = at::empty({triangle_count}, fopts);
+    scene.tri_e2_z = at::empty({triangle_count}, fopts);
+    scene.tri_fn_x = at::empty({triangle_count}, fopts);
+    scene.tri_fn_y = at::empty({triangle_count}, fopts);
+    scene.tri_fn_z = at::empty({triangle_count}, fopts);
+    compute_triangle_soa_cuda(
+        triangle_count,
+        scene.global_vertices,
+        scene.global_faces,
+        scene.tri_p0_x,
+        scene.tri_p0_y,
+        scene.tri_p0_z,
+        scene.tri_e1_x,
+        scene.tri_e1_y,
+        scene.tri_e1_z,
+        scene.tri_e2_x,
+        scene.tri_e2_y,
+        scene.tri_e2_z,
+        scene.tri_fn_x,
+        scene.tri_fn_y,
+        scene.tri_fn_z);
 }
 
 void update_triangle_accel(
@@ -295,39 +307,62 @@ void build_edge_topology(SceneCache &scene) {
     std::vector<int32_t> edge_v1;
     std::vector<int32_t> edge_face0;
     std::vector<int32_t> edge_face1;
+    std::vector<int32_t> edge_opposite;
     std::vector<int32_t> edge_shape_id;
     std::vector<int32_t> edge_local_id;
     std::vector<int32_t> local_edge_counts(scene.meshes.size(), 0);
-    std::map<std::tuple<int32_t, int32_t, int32_t>, int32_t> edge_lookup;
 
     int32_t vertex_offset = 0;
     for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
-        at::Tensor faces_cpu = scene.meshes[shape_id].faces.cpu();
+        const MeshRecord &mesh = scene.meshes[shape_id];
+        if (!mesh.edges_enabled) {
+            vertex_offset += static_cast<int32_t>(scene.meshes[shape_id].vertices.size(0));
+            continue;
+        }
+        at::Tensor faces_cpu = mesh.faces.cpu();
         const int *faces = faces_cpu.data_ptr<int>();
+        std::map<std::pair<int32_t, int32_t>, std::vector<std::pair<int32_t, int32_t>>> edge_map;
         for (int32_t face_id = 0; face_id < static_cast<int32_t>(faces_cpu.size(0)); ++face_id) {
             const int32_t tri[3] = {
                 static_cast<int32_t>(faces[face_id * 3 + 0]),
                 static_cast<int32_t>(faces[face_id * 3 + 1]),
                 static_cast<int32_t>(faces[face_id * 3 + 2]),
             };
-            const int32_t pairs[3][2] = {{tri[0], tri[1]}, {tri[1], tri[2]}, {tri[2], tri[0]}};
             for (int local_edge = 0; local_edge < 3; ++local_edge) {
-                int32_t a = pairs[local_edge][0];
-                int32_t b = pairs[local_edge][1];
-                auto sorted = std::minmax(a, b);
-                auto key = std::make_tuple(shape_id, sorted.first, sorted.second);
-                auto it = edge_lookup.find(key);
-                if (it == edge_lookup.end()) {
-                    const int32_t edge_id = static_cast<int32_t>(edge_v0.size());
-                    edge_lookup.emplace(key, edge_id);
-                    edge_v0.push_back(a + vertex_offset);
-                    edge_v1.push_back(b + vertex_offset);
-                    edge_face0.push_back(face_id);
-                    edge_face1.push_back(-1);
+                const int start_corner = local_edge;
+                const int end_corner = (local_edge + 1) % 3;
+                const int opposite_corner = (local_edge + 2) % 3;
+                const int32_t start_vertex = tri[start_corner];
+                const int32_t end_vertex = tri[end_corner];
+                const int32_t opposite_vertex = tri[opposite_corner];
+                const auto edge_key = start_vertex < end_vertex
+                    ? std::make_pair(start_vertex, end_vertex)
+                    : std::make_pair(end_vertex, start_vertex);
+                edge_map[edge_key].emplace_back(face_id, opposite_vertex);
+            }
+        }
+        for (const auto &entry : edge_map) {
+            const auto &edge_vertices = entry.first;
+            const auto &faces_on_edge = entry.second;
+            if (faces_on_edge.size() == 1) {
+                edge_v0.push_back(edge_vertices.first + vertex_offset);
+                edge_v1.push_back(edge_vertices.second + vertex_offset);
+                edge_face0.push_back(faces_on_edge[0].first);
+                edge_face1.push_back(-1);
+                edge_opposite.push_back(faces_on_edge[0].second + vertex_offset);
+                edge_shape_id.push_back(shape_id);
+                edge_local_id.push_back(local_edge_counts[shape_id]++);
+                continue;
+            }
+            for (size_t i = 0; i < faces_on_edge.size(); ++i) {
+                for (size_t j = i + 1; j < faces_on_edge.size(); ++j) {
+                    edge_v0.push_back(edge_vertices.first + vertex_offset);
+                    edge_v1.push_back(edge_vertices.second + vertex_offset);
+                    edge_face0.push_back(faces_on_edge[i].first);
+                    edge_face1.push_back(faces_on_edge[j].first);
+                    edge_opposite.push_back(faces_on_edge[i].second + vertex_offset);
                     edge_shape_id.push_back(shape_id);
                     edge_local_id.push_back(local_edge_counts[shape_id]++);
-                } else if (edge_face1[it->second] < 0) {
-                    edge_face1[it->second] = face_id;
                 }
             }
         }
@@ -340,6 +375,7 @@ void build_edge_topology(SceneCache &scene) {
     scene.edge_v1 = at::tensor(edge_v1, cpu_iopts).to(device);
     scene.edge_face0 = at::tensor(edge_face0, cpu_iopts).to(device);
     scene.edge_face1 = at::tensor(edge_face1, cpu_iopts).to(device);
+    scene.edge_opposite = at::tensor(edge_opposite, cpu_iopts).to(device);
     scene.edge_shape_id = at::tensor(edge_shape_id, cpu_iopts).to(device);
     scene.edge_local_id = at::tensor(edge_local_id, cpu_iopts).to(device);
 }
@@ -414,46 +450,26 @@ std::vector<float> compute_edge_search_radii(
 
 void refresh_edge_soa(SceneCache &scene) {
     const int64_t edge_count = scene.edge_v0.size(0);
-    at::Tensor edge_v0_cpu = scene.edge_v0.cpu();
-    at::Tensor edge_v1_cpu = scene.edge_v1.cpu();
-    const int *edge_v0 = edge_v0_cpu.data_ptr<int>();
-    const int *edge_v1 = edge_v1_cpu.data_ptr<int>();
-
-    at::Tensor vertices_cpu = scene.global_vertices.cpu();
-    const float *vertices = vertices_cpu.data_ptr<float>();
-
-    std::vector<float> p0_x(edge_count);
-    std::vector<float> p0_y(edge_count);
-    std::vector<float> p0_z(edge_count);
-    std::vector<float> e1_x(edge_count);
-    std::vector<float> e1_y(edge_count);
-    std::vector<float> e1_z(edge_count);
-    for (int64_t edge = 0; edge < edge_count; ++edge) {
-        const int i0 = edge_v0[edge];
-        const int i1 = edge_v1[edge];
-        const float x0 = vertices[i0 * 3 + 0];
-        const float y0 = vertices[i0 * 3 + 1];
-        const float z0 = vertices[i0 * 3 + 2];
-        const float x1 = vertices[i1 * 3 + 0];
-        const float y1 = vertices[i1 * 3 + 1];
-        const float z1 = vertices[i1 * 3 + 2];
-        p0_x[edge] = x0;
-        p0_y[edge] = y0;
-        p0_z[edge] = z0;
-        e1_x[edge] = x1 - x0;
-        e1_y[edge] = y1 - y0;
-        e1_z[edge] = z1 - z0;
-    }
-
-    at::TensorOptions cpu_fopts = at::TensorOptions().device(at::kCPU).dtype(at::kFloat);
     at::Device device(at::kCUDA, scene.device_index);
-    scene.edge_p0_x = at::tensor(p0_x, cpu_fopts).to(device);
-    scene.edge_p0_y = at::tensor(p0_y, cpu_fopts).to(device);
-    scene.edge_p0_z = at::tensor(p0_z, cpu_fopts).to(device);
-    scene.edge_e1_x = at::tensor(e1_x, cpu_fopts).to(device);
-    scene.edge_e1_y = at::tensor(e1_y, cpu_fopts).to(device);
-    scene.edge_e1_z = at::tensor(e1_z, cpu_fopts).to(device);
+    at::TensorOptions fopts = at::TensorOptions().device(device).dtype(at::kFloat);
+    scene.edge_p0_x = at::empty({edge_count}, fopts);
+    scene.edge_p0_y = at::empty({edge_count}, fopts);
+    scene.edge_p0_z = at::empty({edge_count}, fopts);
+    scene.edge_e1_x = at::empty({edge_count}, fopts);
+    scene.edge_e1_y = at::empty({edge_count}, fopts);
+    scene.edge_e1_z = at::empty({edge_count}, fopts);
     scene.edge_mask = at::ones({edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
+    compute_edge_soa_cuda(
+        edge_count,
+        scene.global_vertices,
+        scene.edge_v0,
+        scene.edge_v1,
+        scene.edge_p0_x,
+        scene.edge_p0_y,
+        scene.edge_p0_z,
+        scene.edge_e1_x,
+        scene.edge_e1_y,
+        scene.edge_e1_z);
 }
 
 void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaStream_t stream) {
@@ -599,6 +615,10 @@ int64_t scene_version(int64_t handle) {
 
 int64_t scene_num_meshes(int64_t handle) {
     return static_cast<int64_t>(get_scene(handle).meshes.size());
+}
+
+int64_t scene_edge_count(int64_t handle) {
+    return get_scene(handle).edge_v0.size(0);
 }
 
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {

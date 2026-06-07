@@ -5,6 +5,7 @@
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
+#include <raydtorch/edge/optix_params.h>
 #include <raydtorch/edge_optix_ptx.h>
 #include <raydtorch/optix_intersect_ptx.h>
 #include <raydtorch/reflection_trace_optix_ptx.h>
@@ -366,6 +367,8 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     entry.edge_miss_record = at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
     entry.edge_hitgroup_records =
         at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord) * 3)}, byte_options);
+    entry.edge_params_buffer =
+        at::empty({static_cast<int64_t>(sizeof(EdgeOptixQueryParams))}, byte_options);
 
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(entry.device_index).stream();
     copy_sbt_record(entry.edge_raygen_point_group, entry.edge_raygen_point_record, stream);

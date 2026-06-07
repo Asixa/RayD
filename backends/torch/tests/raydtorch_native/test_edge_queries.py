@@ -172,6 +172,47 @@ class EdgeQueryTests(unittest.TestCase):
         out = scene.nearest_edge(q)
         self.assertTrue(torch.isfinite(out.distance).all().item())
 
+    def test_edges_disabled_mesh_has_no_nearest_edge_hits(self):
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        point = torch.tensor([[0.5, -0.25, 0.0]], device="cuda", dtype=torch.float32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces, edges_enabled=False))
+        scene.build()
+        out = scene.nearest_edge(point)
+        self.assertTrue(torch.isinf(out.distance).all().item())
+        self.assertEqual(int(out.global_edge_id[0].item()), -1)
+
+    def test_nonmanifold_edge_uses_rayd_wedge_count(self):
+        verts = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor(
+            [
+                [0, 1, 2],
+                [1, 0, 3],
+                [0, 1, 4],
+            ],
+            device="cuda",
+            dtype=torch.int32,
+        )
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        self.assertEqual(int(rt._C.scene_edge_count(scene._native_handle)), 9)
+
 
 if __name__ == "__main__":
     unittest.main()

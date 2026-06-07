@@ -29,27 +29,55 @@ Same-script benchmark command:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
-Current same-script result:
+Current same-script static-vs-static result:
 
 ```json
 {
+  "dynamic": false,
   "grid": 64,
   "queries": 4096,
   "rayd": {
-    "build_ms": 62.563,
-    "diffraction_direct_ms": 0.409,
-    "intersect_ms": 0.212,
-    "nearest_edge_ms": 1.460,
-    "reflection_trace_ms": 0.274
+    "build_ms": 2342.0363000041107,
+    "diffraction_direct_ms": 0.4519966666218049,
+    "intersect_ms": 0.14462333335056124,
+    "nearest_edge_ms": 1.4299183333302306,
+    "reflection_trace_ms": 0.34219333332051366
   },
   "raydtorch": {
-    "build_ms": 101.735,
-    "diffraction_direct_ms": 0.458,
-    "intersect_ms": 0.089,
-    "nearest_edge_ms": 1.379,
-    "reflection_trace_ms": 0.471
+    "build_ms": 1547.1698999972432,
+    "diffraction_direct_ms": 0.43191333328043885,
+    "intersect_ms": 0.10184333332290407,
+    "nearest_edge_ms": 1.4051099999051075,
+    "reflection_trace_ms": 0.3025700001065464
+  },
+  "repeat": 60,
+  "warmup": 8
+}
+```
+
+Current same-script dynamic-vs-dynamic result:
+
+```json
+{
+  "dynamic": true,
+  "grid": 64,
+  "queries": 4096,
+  "rayd": {
+    "build_ms": 2337.4531000008574,
+    "diffraction_direct_ms": 0.9759666667378042,
+    "intersect_ms": 0.12905000015355958,
+    "nearest_edge_ms": 1.5716533331821363,
+    "reflection_trace_ms": 0.32191333327015553
+  },
+  "raydtorch": {
+    "build_ms": 1547.6975999990827,
+    "diffraction_direct_ms": 0.42821333336178213,
+    "intersect_ms": 0.11110666673630476,
+    "nearest_edge_ms": 1.4978466667040873,
+    "reflection_trace_ms": 0.3103666667205592
   },
   "repeat": 30,
   "warmup": 5
@@ -67,21 +95,22 @@ the same grid measured:
 }
 ```
 
-Current interpretation:
+Current interpretation for this benchmark shape:
 
-- RayDTorch `intersect` is faster in this run.
-- RayDTorch `nearest_edge` is close to RayD and no longer shows the previous
-  all-edge-scan-scale regression.
-- RayDTorch scene build, reflection trace, and diffraction direct accumulation
-  are still slower in the same-script benchmark.
-- RayDTorch has a no-AD reflection trace fast path that avoids exporting the
-  full AD tape when inputs have neither reverse-mode gradients nor forward-mode
-  tangents; isolated timing shows the fast path helps, but same-script RayD
-  parity performance is not yet closed.
-
-The implementation is now benchmarkable against RayD in one script, but should
-not yet be treated as performance-equivalent or performance-superior across the
-requested multipath/diffraction surface.
+- RayDTorch `intersect` is faster in the latest static and dynamic same-script
+  runs.
+- RayDTorch `diffraction_direct` is faster in the latest static and dynamic
+  same-script runs.
+- RayDTorch point `nearest_edge` is faster in the latest static and dynamic
+  same-script runs after the no-AD Torch path removed unnecessary tape
+  allocation/writes for non-AD callers.
+- RayDTorch scene build is faster in the latest static and dynamic same-script
+  runs.
+- RayDTorch reflection trace is faster in the latest static and dynamic
+  same-script runs.
+- Keep release-size and Nsight-backed runs as the broader performance gate;
+  this document records parity for the covered benchmark, not universal
+  superiority for every multipath/diffraction workload.
 
 ## Parity Coverage Status
 

@@ -193,7 +193,21 @@ class _NearestEdgeFunction(torch.autograd.Function):
         )
 
 
+def _needs_nearest_edge_ad(vertices: torch.Tensor, point: torch.Tensor) -> bool:
+    for value in (vertices, point):
+        if value.requires_grad:
+            return True
+        if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
+            return True
+    return False
+
+
 def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    if not _needs_nearest_edge_ad(vertices, point):
+        values = _C.nearest_edge_forward_noad(int(scene_handle), point)
+        return NearestPointEdge(*values)
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
     return NearestPointEdge(*values[:6])
 

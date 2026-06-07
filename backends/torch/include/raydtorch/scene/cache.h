@@ -85,6 +85,7 @@ struct SceneCache {
     at::Tensor edge_e1_y;
     at::Tensor edge_e1_z;
     at::Tensor edge_mask;
+    at::Tensor edge_opposite;
     OptixEdgeAccel edge_accel;
     std::vector<OptixEdgeAccel> edge_accels;
 };
@@ -94,6 +95,7 @@ void destroy_scene(int64_t handle);
 SceneCache &get_scene(int64_t handle);
 int64_t scene_version(int64_t handle);
 int64_t scene_num_meshes(int64_t handle);
+int64_t scene_edge_count(int64_t handle);
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices);
 void sync_scene(int64_t handle);
 

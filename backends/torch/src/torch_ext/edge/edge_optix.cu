@@ -161,6 +161,45 @@ static __forceinline__ __device__ void write_invalid(unsigned int query) {
     }
 }
 
+static __forceinline__ __device__ void write_final_point_output(unsigned int query,
+                                                                unsigned int edge,
+                                                                float distance_sq,
+                                                                float edge_t) {
+    if (params.write_point_outputs == 0) {
+        return;
+    }
+
+    const float s = clamp01(edge_t);
+    const float3 p = load_query_point(query);
+    const float3 a = load_edge_start(edge);
+    const float3 e = load_edge_vector(edge);
+    const float3 q = a + e * s;
+    const float3 d = p - q;
+
+    params.final_distance[query] = sqrtf(fmaxf(distance_sq, 0.0f));
+    params.final_edge_t[query] = s;
+    params.final_shape_id[query] = params.edge_shape_id[edge];
+    params.final_edge_id[query] = params.edge_local_id[edge];
+    params.final_global_edge_id[query] = static_cast<int>(edge);
+    params.final_edge_point[query * 3 + 0] = q.x;
+    params.final_edge_point[query * 3 + 1] = q.y;
+    params.final_edge_point[query * 3 + 2] = q.z;
+    if (params.final_tape_edge_id != nullptr) {
+        params.final_tape_edge_id[query] = static_cast<int>(edge);
+    }
+    if (params.final_tape_s != nullptr) {
+        params.final_tape_s[query] = s;
+    }
+    if (params.final_tape_d != nullptr) {
+        params.final_tape_d[query * 3 + 0] = d.x;
+        params.final_tape_d[query * 3 + 1] = d.y;
+        params.final_tape_d[query * 3 + 2] = d.z;
+    }
+    if (params.final_unresolved != nullptr) {
+        params.final_unresolved[query] = 0u;
+    }
+}
+
 static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
                                                              int edge_id,
                                                              float distance_sq,
@@ -408,7 +447,9 @@ extern "C" __global__ void __raygen__edge_point() {
     const unsigned int query = optixGetLaunchIndex().x;
     if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
         params.handle == 0ull || params.edge_count <= 0) {
-        write_invalid(query);
+        if (params.write_point_outputs == 0) {
+            write_invalid(query);
+        }
         return;
     }
 
@@ -433,18 +474,27 @@ extern "C" __global__ void __raygen__edge_point() {
                valid);
 
     if (valid == 0u || edge_id == kInvalidEdgeId) {
-        write_invalid(query);
+        if (params.write_point_outputs == 0) {
+            write_invalid(query);
+        }
         return;
     }
 
-    params.out_edge_ids[query] = static_cast<int>(edge_id);
-    params.out_distance_sq[query] = __uint_as_float(distance_sq);
-    params.out_edge_t[query] = __uint_as_float(edge_t);
-    if (params.out_ray_t != nullptr) {
-        params.out_ray_t[query] = 0.0f;
-    }
-    if (params.out_valid != nullptr) {
-        params.out_valid[query] = 1u;
+    if (params.write_point_outputs != 0) {
+        write_final_point_output(query,
+                                 edge_id,
+                                 __uint_as_float(distance_sq),
+                                 __uint_as_float(edge_t));
+    } else {
+        params.out_edge_ids[query] = static_cast<int>(edge_id);
+        params.out_distance_sq[query] = __uint_as_float(distance_sq);
+        params.out_edge_t[query] = __uint_as_float(edge_t);
+        if (params.out_ray_t != nullptr) {
+            params.out_ray_t[query] = 0.0f;
+        }
+        if (params.out_valid != nullptr) {
+            params.out_valid[query] = 1u;
+        }
     }
 }
 

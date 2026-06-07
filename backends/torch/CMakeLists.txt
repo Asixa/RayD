@@ -323,6 +323,7 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/edge/ops_edge.cpp
         src/torch_ext/reflection/ops.cpp
         src/torch_ext/diffraction/ops.cpp
+        src/torch_ext/scene/cache_kernels.cu
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
         src/torch_ext/edge/bvh.cu

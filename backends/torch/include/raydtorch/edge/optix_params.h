@@ -30,11 +30,26 @@ struct EdgeOptixQueryParams {
     int query_count = 0;
     int k = 0;
 
+    const int *edge_shape_id = nullptr;
+    const int *edge_local_id = nullptr;
+
     int *out_edge_ids = nullptr;
     float *out_distance_sq = nullptr;
     float *out_ray_t = nullptr;
     float *out_edge_t = nullptr;
     uint8_t *out_valid = nullptr;
+
+    int write_point_outputs = 0;
+    float *final_distance = nullptr;
+    float *final_edge_point = nullptr;
+    float *final_edge_t = nullptr;
+    int *final_shape_id = nullptr;
+    int *final_edge_id = nullptr;
+    int *final_global_edge_id = nullptr;
+    int *final_tape_edge_id = nullptr;
+    float *final_tape_s = nullptr;
+    float *final_tape_d = nullptr;
+    uint8_t *final_unresolved = nullptr;
 };
 
 } // namespace raydtorch

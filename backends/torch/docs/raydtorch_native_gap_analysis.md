@@ -3,14 +3,15 @@
 Status: RayDTorch now contains RayD-style OptiX PTX pipelines for scene
 intersection, edge query, reflection, and diffraction paths. The current code
 also includes Torch VJP/JVP kernels for the supported continuous outputs under
-the fixed-winner contract. Full completion still requires performance
-acceptance: the same-script RayD/RayDTorch benchmark exists, but current results
-do not yet show performance parity across the covered kernels.
+the fixed-winner contract. The current same-script RayD/RayDTorch benchmark
+shows parity or better for the covered grid-64/query-4096 static and dynamic
+cases; release-size and Nsight-backed runs should remain the broader
+performance gate.
 
 ## Current Multipath Implementation
 
-The current code should be treated as a source-port with active performance
-work remaining:
+The current code should be treated as a source-port with active release-scale
+performance validation remaining:
 
 - `src/torch_ext/common/optix_pipeline.cpp` owns the shared OptiX launch
   pipeline/cache.
@@ -43,23 +44,28 @@ diffraction forward kernels now have RayDTorch source ports, including:
 These RayD files should remain the parity source of truth when extending the
 current ports.
 
-## Not Yet Completion-Quality Performance
+## Performance Gate Status
 
-These areas are still open and must not be counted as performance complete:
+Current status:
 
 - Same-script, same-data, same-batch RayD vs RayDTorch performance comparison
   is implemented in `tests/benchmark_rayd_vs_raydtorch.py`.
-- Current same-script results show RayDTorch is faster for `intersect` and close
-  for `nearest_edge`, but slower for scene build, reflection trace, and
-  diffraction direct accumulation on the recorded quick benchmark shape.
-- Completion-quality performance work should focus on reflection trace and
-  diffraction direct throughput first, then scene build.
+- Current corrected same-script results cover both static-vs-static and
+  dynamic-vs-dynamic runs. RayDTorch is faster for scene build, `intersect`,
+  point `nearest_edge`, reflection trace, and direct diffraction accumulation
+  on the recorded grid-64/query-4096 benchmark.
+- The earlier point `nearest_edge` regression was fixed by removing the
+  measured-slower AoS query path, keeping RayD's SoA OptiX query layout, using a
+  persistent OptiX params buffer, and adding a Torch no-AD forward path that
+  skips autograd tape allocation/writes for non-AD callers.
+- Remaining performance work should focus on release-size runs, Nsight
+  confirmation of the hot kernels, and any larger workloads that stress
+  reflection/diffraction accumulation atomics.
 
 ## Required Acceptance Gate
 
 Before this work can be considered complete, RayDTorch needs:
 
 1. Same-script RayD/RayDTorch performance runs for the release benchmark shapes.
-2. Performance fixes or accepted thresholds for scene build, reflection trace,
-   and diffraction direct accumulation.
+2. Nsight-backed confirmation or accepted thresholds for the release workloads.
 3. Full native and opt-in RayD parity test runs after any performance changes.

@@ -20,6 +20,17 @@ struct EdgeForwardOutputs {
 
 EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &point);
 
+struct EdgeForwardPublicOutputs {
+    at::Tensor distance;
+    at::Tensor edge_point;
+    at::Tensor edge_t;
+    at::Tensor shape_id;
+    at::Tensor edge_id;
+    at::Tensor global_edge_id;
+};
+
+EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const at::Tensor &point);
+
 struct EdgeRayForwardOutputs {
     at::Tensor distance;
     at::Tensor ray_t;

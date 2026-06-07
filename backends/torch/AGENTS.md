@@ -28,9 +28,9 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.ray
 
 ## Native Numeric And Performance Acceptance
 
-Use the current worktree and command output as authoritative. Do not mark the
-multipath/diffraction migration complete just because the lightweight native
-tests pass; performance parity is still an active gate.
+Use the current worktree and command output as authoritative. Do not use a full
+editable reinstall for normal CUDA/OptiX iteration; use the incremental helper
+above and then run focused numeric/performance tests.
 
 Run the CUDA tests with the `witwin2` environment Python:
 
@@ -41,12 +41,11 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_na
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydtorch_native -v
 ```
 
-Latest recorded native test results:
+Latest recorded native test results, after the nearest-edge no-AD fast path and
+RayD edge topology/cache updates:
 
-- `tests.raydtorch_native.test_edge_queries -v`: 7 tests passed.
-- `tests.raydtorch_native.test_multipath -v`: 20 tests passed.
-- `tests.raydtorch_native.test_multipath tests.raydtorch_native.test_scene_cache -v`: 24 tests passed.
-- `unittest discover tests.raydtorch_native -v`: 59 tests passed, 12 skipped.
+- `tests.raydtorch_native.test_edge_queries -v`: 9 tests passed.
+- `unittest discover tests.raydtorch_native -v`: 61 tests passed, 12 skipped.
 
 Run external RayD parity explicitly; the normal discover run skips these tests:
 
@@ -70,27 +69,56 @@ Run same-script RayD vs RayDTorch performance comparison:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
-Latest recorded same-script performance result:
+Latest recorded same-script static-vs-static performance result, stable repeat
+run:
 
 ```json
 {
+  "dynamic": false,
   "grid": 64,
   "queries": 4096,
   "rayd": {
-    "build_ms": 62.563,
-    "diffraction_direct_ms": 0.409,
-    "intersect_ms": 0.212,
-    "nearest_edge_ms": 1.460,
-    "reflection_trace_ms": 0.274
+    "build_ms": 2342.0363000041107,
+    "diffraction_direct_ms": 0.4519966666218049,
+    "intersect_ms": 0.14462333335056124,
+    "nearest_edge_ms": 1.4299183333302306,
+    "reflection_trace_ms": 0.34219333332051366
   },
   "raydtorch": {
-    "build_ms": 101.735,
-    "diffraction_direct_ms": 0.458,
-    "intersect_ms": 0.089,
-    "nearest_edge_ms": 1.379,
-    "reflection_trace_ms": 0.471
+    "build_ms": 1547.1698999972432,
+    "diffraction_direct_ms": 0.43191333328043885,
+    "intersect_ms": 0.10184333332290407,
+    "nearest_edge_ms": 1.4051099999051075,
+    "reflection_trace_ms": 0.3025700001065464
+  },
+  "repeat": 60,
+  "warmup": 8
+}
+```
+
+Latest recorded same-script dynamic-vs-dynamic performance result:
+
+```json
+{
+  "dynamic": true,
+  "grid": 64,
+  "queries": 4096,
+  "rayd": {
+    "build_ms": 2337.4531000008574,
+    "diffraction_direct_ms": 0.9759666667378042,
+    "intersect_ms": 0.12905000015355958,
+    "nearest_edge_ms": 1.5716533331821363,
+    "reflection_trace_ms": 0.32191333327015553
+  },
+  "raydtorch": {
+    "build_ms": 1547.6975999990827,
+    "diffraction_direct_ms": 0.42821333336178213,
+    "intersect_ms": 0.11110666673630476,
+    "nearest_edge_ms": 1.4978466667040873,
+    "reflection_trace_ms": 0.3103666667205592
   },
   "repeat": 30,
   "warmup": 5
@@ -107,16 +135,19 @@ Latest isolated RayDTorch reflection trace microbenchmark on the same grid:
 }
 ```
 
-Current acceptance interpretation:
+Current acceptance interpretation for the covered benchmark shape:
 
 - Numeric parity is currently demonstrated for the covered forward cases and
   fixed-winner Torch VJP/JVP tests.
-- RayDTorch `intersect` is faster in the recorded same-script run.
-- RayDTorch `nearest_edge` is close to RayD and no longer shows the previous
-  all-edge-scan-scale regression.
-- RayDTorch scene build, reflection trace, and diffraction direct accumulation
-  are still slower in the same-script benchmark.
-- A no-AD reflection trace fast path exists and helps isolated RayDTorch timing,
-  but same-script RayD performance parity is not closed.
-- Therefore the full goal is not complete until performance thresholds are
-  fixed or explicitly accepted after the same-script RayD/RayDTorch benchmark.
+- RayDTorch is faster than RayD in the latest same-script static run for scene
+  build, `intersect`, point `nearest_edge`, reflection trace, and direct
+  diffraction accumulation.
+- RayDTorch is faster than RayD in the latest same-script dynamic run for scene
+  build, `intersect`, point `nearest_edge`, reflection trace, and direct
+  diffraction accumulation.
+- The nearest-edge regression was fixed by keeping RayD's SoA OptiX query path,
+  using a persistent params buffer, and adding a Torch no-AD path that avoids
+  autograd tape allocation when neither reverse-mode nor forward-mode AD is
+  required.
+- Keep running release-size and Nsight-backed benchmarks before claiming broad
+  performance superiority across all multipath/diffraction workloads.
