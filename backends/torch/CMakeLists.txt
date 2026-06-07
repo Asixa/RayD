@@ -113,6 +113,7 @@ if(RAYDTORCH_BUILD_NATIVE)
             --std=c++17
         DEPENDS
             src/torch_ext/edge/edge_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/edge/optix_params.h
     )
     add_custom_command(
@@ -133,14 +134,15 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/reflection_trace_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/trace_optix.cu"
             -o "${RAYDTORCH_REFLECTION_TRACE_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/reflection/reflection_trace_optix.cu
+            src/torch_ext/reflection/trace_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/reflection/trace_params.h
     )
     add_custom_command(
@@ -161,14 +163,15 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/segment_visibility_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/visibility_optix.cu"
             -o "${RAYDTORCH_SEGMENT_VISIBILITY_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/reflection/segment_visibility_optix.cu
+            src/torch_ext/reflection/visibility_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/reflection/visibility_params.h
     )
     add_custom_command(
@@ -189,14 +192,15 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/reflection_epc_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/epc_optix.cu"
             -o "${RAYDTORCH_REFLECTION_EPC_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/reflection/reflection_epc_optix.cu
+            src/torch_ext/reflection/epc_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/reflection/epc_params.h
     )
     add_custom_command(
@@ -217,14 +221,16 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/reflection_accumulation_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/accum_optix.cu"
             -o "${RAYDTORCH_REFLECTION_ACCUMULATION_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/reflection/reflection_accumulation_optix.cu
+            src/torch_ext/reflection/accum_optix.cu
+            include/raydtorch/common/complex.cuh
+            include/raydtorch/common/math.cuh
             include/raydtorch/reflection/accum_params.h
     )
     add_custom_command(
@@ -245,14 +251,15 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/diffraction_paths_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/paths_optix.cu"
             -o "${RAYDTORCH_DIFFRACTION_PATHS_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/diffraction/diffraction_paths_optix.cu
+            src/torch_ext/diffraction/paths_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/diffraction/common.h
             include/raydtorch/diffraction/paths_params.h
     )
@@ -274,14 +281,15 @@ if(RAYDTORCH_BUILD_NATIVE)
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/diffraction_accumulation_optix.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/accum_optix.cu"
             -o "${RAYDTORCH_DIFFRACTION_ACCUMULATION_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             --std=c++17
         DEPENDS
-            src/torch_ext/diffraction/diffraction_accumulation_optix.cu
+            src/torch_ext/diffraction/accum_optix.cu
+            include/raydtorch/common/math.cuh
             include/raydtorch/diffraction/common.h
             include/raydtorch/diffraction/accum_params.h
             include/utd/utd_math.h
@@ -313,16 +321,16 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/scene/optix_context.cpp
         src/torch_ext/scene/ops_intersect.cpp
         src/torch_ext/edge/ops_edge.cpp
-        src/torch_ext/diffraction/ops_multipath.cpp
+        src/torch_ext/common/ops_multipath.cpp
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
         src/torch_ext/edge/edge_forward.cu
         src/torch_ext/edge/edge_backward.cu
         src/torch_ext/reflection/visibility_backward.cu
-        src/torch_ext/diffraction/multipath_backward.cu
-        src/torch_ext/reflection/reflection_dedup.cu
-        src/torch_ext/reflection/reflection_epc_field.cu
-        src/torch_ext/diffraction/diffraction_accumulation_ad_native.cu
+        src/torch_ext/reflection/backward.cu
+        src/torch_ext/reflection/dedup.cu
+        src/torch_ext/reflection/epc_field.cu
+        src/torch_ext/diffraction/accum_ad.cu
     )
     target_include_directories(
         _raydtorch

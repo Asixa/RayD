@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/diffraction/accum_params.h>
 #include <utd/utd_math.h>
 
@@ -12,10 +13,7 @@ extern __constant__ DfrAccumParams params;
 
 namespace {
 
-constexpr float kTraceTMin = 1e-5f;
-constexpr float kRayBias = 1e-4f;
-constexpr float kSmallEps = 1e-6f;
-constexpr float kPi = 3.14159265358979323846f;
+constexpr float kDfrEps = 1e-6f;
 
 struct HitPayload {
     unsigned int hit = 0u;
@@ -23,40 +21,6 @@ struct HitPayload {
     unsigned int prim = 0u;
     unsigned int instance = 0u;
 };
-
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_vec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_vec3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float norm3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
-    return make_vec3(a.y * b.z - a.z * b.y,
-                     a.z * b.x - a.x * b.z,
-                     a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    return rsqrtf(fmaxf(dot3(v, v), 1e-12f)) * v;
-}
 
 static __forceinline__ __device__ void clear_payload(HitPayload &payload) {
     payload.hit = 0u;
@@ -78,14 +42,14 @@ static __forceinline__ __device__ void trace_handle(OptixTraversableHandle handl
                                                     float tmax,
                                                     HitPayload &payload) {
     clear_payload(payload);
-    if (handle == 0ull || tmax <= kTraceTMin) {
+    if (handle == 0ull || tmax <= kRayTMin) {
         return;
     }
 
     optixTrace(handle,
                origin,
                direction,
-               kTraceTMin,
+               kRayTMin,
                tmax,
                0.0f,
                255u,
@@ -134,7 +98,7 @@ static __forceinline__ __device__ bool visible_segment_impl(float3 start, float3
     }
     const float3 dir = (1.f / dist) * delta;
     const HitPayload hit =
-        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+        trace_scene_impl<PrimaryOnly>(start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
     return hit.hit == 0u;
 }
 
@@ -154,9 +118,9 @@ static __forceinline__ __device__ int global_primitive_id(const HitPayload &hit)
 
 static __forceinline__ __device__ float3 face_normal_for_global_prim(int prim) {
     if (prim < 0 || prim >= params.n_triangles || params.tri_fn_x == nullptr) {
-        return make_vec3(0.f, 0.f, 0.f);
+        return make_f3(0.f, 0.f, 0.f);
     }
-    return normalize3(make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]));
+    return normalize3(make_f3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]));
 }
 
 template <bool PrimaryOnly>
@@ -172,8 +136,8 @@ static __forceinline__ __device__ bool point_inside_one_ray_impl(float3 point, f
 
 template <bool PrimaryOnly>
 static __forceinline__ __device__ bool point_inside_closed_mesh_robust_impl(float3 point) {
-    const float3 d0 = normalize3(make_vec3(0.81234133f, 0.52311241f, 0.25843197f));
-    const float3 d1 = normalize3(make_vec3(-0.37139068f, 0.60114462f, 0.70757474f));
+    const float3 d0 = normalize3(make_f3(0.81234133f, 0.52311241f, 0.25843197f));
+    const float3 d1 = normalize3(make_f3(-0.37139068f, 0.60114462f, 0.70757474f));
     return point_inside_one_ray_impl<PrimaryOnly>(point, d0) &&
            point_inside_one_ray_impl<PrimaryOnly>(point, d1);
 }
@@ -189,7 +153,7 @@ static __forceinline__ __device__ bool visible_segment_ignore_prim_impl(float3 s
     }
     const float3 dir = (1.f / dist) * delta;
     const HitPayload hit =
-        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+        trace_scene_impl<PrimaryOnly>(start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
     if (hit.hit == 0u) {
         return true;
     }
@@ -216,14 +180,14 @@ static __forceinline__ __device__ float3 state_vec(const float *x,
                                                    const float *y,
                                                    const float *z,
                                                    int idx) {
-    return make_vec3(x[idx], y[idx], z[idx]);
+    return make_f3(x[idx], y[idx], z[idx]);
 }
 
 static __forceinline__ __device__ float3 recursive_state_vec(const float *x,
                                                              const float *y,
                                                              const float *z,
                                                              int idx) {
-    return make_vec3(x[idx], y[idx], z[idx]);
+    return make_f3(x[idx], y[idx], z[idx]);
 }
 
 static __forceinline__ __device__ float3 grid_cell_center(int cell) {
@@ -238,12 +202,12 @@ static __forceinline__ __device__ float3 grid_cell_center(int cell) {
     const float c1 = params.grid_coord1_min +
                      v * (params.grid_coord1_max - params.grid_coord1_min);
     if (params.grid_axis == 0) {
-        return make_vec3(params.grid_position, c0, c1);
+        return make_f3(params.grid_position, c0, c1);
     }
     if (params.grid_axis == 1) {
-        return make_vec3(c0, params.grid_position, c1);
+        return make_f3(c0, params.grid_position, c1);
     }
-    return make_vec3(c0, c1, params.grid_position);
+    return make_f3(c0, c1, params.grid_position);
 }
 
 static __forceinline__ __device__ float component(float3 value, int axis) {
@@ -268,9 +232,9 @@ static __forceinline__ __device__ bool grid_cell_from_point(float3 point, int &c
         return false;
     }
     const float u = (c0 - params.grid_coord0_min) /
-                    fmaxf(params.grid_coord0_max - params.grid_coord0_min, kSmallEps);
+                    fmaxf(params.grid_coord0_max - params.grid_coord0_min, kDfrEps);
     const float v = (c1 - params.grid_coord1_min) /
-                    fmaxf(params.grid_coord1_max - params.grid_coord1_min, kSmallEps);
+                    fmaxf(params.grid_coord1_max - params.grid_coord1_min, kDfrEps);
     const int i = min(max(static_cast<int>(u * params.grid_resolution0), 0),
                       params.grid_resolution0 - 1);
     const int j = min(max(static_cast<int>(v * params.grid_resolution1), 0),
@@ -364,7 +328,7 @@ static __forceinline__ __device__ bool visible_segment_ignore_two_prims_impl(flo
     }
     const float3 dir = (1.f / dist) * delta;
     const HitPayload hit =
-        trace_scene_impl<PrimaryOnly>(start + kRayBias * dir, dir, fmaxf(dist - 2.f * kRayBias, 0.f));
+        trace_scene_impl<PrimaryOnly>(start + kDfrRayBias * dir, dir, fmaxf(dist - 2.f * kDfrRayBias, 0.f));
     if (hit.hit == 0u) {
         return true;
     }
@@ -415,20 +379,20 @@ static __forceinline__ __device__ bool coherent_selected_visibility_point(utd::P
                                                                          utd::PairInputs &selected,
                                                                          float3 &visibility_point) {
     selected = original;
-    visibility_point = make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
+    visibility_point = make_f3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
     if (original.selectStationaryPoint <= 0.5f) {
         return true;
     }
-    const float3 edge_dir = normalize3(make_vec3(original.edgeDir.x, original.edgeDir.y, original.edgeDir.z));
-    const float3 edge_pos = make_vec3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
+    const float3 edge_dir = normalize3(make_f3(original.edgeDir.x, original.edgeDir.y, original.edgeDir.z));
+    const float3 edge_pos = make_f3(original.edgePos.x, original.edgePos.y, original.edgePos.z);
     const float edge_length = original.edgeLineMax - original.edgeLineMin;
     const float3 edge_origin = edge_pos + original.edgeLineMin * edge_dir;
     const float parameter = first_order_diffraction_parameter(
-        make_vec3(original.sourcePos.x, original.sourcePos.y, original.sourcePos.z),
+        make_f3(original.sourcePos.x, original.sourcePos.y, original.sourcePos.z),
         target,
         edge_origin,
         edge_dir);
-    if (!isfinite(parameter) || !(edge_length > kSmallEps)) {
+    if (!isfinite(parameter) || !(edge_length > kDfrEps)) {
         return false;
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
@@ -503,8 +467,8 @@ static __forceinline__ __device__ float3 stable_perpendicular(float3 axis,
         return normalize3(projected);
     }
     const float3 fallback = fabsf(axis.z) < 0.9f
-                                ? make_vec3(0.f, 0.f, 1.f)
-                                : make_vec3(0.f, 1.f, 0.f);
+                                ? make_f3(0.f, 0.f, 1.f)
+                                : make_f3(0.f, 1.f, 0.f);
     return normalize3(fallback - dot3(fallback, axis) * axis);
 }
 
@@ -525,11 +489,11 @@ static __forceinline__ __device__ bool keller_grid_hit_from_incident(float3 inci
     sincosf(2.f * kPi * uniform01(lane, stream, static_cast<unsigned int>(params.seed)), &s, &c);
     const float3 ko = normalize3(axial * edge_dir + radial * (c * basis0 + s * basis1));
     const float denom = component(ko, params.grid_axis);
-    if (fabsf(denom) <= kSmallEps) {
+    if (fabsf(denom) <= kDfrEps) {
         return false;
     }
     const float t = (params.grid_position - component(edge_point, params.grid_axis)) / denom;
-    if (!(t > kRayBias) || !isfinite(t)) {
+    if (!(t > kDfrRayBias) || !isfinite(t)) {
         return false;
     }
     target = edge_point + t * ko;
@@ -637,10 +601,10 @@ static __forceinline__ __device__ bool load_triangle(int prim,
         params.tri_fn_x == nullptr) {
         return false;
     }
-    p0 = make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
-    e1 = make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
-    e2 = make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
-    normal = make_vec3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]);
+    p0 = make_f3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
+    e1 = make_f3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
+    e2 = make_f3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
+    normal = make_f3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]);
     if (dot3(normal, normal) <= 1e-12f) {
         normal = cross3(e1, e2);
     }
@@ -661,7 +625,7 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(float3 imag
     }
     const float3 delta = target - image_source;
     const float dist = norm3(delta);
-    if (!(dist > kRayBias) || !isfinite(dist)) {
+    if (!(dist > kDfrRayBias) || !isfinite(dist)) {
         return false;
     }
     const float3 dir = (1.f / dist) * delta;
@@ -682,7 +646,7 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(float3 imag
         return false;
     }
     const float t = f * dot3(e2, q);
-    if (!(t > kRayBias) || !(t < dist - kRayBias) || !isfinite(t)) {
+    if (!(t > kDfrRayBias) || !(t < dist - kDfrRayBias) || !isfinite(t)) {
         return false;
     }
     reflection_point = image_source + t * dir;
@@ -725,7 +689,7 @@ static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_
     const float3 outgoing = target - reflection_point;
     const float incoming_dist = norm3(incoming);
     const float outgoing_dist = norm3(outgoing);
-    if (!(incoming_dist > kSmallEps) || !(outgoing_dist > kSmallEps)) {
+    if (!(incoming_dist > kDfrEps) || !(outgoing_dist > kDfrEps)) {
         return false;
     }
     const float3 incoming_hat = (1.f / incoming_dist) * incoming;
@@ -742,7 +706,7 @@ static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_
     reflection_gain = gain * gain;
     suffix_fspl = (params.wavelength * (1.f / (4.f * kPi))) *
                   (params.wavelength * (1.f / (4.f * kPi))) /
-                  fmaxf(outgoing_dist * outgoing_dist, kSmallEps);
+                  fmaxf(outgoing_dist * outgoing_dist, kDfrEps);
     if (!(isfinite(reflection_gain) && isfinite(suffix_fspl))) {
         return false;
     }
@@ -772,13 +736,13 @@ static __forceinline__ __device__ float first_order_diffraction_parameter(
     const float3 source_radial = source_offset - source_projection;
     const float target_radial_norm = norm3(target_radial);
     const float source_radial_norm = norm3(source_radial);
-    const float3 v1 = (1.f / fmaxf(target_radial_norm, kSmallEps)) * target_radial;
-    const float3 v2 = (1.f / fmaxf(source_radial_norm, kSmallEps)) * source_radial;
+    const float3 v1 = (1.f / fmaxf(target_radial_norm, kDfrEps)) * target_radial;
+    const float3 v2 = (1.f / fmaxf(source_radial_norm, kDfrEps)) * source_radial;
     const float theta = kPi - acosf(fminf(fmaxf(dot3(v1, v2), -1.f), 1.f));
 
     const float3 raw_rotation_axis = cross3(source_radial, target_radial);
     const float rotation_axis_norm = norm3(raw_rotation_axis);
-    const float3 rotation_axis = rotation_axis_norm > kSmallEps
+    const float3 rotation_axis = rotation_axis_norm > kDfrEps
         ? (1.f / rotation_axis_norm) * raw_rotation_axis
         : zeta;
 
@@ -787,12 +751,12 @@ static __forceinline__ __device__ float first_order_diffraction_parameter(
     const float3 source_to_target = coplanar_target - source_offset;
     const float source_to_target_norm = norm3(source_to_target);
     const float3 u0 =
-        (1.f / fmaxf(source_to_target_norm, kSmallEps)) * source_to_target;
+        (1.f / fmaxf(source_to_target_norm, kDfrEps)) * source_to_target;
     const float3 u1 = cross3(source_offset, u0);
     const float3 u2 = cross3(zeta, u0);
     const float u2_norm = norm3(u2);
     const float sign = dot3(u1, u2) < 0.f ? -1.f : 1.f;
-    return sign * norm3(u1) / fmaxf(u2_norm, kSmallEps);
+    return sign * norm3(u1) / fmaxf(u2_norm, kDfrEps);
 }
 
 static __forceinline__ __device__ float diffraction_weight(int state_idx,
@@ -801,8 +765,8 @@ static __forceinline__ __device__ float diffraction_weight(int state_idx,
                                                            int sample_count) {
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
-    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
-    const float target_distance = fmaxf(norm3(target - edge_point), kSmallEps);
+    const float source_distance = fmaxf(norm3(edge_point - source), kDfrEps);
+    const float target_distance = fmaxf(norm3(target - edge_point), kDfrEps);
     const float edge_length = fmaxf(
         params.state_edge_t_max[state_idx] - params.state_edge_t_min[state_idx],
         0.f);
@@ -829,8 +793,8 @@ static __forceinline__ __device__ float chain_event_weight(float src_power,
                                                            float3 source,
                                                            float3 edge_point,
                                                            float3 target) {
-    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
-    const float target_distance = fmaxf(norm3(target - edge_point), kSmallEps);
+    const float source_distance = fmaxf(norm3(edge_point - source), kDfrEps);
+    const float target_distance = fmaxf(norm3(target - edge_point), kDfrEps);
     const float edge_length = fmaxf(edge_t_max - edge_t_min, 0.f);
     const float wedge_scale = fminf(fmaxf(exterior_angle, 0.25f * kPi) / (2.f * kPi), 2.f);
     const float material_gain = material_gain_for_faces(face0_prim, face1_prim);
@@ -1453,7 +1417,7 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
         const float3 edge_origin = edge_pos + edge_t_min * edge_dir;
         const float parameter =
             first_order_diffraction_parameter(source, target, edge_origin, edge_dir);
-        if (!isfinite(parameter) || !(edge_length > kSmallEps)) {
+        if (!isfinite(parameter) || !(edge_length > kDfrEps)) {
             if (params.collect_debug_counts != 0 &&
                 params.out_utd_reject_count != nullptr) {
                 atomicAdd(params.out_utd_reject_count + cell, 1);
@@ -1488,8 +1452,8 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
         return;
     }
 
-    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
-    const float target_distance = fmaxf(norm3(target - edge_point), kSmallEps);
+    const float source_distance = fmaxf(norm3(edge_point - source), kDfrEps);
+    const float target_distance = fmaxf(norm3(target - edge_point), kDfrEps);
     const float phase = -params.k * (source_distance + target_distance);
     const float amplitude = sqrtf(fmaxf(contribution, 0.f));
     const float field_re = amplitude * cosf(phase);

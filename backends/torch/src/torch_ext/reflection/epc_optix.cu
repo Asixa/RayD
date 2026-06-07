@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/reflection/epc_params.h>
 
 namespace raydtorch {
@@ -11,9 +12,6 @@ extern __constant__ ReflEpcParams params;
 
 namespace {
 
-constexpr float kTraceTMin = 1e-5f;
-constexpr float kTraceTMax = 1e8f;
-constexpr float kRayBias = 1e-5f;
 constexpr float kMinSegmentLength = 2e-5f;
 constexpr float kEpcTolerance = 1e-4f;
 constexpr unsigned int kInvalidPrim = 0xFFFFFFFFu;
@@ -33,35 +31,6 @@ struct VisibilityPayload {
     unsigned int visible = 1u;
     unsigned int blocker = kInvalidPrim;
 };
-
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_float3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float length3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    const float inv_len = rsqrtf(fmaxf(dot3(v, v), 1e-12f));
-    return inv_len * v;
-}
 
 static __forceinline__ __device__ void set_reflection_payload(const HitPayload &payload) {
     optixSetPayload_0(payload.hit);
@@ -130,7 +99,7 @@ static __forceinline__ __device__ void trace_reflection_handle(OptixTraversableH
                                                                float tmax,
                                                                HitPayload &payload) {
     payload.hit = 0u;
-    payload.t = __float_as_uint(kTraceTMax);
+    payload.t = __float_as_uint(kRayTMax);
     payload.bary_u = 0u;
     payload.bary_v = 0u;
     payload.prim = 0u;
@@ -142,7 +111,7 @@ static __forceinline__ __device__ void trace_reflection_handle(OptixTraversableH
     optixTrace(handle,
                origin,
                direction,
-               kTraceTMin,
+               kRayTMin,
                tmax,
                0.0f,
                255u,
@@ -208,7 +177,7 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility_handle(
     optixTrace(handle,
                origin,
                direction,
-               kTraceTMin,
+               kRayTMin,
                tmax,
                0.0f,
                255u,
@@ -262,19 +231,19 @@ static __forceinline__ __device__ VisibilityPayload trace_visibility_primary(flo
 }
 
 static __forceinline__ __device__ float3 load_triangle_p0(int prim) {
-    return make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
+    return make_f3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
 }
 
 static __forceinline__ __device__ float3 load_triangle_e1(int prim) {
-    return make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
+    return make_f3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
 }
 
 static __forceinline__ __device__ float3 load_triangle_e2(int prim) {
-    return make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
+    return make_f3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
 }
 
 static __forceinline__ __device__ float3 load_triangle_normal(int prim) {
-    return normalize3(make_vec3(params.tri_fn_x[prim],
+    return normalize3(make_f3(params.tri_fn_x[prim],
                                 params.tri_fn_y[prim],
                                 params.tri_fn_z[prim]));
 }
@@ -457,11 +426,11 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
         return;
     }
 
-    float3 origin = make_vec3(params.ray_ox[ray_index],
+    float3 origin = make_f3(params.ray_ox[ray_index],
                               params.ray_oy[ray_index],
                               params.ray_oz[ray_index]);
     const int rx_id = params.rx_count == 1 ? 0 : static_cast<int>(ray_index);
-    const float3 receiver = make_vec3(params.rx_x[rx_id],
+    const float3 receiver = make_f3(params.rx_x[rx_id],
                                       params.rx_y[rx_id],
                                       params.rx_z[rx_id]);
 
@@ -495,11 +464,11 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
             }
 
             const float3 plane_point =
-                make_vec3(params.direct_plane_point_x[slot],
+                make_f3(params.direct_plane_point_x[slot],
                           params.direct_plane_point_y[slot],
                           params.direct_plane_point_z[slot]);
             const float3 plane_normal =
-                normalize3(make_vec3(params.direct_plane_normal_x[slot],
+                normalize3(make_f3(params.direct_plane_normal_x[slot],
                                      params.direct_plane_normal_y[slot],
                                      params.direct_plane_normal_z[slot]));
             if (length3(plane_normal) <= 0.f) {
@@ -523,14 +492,14 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
             return;
         } else {
         float3 trace_origin = origin;
-        float3 trace_direction = normalize3(make_vec3(params.ray_dx[ray_index],
+        float3 trace_direction = normalize3(make_f3(params.ray_dx[ray_index],
                                                       params.ray_dy[ray_index],
                                                       params.ray_dz[ray_index]));
 
         for (int bounce = 0; bounce < B; ++bounce) {
             const float tmax_input =
-                bounce == 0 && params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : kTraceTMax;
-            const float trace_tmax = isfinite(tmax_input) ? tmax_input : kTraceTMax;
+                bounce == 0 && params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : kRayTMax;
+            const float trace_tmax = isfinite(tmax_input) ? tmax_input : kRayTMax;
             const HitPayload hit = trace_scene(trace_origin, trace_direction, trace_tmax);
             if (hit.hit == 0u) {
                 break;
@@ -557,7 +526,7 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
             const float t = __uint_as_float(hit.t);
 
             float3 hit_point = trace_origin + t * trace_direction;
-            float3 geo_normal = make_vec3(0.f, 0.f, 1.f);
+            float3 geo_normal = make_f3(0.f, 0.f, 1.f);
             if (global_prim >= 0 && global_prim < params.n_triangles) {
                 const float3 p0 = load_triangle_p0(global_prim);
                 const float3 e1 = load_triangle_e1(global_prim);

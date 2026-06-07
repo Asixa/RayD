@@ -1,4 +1,5 @@
 #include <raydtorch/scene/geometry_kernels.h>
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/common/optix_context.h>
 #include <raydtorch/scene/optix_intersect_params.h>
 
@@ -13,33 +14,6 @@
 namespace raydtorch {
 
 namespace {
-
-__device__ float3 make_f3(const float *ptr) {
-    return make_float3(ptr[0], ptr[1], ptr[2]);
-}
-
-__device__ float3 sub(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-__device__ float3 add(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-__device__ float3 mul(float s, float3 a) {
-    return make_float3(s * a.x, s * a.y, s * a.z);
-}
-
-__device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-__device__ float3 cross3(float3 a, float3 b) {
-    return make_float3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x);
-}
 
 void cuda_check(cudaError_t result, const char *expr) {
     if (result == cudaSuccess)
@@ -95,7 +69,7 @@ __global__ void intersect_recompute_kernel(
     out_uv[ray_idx * 2 + 1] = hit ? v : 0.f;
 
     const float safe_t = hit ? hit_t : 0.f;
-    const float3 p = add(o, mul(safe_t, d));
+    const float3 p = add3(o, mul3(safe_t, d));
     out_p[ray_idx * 3 + 0] = hit ? p.x : 0.f;
     out_p[ray_idx * 3 + 1] = hit ? p.y : 0.f;
     out_p[ray_idx * 3 + 2] = hit ? p.z : 0.f;
@@ -108,9 +82,9 @@ __global__ void intersect_recompute_kernel(
         const float3 p0 = make_f3(vertices + i0 * 3);
         const float3 p1 = make_f3(vertices + i1 * 3);
         const float3 p2 = make_f3(vertices + i2 * 3);
-        normal = cross3(sub(p1, p0), sub(p2, p0));
+        normal = cross3(sub3(p1, p0), sub3(p2, p0));
         const float inv_len = rsqrtf(fmaxf(dot3(normal, normal), 1e-20f));
-        normal = mul(inv_len, normal);
+        normal = mul3(inv_len, normal);
     }
     out_n[ray_idx * 3 + 0] = normal.x;
     out_n[ray_idx * 3 + 1] = normal.y;

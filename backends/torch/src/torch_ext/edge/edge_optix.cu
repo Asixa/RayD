@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/edge/optix_params.h>
 
 namespace raydtorch {
@@ -15,34 +16,6 @@ constexpr float kInfiniteRayTMax = 1.0e8f;
 constexpr float kPointProbeTMax = 1.0e-5f;
 constexpr uint32_t kInvalidEdgeId = 0xffffffffu;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float3 a, float s) {
-    return make_float3(a.x * s, a.y * s, a.z * s);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 a) {
-    return a * s;
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float squared_norm(float3 a) {
-    return dot3(a, a);
-}
-
 static __forceinline__ __device__ float clamp01(float value) {
     return fminf(fmaxf(value, 0.0f), 1.0f);
 }
@@ -56,19 +29,19 @@ static __forceinline__ __device__ bool edge_visible(unsigned int edge) {
 }
 
 static __forceinline__ __device__ float3 load_query_point(unsigned int query) {
-    return make_vec3(params.query_x[query], params.query_y[query], params.query_z[query]);
+    return make_f3(params.query_x[query], params.query_y[query], params.query_z[query]);
 }
 
 static __forceinline__ __device__ float3 load_ray_direction(unsigned int query) {
-    return make_vec3(params.ray_dx[query], params.ray_dy[query], params.ray_dz[query]);
+    return make_f3(params.ray_dx[query], params.ray_dy[query], params.ray_dz[query]);
 }
 
 static __forceinline__ __device__ float3 load_edge_start(unsigned int edge) {
-    return make_vec3(params.edge_p0_x[edge], params.edge_p0_y[edge], params.edge_p0_z[edge]);
+    return make_f3(params.edge_p0_x[edge], params.edge_p0_y[edge], params.edge_p0_z[edge]);
 }
 
 static __forceinline__ __device__ float3 load_edge_vector(unsigned int edge) {
-    return make_vec3(params.edge_e1_x[edge], params.edge_e1_y[edge], params.edge_e1_z[edge]);
+    return make_f3(params.edge_e1_x[edge], params.edge_e1_y[edge], params.edge_e1_z[edge]);
 }
 
 static __forceinline__ __device__ float safe_search_radius() {

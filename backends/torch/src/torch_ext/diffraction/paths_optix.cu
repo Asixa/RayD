@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/diffraction/paths_params.h>
 
 namespace raydtorch {
@@ -11,10 +12,7 @@ extern __constant__ DfrPathParams params;
 
 namespace {
 
-constexpr float kTraceTMin = 1e-5f;
-constexpr float kRayBias = 1e-4f;
-constexpr float kSmallEps = 1e-6f;
-constexpr float kPi = 3.14159265358979323846f;
+constexpr float kPathEps = 1e-6f;
 constexpr float kSpeedOfLight = 299792458.f;
 
 struct HitPayload {
@@ -23,34 +21,6 @@ struct HitPayload {
     unsigned int prim = 0u;
     unsigned int instance = 0u;
 };
-
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_vec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_vec3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float norm3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    return rsqrtf(fmaxf(dot3(v, v), 1e-12f)) * v;
-}
 
 static __forceinline__ __device__ void clear_payload(HitPayload &payload) {
     payload.hit = 0u;
@@ -72,14 +42,14 @@ static __forceinline__ __device__ void trace_handle(OptixTraversableHandle handl
                                                     float tmax,
                                                     HitPayload &payload) {
     clear_payload(payload);
-    if (handle == 0ull || tmax <= kTraceTMin) {
+    if (handle == 0ull || tmax <= kRayTMin) {
         return;
     }
 
     optixTrace(handle,
                origin,
                direction,
-               kTraceTMin,
+               kRayTMin,
                tmax,
                0.0f,
                255u,
@@ -127,9 +97,9 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     const float3 dir = (1.f / dist) * delta;
     const HitPayload hit =
         trace_scene<SplitScene>(
-            start + kRayBias * dir,
+            start + kDfrRayBias * dir,
             dir,
-            fmaxf(dist - 2.f * kRayBias, 0.f));
+            fmaxf(dist - 2.f * kDfrRayBias, 0.f));
     return hit.hit == 0u;
 }
 
@@ -137,7 +107,7 @@ static __forceinline__ __device__ float3 state_vec(const float *x,
                                                    const float *y,
                                                    const float *z,
                                                    int idx) {
-    return make_vec3(x[idx], y[idx], z[idx]);
+    return make_f3(x[idx], y[idx], z[idx]);
 }
 
 static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
@@ -170,8 +140,8 @@ static __forceinline__ __device__ float path_weight(int state_idx,
                                                     float3 receiver) {
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
-    const float source_distance = fmaxf(norm3(edge_point - source), kSmallEps);
-    const float receiver_distance = fmaxf(norm3(receiver - edge_point), kSmallEps);
+    const float source_distance = fmaxf(norm3(edge_point - source), kPathEps);
+    const float receiver_distance = fmaxf(norm3(receiver - edge_point), kPathEps);
     const float edge_length = fmaxf(
         params.state_edge_t_max[state_idx] - params.state_edge_t_min[state_idx],
         0.f);
@@ -260,7 +230,7 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
                                params.state_edge_t_max[state_idx]);
     const float3 edge_point = edge_pos + mid_t * edge_dir;
     const float3 receiver =
-        make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+        make_f3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
 
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
         !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z) ||
@@ -305,9 +275,9 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
     write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
-                out_idx, make_vec3(0.f, 0.f, 0.f));
+                out_idx, make_f3(0.f, 0.f, 0.f));
     write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
-                out_idx, make_vec3(0.f, 0.f, 0.f));
+                out_idx, make_f3(0.f, 0.f, 0.f));
 }
 
 static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
@@ -407,7 +377,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
     const float3 receiver =
-        make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+        make_f3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
 
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
@@ -449,9 +419,9 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
     write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
-                out_idx, make_vec3(0.f, 0.f, 0.f));
+                out_idx, make_f3(0.f, 0.f, 0.f));
     write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
-                out_idx, make_vec3(0.f, 0.f, 0.f));
+                out_idx, make_f3(0.f, 0.f, 0.f));
 }
 
 extern "C" __global__ void __raygen__diffraction_paths_order1_primary() {

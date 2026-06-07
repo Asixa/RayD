@@ -10,6 +10,7 @@ constexpr float kSmallEps = 1e-12f;
 constexpr float kDistanceEps = 1e-20f;
 constexpr float kRayTMin = 1e-5f;
 constexpr float kRayBias = 1e-5f;
+constexpr float kDfrRayBias = 1e-4f;
 constexpr float kRayTMax = 1e8f;
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -76,8 +77,24 @@ __forceinline__ __host__ __device__ float3 cross3(float3 a, float3 b) {
         a.x * b.y - a.y * b.x);
 }
 
+__forceinline__ __host__ __device__ float3 cross(float3 a, float3 b) {
+    return cross3(a, b);
+}
+
 __forceinline__ __host__ __device__ float norm2_3(float3 a) {
     return dot3(a, a);
+}
+
+__forceinline__ __host__ __device__ float squared_norm(float3 a) {
+    return norm2_3(a);
+}
+
+__forceinline__ __host__ __device__ float norm3(float3 a) {
+    return sqrtf(fmaxf(dot3(a, a), 0.0f));
+}
+
+__forceinline__ __host__ __device__ float length3(float3 a) {
+    return norm3(a);
 }
 
 __forceinline__ __device__ float3 normalize3(float3 v, float eps = kSmallEps) {

@@ -11,6 +11,7 @@
 #include <raydtorch/reflection/kernels.h>
 #include <raydtorch/reflection/pipeline.h>
 #include <raydtorch/common/optix_context.h>
+#include <raydtorch/reflection/accum_params.h>
 #include <raydtorch/reflection/dedup.h>
 #include <raydtorch/reflection/epc_field.h>
 #include <raydtorch/reflection/epc_params.h>
@@ -172,7 +173,7 @@ at::Tensor stack_vec3(const at::Tensor &x, const at::Tensor &y, const at::Tensor
     return at::stack({x, y, z}, 1).contiguous();
 }
 
-std::shared_ptr<OptixLaunchPipeline> multipath_pipeline(
+std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
     const SceneCache &scene,
     const OptixPipelineConfig &config) {
     OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(scene.device_index));
@@ -231,7 +232,7 @@ py::tuple visibility_forward_op(
     params.out_first_blocked_prim = blocker_prim.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    multipath_pipeline(scene, segment_visibility_pipeline_config())
+    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
     return py::make_tuple(visible, blocker_prim, tape_t);
 }
@@ -355,7 +356,7 @@ py::tuple trace_reflections_forward_op(
     params.out_img_y = img_y.data_ptr<float>();
     params.out_img_z = img_z.data_ptr<float>();
 
-    multipath_pipeline(scene, reflection_trace_pipeline_config())
+    optix_pipeline_for_scene(scene, reflection_trace_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
 
     at::Tensor bounce_index =
@@ -561,7 +562,7 @@ py::tuple trace_refl_epc_field_forward_op(
     epc_params.out_first_blocked_group = first_blocked_group.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    multipath_pipeline(scene, reflection_epc_pipeline_config())
+    optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
         ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
 
     at::Tensor slot_eta_r = at::ones({slot_count}, fopts);
@@ -980,7 +981,7 @@ py::tuple reflection_accumulation_forward_op(
     params.out_reflection_count = reflection_count.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    multipath_pipeline(scene, reflection_accumulation_pipeline_config())
+    optix_pipeline_for_scene(scene, reflection_accumulation_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
     return py::make_tuple(
         power.reshape({grid_resolution1, grid_resolution0}),
@@ -1202,7 +1203,7 @@ py::tuple diffraction_paths_order1_forward_op(
     params.out_p2_z = out_p2_z.data_ptr<float>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    auto pipeline = multipath_pipeline(scene, diffraction_paths_pipeline_config());
+    auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
     pipeline->launch(2, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
     pipeline->launch(3, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
 
@@ -1577,7 +1578,7 @@ py::tuple diffraction_accumulation_forward_op(
     params.tape_edge_u = tape_edge_u.data_ptr<float>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    auto pipeline = multipath_pipeline(scene, diffraction_accumulation_pipeline_config());
+    auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
     if (use_recursive) {
         pipeline->launch(13, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
     } else {
@@ -2170,7 +2171,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     params.out_utd_reject_count = utd_reject_count.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    auto pipeline = multipath_pipeline(scene, diffraction_accumulation_pipeline_config());
+    auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
     pipeline->launch(11, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
 
     return py::make_tuple(

@@ -5,49 +5,14 @@
 #include <cmath>
 #include <string>
 
+#include <raydtorch/common/math.cuh>
 #include <raydtorch/common/native_compat.h>
 
 namespace raydtorch {
 
 namespace {
 
-constexpr float kSmallEps = 1e-6f;
-constexpr float kRayBias = 1e-4f;
-constexpr float kPi = 3.14159265358979323846f;
-
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_vec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_vec3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_vec3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float norm3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
-    return make_vec3(a.y * b.z - a.z * b.y,
-                     a.z * b.x - a.x * b.z,
-                     a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    return rsqrtf(fmaxf(dot3(v, v), 1e-12f)) * v;
-}
+constexpr float kDfrEps = 1e-6f;
 
 static __forceinline__ __device__ unsigned int hash_u32(unsigned int x) {
     x ^= x >> 16;
@@ -76,16 +41,16 @@ static __forceinline__ __device__ float3 stable_perpendicular(float3 axis,
         return normalize3(projected);
     }
     const float3 fallback = fabsf(axis.z) < 0.9f
-                                ? make_vec3(0.f, 0.f, 1.f)
-                                : make_vec3(0.f, 1.f, 0.f);
+                                ? make_f3(0.f, 0.f, 1.f)
+                                : make_f3(0.f, 1.f, 0.f);
     return normalize3(fallback - dot3(fallback, axis) * axis);
 }
 
 static __forceinline__ __device__ float3 normalize_jvp(float3 unit,
                                                        float norm,
                                                        float3 dot_v) {
-    if (!(norm > kSmallEps) || !isfinite(norm)) {
-        return make_vec3(0.f, 0.f, 0.f);
+    if (!(norm > kDfrEps) || !isfinite(norm)) {
+        return make_f3(0.f, 0.f, 0.f);
     }
     return (1.f / norm) * (dot_v - dot3(unit, dot_v) * unit);
 }
@@ -104,12 +69,12 @@ static __forceinline__ __device__ float3 grid_cell_center(
     const float c1 = params.grid_coord1_min +
                      v * (params.grid_coord1_max - params.grid_coord1_min);
     if (params.grid_axis == 0) {
-        return make_vec3(params.grid_position, c0, c1);
+        return make_f3(params.grid_position, c0, c1);
     }
     if (params.grid_axis == 1) {
-        return make_vec3(c0, params.grid_position, c1);
+        return make_f3(c0, params.grid_position, c1);
     }
-    return make_vec3(c0, c1, params.grid_position);
+    return make_f3(c0, c1, params.grid_position);
 }
 
 static __forceinline__ __device__ float3 grid_cell_center(
@@ -126,12 +91,12 @@ static __forceinline__ __device__ float3 grid_cell_center(
     const float c1 = params.grid_coord1_min +
                      v * (params.grid_coord1_max - params.grid_coord1_min);
     if (params.grid_axis == 0) {
-        return make_vec3(params.grid_position, c0, c1);
+        return make_f3(params.grid_position, c0, c1);
     }
     if (params.grid_axis == 1) {
-        return make_vec3(c0, params.grid_position, c1);
+        return make_f3(c0, params.grid_position, c1);
     }
-    return make_vec3(c0, c1, params.grid_position);
+    return make_f3(c0, c1, params.grid_position);
 }
 
 struct DirectPrimal {
@@ -310,11 +275,11 @@ static __forceinline__ __device__ bool keller_target_from_state(
     ko = normalize3(axial * edge_dir +
                     radial * (cos_theta * basis0 + sin_theta * basis1));
     const float denom = component(ko, params.grid_axis);
-    if (fabsf(denom) <= kSmallEps) {
+    if (fabsf(denom) <= kDfrEps) {
         return false;
     }
     ray_t = (params.grid_position - component(edge_point, params.grid_axis)) / denom;
-    if (!(ray_t > kRayBias) || !isfinite(ray_t)) {
+    if (!(ray_t > kDfrRayBias) || !isfinite(ray_t)) {
         return false;
     }
     target = edge_point + ray_t * ko;
@@ -340,8 +305,8 @@ static __forceinline__ __device__ float3 stable_perpendicular_jvp(
         projected_norm = sqrtf(fmaxf(projected_norm2, 0.f));
     } else {
         const float3 fallback = fabsf(axis.z) < 0.9f
-                                    ? make_vec3(0.f, 0.f, 1.f)
-                                    : make_vec3(0.f, 1.f, 0.f);
+                                    ? make_f3(0.f, 0.f, 1.f)
+                                    : make_f3(0.f, 1.f, 0.f);
         const float fallback_dot_axis = dot3(fallback, axis);
         const float3 fallback_projected = fallback - fallback_dot_axis * axis;
         dot_projected =
@@ -358,7 +323,7 @@ static __forceinline__ __device__ float3 keller_target_jvp(
     float3 dot_edge_dir,
     float3 dot_wi_raw) {
     if (!p.is_keller) {
-        return make_vec3(0.f, 0.f, 0.f);
+        return make_f3(0.f, 0.f, 0.f);
     }
 
     const float3 dot_wi = normalize_jvp(p.wi, p.wi_norm, dot_wi_raw);
@@ -370,7 +335,7 @@ static __forceinline__ __device__ float3 keller_target_jvp(
                                 : 0.f;
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
     const float dot_radial =
-        radial > kSmallEps ? (-(axial / radial) * dot_axial) : 0.f;
+        radial > kDfrEps ? (-(axial / radial) * dot_axial) : 0.f;
 
     const float3 basis0 = stable_perpendicular(p.edge_dir, p.wi);
     const float3 dot_basis0 =
@@ -401,7 +366,7 @@ static __forceinline__ __device__ float3 keller_target_jvp(
     const float dot_numerator = -component(dot_edge_point, params.grid_axis);
     const float dot_t =
         (dot_numerator * denom - numerator * dot_denom) /
-        fmaxf(denom * denom, kSmallEps);
+        fmaxf(denom * denom, kDfrEps);
     return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
@@ -487,16 +452,16 @@ static __forceinline__ __device__ bool load_triangle(
         params.tri_fn_x == nullptr) {
         return false;
     }
-    p0 = make_vec3(params.tri_p0_x[prim],
+    p0 = make_f3(params.tri_p0_x[prim],
                    params.tri_p0_y[prim],
                    params.tri_p0_z[prim]);
-    e1 = make_vec3(params.tri_e1_x[prim],
+    e1 = make_f3(params.tri_e1_x[prim],
                    params.tri_e1_y[prim],
                    params.tri_e1_z[prim]);
-    e2 = make_vec3(params.tri_e2_x[prim],
+    e2 = make_f3(params.tri_e2_x[prim],
                    params.tri_e2_y[prim],
                    params.tri_e2_z[prim]);
-    normal = make_vec3(params.tri_fn_x[prim],
+    normal = make_f3(params.tri_fn_x[prim],
                        params.tri_fn_y[prim],
                        params.tri_fn_z[prim]);
     float norm = norm3(normal);
@@ -532,7 +497,7 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(
     }
     const float3 delta = target - image_source;
     const float dist = norm3(delta);
-    if (!(dist > kRayBias) || !isfinite(dist)) {
+    if (!(dist > kDfrRayBias) || !isfinite(dist)) {
         return false;
     }
     ray_dir = (1.f / dist) * delta;
@@ -553,7 +518,7 @@ static __forceinline__ __device__ bool intersect_reflection_triangle(
         return false;
     }
     ray_t = f * dot3(e2, q);
-    if (!(ray_t > kRayBias) || !(ray_t < dist - kRayBias) || !isfinite(ray_t)) {
+    if (!(ray_t > kDfrRayBias) || !(ray_t < dist - kDfrRayBias) || !isfinite(ray_t)) {
         return false;
     }
     reflection_point = image_source + ray_t * ray_dir;
@@ -615,7 +580,7 @@ static __forceinline__ __device__ bool suffix_reflection_connection(
     const float3 outgoing = target - reflection_point;
     const float incoming_dist = norm3(incoming);
     const float outgoing_dist = norm3(outgoing);
-    if (!(incoming_dist > kSmallEps) || !(outgoing_dist > kSmallEps)) {
+    if (!(incoming_dist > kDfrEps) || !(outgoing_dist > kDfrEps)) {
         return false;
     }
     const float3 incoming_hat = (1.f / incoming_dist) * incoming;
@@ -634,7 +599,7 @@ static __forceinline__ __device__ bool suffix_reflection_connection(
     reflection_gain = material_gain * material_gain;
     const float fspl = params.wavelength * (1.f / (4.f * kPi));
     outgoing_dist2 = outgoing_dist * outgoing_dist;
-    suffix_fspl = (fspl * fspl) / fmaxf(outgoing_dist2, kSmallEps);
+    suffix_fspl = (fspl * fspl) / fmaxf(outgoing_dist2, kDfrEps);
     return isfinite(reflection_gain) && isfinite(suffix_fspl);
 }
 
@@ -645,7 +610,7 @@ static __forceinline__ __device__ float3 suffix_target_jvp(
     float &dot_suffix_fspl) {
     dot_suffix_fspl = 0.f;
     if (!p.is_suffix) {
-        return make_vec3(0.f, 0.f, 0.f);
+        return make_f3(0.f, 0.f, 0.f);
     }
 
     const float3 dot_normal =
@@ -673,11 +638,11 @@ static __forceinline__ __device__ float3 suffix_target_jvp(
         dot3(plane_to_image, dot_normal);
     const float dot_ray_t =
         (dot_numerator * denom - numerator * dot_denom) /
-        fmaxf(denom * denom, kSmallEps);
+        fmaxf(denom * denom, kDfrEps);
     const float3 dot_reflection_point =
         dot_image_source + dot_ray_t * p.suffix_ray_dir + p.suffix_ray_t * dot_ray_dir;
 
-    if (p.suffix_outgoing_dist2 > kSmallEps && p.suffix_fspl != 0.f) {
+    if (p.suffix_outgoing_dist2 > kDfrEps && p.suffix_fspl != 0.f) {
         const float3 outgoing = p.grid_target - p.target;
         const float dot_outgoing_dist2 =
             2.f * dot3(outgoing, -1.f * dot_reflection_point);
@@ -720,14 +685,14 @@ static __forceinline__ __device__ bool load_primal(
         return false;
     }
 
-    p.edge_pos = make_vec3(params.state_edge_pos_x[p.state_idx],
+    p.edge_pos = make_f3(params.state_edge_pos_x[p.state_idx],
                            params.state_edge_pos_y[p.state_idx],
                            params.state_edge_pos_z[p.state_idx]);
-    p.edge_dir_raw = make_vec3(params.state_edge_dir_x[p.state_idx],
+    p.edge_dir_raw = make_f3(params.state_edge_dir_x[p.state_idx],
                                params.state_edge_dir_y[p.state_idx],
                                params.state_edge_dir_z[p.state_idx]);
     p.edge_dir_norm = norm3(p.edge_dir_raw);
-    if (!(p.edge_dir_norm > kSmallEps) || !isfinite(p.edge_dir_norm)) {
+    if (!(p.edge_dir_norm > kDfrEps) || !isfinite(p.edge_dir_norm)) {
         return false;
     }
     p.edge_dir = (1.f / p.edge_dir_norm) * p.edge_dir_raw;
@@ -737,10 +702,10 @@ static __forceinline__ __device__ bool load_primal(
     p.edge_length = fmaxf(p.edge_t_max - p.edge_t_min, 0.f);
     p.edge_length_active = (p.edge_t_max - p.edge_t_min) > 0.f;
     p.edge_point = p.edge_pos + p.edge_t * p.edge_dir;
-    p.source = make_vec3(params.state_src_x[p.state_idx],
+    p.source = make_f3(params.state_src_x[p.state_idx],
                          params.state_src_y[p.state_idx],
                          params.state_src_z[p.state_idx]);
-    p.wi_raw = make_vec3(params.state_wi_x != nullptr ? params.state_wi_x[p.state_idx] : 0.f,
+    p.wi_raw = make_f3(params.state_wi_x != nullptr ? params.state_wi_x[p.state_idx] : 0.f,
                          params.state_wi_y != nullptr ? params.state_wi_y[p.state_idx] : 0.f,
                          params.state_wi_z != nullptr ? params.state_wi_z[p.state_idx] : 0.f);
     p.wi_norm = norm3(p.wi_raw);
@@ -766,13 +731,13 @@ static __forceinline__ __device__ bool load_primal(
     p.suffix_outgoing_dist2 = 1.f;
     p.suffix_ray_t = 0.f;
     p.suffix_material_active = false;
-    p.grid_target = make_vec3(0.f, 0.f, 0.f);
-    p.suffix_p0 = make_vec3(0.f, 0.f, 0.f);
-    p.suffix_normal = make_vec3(0.f, 0.f, 1.f);
+    p.grid_target = make_f3(0.f, 0.f, 0.f);
+    p.suffix_p0 = make_f3(0.f, 0.f, 0.f);
+    p.suffix_normal = make_f3(0.f, 0.f, 1.f);
     p.suffix_normal_norm = 1.f;
-    p.suffix_image_source = make_vec3(0.f, 0.f, 0.f);
-    p.suffix_ray_dir = make_vec3(0.f, 0.f, 0.f);
-    p.keller_ko = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_image_source = make_f3(0.f, 0.f, 0.f);
+    p.suffix_ray_dir = make_f3(0.f, 0.f, 0.f);
+    p.keller_ko = make_f3(0.f, 0.f, 0.f);
     p.keller_ray_t = 0.f;
     p.keller_sin = 0.f;
     p.keller_cos = 1.f;
@@ -824,8 +789,8 @@ static __forceinline__ __device__ bool load_primal(
         }
     }
 
-    const float source_dist = fmaxf(norm3(p.edge_point - p.source), kSmallEps);
-    const float target_dist = fmaxf(norm3(p.target - p.edge_point), kSmallEps);
+    const float source_dist = fmaxf(norm3(p.edge_point - p.source), kDfrEps);
+    const float target_dist = fmaxf(norm3(p.target - p.edge_point), kDfrEps);
     p.source_dist2 = source_dist * source_dist;
     p.target_dist2 = target_dist * target_dist;
     const float sample_norm =
@@ -856,7 +821,7 @@ static __forceinline__ __device__ float3 read_vec_or_zero(
     const float *y,
     const float *z,
     int index) {
-    return make_vec3(read_or_zero(x, index),
+    return make_f3(read_or_zero(x, index),
                      read_or_zero(y, index),
                      read_or_zero(z, index));
 }
@@ -903,11 +868,11 @@ static __forceinline__ __device__ bool chain_keller_target(
     ko = normalize3(axial * edge_dir +
                     radial * (cos_theta * basis0 + sin_theta * basis1));
     const float denom = component(ko, params.grid_axis);
-    if (fabsf(denom) <= kSmallEps) {
+    if (fabsf(denom) <= kDfrEps) {
         return false;
     }
     ray_t = (params.grid_position - component(edge_point, params.grid_axis)) / denom;
-    if (!(ray_t > kRayBias) || !isfinite(ray_t)) {
+    if (!(ray_t > kDfrRayBias) || !isfinite(ray_t)) {
         return false;
     }
     target = edge_point + ray_t * ko;
@@ -933,7 +898,7 @@ static __forceinline__ __device__ float3 chain_keller_target_jvp(
                                 : 0.f;
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
     const float dot_radial =
-        radial > kSmallEps ? (-(axial / radial) * dot_axial) : 0.f;
+        radial > kDfrEps ? (-(axial / radial) * dot_axial) : 0.f;
     const float3 basis0 = stable_perpendicular(terminal.edge_dir, incident);
     const float3 dot_basis0 =
         stable_perpendicular_jvp(terminal.edge_dir,
@@ -965,7 +930,7 @@ static __forceinline__ __device__ float3 chain_keller_target_jvp(
     const float dot_numerator = -component(dot_edge_point, params.grid_axis);
     const float dot_t =
         (dot_numerator * denom - numerator * dot_denom) /
-        fmaxf(denom * denom, kSmallEps);
+        fmaxf(denom * denom, kDfrEps);
     return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
@@ -977,7 +942,7 @@ static __forceinline__ __device__ float3 chain_suffix_target_jvp(
     float &dot_suffix_fspl) {
     dot_suffix_fspl = 0.f;
     if (!p.is_suffix) {
-        return make_vec3(0.f, 0.f, 0.f);
+        return make_f3(0.f, 0.f, 0.f);
     }
 
     const float3 dot_normal =
@@ -1005,11 +970,11 @@ static __forceinline__ __device__ float3 chain_suffix_target_jvp(
         dot3(plane_to_image, dot_normal);
     const float dot_ray_t =
         (dot_numerator * denom - numerator * dot_denom) /
-        fmaxf(denom * denom, kSmallEps);
+        fmaxf(denom * denom, kDfrEps);
     const float3 dot_reflection_point =
         dot_image_source + dot_ray_t * p.suffix_ray_dir + p.suffix_ray_t * dot_ray_dir;
 
-    if (p.suffix_outgoing_dist2 > kSmallEps && p.suffix_fspl != 0.f) {
+    if (p.suffix_outgoing_dist2 > kDfrEps && p.suffix_fspl != 0.f) {
         const float3 outgoing = p.grid_target - p.final_target;
         const float dot_outgoing_dist2 =
             2.f * dot3(outgoing, -1.f * dot_reflection_point);
@@ -1048,8 +1013,8 @@ static __forceinline__ __device__ float chain_event_weight(
         event.material_gain = fmaxf(raw_gain, 0.f);
         event.material_active = raw_gain > 0.f;
     }
-    const float source_dist = fmaxf(norm3(event.edge_point - source), kSmallEps);
-    const float target_dist = fmaxf(norm3(target - event.edge_point), kSmallEps);
+    const float source_dist = fmaxf(norm3(event.edge_point - source), kDfrEps);
+    const float target_dist = fmaxf(norm3(target - event.edge_point), kDfrEps);
     event.source_dist2 = source_dist * source_dist;
     event.target_dist2 = target_dist * target_dist;
     event.contribution =
@@ -1068,14 +1033,14 @@ static __forceinline__ __device__ bool load_chain_event_initial(
     float u) {
     event.state_idx = idx;
     event.edge_u = u;
-    event.edge_pos = make_vec3(params.state_edge_pos_x[idx],
+    event.edge_pos = make_f3(params.state_edge_pos_x[idx],
                                params.state_edge_pos_y[idx],
                                params.state_edge_pos_z[idx]);
-    event.edge_dir_raw = make_vec3(params.state_edge_dir_x[idx],
+    event.edge_dir_raw = make_f3(params.state_edge_dir_x[idx],
                                    params.state_edge_dir_y[idx],
                                    params.state_edge_dir_z[idx]);
     event.edge_dir_norm = norm3(event.edge_dir_raw);
-    if (!(event.edge_dir_norm > kSmallEps) || !isfinite(event.edge_dir_norm)) {
+    if (!(event.edge_dir_norm > kDfrEps) || !isfinite(event.edge_dir_norm)) {
         return false;
     }
     event.edge_dir = (1.f / event.edge_dir_norm) * event.edge_dir_raw;
@@ -1093,14 +1058,14 @@ static __forceinline__ __device__ bool load_chain_event_recursive(
     float u) {
     event.state_idx = idx;
     event.edge_u = u;
-    event.edge_pos = make_vec3(params.recursive_state_edge_pos_x[idx],
+    event.edge_pos = make_f3(params.recursive_state_edge_pos_x[idx],
                                params.recursive_state_edge_pos_y[idx],
                                params.recursive_state_edge_pos_z[idx]);
-    event.edge_dir_raw = make_vec3(params.recursive_state_edge_dir_x[idx],
+    event.edge_dir_raw = make_f3(params.recursive_state_edge_dir_x[idx],
                                    params.recursive_state_edge_dir_y[idx],
                                    params.recursive_state_edge_dir_z[idx]);
     event.edge_dir_norm = norm3(event.edge_dir_raw);
-    if (!(event.edge_dir_norm > kSmallEps) || !isfinite(event.edge_dir_norm)) {
+    if (!(event.edge_dir_norm > kDfrEps) || !isfinite(event.edge_dir_norm)) {
         return false;
     }
     event.edge_dir = (1.f / event.edge_dir_norm) * event.edge_dir_raw;
@@ -1172,7 +1137,7 @@ static __forceinline__ __device__ bool load_chain_primal(
         return false;
     }
 
-    const float3 source = make_vec3(params.state_src_x[p.first_idx],
+    const float3 source = make_f3(params.state_src_x[p.first_idx],
                                     params.state_src_y[p.first_idx],
                                     params.state_src_z[p.first_idx]);
     p.grid_target = grid_cell_center(params, p.cell);
@@ -1186,11 +1151,11 @@ static __forceinline__ __device__ bool load_chain_primal(
     p.suffix_ray_t = 0.f;
     p.suffix_normal_norm = 1.f;
     p.suffix_material_active = false;
-    p.suffix_p0 = make_vec3(0.f, 0.f, 0.f);
-    p.suffix_normal = make_vec3(0.f, 0.f, 1.f);
-    p.suffix_image_source = make_vec3(0.f, 0.f, 0.f);
-    p.suffix_ray_dir = make_vec3(0.f, 0.f, 0.f);
-    p.keller_ko = make_vec3(0.f, 0.f, 0.f);
+    p.suffix_p0 = make_f3(0.f, 0.f, 0.f);
+    p.suffix_normal = make_f3(0.f, 0.f, 1.f);
+    p.suffix_image_source = make_f3(0.f, 0.f, 0.f);
+    p.suffix_ray_dir = make_f3(0.f, 0.f, 0.f);
+    p.keller_ko = make_f3(0.f, 0.f, 0.f);
     p.keller_ray_t = 0.f;
     p.keller_sin = 0.f;
     p.keller_cos = 1.f;
@@ -1356,8 +1321,8 @@ static __forceinline__ __device__ float chain_contribution_jvp(
     const float3 dot_second_point = chain_event_point_jvp(p.second, tangent.second);
     const float3 dot_third_point =
         p.has_third ? chain_event_point_jvp(p.third, tangent.third)
-                    : make_vec3(0.f, 0.f, 0.f);
-    float3 dot_final_target = make_vec3(0.f, 0.f, 0.f);
+                    : make_f3(0.f, 0.f, 0.f);
+    float3 dot_final_target = make_f3(0.f, 0.f, 0.f);
     float dot_suffix_fspl = 0.f;
     if (p.is_keller) {
         const ChainEventPrimal &terminal = p.has_third ? p.third : p.second;
@@ -1549,22 +1514,22 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
     const ChainPrimal &p,
     float grad_contribution) {
     ChainTangent tangent = {};
-    tangent.first.edge_pos = make_vec3(1.f, 0.f, 0.f);
+    tangent.first.edge_pos = make_f3(1.f, 0.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_x, p.first_idx, tangent);
     tangent = {};
-    tangent.first.edge_pos = make_vec3(0.f, 1.f, 0.f);
+    tangent.first.edge_pos = make_f3(0.f, 1.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_y, p.first_idx, tangent);
     tangent = {};
-    tangent.first.edge_pos = make_vec3(0.f, 0.f, 1.f);
+    tangent.first.edge_pos = make_f3(0.f, 0.f, 1.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_z, p.first_idx, tangent);
     tangent = {};
-    tangent.first.edge_dir_raw = make_vec3(1.f, 0.f, 0.f);
+    tangent.first.edge_dir_raw = make_f3(1.f, 0.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_x, p.first_idx, tangent);
     tangent = {};
-    tangent.first.edge_dir_raw = make_vec3(0.f, 1.f, 0.f);
+    tangent.first.edge_dir_raw = make_f3(0.f, 1.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_y, p.first_idx, tangent);
     tangent = {};
-    tangent.first.edge_dir_raw = make_vec3(0.f, 0.f, 1.f);
+    tangent.first.edge_dir_raw = make_f3(0.f, 0.f, 1.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_z, p.first_idx, tangent);
     tangent = {};
     tangent.first.edge_t_min = 1.f;
@@ -1573,13 +1538,13 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
     tangent.first.edge_t_max = 1.f;
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_edge_t_max, p.first_idx, tangent);
     tangent = {};
-    tangent.first.source = make_vec3(1.f, 0.f, 0.f);
+    tangent.first.source = make_f3(1.f, 0.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_src_x, p.first_idx, tangent);
     tangent = {};
-    tangent.first.source = make_vec3(0.f, 1.f, 0.f);
+    tangent.first.source = make_f3(0.f, 1.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_src_y, p.first_idx, tangent);
     tangent = {};
-    tangent.first.source = make_vec3(0.f, 0.f, 1.f);
+    tangent.first.source = make_f3(0.f, 0.f, 1.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_state_src_z, p.first_idx, tangent);
     tangent = {};
     tangent.first.src_power = 1.f;
@@ -1594,22 +1559,22 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
     }
 
     tangent = {};
-    tangent.second.edge_pos = make_vec3(1.f, 0.f, 0.f);
+    tangent.second.edge_pos = make_f3(1.f, 0.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_x, p.second_idx, tangent);
     tangent = {};
-    tangent.second.edge_pos = make_vec3(0.f, 1.f, 0.f);
+    tangent.second.edge_pos = make_f3(0.f, 1.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_y, p.second_idx, tangent);
     tangent = {};
-    tangent.second.edge_pos = make_vec3(0.f, 0.f, 1.f);
+    tangent.second.edge_pos = make_f3(0.f, 0.f, 1.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_z, p.second_idx, tangent);
     tangent = {};
-    tangent.second.edge_dir_raw = make_vec3(1.f, 0.f, 0.f);
+    tangent.second.edge_dir_raw = make_f3(1.f, 0.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_x, p.second_idx, tangent);
     tangent = {};
-    tangent.second.edge_dir_raw = make_vec3(0.f, 1.f, 0.f);
+    tangent.second.edge_dir_raw = make_f3(0.f, 1.f, 0.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_y, p.second_idx, tangent);
     tangent = {};
-    tangent.second.edge_dir_raw = make_vec3(0.f, 0.f, 1.f);
+    tangent.second.edge_dir_raw = make_f3(0.f, 0.f, 1.f);
     add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_z, p.second_idx, tangent);
     tangent = {};
     tangent.second.edge_t_min = 1.f;
@@ -1628,22 +1593,22 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
 
     if (p.has_third) {
         tangent = {};
-        tangent.third.edge_pos = make_vec3(1.f, 0.f, 0.f);
+        tangent.third.edge_pos = make_f3(1.f, 0.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_x, p.third_idx, tangent);
         tangent = {};
-        tangent.third.edge_pos = make_vec3(0.f, 1.f, 0.f);
+        tangent.third.edge_pos = make_f3(0.f, 1.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_y, p.third_idx, tangent);
         tangent = {};
-        tangent.third.edge_pos = make_vec3(0.f, 0.f, 1.f);
+        tangent.third.edge_pos = make_f3(0.f, 0.f, 1.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_pos_z, p.third_idx, tangent);
         tangent = {};
-        tangent.third.edge_dir_raw = make_vec3(1.f, 0.f, 0.f);
+        tangent.third.edge_dir_raw = make_f3(1.f, 0.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_x, p.third_idx, tangent);
         tangent = {};
-        tangent.third.edge_dir_raw = make_vec3(0.f, 1.f, 0.f);
+        tangent.third.edge_dir_raw = make_f3(0.f, 1.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_y, p.third_idx, tangent);
         tangent = {};
-        tangent.third.edge_dir_raw = make_vec3(0.f, 0.f, 1.f);
+        tangent.third.edge_dir_raw = make_f3(0.f, 0.f, 1.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_recursive_state_edge_dir_z, p.third_idx, tangent);
         tangent = {};
         tangent.third.edge_t_min = 1.f;
@@ -1670,22 +1635,22 @@ static __forceinline__ __device__ void chain_vjp_by_unit_jvps(
                            p.suffix_material_idx,
                            tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(1.f, 0.f, 0.f);
+        tangent.suffix_p0 = make_f3(1.f, 0.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_x, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(0.f, 1.f, 0.f);
+        tangent.suffix_p0 = make_f3(0.f, 1.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_y, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(0.f, 0.f, 1.f);
+        tangent.suffix_p0 = make_f3(0.f, 0.f, 1.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_z, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(1.f, 0.f, 0.f);
+        tangent.suffix_normal_raw = make_f3(1.f, 0.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_x, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(0.f, 1.f, 0.f);
+        tangent.suffix_normal_raw = make_f3(0.f, 1.f, 0.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_y, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(0.f, 0.f, 1.f);
+        tangent.suffix_normal_raw = make_f3(0.f, 0.f, 1.f);
         add_chain_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_z, p.suffix_material_idx, tangent);
     }
 }
@@ -1816,23 +1781,23 @@ static __forceinline__ __device__ void vjp_by_unit_jvps(
     const DirectPrimal &p,
     float grad_contribution) {
     DfrTangent tangent = {};
-    tangent.edge_pos = make_vec3(1.f, 0.f, 0.f);
+    tangent.edge_pos = make_f3(1.f, 0.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_x, p.state_idx, tangent);
     tangent = {};
-    tangent.edge_pos = make_vec3(0.f, 1.f, 0.f);
+    tangent.edge_pos = make_f3(0.f, 1.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_y, p.state_idx, tangent);
     tangent = {};
-    tangent.edge_pos = make_vec3(0.f, 0.f, 1.f);
+    tangent.edge_pos = make_f3(0.f, 0.f, 1.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_z, p.state_idx, tangent);
 
     tangent = {};
-    tangent.edge_dir_raw = make_vec3(1.f, 0.f, 0.f);
+    tangent.edge_dir_raw = make_f3(1.f, 0.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_x, p.state_idx, tangent);
     tangent = {};
-    tangent.edge_dir_raw = make_vec3(0.f, 1.f, 0.f);
+    tangent.edge_dir_raw = make_f3(0.f, 1.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_y, p.state_idx, tangent);
     tangent = {};
-    tangent.edge_dir_raw = make_vec3(0.f, 0.f, 1.f);
+    tangent.edge_dir_raw = make_f3(0.f, 0.f, 1.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_z, p.state_idx, tangent);
 
     tangent = {};
@@ -1843,23 +1808,23 @@ static __forceinline__ __device__ void vjp_by_unit_jvps(
     add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_t_max, p.state_idx, tangent);
 
     tangent = {};
-    tangent.source = make_vec3(1.f, 0.f, 0.f);
+    tangent.source = make_f3(1.f, 0.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_src_x, p.state_idx, tangent);
     tangent = {};
-    tangent.source = make_vec3(0.f, 1.f, 0.f);
+    tangent.source = make_f3(0.f, 1.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_src_y, p.state_idx, tangent);
     tangent = {};
-    tangent.source = make_vec3(0.f, 0.f, 1.f);
+    tangent.source = make_f3(0.f, 0.f, 1.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_src_z, p.state_idx, tangent);
 
     tangent = {};
-    tangent.wi_raw = make_vec3(1.f, 0.f, 0.f);
+    tangent.wi_raw = make_f3(1.f, 0.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_x, p.state_idx, tangent);
     tangent = {};
-    tangent.wi_raw = make_vec3(0.f, 1.f, 0.f);
+    tangent.wi_raw = make_f3(0.f, 1.f, 0.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_y, p.state_idx, tangent);
     tangent = {};
-    tangent.wi_raw = make_vec3(0.f, 0.f, 1.f);
+    tangent.wi_raw = make_f3(0.f, 0.f, 1.f);
     add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_z, p.state_idx, tangent);
 
     tangent = {};
@@ -1883,22 +1848,22 @@ static __forceinline__ __device__ void vjp_by_unit_jvps(
                      p.suffix_material_idx,
                      tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(1.f, 0.f, 0.f);
+        tangent.suffix_p0 = make_f3(1.f, 0.f, 0.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_x, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(0.f, 1.f, 0.f);
+        tangent.suffix_p0 = make_f3(0.f, 1.f, 0.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_y, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_p0 = make_vec3(0.f, 0.f, 1.f);
+        tangent.suffix_p0 = make_f3(0.f, 0.f, 1.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_z, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(1.f, 0.f, 0.f);
+        tangent.suffix_normal_raw = make_f3(1.f, 0.f, 0.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_x, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(0.f, 1.f, 0.f);
+        tangent.suffix_normal_raw = make_f3(0.f, 1.f, 0.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_y, p.suffix_material_idx, tangent);
         tangent = {};
-        tangent.suffix_normal_raw = make_vec3(0.f, 0.f, 1.f);
+        tangent.suffix_normal_raw = make_f3(0.f, 0.f, 1.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_fn_z, p.suffix_material_idx, tangent);
     }
 }
@@ -1915,7 +1880,7 @@ __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     }
     if (params.dot_out_field_x_re != nullptr) {
         const float amp = sqrtf(fmaxf(p.contribution, 0.f));
-        if (amp > kSmallEps) {
+        if (amp > kDfrEps) {
             atomicAdd(params.dot_out_field_x_re + p.cell,
                       0.5f * dot_contribution / amp);
         }
@@ -1932,7 +1897,7 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
     float grad_contribution =
         read_or_zero(params.grad_out_power, p.cell);
     const float amp = sqrtf(fmaxf(p.contribution, 0.f));
-    if (amp > kSmallEps) {
+    if (amp > kDfrEps) {
         grad_contribution +=
             read_or_zero(params.grad_out_field_x_re, p.cell) * 0.5f / amp;
     }
@@ -1954,17 +1919,17 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
         p.material_idx >= 0 &&
         params.grad_material_gain != nullptr) {
         const float grad_gain =
-            grad_contribution * p.contribution / fmaxf(p.material_gain, kSmallEps);
+            grad_contribution * p.contribution / fmaxf(p.material_gain, kDfrEps);
         atomicAdd(params.grad_material_gain + p.material_idx, grad_gain);
     }
 
     float grad_edge_length = 0.f;
-    if (p.edge_length_active && p.edge_length > kSmallEps) {
+    if (p.edge_length_active && p.edge_length > kDfrEps) {
         grad_edge_length = grad_contribution * p.contribution / p.edge_length;
     }
     if (p.wedge_active && params.grad_state_exterior_angle != nullptr) {
         const float grad_wedge =
-            grad_contribution * p.contribution / fmaxf(p.wedge_scale, kSmallEps);
+            grad_contribution * p.contribution / fmaxf(p.wedge_scale, kDfrEps);
         atomicAdd(params.grad_state_exterior_angle + p.state_idx,
                   grad_wedge / (2.f * kPi));
     }
@@ -2025,7 +1990,7 @@ __global__ void dfr_chain_accum_jvp_kernel(DfrChainAccumADParams params) {
     }
     if (params.dot_out_field_x_re != nullptr) {
         const float amp = sqrtf(fmaxf(p.contribution, 0.f));
-        if (amp > kSmallEps) {
+        if (amp > kDfrEps) {
             atomicAdd(params.dot_out_field_x_re + p.cell,
                       0.5f * dot_contribution / amp);
         }
@@ -2041,7 +2006,7 @@ __global__ void dfr_chain_accum_vjp_kernel(DfrChainAccumADParams params) {
     float grad_contribution =
         read_or_zero(params.grad_out_power, p.cell);
     const float amp = sqrtf(fmaxf(p.contribution, 0.f));
-    if (amp > kSmallEps) {
+    if (amp > kDfrEps) {
         grad_contribution +=
             read_or_zero(params.grad_out_field_x_re, p.cell) * 0.5f / amp;
     }

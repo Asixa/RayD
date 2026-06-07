@@ -1,4 +1,5 @@
 #include <raydtorch/scene/geometry_kernels.h>
+#include <raydtorch/common/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -6,39 +7,6 @@
 namespace raydtorch {
 
 namespace {
-
-__device__ float3 make_f3(const float *ptr) {
-    return make_float3(ptr[0], ptr[1], ptr[2]);
-}
-
-__device__ float3 add3(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-__device__ float3 sub3(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-__device__ float3 mul3(float s, float3 a) {
-    return make_float3(s * a.x, s * a.y, s * a.z);
-}
-
-__device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-__device__ float3 cross3(float3 a, float3 b) {
-    return make_float3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x);
-}
-
-__device__ void atomic_add3(float *base, int index, float3 value) {
-    atomicAdd(&base[index * 3 + 0], value.x);
-    atomicAdd(&base[index * 3 + 1], value.y);
-    atomicAdd(&base[index * 3 + 2], value.z);
-}
 
 __device__ void add_to3(float *base, int index, float3 value) {
     base[index * 3 + 0] += value.x;
