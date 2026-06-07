@@ -174,6 +174,9 @@ __global__ void intersect_backward_t_kernel(
     const float *__restrict__ tape_bary,
     int tape_bary_width,
     const float *__restrict__ grad_t,
+    int64_t grad_t_stride,
+    float grad_t_constant,
+    bool grad_t_is_constant,
     int64_t ray_count,
     float *__restrict__ grad_vertices,
     float *__restrict__ grad_ray_o,
@@ -189,7 +192,7 @@ __global__ void intersect_backward_t_kernel(
     const int prim_id = tape_prim_id[ray_idx];
     if (prim_id < 0)
         return;
-    const float gt = grad_t[ray_idx];
+    const float gt = grad_t_is_constant ? grad_t_constant : grad_t[ray_idx * grad_t_stride];
     if (gt == 0.f)
         return;
 
@@ -384,6 +387,7 @@ IntersectBackwardOutputs intersect_backward_t_cuda(
     const at::Tensor &tape_prim_id,
     const at::Tensor &tape_barycentric,
     const at::Tensor &grad_t,
+    int64_t grad_t_stride,
     bool need_grad_vertices,
     bool need_grad_ray_o,
     bool need_grad_ray_d,
@@ -412,6 +416,58 @@ IntersectBackwardOutputs intersect_backward_t_cuda(
         tape_barycentric.data_ptr<float>(),
         static_cast<int>(tape_barycentric.size(1)),
         grad_t.data_ptr<float>(),
+        grad_t_stride,
+        0.f,
+        false,
+        ray_count,
+        need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
+        need_grad_ray_o ? out.grad_ray_o.data_ptr<float>() : nullptr,
+        need_grad_ray_d ? out.grad_ray_d.data_ptr<float>() : nullptr,
+        need_grad_vertices,
+        need_grad_ray_o,
+        need_grad_ray_d);
+    return out;
+}
+
+IntersectBackwardOutputs intersect_backward_t_sum_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax) {
+    const int64_t ray_count = ray_d.size(0);
+    IntersectBackwardOutputs out;
+    out.grad_vertices = need_grad_vertices ? at::zeros_like(vertices) : at::empty({0}, vertices.options());
+    out.grad_ray_o = need_grad_ray_o ? at::zeros_like(ray_d) : at::empty({0, 3}, ray_d.options());
+    out.grad_ray_d = need_grad_ray_d ? at::zeros_like(ray_d) : at::empty({0, 3}, ray_d.options());
+    out.grad_ray_tmax = need_grad_ray_tmax ? at::zeros({ray_count}, ray_d.options()) : at::empty({0}, ray_d.options());
+
+    if (ray_count == 0 || (!need_grad_vertices && !need_grad_ray_o && !need_grad_ray_d)) {
+        return out;
+    }
+
+    const int threads = 128;
+    const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
+    intersect_backward_t_kernel<<<blocks, threads, 0, stream>>>(
+        vertices.data_ptr<float>(),
+        faces.data_ptr<int>(),
+        ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(),
+        active.data_ptr<bool>(),
+        tape_prim_id.data_ptr<int>(),
+        tape_barycentric.data_ptr<float>(),
+        static_cast<int>(tape_barycentric.size(1)),
+        nullptr,
+        0,
+        1.f,
+        true,
         ray_count,
         need_grad_vertices ? out.grad_vertices.data_ptr<float>() : nullptr,
         need_grad_ray_o ? out.grad_ray_o.data_ptr<float>() : nullptr,

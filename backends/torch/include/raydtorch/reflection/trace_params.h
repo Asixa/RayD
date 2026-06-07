@@ -39,6 +39,8 @@ struct ReflectionTraceParams {
     const float *ray_dx = nullptr;
     const float *ray_dy = nullptr;
     const float *ray_dz = nullptr;
+    const float *ray_o_aos = nullptr;
+    const float *ray_d_aos = nullptr;
     const float *ray_tmax = nullptr;
     const uint8_t *active_mask = nullptr;
     int n_rays = 0;
@@ -47,6 +49,7 @@ struct ReflectionTraceParams {
     int return_trailing = 0;
     int output_layout = 0;  ///< 0 = ray-major [ray, bounce], 1 = bounce-major [bounce, ray].
 
+    uint8_t *out_valid = nullptr;  ///< Ray-major [ray, bounce] valid mask.
     int *out_bounce_count = nullptr;
     int *out_shape_ids = nullptr;
     int *out_prim_ids = nullptr;

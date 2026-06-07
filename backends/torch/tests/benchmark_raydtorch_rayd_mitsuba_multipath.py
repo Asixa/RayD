@@ -217,15 +217,14 @@ def run_raydtorch_reflection_trace(args: argparse.Namespace, ray_count: int, max
     ray = _torch_reflection_ray(ray_count)
 
     def call_kernel():
-        chain = scene.trace_reflections(ray, max_bounces=max_bounces)
-        valid = chain.valid
-        slot_count = valid.sum()
-        full_depth_count = (valid.sum(dim=1) == max_bounces).sum()
-        checksum = torch.where(valid, chain.t, torch.zeros_like(chain.t)).sum()
-        return valid, chain.t, chain.prim_ids, slot_count, full_depth_count, checksum
+        chain = scene.trace_reflections_minimal(ray, max_bounces=max_bounces)
+        return chain.valid, chain.t, chain.prim_ids
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
-    _valid, _t, _prim_ids, slot_count, full_depth_count, checksum = measured.pop("last_value")
+    valid, t, _prim_ids = measured.pop("last_value")
+    slot_count = valid.sum()
+    full_depth_count = (valid.sum(dim=1) == max_bounces).sum()
+    checksum = torch.where(valid, t, torch.zeros_like(t)).sum()
     result = _base_metric(
         backend="raydtorch",
         workload="reflection_trace",
@@ -321,7 +320,6 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
             max_paths=state_count,
             wavelength=0.125,
         )
-        checksum = torch.where(paths.valid, paths.delay, torch.zeros_like(paths.delay)).sum()
         return (
             paths.count,
             paths.valid,
@@ -333,11 +331,11 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
             paths.p0,
             paths.p1,
             paths.p2,
-            checksum,
         )
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
-    count, _valid, _rx_id, _edge0, _delay, _field_x_re, _field_x_im, _p0, _p1, _p2, checksum = measured.pop("last_value")
+    count, valid, _rx_id, _edge0, delay, _field_x_re, _field_x_im, _p0, _p1, _p2 = measured.pop("last_value")
+    checksum = torch.where(valid, delay, torch.zeros_like(delay)).sum()
     valid_count = int(count[0].item())
     result = _base_metric(
         backend="raydtorch",

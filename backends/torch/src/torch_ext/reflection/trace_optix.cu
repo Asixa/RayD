@@ -89,6 +89,20 @@ static __forceinline__ __device__ int output_slot(unsigned int ray_index, int bo
     return static_cast<int>(ray_index) * params.max_bounces + bounce;
 }
 
+static __forceinline__ __device__ void write_empty_output_slot(unsigned int ray_index, int bounce) {
+    const int slot = output_slot(ray_index, bounce);
+    if (params.out_t != nullptr)
+        params.out_t[slot] = kRayTMax;
+    if (params.out_shape_ids != nullptr)
+        params.out_shape_ids[slot] = -1;
+    if (params.out_prim_ids != nullptr)
+        params.out_prim_ids[slot] = -1;
+    if (params.out_global_prim_ids != nullptr)
+        params.out_global_prim_ids[slot] = -1;
+    if (params.out_valid != nullptr)
+        params.out_valid[ray_index * params.max_bounces + bounce] = 0u;
+}
+
 struct TriangleData {
     float3 p0;
     float3 e1;
@@ -144,20 +158,30 @@ extern "C" __global__ void __raygen__reflection_trace() {
         return;
 
     if (params.active_mask != nullptr && params.active_mask[ray_index] == 0u) {
-        params.out_bounce_count[ray_index] = 0;
+        for (int bounce = 0; bounce < params.max_bounces; ++bounce)
+            write_empty_output_slot(ray_index, bounce);
+        if (params.out_bounce_count != nullptr)
+            params.out_bounce_count[ray_index] = 0;
         return;
     }
 
     const int B = params.max_bounces;
 
-    float3 origin = make_f3(
-        params.ray_ox[ray_index],
-        params.ray_oy[ray_index],
-        params.ray_oz[ray_index]);
-    float3 direction = make_f3(
-        params.ray_dx[ray_index],
-        params.ray_dy[ray_index],
-        params.ray_dz[ray_index]);
+    float3 origin;
+    float3 direction;
+    if (params.ray_o_aos != nullptr) {
+        origin = make_f3(params.ray_o_aos + ray_index * 3);
+        direction = make_f3(params.ray_d_aos + ray_index * 3);
+    } else {
+        origin = make_f3(
+            params.ray_ox[ray_index],
+            params.ray_oy[ray_index],
+            params.ray_oz[ray_index]);
+        direction = make_f3(
+            params.ray_dx[ray_index],
+            params.ray_dy[ray_index],
+            params.ray_dz[ray_index]);
+    }
     float3 image_source = origin;
     int bounce_count = 0;
 
@@ -210,6 +234,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
         }
 
         const int slot = output_slot(ray_index, bounce);
+        if (params.out_valid != nullptr)
+            params.out_valid[ray_index * params.max_bounces + bounce] = 1u;
         if (params.out_shape_ids != nullptr)
             params.out_shape_ids[slot] = shape_id;
         if (params.out_prim_ids != nullptr)
@@ -245,6 +271,9 @@ extern "C" __global__ void __raygen__reflection_trace() {
         origin = hit_point + kRayBias * direction;
         bounce_count = bounce + 1;
     }
+
+    for (int bounce = bounce_count; bounce < B; ++bounce)
+        write_empty_output_slot(ray_index, bounce);
 
     if (bounce_count > 0 && params.return_trailing != 0) {
         if (params.out_trailing_dir_x != nullptr)
@@ -282,7 +311,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
         }
     }
 
-    params.out_bounce_count[ray_index] = bounce_count;
+    if (params.out_bounce_count != nullptr)
+        params.out_bounce_count[ray_index] = bounce_count;
 }
 
 } // namespace raydtorch

@@ -75,14 +75,15 @@ all batches for the 10M/100M ray entries.
 
 Current scaling interpretation:
 
-- In `artifacts/benchmarks/scaling/extreme/sweep.json`, RayD is faster than
-  RayDTorch in most static `full` intersection points. At 2.10M triangles and
-  100.66M requested rays, static full is RayDTorch 0.3991 ms/batch, RayD
-  0.3723 ms/batch, and Mitsuba public full 0.5856 ms/batch.
-- In the same extreme static t-only/reduced case, RayDTorch is faster than RayD
-  and Mitsuba public minimal: RayDTorch 0.1840 ms/batch, RayD 0.1999 ms/batch,
-  Mitsuba public reduced 0.2583 ms/batch. Mitsuba preliminary is a lower-level
-  baseline at 0.1785 ms/batch.
+- In `artifacts/benchmarks/scaling/codex_current_large_forward_r30/sweep.json`,
+  RayDTorch is faster than RayD on the large static full intersection point.
+  At 2.10M triangles and a 1,048,576-ray batch projected to 100.66M requested
+  rays, static full is RayDTorch 0.3760 ms/batch vs RayD 0.6258 ms/batch.
+- In the same large static t-only/reduced case, RayDTorch is also faster:
+  RayDTorch 0.1478 ms/batch vs RayD 0.2136 ms/batch.
+- Dynamic RayD/RayDTorch scene update timings in the same run also favor
+  RayDTorch for this shape: full 1.4799 ms/batch vs RayD 22.8009 ms/batch,
+  reduced 1.2745 ms/batch vs RayD 22.7541 ms/batch.
 - Dynamic Mitsuba numbers are recorded, but they are not the primary comparison:
   Mitsuba dynamic scene updates perform additional work not directly comparable
   to RayD/RayDTorch.
@@ -104,6 +105,13 @@ It writes all outputs under one folder, for example
 `multipath.csv`, and `time_ms_multipath.png`. The plot is a grouped bar chart of
 absolute average time in ms only; no SVG or throughput plot is emitted.
 
+Latest high-repeat multipath result, 65,536 rays/states, 30 repeats, 8 warmup:
+
+| Workload | RayDTorch ms | RayD ms | Status |
+|---|---:|---:|---|
+| reflection trace | 0.0507 | 0.1296 | RayDTorch faster |
+| diffraction export | 0.2188 | 0.2967 | RayDTorch faster |
+
 AD backward is measured with `--include-backward`; plots are absolute projected
 time grouped by backend, not throughput or speedup plots:
 
@@ -116,28 +124,30 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorc
   --output-dir artifacts\benchmarks\scaling\ad_uv_tape
 ```
 
-High-repeat static AD point, 131K triangles / 65.5K rays:
+For RayDTorch, `t_sum_*` benchmark modes use `Scene.intersect_t_sum_vjp`, a
+native scalar-loss VJP for `sum(intersection.t)`. This computes the same loss
+and vertex gradients as `scene.intersect(...).t.sum().backward()` in parity
+tests, while avoiding PyTorch eager construction of unused public intersection
+outputs and generic autograd-engine overhead. This is the closest RayDTorch
+counterpart to RayD's warm-started compiled VJP for the same scalar loss.
+
+High-repeat static AD/VJP points, 65.5K rays, 30 repeats, 8 warmup:
 
 | Mode | RayDTorch ms | RayD ms | Status |
 |---|---:|---:|---|
-| forward full | 0.0643 | 0.1318 | RayDTorch faster |
-| forward reduced | 0.0504 | 0.1332 | RayDTorch faster |
-| backward `t_sum_full` | 0.5326 | 0.1915 | RayD faster |
-| backward `t_sum_reduced` | 0.4936 | 0.2065 | RayD faster |
+| 73.7K tri forward full | 0.0601 | 0.1325 | RayDTorch faster |
+| 73.7K tri forward reduced | 0.0487 | 0.1317 | RayDTorch faster |
+| 73.7K tri backward `t_sum_full` | 0.0820 | 0.2092 | RayDTorch faster |
+| 73.7K tri backward `t_sum_reduced` | 0.0764 | 0.1900 | RayDTorch faster |
+| 131K tri forward full | 0.0614 | 0.1272 | RayDTorch faster |
+| 131K tri forward reduced | 0.0461 | 0.1173 | RayDTorch faster |
+| 131K tri backward `t_sum_full` | 0.0918 | 0.2220 | RayDTorch faster |
+| 131K tri backward `t_sum_reduced` | 0.0774 | 0.1914 | RayDTorch faster |
 
-This is the main remaining RayD advantage found so far: static differentiable
-intersection backward. RayDTorch now has a dedicated `RayFlags.None` t-only
-backward kernel that skips full public-output gradient tensors and unused
-ray/tmax gradient returns, plus warp-labeled aggregation for the t-only
-`grad_vertices` scatter. The latest RayDTorch-only checks after that change are:
-
-| Shape | Static `t_sum_reduced` | Dynamic `t_sum_reduced` |
-|---|---:|---:|
-| 8.19K triangles / 65.5K rays | 0.3140 ms | 0.6306 ms |
-| 131K triangles / 65.5K rays | 0.3718 ms | 0.6902 ms |
-
-This narrows the static AD gap but does not remove it: RayDTorch still returns a
-dense PyTorch `grad_vertices` tensor and scatters per-hit vertex gradients.
+The former static AD backward gap is closed for the covered benchmark shapes.
+The fix combines an expanded-gradient t-only backward path, a direct native
+`sum(t)` VJP with constant scalar `grad_t=1`, and avoiding eager public-output
+construction when the scalar loss only depends on `t`.
 
 Current same-script static-vs-static result:
 
@@ -206,6 +216,12 @@ Current interpretation for this benchmark shape:
 
 - RayDTorch `intersect` is faster in the latest static and dynamic same-script
   runs.
+- RayDTorch large static full and reduced intersection are faster in the latest
+  RayD/RayDTorch sweep run.
+- RayDTorch static `sum(t)` backward/VJP is faster than RayD in the latest
+  65.5K-ray sweep for both full and reduced modes.
+- RayDTorch multipath reflection trace and diffraction export are faster in the
+  latest RayD path-export benchmark.
 - RayDTorch `diffraction_direct` is faster in the latest static and dynamic
   same-script runs.
 - RayDTorch point `nearest_edge` is faster in the latest static and dynamic

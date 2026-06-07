@@ -63,6 +63,142 @@ class IntersectGradientTests(unittest.TestCase):
         torch.testing.assert_close(verts.grad[:, 0], torch.zeros(3, device="cuda"))
         torch.testing.assert_close(verts.grad[:, 1], torch.zeros(3, device="cuda"))
 
+    def test_intersect_t_sum_matches_public_t_sum_gradient(self):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        ray = rt.Ray(
+            torch.tensor(
+                [[0.25, 0.25, -1.0], [0.50, 0.25, -1.0], [0.25, 0.50, -1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+            torch.tensor(
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+        )
+        base = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        public_verts = base.clone().detach().requires_grad_(True)
+        public_scene = rt.Scene()
+        public_scene.add_mesh(rt.Mesh(public_verts, faces))
+        public_scene.build()
+        public_loss = public_scene.intersect(ray).t.sum()
+        public_loss.backward()
+
+        sum_verts = base.clone().detach().requires_grad_(True)
+        sum_scene = rt.Scene()
+        sum_scene.add_mesh(rt.Mesh(sum_verts, faces))
+        sum_scene.build()
+        sum_loss = sum_scene.intersect_t_sum(ray)
+        sum_loss.backward()
+
+        torch.testing.assert_close(sum_loss, public_loss, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(sum_verts.grad, public_verts.grad, atol=1e-5, rtol=1e-5)
+
+    def test_intersect_t_sum_vjp_matches_public_t_sum_gradient(self):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        ray = rt.Ray(
+            torch.tensor(
+                [[0.25, 0.25, -1.0], [0.50, 0.25, -1.0], [0.25, 0.50, -1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+            torch.tensor(
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+        )
+        base = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        public_verts = base.clone().detach().requires_grad_(True)
+        public_scene = rt.Scene()
+        public_scene.add_mesh(rt.Mesh(public_verts, faces))
+        public_scene.build()
+        public_loss = public_scene.intersect(ray).t.sum()
+        public_loss.backward()
+
+        vjp_scene = rt.Scene()
+        vjp_scene.add_mesh(rt.Mesh(base.clone(), faces))
+        vjp_scene.build()
+        vjp_loss, vjp_grad, _, _, _ = vjp_scene.intersect_t_sum_vjp(ray)
+
+        torch.testing.assert_close(vjp_loss, public_loss.detach(), atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(vjp_grad, public_verts.grad, atol=1e-5, rtol=1e-5)
+
+    def test_native_t_backward_accepts_expanded_grad_t(self):
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        ray = rt.Ray(
+            torch.tensor(
+                [[0.25, 0.25, -1.0], [0.50, 0.25, -1.0], [0.25, 0.50, -1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+            torch.tensor(
+                [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+                device="cuda",
+                dtype=torch.float32,
+            ),
+        )
+        active = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.bool)
+        flags_none = getattr(rt.RayFlags, "None")
+        values = rt._C.intersect_forward_ad_flags(
+            scene._require_ready(),
+            ray.o,
+            ray.d,
+            ray.tmax,
+            active,
+            int(flags_none),
+        )
+        tape_prim_id = values[10]
+        tape_barycentric = values[11]
+
+        contiguous_grad = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.float32)
+        expanded_grad = torch.ones((), device="cuda", dtype=torch.float32).expand(ray.o.shape[0])
+        self.assertFalse(expanded_grad.is_contiguous())
+        expected = rt._C.intersect_backward_t(
+            scene._require_ready(),
+            ray.o,
+            ray.d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            contiguous_grad,
+            True,
+            False,
+            False,
+            False,
+        )[0]
+        actual = rt._C.intersect_backward_t(
+            scene._require_ready(),
+            ray.o,
+            ray.d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            expanded_grad,
+            True,
+            False,
+            False,
+            False,
+        )[0]
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
     def test_ray_origin_gradient_through_t(self):
         verts = torch.tensor(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],

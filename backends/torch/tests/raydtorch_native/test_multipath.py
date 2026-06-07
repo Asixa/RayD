@@ -103,6 +103,36 @@ class MultipathTests(unittest.TestCase):
             rtol=1e-3,
         )
 
+    def test_minimal_reflection_trace_matches_public_trace_without_image_sources(self):
+        verts = torch.tensor(
+            [
+                [0.0, -1.0, 0.0],
+                [2.0, -1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [2.0, -1.0, 0.0],
+                [2.0, 1.0, 0.0],
+                [2.0, -1.0, 4.0],
+            ],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2], [3, 4, 5]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        ray = rt.Ray(
+            torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+            torch.tensor([[1.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
+        )
+
+        full = scene.trace_reflections(ray, max_bounces=2)
+        minimal = scene.trace_reflections_minimal(ray, max_bounces=2)
+
+        torch.testing.assert_close(minimal.valid, full.valid)
+        torch.testing.assert_close(minimal.t, full.t)
+        torch.testing.assert_close(minimal.prim_ids, full.prim_ids)
+        self.assertEqual(tuple(minimal.image_sources.shape), (0, 0, 3))
+
     def test_two_bounce_reflection_second_t_has_gradient(self):
         verts = torch.tensor(
             [

@@ -103,10 +103,14 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     return hit.hit == 0u;
 }
 
-static __forceinline__ __device__ float3 state_vec(const float *x,
-                                                   const float *y,
-                                                   const float *z,
-                                                   int idx) {
+static __forceinline__ __device__ float3 vec_from_storage(const float *aos,
+                                                          const float *x,
+                                                          const float *y,
+                                                          const float *z,
+                                                          int idx) {
+    if (aos != nullptr) {
+        return make_f3(aos + idx * 3);
+    }
     return make_f3(x[idx], y[idx], z[idx]);
 }
 
@@ -139,7 +143,11 @@ static __forceinline__ __device__ float path_weight(int state_idx,
                                                     float3 edge_point,
                                                     float3 receiver) {
     const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+        vec_from_storage(params.state_src_aos,
+                         params.state_src_x,
+                         params.state_src_y,
+                         params.state_src_z,
+                         state_idx);
     const float source_distance = fmaxf(norm3(edge_point - source), kPathEps);
     const float receiver_distance = fmaxf(norm3(receiver - edge_point), kPathEps);
     const float edge_length = fmaxf(
@@ -233,19 +241,28 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     }
 
     const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+        vec_from_storage(params.state_src_aos,
+                         params.state_src_x,
+                         params.state_src_y,
+                         params.state_src_z,
+                         state_idx);
     const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+        vec_from_storage(params.state_edge_pos_aos,
+                         params.state_edge_pos_x,
+                         params.state_edge_pos_y,
+                         params.state_edge_pos_z,
+                         state_idx);
     const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x,
-                             params.state_edge_dir_y,
-                             params.state_edge_dir_z,
-                             state_idx));
+        normalize3(vec_from_storage(params.state_edge_dir_aos,
+                                    params.state_edge_dir_x,
+                                    params.state_edge_dir_y,
+                                    params.state_edge_dir_z,
+                                    state_idx));
     const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
                                params.state_edge_t_max[state_idx]);
     const float3 edge_point = edge_pos + mid_t * edge_dir;
     const float3 receiver =
-        make_f3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+        vec_from_storage(params.rx_pos_aos, params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
 
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
         !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z) ||
@@ -314,12 +331,17 @@ static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
 
 static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
     const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+        vec_from_storage(params.state_edge_pos_aos,
+                         params.state_edge_pos_x,
+                         params.state_edge_pos_y,
+                         params.state_edge_pos_z,
+                         state_idx);
     const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x,
-                             params.state_edge_dir_y,
-                             params.state_edge_dir_z,
-                             state_idx));
+        normalize3(vec_from_storage(params.state_edge_dir_aos,
+                                    params.state_edge_dir_x,
+                                    params.state_edge_dir_y,
+                                    params.state_edge_dir_z,
+                                    state_idx));
     const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
                                params.state_edge_t_max[state_idx]);
     return edge_pos + mid_t * edge_dir;
@@ -351,7 +373,11 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
     (void)tx_idx;
 
     const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+        vec_from_storage(params.state_src_aos,
+                         params.state_src_x,
+                         params.state_src_y,
+                         params.state_src_z,
+                         state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
         !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z)) {
@@ -379,10 +405,14 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     }
 
     const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+        vec_from_storage(params.state_src_aos,
+                         params.state_src_x,
+                         params.state_src_y,
+                         params.state_src_z,
+                         state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
     const float3 receiver =
-        make_f3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+        vec_from_storage(params.rx_pos_aos, params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
 
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;

@@ -286,12 +286,6 @@ def _torch_forward_performance(
     }
 
 
-def _clear_torch_grads(*values: torch.Tensor) -> None:
-    for value in values:
-        if value.grad is not None:
-            value.grad = None
-
-
 def _torch_backward_performance(
     mesh_data: dict[str, list[float] | list[int]],
     updated_mesh_data: dict[str, list[float] | list[int]],
@@ -319,7 +313,6 @@ def _torch_backward_performance(
 
         def run():
             nonlocal use_updated
-            _clear_torch_grads(base_positions, updated_positions)
             current_rays = rays
             if dynamic:
                 use_updated = not use_updated
@@ -327,10 +320,7 @@ def _torch_backward_performance(
                 scene.sync()
                 current_rays = updated_rays if use_updated else rays
             flags = rt.RayFlags.All if mode == "t_sum_full" else flags_none
-            its = scene.intersect(current_rays, flags=flags)
-            loss = its.t.sum()
-            loss.backward()
-            return loss
+            return scene.intersect_t_sum_vjp(current_rays, flags=flags)
 
         return run
 

@@ -9,11 +9,13 @@ from .autograd import accum_dfr_chain_native as _accum_dfr_chain_native
 from .autograd import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct_native
 from .autograd import accum_dfr_direct_native as _accum_dfr_direct_native
 from .autograd import intersect as _intersect
+from .autograd import intersect_t_sum as _intersect_t_sum
 from .autograd import nearest_edge as _nearest_edge
 from .autograd import nearest_edge_ray as _nearest_edge_ray
 from .autograd import trace_refl_epc_field as _trace_refl_epc_field
 from .autograd import trace_dfr_paths_order1_native as _trace_dfr_paths_order1_native
 from .autograd import trace_reflections as _trace_reflections
+from .autograd import trace_reflections_minimal as _trace_reflections_minimal
 from .autograd import visible as _visible
 from .mesh import Mesh
 from .types import DfrGrid, DfrMaterial, DfrStates, Intersection, Ray, RayFlags
@@ -122,6 +124,41 @@ class Scene:
             return Intersection(*values)
         return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous(), int(flags))
 
+    def intersect_t_sum(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
+        handle = self._require_ready()
+        if active is None:
+            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
+        vertices = self._vertices_for_ad()
+        flags = RayFlags(flags)
+        return _intersect_t_sum(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous(), int(flags))
+
+    def intersect_t_sum_vjp(
+        self,
+        ray: Ray,
+        active=None,
+        flags: RayFlags = RayFlags.All,
+        need_grad_vertices: bool = True,
+        need_grad_ray_o: bool = False,
+        need_grad_ray_d: bool = False,
+        need_grad_ray_tmax: bool = False,
+    ):
+        handle = self._require_ready()
+        if active is None:
+            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
+        flags = RayFlags(flags)
+        return _C.intersect_t_sum_vjp(
+            handle,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            active.contiguous(),
+            int(flags),
+            bool(need_grad_vertices),
+            bool(need_grad_ray_o),
+            bool(need_grad_ray_d),
+            bool(need_grad_ray_tmax),
+        )
+
     def nearest_edge(self, point: torch.Tensor | Ray):
         handle = self._require_ready()
         vertices = self._vertices_for_ad()
@@ -153,6 +190,19 @@ class Scene:
         return _trace_reflections(
             handle,
             vertices,
+            ray.o,
+            ray.d,
+            ray.tmax,
+            active.contiguous(),
+            int(max_bounces),
+        )
+
+    def trace_reflections_minimal(self, ray: Ray, max_bounces: int, active=None):
+        handle = self._require_ready()
+        if active is None:
+            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
+        return _trace_reflections_minimal(
+            handle,
             ray.o,
             ray.d,
             ray.tmax,

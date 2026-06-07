@@ -77,6 +77,20 @@ IntersectBackwardOutputs intersect_backward_t_cuda(
     const at::Tensor &tape_prim_id,
     const at::Tensor &tape_barycentric,
     const at::Tensor &grad_t,
+    int64_t grad_t_stride,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax);
+
+IntersectBackwardOutputs intersect_backward_t_sum_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
     bool need_grad_vertices,
     bool need_grad_ray_o,
     bool need_grad_ray_d,

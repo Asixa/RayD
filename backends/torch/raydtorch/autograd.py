@@ -45,6 +45,10 @@ def _grad_or_zeros(value: torch.Tensor | None, like: torch.Tensor) -> torch.Tens
     return torch.zeros_like(like)
 
 
+def _has_grad(value: torch.Tensor | None) -> bool:
+    return value is not None and value.numel() != 0
+
+
 class _IntersectFunction(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -91,13 +95,17 @@ class _IntersectFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
-        grad_t = _grad_or_zeros(grad_outputs[0], tape_t)
-        if ctx.flags == 0:
+        grad_t = grad_outputs[0]
+        only_t_grad = all(not _has_grad(value) for value in grad_outputs[1:6])
+        if ctx.flags == 0 or only_t_grad:
             need_grad_vertices = bool(ctx.needs_input_grad[1])
             need_grad_ray_o = bool(ctx.needs_input_grad[2])
             need_grad_ray_d = bool(ctx.needs_input_grad[3])
             need_grad_ray_tmax = bool(ctx.needs_input_grad[4])
-            if not (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax):
+            if not (
+                _has_grad(grad_t)
+                and (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax)
+            ):
                 return None, None, None, None, None, None, None
             grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward_t(
                 ctx.scene_handle,
@@ -121,6 +129,7 @@ class _IntersectFunction(torch.autograd.Function):
                 None,
                 None,
             )
+        grad_t = _grad_or_zeros(grad_t, tape_t)
         grad_p = _grad_or_zeros(grad_outputs[1], ray_o)
         grad_n = _grad_or_zeros(grad_outputs[2], ray_o)
         grad_geo_n = _grad_or_zeros(grad_outputs[3], ray_o)
@@ -201,6 +210,20 @@ def intersect(
 ) -> Intersection:
     values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
     return Intersection(*values[:10])
+
+
+def intersect_t_sum(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    ray_o: torch.Tensor,
+    ray_d: torch.Tensor,
+    ray_tmax: torch.Tensor,
+    active: torch.Tensor,
+    flags: int,
+) -> torch.Tensor:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    return _C.intersect_t_sum_ad(int(scene_handle), vertices, ray_o, ray_d, ray_tmax, active, int(flags))
 
 
 class _NearestEdgeFunction(torch.autograd.Function):
@@ -522,6 +545,27 @@ def trace_reflections(
         int(max_bounces),
     )
     return ReflectionChain(*values[:4])
+
+
+def trace_reflections_minimal(
+    scene_handle: int,
+    ray_o: torch.Tensor,
+    ray_d: torch.Tensor,
+    ray_tmax: torch.Tensor,
+    active: torch.Tensor,
+    max_bounces: int,
+) -> ReflectionChain:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    valid, t, prim_ids = _C.trace_reflections_forward_minimal(
+        int(scene_handle),
+        ray_o,
+        ray_d,
+        ray_tmax,
+        active,
+        int(max_bounces),
+    )
+    return ReflectionChain(valid, t, t.new_empty((0, 0, 3)), prim_ids)
 
 
 class _TraceReflEpcFieldFunction(torch.autograd.Function):
