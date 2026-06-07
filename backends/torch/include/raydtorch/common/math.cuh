@@ -130,6 +130,20 @@ __forceinline__ __device__ bool warp_mask_leader(unsigned int mask) {
     return static_cast<int>(threadIdx.x & 31u) == (__ffs(mask) - 1);
 }
 
+struct WarpCellGroup {
+    unsigned int peers = 0u;
+    int count = 0;
+    bool leader = false;
+};
+
+__forceinline__ __device__ WarpCellGroup warp_cell_group(int index) {
+    WarpCellGroup group;
+    group.peers = __match_any_sync(__activemask(), index);
+    group.count = __popc(group.peers);
+    group.leader = warp_mask_leader(group.peers);
+    return group;
+}
+
 __forceinline__ __device__ void atomic_add_same_cell(float *base, int index, float value) {
     const unsigned int active = __activemask();
     const unsigned int peers = __match_any_sync(active, index);
@@ -142,6 +156,20 @@ __forceinline__ __device__ void atomic_add_same_cell(float *base, int index, flo
         atomicAdd(base + index, sum);
 }
 
+__forceinline__ __device__ void atomic_add_same_cell(
+    float *base,
+    int index,
+    float value,
+    WarpCellGroup group) {
+    if (group.count == 1) {
+        atomicAdd(base + index, value);
+        return;
+    }
+    const float sum = warp_sum_masked(group.peers, value);
+    if (group.leader)
+        atomicAdd(base + index, sum);
+}
+
 __forceinline__ __device__ void atomic_add_same_cell(int *base, int index, int value) {
     const unsigned int active = __activemask();
     const unsigned int peers = __match_any_sync(active, index);
@@ -151,6 +179,20 @@ __forceinline__ __device__ void atomic_add_same_cell(int *base, int index, int v
     }
     const int sum = warp_sum_masked(peers, value);
     if (warp_mask_leader(peers))
+        atomicAdd(base + index, sum);
+}
+
+__forceinline__ __device__ void atomic_add_same_cell(
+    int *base,
+    int index,
+    int value,
+    WarpCellGroup group) {
+    if (group.count == 1) {
+        atomicAdd(base + index, value);
+        return;
+    }
+    const int sum = warp_sum_masked(group.peers, value);
+    if (group.leader)
         atomicAdd(base + index, sum);
 }
 

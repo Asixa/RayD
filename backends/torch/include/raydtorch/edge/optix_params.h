@@ -5,9 +5,13 @@
 namespace raydtorch {
 
 constexpr int EdgeOptixTopKMax = 16;
+constexpr int EdgeOptixMaxTiers = 4;
 
 struct EdgeOptixQueryParams {
     uint64_t handle = 0;
+    uint64_t tier_handles[EdgeOptixMaxTiers] = {};
+    float tier_search_radii[EdgeOptixMaxTiers] = {};
+    int tier_count = 0;
 
     const float *edge_p0_x = nullptr;
     const float *edge_p0_y = nullptr;

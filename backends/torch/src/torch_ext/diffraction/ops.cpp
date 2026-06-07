@@ -4,6 +4,7 @@
 
 #include <raydtorch/diffraction/accum_params.h>
 #include <raydtorch/diffraction/accum_ad.h>
+#include <raydtorch/diffraction/accum_reduce.h>
 #include <raydtorch/diffraction/paths_params.h>
 #include <raydtorch/diffraction/pipeline.h>
 #include <raydtorch/scene/geometry_kernels.h>
@@ -33,6 +34,9 @@
 namespace raydtorch {
 
 namespace {
+
+constexpr int64_t kStagedDfrAccumMinSamples = 2048;
+constexpr int64_t kStagedDfrAccumMinSamplesPerCell = 4;
 
 void require_same_batch(const at::Tensor &a, const at::Tensor &b, const char *name) {
     if (a.size(0) != b.size(0))
@@ -571,6 +575,19 @@ py::tuple diffraction_accumulation_forward_op(
     at::Tensor tape_cell = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
     at::Tensor tape_material_idx = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
     at::Tensor tape_edge_u = write_tape ? at::zeros({launch_count}, fopts) : at::empty({0}, fopts);
+    const bool staged_no_suffix_accum =
+        !write_tape &&
+        !use_recursive &&
+        suffix_launch_count == 0 &&
+        (direct_launch_count + keller_launch_count) > 0 &&
+        static_cast<int64_t>(launch_count) >= kStagedDfrAccumMinSamples &&
+        static_cast<int64_t>(launch_count) >= cell_count * kStagedDfrAccumMinSamplesPerCell;
+    at::Tensor stage_cell = staged_no_suffix_accum
+        ? at::full({launch_count}, -1, iopts)
+        : at::empty({0}, iopts);
+    at::Tensor stage_value = staged_no_suffix_accum
+        ? at::zeros({launch_count, 4}, fopts)
+        : at::empty({0, 4}, fopts);
     if (state_count == 0 || launch_count == 0) {
         return py::make_tuple(
             power.reshape({grid_resolution1, grid_resolution0}),
@@ -755,6 +772,10 @@ py::tuple diffraction_accumulation_forward_op(
     params.tape_cell = write_tape ? tape_cell.data_ptr<int>() : nullptr;
     params.tape_material_idx = write_tape ? tape_material_idx.data_ptr<int>() : nullptr;
     params.tape_edge_u = write_tape ? tape_edge_u.data_ptr<float>() : nullptr;
+    params.stage_cell = staged_no_suffix_accum ? stage_cell.data_ptr<int>() : nullptr;
+    params.stage_value = staged_no_suffix_accum
+        ? reinterpret_cast<float4 *>(stage_value.data_ptr<float>())
+        : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
@@ -764,6 +785,17 @@ py::tuple diffraction_accumulation_forward_op(
         pipeline->launch(6, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
         if (direct_launch_count + keller_launch_count > 0)
             pipeline->launch(7, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+        if (staged_no_suffix_accum) {
+            reduce_dfr_accum_staged_cuda(
+                launch_count,
+                stage_cell,
+                stage_value,
+                power,
+                field_x_re,
+                direct_count,
+                keller_count,
+                edge_uses);
+        }
         if (suffix_launch_count > 0) {
             pipeline->launch(8, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
             pipeline->launch(9, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);

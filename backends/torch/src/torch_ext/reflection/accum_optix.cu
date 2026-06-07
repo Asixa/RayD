@@ -374,13 +374,32 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
         return false;
     }
 
-    atomic_add_same_cell(params.out_field_x_re, cell, contribution_field.x.r);
-    atomic_add_same_cell(params.out_field_x_im, cell, contribution_field.x.i);
-    atomic_add_same_cell(params.out_field_y_re, cell, contribution_field.y.r);
-    atomic_add_same_cell(params.out_field_y_im, cell, contribution_field.y.i);
-    atomic_add_same_cell(params.out_field_z_re, cell, contribution_field.z.r);
-    atomic_add_same_cell(params.out_field_z_im, cell, contribution_field.z.i);
-    atomic_add_same_cell(params.out_reflection_power, cell, contribution_power);
+    if (params.stage_cell != nullptr && params.stage_value != nullptr) {
+        const long long stage_stride = static_cast<long long>(params.max_bounces) + 1ll;
+        const long long slot = static_cast<long long>(ray_index) * stage_stride +
+                               static_cast<long long>(depth);
+        ReflAccumStagedValue value;
+        value.a = make_float4(contribution_power,
+                              contribution_field.x.r,
+                              contribution_field.x.i,
+                              contribution_field.y.r);
+        value.b = make_float4(contribution_field.y.i,
+                              contribution_field.z.r,
+                              contribution_field.z.i,
+                              1.0f);
+        params.stage_cell[slot] = cell;
+        params.stage_value[slot] = value;
+        return true;
+    }
+
+    const WarpCellGroup cell_group = warp_cell_group(cell);
+    atomic_add_same_cell(params.out_field_x_re, cell, contribution_field.x.r, cell_group);
+    atomic_add_same_cell(params.out_field_x_im, cell, contribution_field.x.i, cell_group);
+    atomic_add_same_cell(params.out_field_y_re, cell, contribution_field.y.r, cell_group);
+    atomic_add_same_cell(params.out_field_y_im, cell, contribution_field.y.i, cell_group);
+    atomic_add_same_cell(params.out_field_z_re, cell, contribution_field.z.r, cell_group);
+    atomic_add_same_cell(params.out_field_z_im, cell, contribution_field.z.i, cell_group);
+    atomic_add_same_cell(params.out_reflection_power, cell, contribution_power, cell_group);
     atomic_add_warp(params.out_reflection_count, 1);
     return true;
 }

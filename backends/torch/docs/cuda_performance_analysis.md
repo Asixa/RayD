@@ -32,21 +32,44 @@ Implemented in the current worktree:
   - `UV`: returns `t` and `uv`.
   - `All`: returns the full legacy intersection fields.
   Reverse-mode and forward-mode AD keep the full existing autograd path.
+- Edge topology construction is now fully GPU-side for the build path:
+  per-face edge candidates are emitted on CUDA, sorted with CUB by canonical
+  edge key, segmented, scanned, and expanded into the RayD-compatible boundary /
+  manifold / non-manifold wedge records. The build path no longer calls
+  `mesh.faces.cpu()`.
 - Edge-search radii no longer copy six full edge SoA tensors back to CPU;
-  a CUDA reduction returns only bbox/max-length partials.
-- The edge topology path is explicitly named `build_edge_topology_cpu_fallback`.
-  It still uses CPU fallback semantics, but now uses `unordered_map` plus sorted
-  keys for deterministic edge ids.
+  CUDA reductions now finalize bbox/max-edge-length on device and read back
+  only the 7 scalar values needed for host-side radius selection.
+- The edge OptiX pipeline is split by payload pressure: point/ray queries use
+  a 5-payload point/ray PTX/module/pipeline, while top-k keeps its separate
+  16-payload PTX/module/pipeline.
+- Edge point/ray nearest-edge queries now use one OptiX launch per query batch:
+  raygen iterates the existing tight-radius edge GAS tiers on the GPU and early-outs
+  when a query resolves. Top-k keeps the separate 16-payload pipeline.
+- Static triangle and edge GAS builds use `OPTIX_BUILD_FLAG_ALLOW_COMPACTION`
+  and compact when OptiX reports a smaller output. Dynamic triangle/edge paths
+  skip compaction to preserve update/rebuild buffer compatibility.
 - Reflection no-AD tracing avoids allocating/writing autograd tape-only arrays.
 - Reflection trace uses bounce-major internal output storage when
   `max_bounces > 1`, then returns the existing public `[ray, bounce]` tensors.
   This targets coalesced per-bounce stores without changing the Python or AD
   contract. `max_bounces == 1` keeps the original layout to avoid a pointless
   transpose in the RayD comparison benchmark.
+- Reflection trace hit-gather now uses trace-specific packed triangle buffers:
+  the scene cache keeps the existing SoA arrays for other kernels and additionally
+  writes four `[N,4]` float tensors for p0/e1/e2/face-normal. Trace raygen reads
+  four aligned `float4` records instead of 12 scattered component arrays.
 - Visibility-style OptiX traces use first-hit termination where ignore lists are
   not required.
 - Reflection and diffraction accumulation now use warp-aggregated same-cell
   atomics for the hot complex/power field scatter paths.
+- Reflection accumulation also has a thresholded staged reduce path for future
+  nonzero-material accumulation workloads: one per-ray/per-depth record is staged
+  and reduced by cell with CUB before scatter.
+- Diffraction no-AD, no-suffix direct/Keller accumulation has an additional
+  thresholded staging path: OptiX writes one `(cell, value)` record per sample,
+  then a CUDA/CUB radix sort + reduce-by-key collapses high-contention cells
+  before scattering to the output grid.
 - Diffraction path export uses warp-aggregated path-slot reservation and a
   single primary-scene launch for order-1 export. It also avoids redundant
   zero-field stores and skips unused p1/p2 component writes for order-1 paths.
@@ -56,75 +79,86 @@ Implemented in the current worktree:
   in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested but caused
   a severe post-sync nearest-edge traversal regression on the benchmark shape,
   so it is not retained.
+- Clarification: there is no CPU edge-topology fallback in the current build
+  path. The remaining host readbacks in scene build are scalar control values
+  needed for exact PyTorch tensor sizing or OptiX compaction decisions, not
+  host-side geometry/topology computation.
 
-Fallbacks that remain intentionally present:
+Intentional non-fast paths that remain:
 
-- Edge topology construction is still a CPU fallback because the full GPU
-  sort/segmented-reduction implementation is not yet in this patch.
 - Intersect AD/JVP/VJP still uses the full legacy field path; the selective
   RayFlags path is no-AD only.
 - Diffraction direct/chain AD paths keep their existing full-output contract.
   The no-tape direct path is only selected when neither reverse-mode nor
   forward-mode AD is active.
 - Edge GAS true refit remains a guarded backlog item. Current sync uses
-  rebuild-in-place when compatible, otherwise full `build_edge_accel` fallback.
+  rebuild-in-place when compatible, otherwise a full edge-accel rebuild path.
 
 Latest verification:
 
 - Incremental native build succeeded via `scripts/dev_build_native.ps1`.
+- `python -m unittest tests.raydtorch_native.test_edge_queries -v`: 9 passed.
 - `python -m unittest tests.raydtorch_native.test_multipath -v`: 20 passed.
 - `python -m unittest discover tests.raydtorch_native -v`: 62 passed, 12 skipped.
 - Opt-in RayD parity:
   `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
+- High-contention staged diffraction accumulation parity check at
+  `direct_samples=4096`: max `power` diff `1.43e-6`, max `field_x_re` diff
+  `3.05e-5`; direct counts and edge-use counts both matched at `4096`.
+- Reflection staged accumulation path compiles and is wired behind a high-contention
+  threshold. Current public native smoke uses default air-air material parameters, so
+  reflection accumulation remains zero and does not yet prove a speedup for that path.
 - `git diff --check`: no whitespace errors; Git only reported existing LF/CRLF
   conversion warnings for touched files.
 
 Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
-`warmup=8`, `repeat=60`, RayD package resolved to `E:\Code\RayDi\rayd`:
+`warmup=5`, `repeat=30`, RayD package resolved to `E:\Code\RayDi\rayd`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2287.357 | 1527.668 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1194 | 0.0387 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1257 | 0.0469 | RayDTorch faster |
-| nearest edge | 1.1977 | 1.0324 | RayDTorch faster |
-| reflection trace | 0.2248 | 0.1738 | RayDTorch faster |
-| diffraction direct | 0.3921 | 0.2734 | RayDTorch faster |
-| diffraction paths | 0.3042 | 0.2366 | RayDTorch faster |
+| build | 2300.180 | 1539.985 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1206 | 0.0365 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1212 | 0.0519 | RayDTorch faster |
+| nearest edge | 1.1823 | 0.9765 | RayDTorch faster |
+| reflection trace | 0.2058 | 0.1702 | RayDTorch faster |
+| diffraction direct | 0.3330 | 0.2251 | RayDTorch faster |
+| diffraction paths | 0.2792 | 0.2515 | RayDTorch faster |
 
-Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=8`, `repeat=60`:
+Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`, `repeat=30`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2298.370 | 1521.933 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1274 | 0.0463 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1372 | 0.0505 | RayDTorch faster |
-| nearest edge | 1.2131 | 1.0659 | RayDTorch faster |
-| reflection trace | 0.2249 | 0.1944 | RayDTorch faster |
-| diffraction direct | 0.5026 | 0.3033 | RayDTorch faster |
-| diffraction paths | 0.2601 | 0.2250 | RayDTorch faster |
+| build | 2280.680 | 1518.062 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1232 | 0.0366 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1335 | 0.0470 | RayDTorch faster |
+| nearest edge | 1.1542 | 0.9761 | RayDTorch faster |
+| reflection trace | 0.3805 | 0.1725 | RayDTorch faster |
+| diffraction direct | 0.3091 | 0.2347 | RayDTorch faster |
+| diffraction paths | 0.3089 | 0.2189 | RayDTorch faster |
 
 Latest RayDTorch-native multi-bounce check, `grid=64`, `queries=4096`,
-`warmup=8`, `repeat=60`, `max_bounces=4`:
+`warmup=5`, `repeat=30`, `max_bounces=4`:
 
 | Operation | RayDTorch ms |
 |---|---:|
-| build | 1522.405 |
-| dynamic sync | 0.882 |
-| reflection trace | 0.2250 |
-| diffraction direct | 0.2331 |
-| diffraction paths | 0.2805 |
+| build | 1544.059 |
+| dynamic sync | 0.935 |
+| intersect `RayFlags.None` | 0.0380 |
+| intersect `RayFlags.All` | 0.0602 |
+| nearest edge | 16.283 |
+| reflection trace | 0.2359 |
+| diffraction direct | 0.2204 |
+| diffraction paths | 0.2909 |
 
 The native benchmark's `nearest_edge` uses random 3D points after a dynamic sync,
 which drives many queries to the full-radius edge tier; it is not the same
 near-surface edge-query shape as the RayD comparison benchmark above.
 
-For this benchmark shape, RayDTorch now meets the current RayD-comparison target:
-intersect and reflection are substantially faster; nearest-edge, direct
-diffraction, order-1 diffraction paths, and scene build are faster or at parity.
-Keep release-size and Nsight-backed benchmarks before claiming broad superiority
-across all scenes and multipath workloads.
+For this benchmark shape, RayDTorch now meets the RayD-comparison target for
+scene build, intersect, nearest-edge, reflection trace, direct diffraction, and
+order-1 diffraction path export. Keep release-size and Nsight-backed benchmarks
+before claiming broad superiority across all scenes and multipath workloads.
 
 ## Contents
 
@@ -146,28 +180,27 @@ across all scenes and multipath workloads.
 
 The three slowest paths each have a clear primary suspect that is provable from source:
 
-1. **Scene build (~1550 ms @ grid 192)** is dominated by **host-side, single-threaded edge
-   topology extraction** using `std::map` plus a synchronous `faces.cpu()` round-trip, and
-   by a **6× D2H copy + serial CPU bounding-box reduction** to derive edge search radii.
-   Almost none of the build work that *could* run on the GPU does.
+1. **Scene build** originally had two avoidable host stalls: CPU edge topology extraction
+   via `faces.cpu()` and host-side bbox/max-edge reduction. Both are now GPU-side;
+   remaining build work is mostly OptiX GAS/IAS construction and tensor setup.
 
 2. **Reflection trace** originally wrote per-bounce outputs in a **ray-major layout**
    (`slot = ray*B + bounce`) across ~17–24 separate SoA arrays. The current worktree now
    uses bounce-major internal storage for `max_bounces > 1`, while returning the same public
    `[ray, bounce]` tensors. Nsight should still verify store coalescing and transpose cost.
 
-3. **Nearest-edge query** issues **one OptiX launch + one finalize kernel + one params
-   H2D copy per radius tier** (up to 3), always over the full query width, and the shared
-   edge pipeline reserves **16 payload registers** (needed only by top-k) for the point/ray
-   paths too, depressing occupancy.
+3. **Nearest-edge query** previously issued **one OptiX launch + one finalize kernel +
+   one params H2D copy per radius tier**. Point/ray now launches once and loops over the
+   existing tight edge GAS tiers inside raygen; top-k remains on its own high-payload path.
 
 Above all of these sits a **build-configuration defect**: the cached build targets
 `sm_52` (Maxwell) on a Blackwell GPU. Fixing the architecture is zero-risk and may lift
 every kernel before any code is touched.
 
-This document is a backlog, not a patch set. Confirm impact ordering with the
-[measurement plan](#measurement-plan) before investing in the larger refactors (items 4, 5,
-15).
+This document is both a status record and a remaining backlog. Confirm impact ordering with
+the [measurement plan](#measurement-plan) before investing in the remaining larger refactors:
+split-scene support, exact stack sizing, coherent multi-output sort-level reductions,
+materialized reflection-accumulation benchmarks, and additional GAS/IAS sync work.
 
 ---
 
@@ -176,10 +209,10 @@ This document is a backlog, not a patch set. Confirm impact ordering with the
 | Level | Items | One-liner |
 |---|---|---|
 | **P0** | 1, 2, 3 | Architecture, build type, fast-math/PTX arch fixes landed |
-| **P1 build** | 4, 5, 6, 7 | CPU edge topology + D2H radii fixed; edge sync partially improved; no compaction |
-| **P1 edge** | 11, 12 | Per-tier launches + 16-payload occupancy hit |
-| **P1 refl** | 15, 16, 17 | Bounce-major trace writes landed for B>1; hit gather and split traces remain |
-| **P2 accum** | 19, 20, 25, 26 | Same-cell warp atomics and path-counter aggregation landed; deeper reductions remain |
+| **P1 build** | 4, 5, 6, 7 | GPU edge topology + D2H radii fixed; edge sync partially improved; static GAS compaction landed |
+| **P1 edge** | 11, 12 | Point/ray tier launches collapsed; point/ray payload split landed |
+| **P1 refl** | 15, 16, 17 | Bounce-major trace writes and packed hit gather landed; split-mode is inactive in current Torch call sites |
+| **P2 accum** | 19, 20, 25, 26 | Same-cell warp atomics, path-counter aggregation, reflection staged reduce, and thresholded no-AD diffraction sort/reduce landed |
 
 Impact legend: **High** = likely measurable on the benchmark; **Med** = real but
 secondary; **Low** = correctness-neutral cleanup / small constant.
@@ -250,28 +283,22 @@ Highest leverage, smallest change. Do these first; they may shift the whole rank
 
 Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs RayD 95).
 
-### 4. Edge topology built on the CPU, single-threaded, via `std::map` `[verified] — High`
+### 4. Edge topology built on the CPU, single-threaded, via `std::map` `[implemented] - High`
 
-- Location: [scene_cache.cpp:305-381](../src/torch_ext/scene/scene_cache.cpp#L305)
-  `build_edge_topology`.
-- Problem: `mesh.faces.cpu()` forces a synchronous D2H; then every triangle inserts its 3
-  undirected edges into a `std::map<pair<int,int>, vector<pair<int,int>>>` (red-black tree +
-  a heap allocation/`vector` growth per edge). At grid 192 the triangle count is large, so
-  this is the most probable build hotspot.
-- Fix direction: move edge extraction to the GPU — emit all 3 edges per face with a
-  canonical (min,max) key, `cub`/`thrust` sort by key, then a segmented reduction to pair
-  faces and detect boundary (count==1) vs manifold (count==2) edges. At minimum, drop the
-  `.cpu()` round-trip and switch to `unordered_map` with `reserve`.
+- Original problem: `mesh.faces.cpu()` forced a synchronous D2H; then every triangle inserted its 3 undirected edges into a host map. At grid 192 the triangle count is large, so this was the most probable build hotspot.
+- Implemented: `build_edge_topology_cuda()` emits all 3 edges per face on CUDA, sorts canonical `(min,max)` edge keys with CUB radix sort, marks key runs, scans output counts, and expands boundary/manifold/non-manifold RayD-compatible wedge records on the GPU. Non-manifold edges emit every unordered incident-face pair; the build path has no host topology implementation or CPU fallback.
 
-### 5. Edge search radii via 6× `.cpu()` D2H + serial CPU bbox reduction `[verified] — High`
+### 5. Edge search radii via six `.cpu()` D2H + serial CPU bbox reduction `[implemented] - High`
 
 - Location: [scene_cache.cpp:484-497](../src/torch_ext/scene/scene_cache.cpp#L484)
   (six `scene.edge_*.cpu()` copies) feeding
   [compute_edge_search_radii:383-449](../src/torch_ext/scene/scene_cache.cpp#L383).
 - Problem: the edge SoA was just produced on the GPU, then copied back to the host as six
   independent synchronous transfers, only to run a serial min/max + max-edge-length loop.
-- Fix direction: compute the bounding box and max edge length on-device (a reduction kernel
-  or `at::aminmax`/`cub`), returning a handful of scalars instead of full arrays.
+- Implemented: `compute_edge_search_stats_cuda()` now reduces bbox and max edge length on
+  CUDA. The first kernel writes per-block partials; a second CUDA kernel finalizes those
+  partials into 7 scalar values. The host reads only those final scalars for radius
+  selection.
 
 ### 6. Up to 3 edge GAS rebuilt on every build *and* every sync `[partial] — Med-High`
 
@@ -285,17 +312,13 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Current state: compatible dynamic syncs reuse edge AABB/GAS/temp buffers and rebuild
   the GAS in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested and rejected
   because it made post-sync nearest-edge traversal much slower on the native benchmark.
-  Single-GAS/tier-collapse work remains open.
+  The point/ray query launch collapse is implemented without merging tiers into one
+  broad-radius GAS; the existing tight-radius GAS tiers remain to protect traversal quality.
 
-### 7. No acceleration-structure compaction anywhere `[verified] — Med`
+### 7. No acceleration-structure compaction anywhere `[implemented static GAS] - Med`
 
-- Location: triangle GAS [scene_cache.cpp:65-66](../src/torch_ext/scene/scene_cache.cpp#L65),
-  IAS [:145](../src/torch_ext/scene/scene_cache.cpp#L145), edge GAS
-  [:530](../src/torch_ext/scene/scene_cache.cpp#L530) — all `PREFER_FAST_TRACE` only.
-- Problem: GAS output buffers are left uncompacted: larger VRAM footprint and worse
-  traversal cache locality. The cuda-optimize checklist explicitly calls this out.
-- Fix direction: add `OPTIX_BUILD_FLAG_ALLOW_COMPACTION` for static geometry and run a
-  compaction pass (one extra build-time cost for a smaller, faster AS).
+- Original problem: GAS output buffers were left uncompacted: larger VRAM footprint and worse traversal cache locality.
+- Implemented: static triangle and edge GAS builds request compacted size and call `optixAccelCompact()` when OptiX reports a smaller output. Dynamic triangle/edge paths skip compaction to preserve update/rebuild buffer compatibility.
 
 ### 8. `refresh_global_geometry` does many tiny tensor ops + 12 separate SoA buffers `[verified] — Med`
 
@@ -323,25 +346,24 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 
 ## P1 — Nearest-edge query
 
-### 11. Tiered query = N launches + N finalize kernels + N params H2D `[verified] — Med-High`
+### 11. Tiered point/ray query host launches `[implemented] - Med-High`
 
-- Location: [edge_forward.cu:325-372](../src/torch_ext/edge/edge_forward.cu#L325) (point) and
-  [:431-483](../src/torch_ext/edge/edge_forward.cu#L431) (ray) loop over `scene.edge_accels`.
-- Problem: each radius tier issues a `cudaMemcpyAsync(params)`
-  ([edge_forward.cu:257](../src/torch_ext/edge/edge_forward.cu#L257)) + an `optixLaunch` + a
-  finalize kernel, and the launch width is always the full query count even after most
-  queries resolve in tier 0.
-- Fix direction: collapse into a single GAS / single launch (raygen grows the radius and
-  early-outs), or stream-compact the unresolved set before later tiers to shrink the launch.
+- Original problem: point and ray nearest-edge queries looped over `scene.edge_accels` on
+  the host. Each radius tier issued a `cudaMemcpyAsync(params)` + `optixLaunch`, and ray
+  queries also launched a finalize kernel after every tier.
+- Implemented: point/ray launch params carry the tier handle/radius array. `edge_optix.cu`
+  loops over tiers inside raygen, keeps the tight per-tier GAS/AABB bounds, and early-outs
+  when the query resolves. Ray query payload 4 now carries the current tier radius bits;
+  validity is `edge_id != invalid`, so the 5-payload point/ray pipeline stays intact.
+- Measured effect on the RayD comparison shape after this change: nearest-edge static
+  improved from the previous RayDTorch record of `1.0648 ms` to `1.0081 ms`, while RayD
+  measured `1.2564 ms` in the same run. Dynamic nearest-edge measured RayDTorch
+  `1.0102 ms` vs RayD `1.1727 ms`.
 
-### 12. Edge pipeline reserves 16 payload registers for all raygens `[verified] — Med`
+### 12. Edge pipeline reserves 16 payload registers for all raygens `[implemented] - Med`
 
-- Location: [optix_context.cpp:248](../src/torch_ext/scene/optix_context.cpp#L248)
-  (`numPayloadValues = 16`). Top-k (k≤8) needs 16; point uses 4, ray uses 5.
-- Problem: payload count is per-pipeline, so the point/ray raygens pay the full 16-register
-  reservation, lowering megakernel occupancy.
-- Fix direction: split top-k into its own pipeline (payload ≤ 6) or use payload semantics;
-  keep the point/ray pipeline at minimum payload. Confirm with `launch__registers_per_thread`.
+- Original problem: payload count is per-pipeline, so point/ray raygens paid the full 16-register top-k reservation even though point uses 4 payload values and ray uses 5.
+- Implemented: `edge_optix.cu` now compiles into separate point/ray-only and top-k-only PTX modules. Runtime creates a 5-payload point/ray pipeline and a 16-payload top-k pipeline, each with its own module and SBT records. Confirm register reduction with `launch__registers_per_thread`.
 
 ### 13. AoS point/edge coordinates loaded as 3 scalar loads `[verified] — Low`
 
@@ -376,19 +398,29 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Confirm with `l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_st.ratio` on
   `__raygen__reflection_trace`.
 
-### 16. Each hit re-gathers 12 scattered `tri_*[global_prim]` to recompute hit point/normal `[verified] — Med`
+### 16. Each hit re-gathers 12 scattered `tri_*[global_prim]` to recompute hit point/normal `[implemented] - Med`
 
-- Location: [trace_optix.cu:154-173](../src/torch_ext/reflection/trace_optix.cu#L154).
-  `global_prim` is effectively random across a warp → 12 scattered global loads per bounce.
-- Fix direction: pack the triangle SoA into aligned groups (`float4`) to cut transactions, or
-  evaluate using the OptiX barycentrics + vertex buffer directly.
+- Original problem: `global_prim` is effectively random across a warp, and trace raygen
+  reloaded p0/e1/e2/fn as 12 independent component arrays for every hit.
+- Implemented: scene cache now writes trace-only packed triangle tensors alongside the
+  existing SoA arrays. `trace_optix.cu` reads p0/e1/e2/fn through four aligned `float4`
+  records and keeps the SoA compatibility read path only for internal callers
+  that still provide component arrays.
+- Measured effect: single-bounce RayD comparison remains traversal-bound and moves with
+  benchmark noise. The native `max_bounces=4`, `warmup=5`, `repeat=30` check measured
+  reflection trace at `0.2359 ms`, while an earlier repeat-60 run after the same layout
+  change measured `0.2182 ms`. Treat the packed layout as implemented but not yet proven
+  by Nsight counters.
 
 ### 17. `split_mode` traces twice per bounce (primary + secondary) `[verified] — Med`
 
 - Location: [trace_optix.cu:128-136](../src/torch_ext/reflection/trace_optix.cu#L128) and the
   trailing segment [:238-246](../src/torch_ext/reflection/trace_optix.cu#L238).
-- Fix direction: evaluate merging into a single IAS with multiple instances so one traversal
-  replaces the second per-bounce trace.
+- Current Torch call sites set `split_mode=0`, so this is not active in the latest
+  RayD/RayDTorch comparison benchmark. RayDTorch currently builds one triangle IAS for the
+  scene, so there is no split-scene double trace on the hot path.
+- Future split-scene support should still prefer merging static/dynamic instances into one
+  IAS so one traversal replaces the second per-bounce trace.
 
 ### 18. Shared multipath pipeline uses a hardcoded oversized stack `[verified] — Low`
 
@@ -404,15 +436,26 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 > Mostly from a focused sub-agent read of the accumulation modules; treat impact as
 > `[needs Nsight]` unless noted.
 
-### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[implemented warp aggregation] — High`
+### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[implemented warp aggregation + staged reduce hook] — High`
 
 - Location: `accum_optix.cu:377-384`, coherent branch `:445-460`.
 - Problem: many threads atomically add into the same cell — serialized, complex-valued
   (re/im split into separate atomics per component).
 - Implemented: hot reflection and diffraction field/power scatter paths now use same-cell
-  warp aggregation before the global atomic. This changes same-warp floating-point addition
-  order, so parity tests are the correctness guard. A sort/segmented-reduction design is
-  still a possible larger follow-up for heavy cell contention.
+  warp aggregation before the global atomic. Multi-output paths share one cached
+  `WarpCellGroup` inside each output branch, avoiding repeated `__match_any_sync` /
+  leader discovery for each field component. This changes same-warp floating-point
+  addition order, so parity tests are the correctness guard. Diffraction direct/Keller
+  also has a heavier no-AD/no-suffix staged sort/reduce path described in item 26.
+- Reflection accumulation now has an optional high-contention staging path:
+  `__raygen__reflection_accumulation` writes one `(cell, ReflAccumStagedValue)` per
+  `ray/depth` slot when the host predicts at least 2048 samples and at least 4 samples
+  per cell; `reduce_refl_accum_staged_cuda()` then uses CUB radix sort and reduce-by-key
+  before scattering the seven field/power outputs plus reflection count. Existing
+  low-contention calls keep the warp-aggregated atomic path.
+- Caveat: the current public native smoke path creates default material parameters with
+  zero reflection coefficient, so this staged reflection path is compiled and parity-safe
+  but not yet tied to a nonzero reflection-accumulation benchmark.
 
 ### 20. Audit occlusion/visibility ray flags for `TERMINATE_ON_FIRST_HIT | DISABLE_ANYHIT` `[needs check] — High if confirmed`
 
@@ -458,12 +501,20 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Implemented: path export reserves output slots per warp using one `atomicAdd` per active
   warp group. Prefix-sum allocation remains a larger alternative.
 
-### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation] — High`
+### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation + staged reduce for direct/Keller] — High`
 
 - Location: `accum_optix.cu:445-460` (same class of issue as item 19).
 - Implemented: coherent direct/multi field outputs now use same-cell warp aggregation for
-  the field components and per-cell counts. Block-level or sorted reductions remain open
-  for very high contention workloads.
+  the field components and per-cell counts, sharing one cached `WarpCellGroup` across the
+  output channels within each direct or multi branch.
+- Implemented for no-AD/no-suffix direct/Keller order-1 accumulation: when
+  `launch_count >= 2048` and at least 4 samples per cell are expected, OptiX stages
+  `(cell, float4(power, field_x_re, direct_count, keller_count))`, then
+  `reduce_dfr_accum_staged_cuda()` uses CUB radix sort and reduce-by-key before one
+  scatter pass updates the output tensors. AD, recursive, suffix, and low-contention
+  direct paths keep the existing warp-aggregated atomic path.
+- Remaining larger work: extend block/sort-level reductions to coherent multi-output UTD
+  paths if Nsight still shows global atomic pressure there.
 
 ### 27. Path output scatters 12 SoA complex components via `out_idx` `[needs Nsight] — Med`
 
@@ -541,8 +592,9 @@ ncu --metrics `
 
 What to look for:
 
-- Build: in the `nsys` timeline, a large CPU gap with no GPU work during build confirms
-  items 4/5 dominate (the `std::map` loop + the six `.cpu()` syncs).
+- Build: in the `nsys` timeline, confirm that the old item-4/item-5 host gaps are gone.
+  Remaining build time should mostly be CUB topology kernels, OptiX GAS/IAS builds,
+  compaction, and small host control work.
 - Reflection trace: compare `...op_st.ratio` for `max_bounces > 1` before/after the
   bounce-major internal layout to verify the expected store coalescing and transpose cost.
 - Edge: `launch__occupancy_limit_registers` being the limiter confirms the 16-payload cost
@@ -554,14 +606,18 @@ What to look for:
 
 1. **Nsight validate landed changes**: PTX fast-math/arch, bounce-major reflection
    trace (`max_bounces > 1`), and warp-aggregated accumulation atomics.
-2. **Build path**: GPU-ize edge topology (item 4) and consider AS compaction (item 7)
-   only after measuring build/traversal trade-offs.
-3. **Edge query**: split the top-k pipeline (item 12) and collapse or compact the tiered
-   launches (item 11).
-4. **Reflection remaining work**: pack triangle data or otherwise reduce the 12 scattered
-   hit-gather loads (item 16), then revisit split-scene double traces (item 17).
+2. **Build path**: GPU edge topology (item 4), GPU edge stats (item 5), and static AS
+   compaction (item 7) are landed. Next build-path work should be driven by Nsight
+   evidence around GAS/IAS construction and scalar synchronization.
+3. **Edge query**: split point/ray vs top-k payload pressure and point/ray tier-launch
+   collapse are landed; next step is Nsight validation of payload registers, launch count,
+   and traversal cost across larger/random query distributions.
+4. **Reflection remaining work**: revisit split-scene double traces (item 17) and validate
+   packed hit-gather register/memory counters with Nsight on multi-bounce scenes.
 5. **Accumulation next level**: if Nsight still shows atomic pressure after warp
-   aggregation, evaluate block-level or sort/segmented reductions for items 19/26.
+   aggregation and the staged paths, extend block-level or sort/segmented reductions
+   to coherent multi-output UTD paths and add a nonzero-material reflection accumulation
+   benchmark.
 
 Accuracy guard: items 3, 19, 25, 26, 28 (fast-math, reassociated/atomic reductions) change
 the floating-point contract. Keep the native AD and opt-in RayD parity tests green after each.

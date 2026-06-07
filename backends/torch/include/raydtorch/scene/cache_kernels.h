@@ -17,6 +17,21 @@ struct EdgeSearchStats {
     float max_edge_length = 0.0f;
 };
 
+struct EdgeTopology {
+    at::Tensor edge_v0;
+    at::Tensor edge_v1;
+    at::Tensor edge_face0;
+    at::Tensor edge_face1;
+    at::Tensor edge_opposite;
+    at::Tensor edge_shape_id;
+    at::Tensor edge_local_id;
+};
+
+EdgeTopology build_edge_topology_cuda(
+    const at::Tensor &faces,
+    int32_t vertex_offset,
+    int32_t shape_id);
+
 void compute_triangle_soa_cuda(
     int64_t triangle_count,
     const at::Tensor &vertices,
@@ -32,7 +47,11 @@ void compute_triangle_soa_cuda(
     at::Tensor &tri_e2_z,
     at::Tensor &tri_fn_x,
     at::Tensor &tri_fn_y,
-    at::Tensor &tri_fn_z);
+    at::Tensor &tri_fn_z,
+    at::Tensor &tri_p0_packed,
+    at::Tensor &tri_e1_packed,
+    at::Tensor &tri_e2_packed,
+    at::Tensor &tri_fn_packed);
 
 void compute_edge_soa_cuda(
     int64_t edge_count,

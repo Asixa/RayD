@@ -6,7 +6,8 @@
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
 #include <raydtorch/edge/optix_params.h>
-#include <raydtorch/edge_optix_ptx.h>
+#include <raydtorch/edge_optix_point_ray_ptx.h>
+#include <raydtorch/edge_optix_topk_ptx.h>
 #include <raydtorch/optix_intersect_ptx.h>
 #include <raydtorch/reflection_trace_optix_ptx.h>
 
@@ -58,13 +59,11 @@ void copy_sbt_record(
 void copy_edge_hitgroup_records(
     OptixProgramGroup point_group,
     OptixProgramGroup ray_group,
-    OptixProgramGroup topk_group,
     at::Tensor &device_records,
     cudaStream_t stream) {
-    EmptySbtRecord host_records[3] = {};
+    EmptySbtRecord host_records[2] = {};
     raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(point_group, &host_records[0]));
     raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(ray_group, &host_records[1]));
-    raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(topk_group, &host_records[2]));
     cuda_check(
         cudaMemcpyAsync(
             device_records.data_ptr<uint8_t>(),
@@ -233,7 +232,7 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
 }
 
 void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
-    if (entry.edge_pipeline != nullptr)
+    if (entry.edge_pipeline != nullptr && entry.edge_topk_pipeline != nullptr)
         return;
 
     c10::cuda::CUDAGuard guard(entry.device_index);
@@ -242,83 +241,114 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     module_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
     module_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
 
-    OptixPipelineCompileOptions pipeline_options = {};
-    pipeline_options.usesMotionBlur = false;
-    pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipeline_options.numPayloadValues = 16;
-    pipeline_options.numAttributeValues = 3;
-    pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
-    pipeline_options.pipelineLaunchParamsVariableName = "params";
-    pipeline_options.usesPrimitiveTypeFlags =
-        static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM);
+    auto make_pipeline_options = [](unsigned int payload_count) {
+        OptixPipelineCompileOptions options = {};
+        options.usesMotionBlur = false;
+        options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+        options.numPayloadValues = payload_count;
+        options.numAttributeValues = 3;
+        options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
+        options.pipelineLaunchParamsVariableName = "params";
+        options.usesPrimitiveTypeFlags =
+            static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM);
+        return options;
+    };
+    OptixPipelineCompileOptions point_ray_options = make_pipeline_options(5);
+    OptixPipelineCompileOptions topk_options = make_pipeline_options(16);
 
     char log[8192] = {};
     size_t log_size = sizeof(log);
     raydtorch_OPTIX_CHECK(optixModuleCreate(
         entry.optix_context,
         &module_options,
-        &pipeline_options,
-        raydtorch_edge_optix_ptx,
-        sizeof(raydtorch_edge_optix_ptx),
+        &point_ray_options,
+        raydtorch_edge_optix_point_ray_ptx,
+        sizeof(raydtorch_edge_optix_point_ray_ptx),
         log,
         &log_size,
         &entry.edge_module));
+    log_size = sizeof(log);
+    raydtorch_OPTIX_CHECK(optixModuleCreate(
+        entry.optix_context,
+        &module_options,
+        &topk_options,
+        raydtorch_edge_optix_topk_ptx,
+        sizeof(raydtorch_edge_optix_topk_ptx),
+        log,
+        &log_size,
+        &entry.edge_topk_module));
 
-    auto make_raygen_group = [&](const char *entry_name, OptixProgramGroup *out_group) {
+    auto make_raygen_group = [&](OptixModule module,
+                                 const char *entry_name,
+                                 OptixProgramGroup *out_group) {
         OptixProgramGroupDesc raygen_desc = {};
         raygen_desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-        raygen_desc.raygen.module = entry.edge_module;
+        raygen_desc.raygen.module = module;
         raygen_desc.raygen.entryFunctionName = entry_name;
         create_program_group(entry.optix_context, raygen_desc, out_group);
     };
-    make_raygen_group("__raygen__edge_point", &entry.edge_raygen_point_group);
-    make_raygen_group("__raygen__edge_ray", &entry.edge_raygen_ray_group);
-    make_raygen_group("__raygen__edge_topk_point", &entry.edge_raygen_topk_group);
+    make_raygen_group(entry.edge_module, "__raygen__edge_point", &entry.edge_raygen_point_group);
+    make_raygen_group(entry.edge_module, "__raygen__edge_ray", &entry.edge_raygen_ray_group);
+    make_raygen_group(
+        entry.edge_topk_module,
+        "__raygen__edge_topk_point",
+        &entry.edge_raygen_topk_group);
 
-    OptixProgramGroupDesc miss_desc = {};
-    miss_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-    miss_desc.miss.module = entry.edge_module;
-    miss_desc.miss.entryFunctionName = "__miss__edge_query";
-    create_program_group(entry.optix_context, miss_desc, &entry.edge_miss_group);
+    auto make_miss_group = [&](OptixModule module, OptixProgramGroup *out_group) {
+        OptixProgramGroupDesc miss_desc = {};
+        miss_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
+        miss_desc.miss.module = module;
+        miss_desc.miss.entryFunctionName = "__miss__edge_query";
+        create_program_group(entry.optix_context, miss_desc, out_group);
+    };
+    make_miss_group(entry.edge_module, &entry.edge_miss_group);
+    make_miss_group(entry.edge_topk_module, &entry.edge_topk_miss_group);
 
     auto make_hitgroup = [&](
+                             OptixModule module,
                              const char *closesthit,
                              const char *anyhit,
                              const char *intersection,
                              OptixProgramGroup *out_group) {
         OptixProgramGroupDesc hitgroup_desc = {};
         hitgroup_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-        hitgroup_desc.hitgroup.moduleCH = closesthit != nullptr ? entry.edge_module : nullptr;
+        hitgroup_desc.hitgroup.moduleCH = closesthit != nullptr ? module : nullptr;
         hitgroup_desc.hitgroup.entryFunctionNameCH = closesthit;
-        hitgroup_desc.hitgroup.moduleAH = anyhit != nullptr ? entry.edge_module : nullptr;
+        hitgroup_desc.hitgroup.moduleAH = anyhit != nullptr ? module : nullptr;
         hitgroup_desc.hitgroup.entryFunctionNameAH = anyhit;
-        hitgroup_desc.hitgroup.moduleIS = intersection != nullptr ? entry.edge_module : nullptr;
+        hitgroup_desc.hitgroup.moduleIS = intersection != nullptr ? module : nullptr;
         hitgroup_desc.hitgroup.entryFunctionNameIS = intersection;
         create_program_group(entry.optix_context, hitgroup_desc, out_group);
     };
     make_hitgroup(
+        entry.edge_module,
         "__closesthit__edge_point",
         nullptr,
         "__intersection__edge_point",
         &entry.edge_hit_point_group);
     make_hitgroup(
+        entry.edge_module,
         nullptr,
         "__anyhit__edge_ray",
         "__intersection__edge_ray",
         &entry.edge_hit_ray_group);
     make_hitgroup(
+        entry.edge_topk_module,
         nullptr,
         "__anyhit__edge_topk_point",
         "__intersection__edge_topk_point",
         &entry.edge_hit_topk_group);
 
-    OptixProgramGroup program_groups[] = {
+    OptixProgramGroup point_ray_groups[] = {
         entry.edge_raygen_point_group,
         entry.edge_raygen_ray_group,
-        entry.edge_raygen_topk_group,
         entry.edge_miss_group,
         entry.edge_hit_point_group,
         entry.edge_hit_ray_group,
+    };
+    OptixProgramGroup topk_groups[] = {
+        entry.edge_raygen_topk_group,
+        entry.edge_topk_miss_group,
         entry.edge_hit_topk_group,
     };
 
@@ -327,34 +357,50 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     log_size = sizeof(log);
     raydtorch_OPTIX_CHECK(optixPipelineCreate(
         entry.optix_context,
-        &pipeline_options,
+        &point_ray_options,
         &link_options,
-        program_groups,
-        7,
+        point_ray_groups,
+        5,
         log,
         &log_size,
         &entry.edge_pipeline));
+    log_size = sizeof(log);
+    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+        entry.optix_context,
+        &topk_options,
+        &link_options,
+        topk_groups,
+        3,
+        log,
+        &log_size,
+        &entry.edge_topk_pipeline));
 
-    OptixStackSizes stack_sizes = {};
-    for (OptixProgramGroup group : program_groups)
-        raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.edge_pipeline));
-    uint32_t direct_callable_stack_from_traversal = 0;
-    uint32_t direct_callable_stack_from_state = 0;
-    uint32_t continuation_stack = 0;
-    raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
-        &stack_sizes,
-        1,
-        0,
-        1,
-        &direct_callable_stack_from_traversal,
-        &direct_callable_stack_from_state,
-        &continuation_stack));
-    raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
-        entry.edge_pipeline,
-        direct_callable_stack_from_traversal,
-        direct_callable_stack_from_state,
-        continuation_stack,
-        1));
+    auto set_stack_size = [&](OptixPipeline pipeline,
+                              const OptixProgramGroup *groups,
+                              int group_count) {
+        OptixStackSizes stack_sizes = {};
+        for (int i = 0; i < group_count; ++i)
+            raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(groups[i], &stack_sizes, pipeline));
+        uint32_t direct_callable_stack_from_traversal = 0;
+        uint32_t direct_callable_stack_from_state = 0;
+        uint32_t continuation_stack = 0;
+        raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
+            &stack_sizes,
+            1,
+            0,
+            1,
+            &direct_callable_stack_from_traversal,
+            &direct_callable_stack_from_state,
+            &continuation_stack));
+        raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
+            pipeline,
+            direct_callable_stack_from_traversal,
+            direct_callable_stack_from_state,
+            continuation_stack,
+            1));
+    };
+    set_stack_size(entry.edge_pipeline, point_ray_groups, 5);
+    set_stack_size(entry.edge_topk_pipeline, topk_groups, 3);
 
     at::TensorOptions byte_options =
         at::TensorOptions().device(at::Device(at::kCUDA, entry.device_index)).dtype(at::kByte);
@@ -365,8 +411,12 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     entry.edge_raygen_topk_record =
         at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
     entry.edge_miss_record = at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
+    entry.edge_topk_miss_record =
+        at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
     entry.edge_hitgroup_records =
-        at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord) * 3)}, byte_options);
+        at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord) * 2)}, byte_options);
+    entry.edge_topk_hitgroup_record =
+        at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
     entry.edge_params_buffer =
         at::empty({static_cast<int64_t>(sizeof(EdgeOptixQueryParams))}, byte_options);
 
@@ -375,14 +425,15 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     copy_sbt_record(entry.edge_raygen_ray_group, entry.edge_raygen_ray_record, stream);
     copy_sbt_record(entry.edge_raygen_topk_group, entry.edge_raygen_topk_record, stream);
     copy_sbt_record(entry.edge_miss_group, entry.edge_miss_record, stream);
+    copy_sbt_record(entry.edge_topk_miss_group, entry.edge_topk_miss_record, stream);
     copy_edge_hitgroup_records(
         entry.edge_hit_point_group,
         entry.edge_hit_ray_group,
-        entry.edge_hit_topk_group,
         entry.edge_hitgroup_records,
         stream);
+    copy_sbt_record(entry.edge_hit_topk_group, entry.edge_topk_hitgroup_record, stream);
 
-    auto init_edge_sbt = [&](OptixShaderBindingTable &sbt, const at::Tensor &raygen_record) {
+    auto init_point_ray_sbt = [&](OptixShaderBindingTable &sbt, const at::Tensor &raygen_record) {
         sbt = {};
         sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(
             const_cast<uint8_t *>(raygen_record.data_ptr<uint8_t>()));
@@ -393,11 +444,28 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
         sbt.hitgroupRecordBase =
             reinterpret_cast<CUdeviceptr>(entry.edge_hitgroup_records.data_ptr<uint8_t>());
         sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
-        sbt.hitgroupRecordCount = 3;
+        sbt.hitgroupRecordCount = 2;
     };
-    init_edge_sbt(entry.edge_point_sbt, entry.edge_raygen_point_record);
-    init_edge_sbt(entry.edge_ray_sbt, entry.edge_raygen_ray_record);
-    init_edge_sbt(entry.edge_topk_sbt, entry.edge_raygen_topk_record);
+    auto init_topk_sbt = [&]() {
+        entry.edge_topk_sbt = {};
+        entry.edge_topk_sbt.raygenRecord = reinterpret_cast<CUdeviceptr>(
+            entry.edge_raygen_topk_record.data_ptr<uint8_t>());
+        entry.edge_topk_sbt.missRecordBase =
+            reinterpret_cast<CUdeviceptr>(entry.edge_topk_miss_record.data_ptr<uint8_t>());
+        entry.edge_topk_sbt.missRecordStrideInBytes = sizeof(EmptySbtRecord);
+        entry.edge_topk_sbt.missRecordCount = 1;
+        entry.edge_topk_sbt.hitgroupRecordBase =
+            reinterpret_cast<CUdeviceptr>(entry.edge_topk_hitgroup_record.data_ptr<uint8_t>());
+        entry.edge_topk_sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
+        entry.edge_topk_sbt.hitgroupRecordCount = 1;
+    };
+    init_point_ray_sbt(entry.edge_point_sbt, entry.edge_raygen_point_record);
+    init_point_ray_sbt(entry.edge_ray_sbt, entry.edge_raygen_ray_record);
+    init_topk_sbt();
+}
+
+OptixPipeline edge_pipeline(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind) {
+    return kind == EdgeOptixLaunchKind::PointTopK ? entry.edge_topk_pipeline : entry.edge_pipeline;
 }
 
 const OptixShaderBindingTable &edge_sbt(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind) {

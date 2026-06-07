@@ -80,8 +80,10 @@ if(RAYDTORCH_BUILD_NATIVE)
 
     set(RAYDTORCH_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/optix_intersect.ptx")
     set(RAYDTORCH_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/optix_intersect_ptx.h")
-    set(RAYDTORCH_EDGE_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix.ptx")
-    set(RAYDTORCH_EDGE_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/edge_optix_ptx.h")
+    set(RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_point_ray.ptx")
+    set(RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/edge_optix_point_ray_ptx.h")
+    set(RAYDTORCH_EDGE_OPTIX_TOPK_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_topk.ptx")
+    set(RAYDTORCH_EDGE_OPTIX_TOPK_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/edge_optix_topk_ptx.h")
     set(RAYDTORCH_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace_optix.ptx")
     set(RAYDTORCH_REFLECTION_TRACE_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/raydtorch/reflection_trace_optix_ptx.h")
     set(RAYDTORCH_SEGMENT_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_optix.ptx")
@@ -123,12 +125,13 @@ if(RAYDTORCH_BUILD_NATIVE)
     )
     add_custom_target(raydtorch_optix_ptx DEPENDS "${RAYDTORCH_OPTIX_PTX_HEADER}")
     add_custom_command(
-        OUTPUT "${RAYDTORCH_EDGE_OPTIX_PTX}"
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX}"
         COMMAND
             "${CMAKE_CUDA_COMPILER}"
             --ptx
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/edge/edge_optix.cu"
-            -o "${RAYDTORCH_EDGE_OPTIX_PTX}"
+            -o "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX}"
+            -DRAYDTORCH_EDGE_POINT_RAY_ONLY=1
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
@@ -139,18 +142,51 @@ if(RAYDTORCH_BUILD_NATIVE)
             include/raydtorch/edge/optix_params.h
     )
     add_custom_command(
-        OUTPUT "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}"
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
         COMMAND
             "${Python_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
-            "${RAYDTORCH_EDGE_OPTIX_PTX}"
-            "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}"
-            raydtorch_edge_optix_ptx
+            "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX}"
+            "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
+            raydtorch_edge_optix_point_ray_ptx
         DEPENDS
-            "${RAYDTORCH_EDGE_OPTIX_PTX}"
+            "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX}"
             src/torch_ext/embed_ptx.py
     )
-    add_custom_target(raydtorch_edge_optix_ptx DEPENDS "${RAYDTORCH_EDGE_OPTIX_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/edge/edge_optix.cu"
+            -o "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX}"
+            -DRAYDTORCH_EDGE_TOPK_ONLY=1
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            ${RAYDTORCH_OPTIX_NVCC_FLAGS}
+        DEPENDS
+            src/torch_ext/edge/edge_optix.cu
+            include/raydtorch/common/math.cuh
+            include/raydtorch/edge/optix_params.h
+    )
+    add_custom_command(
+        OUTPUT "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX}"
+            "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
+            raydtorch_edge_optix_topk_ptx
+        DEPENDS
+            "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(
+        raydtorch_edge_optix_ptx
+        DEPENDS
+            "${RAYDTORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
+            "${RAYDTORCH_EDGE_OPTIX_TOPK_PTX_HEADER}")
     add_custom_command(
         OUTPUT "${RAYDTORCH_REFLECTION_TRACE_PTX}"
         COMMAND
@@ -355,6 +391,8 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/reflection/backward.cu
         src/torch_ext/reflection/dedup.cu
         src/torch_ext/reflection/epc_field.cu
+        src/torch_ext/reflection/accum_reduce.cu
+        src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
     )
     target_include_directories(

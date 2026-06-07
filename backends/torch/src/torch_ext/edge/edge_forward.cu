@@ -7,6 +7,7 @@
 #include <math_constants.h>
 #include <optix_stubs.h>
 
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
@@ -69,6 +70,42 @@ void require_edge_cache_dtypes(const SceneCache &scene) {
     require_edge_cache_dtype(scene.edge_e1_y, at::kFloat, "edge_e1_y");
     require_edge_cache_dtype(scene.edge_e1_z, at::kFloat, "edge_e1_z");
     require_edge_cache_dtype(scene.edge_mask, at::kByte, "edge_mask");
+}
+
+void fill_edge_tiers(const SceneCache &scene, EdgeOptixQueryParams &params) {
+    if (scene.edge_accels.size() > static_cast<std::size_t>(EdgeOptixMaxTiers)) {
+        throw std::runtime_error(
+            "edge query has more GAS tiers than EdgeOptixMaxTiers; increase the OptiX params "
+            "tier array size.");
+    }
+
+    params.tier_count = static_cast<int>(scene.edge_accels.size());
+    if (params.tier_count <= 0) {
+        return;
+    }
+
+    params.handle = static_cast<uint64_t>(scene.edge_accels.front().traversable);
+    params.search_radius = scene.edge_accels.back().search_radius;
+    for (int tier = 0; tier < params.tier_count; ++tier) {
+        const OptixEdgeAccel &accel = scene.edge_accels[static_cast<std::size_t>(tier)];
+        params.tier_handles[tier] = static_cast<uint64_t>(accel.traversable);
+        params.tier_search_radii[tier] = accel.search_radius;
+    }
+}
+
+void fill_edge_geometry_params(
+    const SceneCache &scene,
+    int64_t edge_count,
+    EdgeOptixQueryParams &params) {
+    fill_edge_tiers(scene, params);
+    params.edge_p0_x = scene.edge_p0_x.data_ptr<float>();
+    params.edge_p0_y = scene.edge_p0_y.data_ptr<float>();
+    params.edge_p0_z = scene.edge_p0_z.data_ptr<float>();
+    params.edge_e1_x = scene.edge_e1_x.data_ptr<float>();
+    params.edge_e1_y = scene.edge_e1_y.data_ptr<float>();
+    params.edge_e1_z = scene.edge_e1_z.data_ptr<float>();
+    params.edge_mask = scene.edge_mask.data_ptr<uint8_t>();
+    params.edge_count = static_cast<int>(edge_count);
 }
 
 __global__ void init_edge_point_outputs_kernel(
@@ -227,7 +264,7 @@ void launch_edge_query(
             stream),
         "cudaMemcpyAsync(edge OptiX params)");
     raydtorch_OPTIX_CHECK(optixLaunch(
-        optix_entry.edge_pipeline,
+        edge_pipeline(optix_entry, kind),
         stream,
         reinterpret_cast<CUdeviceptr>(optix_entry.edge_params_buffer.data_ptr<uint8_t>()),
         sizeof(EdgeOptixQueryParams),
@@ -285,40 +322,29 @@ EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &
     at::Tensor query_y = point.select(1, 1).contiguous();
     at::Tensor query_z = point.select(1, 2).contiguous();
 
-    for (const OptixEdgeAccel &accel : scene.edge_accels) {
-        EdgeOptixQueryParams params = {};
-        params.handle = static_cast<uint64_t>(accel.traversable);
-        params.edge_p0_x = scene.edge_p0_x.data_ptr<float>();
-        params.edge_p0_y = scene.edge_p0_y.data_ptr<float>();
-        params.edge_p0_z = scene.edge_p0_z.data_ptr<float>();
-        params.edge_e1_x = scene.edge_e1_x.data_ptr<float>();
-        params.edge_e1_y = scene.edge_e1_y.data_ptr<float>();
-        params.edge_e1_z = scene.edge_e1_z.data_ptr<float>();
-        params.edge_mask = scene.edge_mask.data_ptr<uint8_t>();
-        params.edge_count = static_cast<int>(edge_count);
-        params.search_radius = accel.search_radius;
-        params.query_x = query_x.data_ptr<float>();
-        params.query_y = query_y.data_ptr<float>();
-        params.query_z = query_z.data_ptr<float>();
-        params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
-        params.query_count = static_cast<int>(point_count);
-        params.edge_shape_id = scene.edge_shape_id.data_ptr<int>();
-        params.edge_local_id = scene.edge_local_id.data_ptr<int>();
-        params.write_point_outputs = 1;
-        params.final_distance = out.distance.data_ptr<float>();
-        params.final_edge_point = out.edge_point.data_ptr<float>();
-        params.final_edge_t = out.edge_t.data_ptr<float>();
-        params.final_shape_id = out.shape_id.data_ptr<int>();
-        params.final_edge_id = out.edge_id.data_ptr<int>();
-        params.final_global_edge_id = out.global_edge_id.data_ptr<int>();
-        params.final_tape_edge_id = out.tape_edge_id.data_ptr<int>();
-        params.final_tape_s = out.tape_s.data_ptr<float>();
-        params.final_tape_d = out.tape_d.data_ptr<float>();
-        params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
+    EdgeOptixQueryParams params = {};
+    fill_edge_geometry_params(scene, edge_count, params);
+    params.query_x = query_x.data_ptr<float>();
+    params.query_y = query_y.data_ptr<float>();
+    params.query_z = query_z.data_ptr<float>();
+    params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
+    params.query_count = static_cast<int>(point_count);
+    params.edge_shape_id = scene.edge_shape_id.data_ptr<int>();
+    params.edge_local_id = scene.edge_local_id.data_ptr<int>();
+    params.write_point_outputs = 1;
+    params.final_distance = out.distance.data_ptr<float>();
+    params.final_edge_point = out.edge_point.data_ptr<float>();
+    params.final_edge_t = out.edge_t.data_ptr<float>();
+    params.final_shape_id = out.shape_id.data_ptr<int>();
+    params.final_edge_id = out.edge_id.data_ptr<int>();
+    params.final_global_edge_id = out.global_edge_id.data_ptr<int>();
+    params.final_tape_edge_id = out.tape_edge_id.data_ptr<int>();
+    params.final_tape_s = out.tape_s.data_ptr<float>();
+    params.final_tape_d = out.tape_d.data_ptr<float>();
+    params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
 
-        launch_edge_query(
-            optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
-    }
+    launch_edge_query(
+        optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
     return out;
 }
 
@@ -362,37 +388,26 @@ EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const a
     at::Tensor query_y = point.select(1, 1).contiguous();
     at::Tensor query_z = point.select(1, 2).contiguous();
 
-    for (const OptixEdgeAccel &accel : scene.edge_accels) {
-        EdgeOptixQueryParams params = {};
-        params.handle = static_cast<uint64_t>(accel.traversable);
-        params.edge_p0_x = scene.edge_p0_x.data_ptr<float>();
-        params.edge_p0_y = scene.edge_p0_y.data_ptr<float>();
-        params.edge_p0_z = scene.edge_p0_z.data_ptr<float>();
-        params.edge_e1_x = scene.edge_e1_x.data_ptr<float>();
-        params.edge_e1_y = scene.edge_e1_y.data_ptr<float>();
-        params.edge_e1_z = scene.edge_e1_z.data_ptr<float>();
-        params.edge_mask = scene.edge_mask.data_ptr<uint8_t>();
-        params.edge_count = static_cast<int>(edge_count);
-        params.search_radius = accel.search_radius;
-        params.query_x = query_x.data_ptr<float>();
-        params.query_y = query_y.data_ptr<float>();
-        params.query_z = query_z.data_ptr<float>();
-        params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
-        params.query_count = static_cast<int>(point_count);
-        params.edge_shape_id = scene.edge_shape_id.data_ptr<int>();
-        params.edge_local_id = scene.edge_local_id.data_ptr<int>();
-        params.write_point_outputs = 1;
-        params.final_distance = out.distance.data_ptr<float>();
-        params.final_edge_point = out.edge_point.data_ptr<float>();
-        params.final_edge_t = out.edge_t.data_ptr<float>();
-        params.final_shape_id = out.shape_id.data_ptr<int>();
-        params.final_edge_id = out.edge_id.data_ptr<int>();
-        params.final_global_edge_id = out.global_edge_id.data_ptr<int>();
-        params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
+    EdgeOptixQueryParams params = {};
+    fill_edge_geometry_params(scene, edge_count, params);
+    params.query_x = query_x.data_ptr<float>();
+    params.query_y = query_y.data_ptr<float>();
+    params.query_z = query_z.data_ptr<float>();
+    params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
+    params.query_count = static_cast<int>(point_count);
+    params.edge_shape_id = scene.edge_shape_id.data_ptr<int>();
+    params.edge_local_id = scene.edge_local_id.data_ptr<int>();
+    params.write_point_outputs = 1;
+    params.final_distance = out.distance.data_ptr<float>();
+    params.final_edge_point = out.edge_point.data_ptr<float>();
+    params.final_edge_t = out.edge_t.data_ptr<float>();
+    params.final_shape_id = out.shape_id.data_ptr<int>();
+    params.final_edge_id = out.edge_id.data_ptr<int>();
+    params.final_global_edge_id = out.global_edge_id.data_ptr<int>();
+    params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
 
-        launch_edge_query(
-            optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
-    }
+    launch_edge_query(
+        optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
     return out;
 }
 
@@ -457,63 +472,51 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     at::Tensor stage_edge_t = at::empty({ray_count}, fopts);
     at::Tensor stage_valid = at::empty({ray_count}, bopts);
 
-    for (const OptixEdgeAccel &accel : scene.edge_accels) {
-        EdgeOptixQueryParams params = {};
-        params.handle = static_cast<uint64_t>(accel.traversable);
-        params.edge_p0_x = scene.edge_p0_x.data_ptr<float>();
-        params.edge_p0_y = scene.edge_p0_y.data_ptr<float>();
-        params.edge_p0_z = scene.edge_p0_z.data_ptr<float>();
-        params.edge_e1_x = scene.edge_e1_x.data_ptr<float>();
-        params.edge_e1_y = scene.edge_e1_y.data_ptr<float>();
-        params.edge_e1_z = scene.edge_e1_z.data_ptr<float>();
-        params.edge_mask = scene.edge_mask.data_ptr<uint8_t>();
-        params.edge_count = static_cast<int>(edge_count);
-        params.search_radius = accel.search_radius;
-        params.query_x = query_x.data_ptr<float>();
-        params.query_y = query_y.data_ptr<float>();
-        params.query_z = query_z.data_ptr<float>();
-        params.ray_dx = ray_dx.data_ptr<float>();
-        params.ray_dy = ray_dy.data_ptr<float>();
-        params.ray_dz = ray_dz.data_ptr<float>();
-        params.ray_tmax = ray_tmax.data_ptr<float>();
-        params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
-        params.query_count = static_cast<int>(ray_count);
-        params.out_edge_ids = stage_edge_id.data_ptr<int>();
-        params.out_distance_sq = stage_distance_sq.data_ptr<float>();
-        params.out_ray_t = stage_ray_t.data_ptr<float>();
-        params.out_edge_t = stage_edge_t.data_ptr<float>();
-        params.out_valid = reinterpret_cast<uint8_t *>(stage_valid.data_ptr<bool>());
+    EdgeOptixQueryParams params = {};
+    fill_edge_geometry_params(scene, edge_count, params);
+    params.query_x = query_x.data_ptr<float>();
+    params.query_y = query_y.data_ptr<float>();
+    params.query_z = query_z.data_ptr<float>();
+    params.ray_dx = ray_dx.data_ptr<float>();
+    params.ray_dy = ray_dy.data_ptr<float>();
+    params.ray_dz = ray_dz.data_ptr<float>();
+    params.ray_tmax = ray_tmax.data_ptr<float>();
+    params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
+    params.query_count = static_cast<int>(ray_count);
+    params.out_edge_ids = stage_edge_id.data_ptr<int>();
+    params.out_distance_sq = stage_distance_sq.data_ptr<float>();
+    params.out_ray_t = stage_ray_t.data_ptr<float>();
+    params.out_edge_t = stage_edge_t.data_ptr<float>();
+    params.out_valid = reinterpret_cast<uint8_t *>(stage_valid.data_ptr<bool>());
 
-        launch_edge_query(
-            optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Ray, ray_count);
-        finalize_edge_ray_stage_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-            scene.edge_p0_x.data_ptr<float>(),
-            scene.edge_p0_y.data_ptr<float>(),
-            scene.edge_p0_z.data_ptr<float>(),
-            scene.edge_e1_x.data_ptr<float>(),
-            scene.edge_e1_y.data_ptr<float>(),
-            scene.edge_e1_z.data_ptr<float>(),
-            scene.edge_shape_id.data_ptr<int>(),
-            scene.edge_local_id.data_ptr<int>(),
-            ray_o.data_ptr<float>(),
-            ray_d.data_ptr<float>(),
-            stage_edge_id.data_ptr<int>(),
-            stage_distance_sq.data_ptr<float>(),
-            stage_ray_t.data_ptr<float>(),
-            stage_edge_t.data_ptr<float>(),
-            stage_valid.data_ptr<bool>(),
-            ray_count,
-            out.distance.data_ptr<float>(),
-            out.ray_t.data_ptr<float>(),
-            out.point.data_ptr<float>(),
-            out.edge_t.data_ptr<float>(),
-            out.edge_point.data_ptr<float>(),
-            out.shape_id.data_ptr<int>(),
-            out.edge_id.data_ptr<int>(),
-            out.global_edge_id.data_ptr<int>(),
-            out.tape_edge_id.data_ptr<int>(),
-            unresolved.data_ptr<bool>());
-    }
+    launch_edge_query(optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Ray, ray_count);
+    finalize_edge_ray_stage_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+        scene.edge_p0_x.data_ptr<float>(),
+        scene.edge_p0_y.data_ptr<float>(),
+        scene.edge_p0_z.data_ptr<float>(),
+        scene.edge_e1_x.data_ptr<float>(),
+        scene.edge_e1_y.data_ptr<float>(),
+        scene.edge_e1_z.data_ptr<float>(),
+        scene.edge_shape_id.data_ptr<int>(),
+        scene.edge_local_id.data_ptr<int>(),
+        ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(),
+        stage_edge_id.data_ptr<int>(),
+        stage_distance_sq.data_ptr<float>(),
+        stage_ray_t.data_ptr<float>(),
+        stage_edge_t.data_ptr<float>(),
+        stage_valid.data_ptr<bool>(),
+        ray_count,
+        out.distance.data_ptr<float>(),
+        out.ray_t.data_ptr<float>(),
+        out.point.data_ptr<float>(),
+        out.edge_t.data_ptr<float>(),
+        out.edge_point.data_ptr<float>(),
+        out.shape_id.data_ptr<int>(),
+        out.edge_id.data_ptr<int>(),
+        out.global_edge_id.data_ptr<int>(),
+        out.tape_edge_id.data_ptr<int>(),
+        unresolved.data_ptr<bool>());
     return out;
 }
 

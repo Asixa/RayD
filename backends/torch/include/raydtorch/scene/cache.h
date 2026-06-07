@@ -88,6 +88,10 @@ struct SceneCache {
     at::Tensor edge_opposite;
     OptixEdgeAccel edge_accel;
     std::vector<OptixEdgeAccel> edge_accels;
+    at::Tensor tri_p0_packed;
+    at::Tensor tri_e1_packed;
+    at::Tensor tri_e2_packed;
+    at::Tensor tri_fn_packed;
 };
 
 int64_t create_scene(std::vector<MeshRecord> meshes);

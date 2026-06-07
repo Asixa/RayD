@@ -4,11 +4,20 @@
 
 #ifdef __CUDACC__
 #  include <optix.h>
+#  include <vector_types.h>
 #else
 #  include <optix.h>
+#  include <vector_types.h>
 #endif
 
 namespace raydtorch {
+
+struct ReflAccumStagedValue {
+    // xyzw = power, field_x_re, field_x_im, field_y_re
+    float4 a;
+    // xyzw = field_y_im, field_z_re, field_z_im, reflection_count
+    float4 b;
+};
 
 /// Launch parameters for the native reflection-accumulation pipeline (flat SoA device pointers).
 struct AccumParams {
@@ -94,6 +103,8 @@ struct AccumParams {
     float *out_field_z_re;
     float *out_field_z_im;
     int *out_reflection_count;
+    int *stage_cell;
+    ReflAccumStagedValue *stage_value;
     int *out_wedge_count;
     int *out_wedge_ray_index;
     float *out_wedge_hit_x;

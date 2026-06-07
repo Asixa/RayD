@@ -33,6 +33,46 @@ void cuda_check(cudaError_t result, const char *expr) {
         std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
+void compact_accel_if_smaller(
+    OptixDeviceContext optix_context,
+    cudaStream_t stream,
+    at::TensorOptions byte_options,
+    at::Tensor &gas_buffer,
+    OptixTraversableHandle &traversable,
+    const at::Tensor &compacted_size_buffer,
+    const char *name) {
+    uint64_t compacted_size = 0;
+    cuda_check(
+        cudaMemcpyAsync(
+            &compacted_size,
+            compacted_size_buffer.data_ptr<uint8_t>(),
+            sizeof(uint64_t),
+            cudaMemcpyDeviceToHost,
+            stream),
+        "cudaMemcpyAsync(compacted GAS size)");
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(compacted GAS size)");
+    if (compacted_size == 0 || compacted_size >= static_cast<uint64_t>(gas_buffer.numel()))
+        return;
+    if (compacted_size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        throw std::runtime_error(std::string(name) + ": compacted GAS size exceeds int64 range.");
+    }
+
+    at::Tensor source_buffer = gas_buffer;
+    at::Tensor compacted_buffer =
+        at::empty({static_cast<int64_t>(compacted_size)}, byte_options);
+    OptixTraversableHandle compacted_traversable = 0;
+    raydtorch_OPTIX_CHECK(optixAccelCompact(
+        optix_context,
+        stream,
+        traversable,
+        reinterpret_cast<CUdeviceptr>(compacted_buffer.data_ptr<uint8_t>()),
+        static_cast<size_t>(compacted_size),
+        &compacted_traversable));
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(GAS compaction)");
+    gas_buffer = compacted_buffer;
+    traversable = compacted_traversable;
+}
+
 OptixTriangleAccel build_triangle_accel(
     const MeshRecord &mesh,
     OptixDeviceContext optix_context,
@@ -66,6 +106,8 @@ OptixTriangleAccel build_triangle_accel(
     accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
     if (mesh.dynamic)
         accel_options.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    else
+        accel_options.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
@@ -78,6 +120,18 @@ OptixTriangleAccel build_triangle_accel(
         at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
     accel.gas_buffer =
         at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+    at::Tensor compacted_size_buffer;
+    OptixAccelEmitDesc compacted_size_emit = {};
+    OptixAccelEmitDesc *emit_descs = nullptr;
+    unsigned int emit_desc_count = 0;
+    if (!mesh.dynamic) {
+        compacted_size_buffer = at::empty({static_cast<int64_t>(sizeof(uint64_t))}, byte_options);
+        compacted_size_emit.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+        compacted_size_emit.result =
+            reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
+        emit_descs = &compacted_size_emit;
+        emit_desc_count = 1;
+    }
 
     raydtorch_OPTIX_CHECK(optixAccelBuild(
         optix_context,
@@ -90,8 +144,18 @@ OptixTriangleAccel build_triangle_accel(
         reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
         buffer_sizes.outputSizeInBytes,
         &accel.traversable,
-        nullptr,
-        0));
+        emit_descs,
+        emit_desc_count));
+    if (!mesh.dynamic) {
+        compact_accel_if_smaller(
+            optix_context,
+            stream,
+            byte_options,
+            accel.gas_buffer,
+            accel.traversable,
+            compacted_size_buffer,
+            "build_triangle_accel()");
+    }
 
     return accel;
 }
@@ -222,6 +286,10 @@ void refresh_global_geometry(SceneCache &scene) {
     scene.tri_fn_x = at::empty({triangle_count}, fopts);
     scene.tri_fn_y = at::empty({triangle_count}, fopts);
     scene.tri_fn_z = at::empty({triangle_count}, fopts);
+    scene.tri_p0_packed = at::empty({triangle_count, 4}, fopts);
+    scene.tri_e1_packed = at::empty({triangle_count, 4}, fopts);
+    scene.tri_e2_packed = at::empty({triangle_count, 4}, fopts);
+    scene.tri_fn_packed = at::empty({triangle_count, 4}, fopts);
     compute_triangle_soa_cuda(
         triangle_count,
         scene.global_vertices,
@@ -237,7 +305,11 @@ void refresh_global_geometry(SceneCache &scene) {
         scene.tri_e2_z,
         scene.tri_fn_x,
         scene.tri_fn_y,
-        scene.tri_fn_z);
+        scene.tri_fn_z,
+        scene.tri_p0_packed,
+        scene.tri_e1_packed,
+        scene.tri_e2_packed,
+        scene.tri_fn_packed);
 }
 
 void update_triangle_accel(
@@ -310,101 +382,54 @@ bool scene_has_dynamic_edges(const SceneCache &scene) {
     return false;
 }
 
-uint64_t edge_key(int32_t a, int32_t b) {
-    const uint32_t lo = static_cast<uint32_t>(std::min(a, b));
-    const uint32_t hi = static_cast<uint32_t>(std::max(a, b));
-    return (static_cast<uint64_t>(lo) << 32) | static_cast<uint64_t>(hi);
-}
-
-int32_t edge_key_v0(uint64_t key) {
-    return static_cast<int32_t>(key >> 32);
-}
-
-int32_t edge_key_v1(uint64_t key) {
-    return static_cast<int32_t>(key & 0xffffffffu);
-}
-
-void build_edge_topology_cpu_fallback(SceneCache &scene) {
-    std::vector<int32_t> edge_v0;
-    std::vector<int32_t> edge_v1;
-    std::vector<int32_t> edge_face0;
-    std::vector<int32_t> edge_face1;
-    std::vector<int32_t> edge_opposite;
-    std::vector<int32_t> edge_shape_id;
-    std::vector<int32_t> edge_local_id;
-    std::vector<int32_t> local_edge_counts(scene.meshes.size(), 0);
+void build_edge_topology(SceneCache &scene) {
+    std::vector<at::Tensor> edge_v0_parts;
+    std::vector<at::Tensor> edge_v1_parts;
+    std::vector<at::Tensor> edge_face0_parts;
+    std::vector<at::Tensor> edge_face1_parts;
+    std::vector<at::Tensor> edge_opposite_parts;
+    std::vector<at::Tensor> edge_shape_id_parts;
+    std::vector<at::Tensor> edge_local_id_parts;
+    edge_v0_parts.reserve(scene.meshes.size());
+    edge_v1_parts.reserve(scene.meshes.size());
+    edge_face0_parts.reserve(scene.meshes.size());
+    edge_face1_parts.reserve(scene.meshes.size());
+    edge_opposite_parts.reserve(scene.meshes.size());
+    edge_shape_id_parts.reserve(scene.meshes.size());
+    edge_local_id_parts.reserve(scene.meshes.size());
 
     int32_t vertex_offset = 0;
     for (int32_t shape_id = 0; shape_id < static_cast<int32_t>(scene.meshes.size()); ++shape_id) {
         const MeshRecord &mesh = scene.meshes[shape_id];
-        if (!mesh.edges_enabled) {
-            vertex_offset += static_cast<int32_t>(scene.meshes[shape_id].vertices.size(0));
-            continue;
-        }
-        at::Tensor faces_cpu = mesh.faces.cpu();
-        const int *faces = faces_cpu.data_ptr<int>();
-        std::unordered_map<uint64_t, std::vector<std::pair<int32_t, int32_t>>> edge_map;
-        edge_map.reserve(static_cast<size_t>(faces_cpu.size(0)) * 3);
-        for (int32_t face_id = 0; face_id < static_cast<int32_t>(faces_cpu.size(0)); ++face_id) {
-            const int32_t tri[3] = {
-                static_cast<int32_t>(faces[face_id * 3 + 0]),
-                static_cast<int32_t>(faces[face_id * 3 + 1]),
-                static_cast<int32_t>(faces[face_id * 3 + 2]),
-            };
-            for (int local_edge = 0; local_edge < 3; ++local_edge) {
-                const int start_corner = local_edge;
-                const int end_corner = (local_edge + 1) % 3;
-                const int opposite_corner = (local_edge + 2) % 3;
-                const int32_t start_vertex = tri[start_corner];
-                const int32_t end_vertex = tri[end_corner];
-                const int32_t opposite_vertex = tri[opposite_corner];
-                edge_map[edge_key(start_vertex, end_vertex)].emplace_back(face_id, opposite_vertex);
+        if (mesh.edges_enabled) {
+            EdgeTopology topology = build_edge_topology_cuda(mesh.faces, vertex_offset, shape_id);
+            if (topology.edge_v0.numel() > 0) {
+                edge_v0_parts.push_back(topology.edge_v0);
+                edge_v1_parts.push_back(topology.edge_v1);
+                edge_face0_parts.push_back(topology.edge_face0);
+                edge_face1_parts.push_back(topology.edge_face1);
+                edge_opposite_parts.push_back(topology.edge_opposite);
+                edge_shape_id_parts.push_back(topology.edge_shape_id);
+                edge_local_id_parts.push_back(topology.edge_local_id);
             }
         }
-        std::vector<uint64_t> sorted_edge_keys;
-        sorted_edge_keys.reserve(edge_map.size());
-        for (const auto &entry : edge_map)
-            sorted_edge_keys.push_back(entry.first);
-        std::sort(sorted_edge_keys.begin(), sorted_edge_keys.end());
-
-        for (uint64_t key : sorted_edge_keys) {
-            const int32_t v0 = edge_key_v0(key);
-            const int32_t v1 = edge_key_v1(key);
-            const auto &faces_on_edge = edge_map.find(key)->second;
-            if (faces_on_edge.size() == 1) {
-                edge_v0.push_back(v0 + vertex_offset);
-                edge_v1.push_back(v1 + vertex_offset);
-                edge_face0.push_back(faces_on_edge[0].first);
-                edge_face1.push_back(-1);
-                edge_opposite.push_back(faces_on_edge[0].second + vertex_offset);
-                edge_shape_id.push_back(shape_id);
-                edge_local_id.push_back(local_edge_counts[shape_id]++);
-                continue;
-            }
-            for (size_t i = 0; i < faces_on_edge.size(); ++i) {
-                for (size_t j = i + 1; j < faces_on_edge.size(); ++j) {
-                    edge_v0.push_back(v0 + vertex_offset);
-                    edge_v1.push_back(v1 + vertex_offset);
-                    edge_face0.push_back(faces_on_edge[i].first);
-                    edge_face1.push_back(faces_on_edge[j].first);
-                    edge_opposite.push_back(faces_on_edge[i].second + vertex_offset);
-                    edge_shape_id.push_back(shape_id);
-                    edge_local_id.push_back(local_edge_counts[shape_id]++);
-                }
-            }
-        }
-        vertex_offset += static_cast<int32_t>(scene.meshes[shape_id].vertices.size(0));
+        vertex_offset += static_cast<int32_t>(mesh.vertices.size(0));
     }
 
-    at::TensorOptions cpu_iopts = at::TensorOptions().device(at::kCPU).dtype(at::kInt);
     at::Device device(at::kCUDA, scene.device_index);
-    scene.edge_v0 = at::tensor(edge_v0, cpu_iopts).to(device);
-    scene.edge_v1 = at::tensor(edge_v1, cpu_iopts).to(device);
-    scene.edge_face0 = at::tensor(edge_face0, cpu_iopts).to(device);
-    scene.edge_face1 = at::tensor(edge_face1, cpu_iopts).to(device);
-    scene.edge_opposite = at::tensor(edge_opposite, cpu_iopts).to(device);
-    scene.edge_shape_id = at::tensor(edge_shape_id, cpu_iopts).to(device);
-    scene.edge_local_id = at::tensor(edge_local_id, cpu_iopts).to(device);
+    at::TensorOptions iopts = at::TensorOptions().device(device).dtype(at::kInt);
+    auto cat_or_empty = [&](std::vector<at::Tensor> &parts) {
+        if (parts.empty())
+            return at::empty({0}, iopts);
+        return at::cat(parts, 0).contiguous();
+    };
+    scene.edge_v0 = cat_or_empty(edge_v0_parts);
+    scene.edge_v1 = cat_or_empty(edge_v1_parts);
+    scene.edge_face0 = cat_or_empty(edge_face0_parts);
+    scene.edge_face1 = cat_or_empty(edge_face1_parts);
+    scene.edge_opposite = cat_or_empty(edge_opposite_parts);
+    scene.edge_shape_id = cat_or_empty(edge_shape_id_parts);
+    scene.edge_local_id = cat_or_empty(edge_local_id_parts);
 }
 
 std::vector<float> compute_edge_search_radii(
@@ -488,6 +513,7 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
     at::Device device(at::kCUDA, scene.device_index);
     at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
     at::TensorOptions float_options = at::TensorOptions().device(device).dtype(at::kFloat);
+    const bool compact_static_edges = !scene_has_dynamic_edges(scene);
 
     for (size_t gas_index = 0; gas_index < radii.size(); ++gas_index) {
         OptixEdgeAccel &accel = scene.edge_accels[gas_index];
@@ -517,6 +543,8 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
 
         OptixAccelBuildOptions accel_options = {};
         accel_options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+        if (compact_static_edges)
+            accel_options.buildFlags |= OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
         OptixAccelBufferSizes buffer_sizes = {};
@@ -527,6 +555,18 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
             at::empty({static_cast<int64_t>(buffer_sizes.tempSizeInBytes)}, byte_options);
         accel.gas_buffer =
             at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
+        at::Tensor compacted_size_buffer;
+        OptixAccelEmitDesc compacted_size_emit = {};
+        OptixAccelEmitDesc *emit_descs = nullptr;
+        unsigned int emit_desc_count = 0;
+        if (compact_static_edges) {
+            compacted_size_buffer = at::empty({static_cast<int64_t>(sizeof(uint64_t))}, byte_options);
+            compacted_size_emit.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+            compacted_size_emit.result =
+                reinterpret_cast<CUdeviceptr>(compacted_size_buffer.data_ptr<uint8_t>());
+            emit_descs = &compacted_size_emit;
+            emit_desc_count = 1;
+        }
         raydtorch_OPTIX_CHECK(optixAccelBuild(
             optix_context,
             stream,
@@ -538,8 +578,18 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
             reinterpret_cast<CUdeviceptr>(accel.gas_buffer.data_ptr<uint8_t>()),
             buffer_sizes.outputSizeInBytes,
             &accel.traversable,
-            nullptr,
-            0));
+            emit_descs,
+            emit_desc_count));
+        if (compact_static_edges) {
+            compact_accel_if_smaller(
+                optix_context,
+                stream,
+                byte_options,
+                accel.gas_buffer,
+                accel.traversable,
+                compacted_size_buffer,
+                "build_edge_accel()");
+        }
         accel.search_radius = radius;
     }
     scene.edge_accel = scene.edge_accels.back();
@@ -661,7 +711,7 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
         scene->triangle_accels.push_back(
             build_triangle_accel(mesh, optix_entry.optix_context, torch_ctx.stream));
     build_triangle_ias(*scene, optix_entry.optix_context, torch_ctx.stream);
-    build_edge_topology_cpu_fallback(*scene);
+    build_edge_topology(*scene);
     build_edge_accel(*scene, optix_entry.optix_context, torch_ctx.stream);
     const int64_t handle = scene->handle;
 

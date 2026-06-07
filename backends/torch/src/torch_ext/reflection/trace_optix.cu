@@ -89,6 +89,37 @@ static __forceinline__ __device__ int output_slot(unsigned int ray_index, int bo
     return static_cast<int>(ray_index) * params.max_bounces + bounce;
 }
 
+struct TriangleData {
+    float3 p0;
+    float3 e1;
+    float3 e2;
+    float3 fn;
+};
+
+static __forceinline__ __device__ float3 f3_from_f4(float4 value) {
+    return make_f3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ TriangleData load_triangle_data(int prim) {
+    TriangleData tri;
+    if (params.tri_p0_packed != nullptr &&
+        params.tri_e1_packed != nullptr &&
+        params.tri_e2_packed != nullptr &&
+        params.tri_fn_packed != nullptr) {
+        tri.p0 = f3_from_f4(params.tri_p0_packed[prim]);
+        tri.e1 = f3_from_f4(params.tri_e1_packed[prim]);
+        tri.e2 = f3_from_f4(params.tri_e2_packed[prim]);
+        tri.fn = f3_from_f4(params.tri_fn_packed[prim]);
+        return tri;
+    }
+
+    tri.p0 = make_f3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
+    tri.e1 = make_f3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
+    tri.e2 = make_f3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
+    tri.fn = make_f3(params.tri_fn_x[prim], params.tri_fn_y[prim], params.tri_fn_z[prim]);
+    return tri;
+}
+
 } // namespace
 
 extern "C" __global__ void __closesthit__reflection() {
@@ -161,24 +192,9 @@ extern "C" __global__ void __raygen__reflection_trace() {
         float3 geo_normal = make_f3(0.0f, 0.0f, 1.0f);
 
         if (global_prim >= 0 && global_prim < params.n_triangles) {
-            const float p0x = params.tri_p0_x[global_prim];
-            const float p0y = params.tri_p0_y[global_prim];
-            const float p0z = params.tri_p0_z[global_prim];
-            const float e1x = params.tri_e1_x[global_prim];
-            const float e1y = params.tri_e1_y[global_prim];
-            const float e1z = params.tri_e1_z[global_prim];
-            const float e2x = params.tri_e2_x[global_prim];
-            const float e2y = params.tri_e2_y[global_prim];
-            const float e2z = params.tri_e2_z[global_prim];
-
-            hit_point = make_f3(
-                p0x + bary_u * e1x + bary_v * e2x,
-                p0y + bary_u * e1y + bary_v * e2y,
-                p0z + bary_u * e1z + bary_v * e2z);
-            geo_normal = normalize3(make_f3(
-                params.tri_fn_x[global_prim],
-                params.tri_fn_y[global_prim],
-                params.tri_fn_z[global_prim]));
+            const TriangleData tri = load_triangle_data(global_prim);
+            hit_point = tri.p0 + bary_u * tri.e1 + bary_v * tri.e2;
+            geo_normal = normalize3(tri.fn);
         }
 
         if (dot3(direction, geo_normal) > 0.0f)

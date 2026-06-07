@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optix.h>
+#include <vector_types.h>
 
 #include <cstdint>
 
@@ -23,6 +24,10 @@ struct ReflectionTraceParams {
     const float *tri_fn_x = nullptr;
     const float *tri_fn_y = nullptr;
     const float *tri_fn_z = nullptr;
+    const float4 *tri_p0_packed = nullptr;
+    const float4 *tri_e1_packed = nullptr;
+    const float4 *tri_e2_packed = nullptr;
+    const float4 *tri_fn_packed = nullptr;
 
     const int *face_offsets = nullptr;
     int n_meshes = 0;

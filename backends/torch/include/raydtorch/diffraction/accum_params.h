@@ -9,6 +9,7 @@
 #else
 #  include <optix.h>
 #endif
+#include <vector_types.h>
 
 namespace raydtorch {
 
@@ -254,6 +255,11 @@ struct DfrAccumParams {
     int *tape_cell;
     int *tape_material_idx;
     float *tape_edge_u;
+
+    // Optional no-AD staging path for sort/reduce-by-key accumulation.
+    // stage_value = (power, field_x_re, direct_count, keller_count).
+    int *stage_cell;
+    float4 *stage_value;
 };
 
 } // namespace raydtorch

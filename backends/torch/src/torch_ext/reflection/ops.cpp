@@ -11,6 +11,7 @@
 #include <raydtorch/reflection/kernels.h>
 #include <raydtorch/reflection/pipeline.h>
 #include <raydtorch/common/optix_context.h>
+#include <raydtorch/reflection/accum_reduce.h>
 #include <raydtorch/reflection/accum_params.h>
 #include <raydtorch/reflection/dedup.h>
 #include <raydtorch/reflection/epc_field.h>
@@ -33,6 +34,9 @@
 namespace raydtorch {
 
 namespace {
+
+constexpr int64_t kStagedReflAccumMinSamples = 2048;
+constexpr int64_t kStagedReflAccumMinSamplesPerCell = 4;
 
 void require_same_batch(const at::Tensor &a, const at::Tensor &b, const char *name) {
     if (a.size(0) != b.size(0))
@@ -105,6 +109,10 @@ struct TriangleSoA {
     at::Tensor fn_x;
     at::Tensor fn_y;
     at::Tensor fn_z;
+    at::Tensor p0_packed;
+    at::Tensor e1_packed;
+    at::Tensor e2_packed;
+    at::Tensor fn_packed;
     at::Tensor face_offsets;
     int32_t n_triangles = 0;
 };
@@ -130,6 +138,10 @@ TriangleSoA make_triangle_soa(const MeshRecord &mesh) {
         fn.select(1, 0).contiguous(),
         fn.select(1, 1).contiguous(),
         fn.select(1, 2).contiguous(),
+        at::empty({0, 4}, mesh.vertices.options()),
+        at::empty({0, 4}, mesh.vertices.options()),
+        at::empty({0, 4}, mesh.vertices.options()),
+        at::empty({0, 4}, mesh.vertices.options()),
         at::zeros({1}, mesh.faces.options()),
         static_cast<int32_t>(mesh.faces.size(0)),
     };
@@ -149,6 +161,10 @@ TriangleSoA make_scene_triangle_soa(const SceneCache &scene) {
         scene.tri_fn_x,
         scene.tri_fn_y,
         scene.tri_fn_z,
+        scene.tri_p0_packed,
+        scene.tri_e1_packed,
+        scene.tri_e2_packed,
+        scene.tri_fn_packed,
         scene.face_offsets.contiguous(),
         static_cast<int32_t>(scene.global_faces.size(0)),
     };
@@ -332,6 +348,10 @@ py::tuple trace_reflections_forward_impl(
     params.tri_fn_x = tri.fn_x.data_ptr<float>();
     params.tri_fn_y = tri.fn_y.data_ptr<float>();
     params.tri_fn_z = tri.fn_z.data_ptr<float>();
+    params.tri_p0_packed = reinterpret_cast<const float4 *>(tri.p0_packed.data_ptr<float>());
+    params.tri_e1_packed = reinterpret_cast<const float4 *>(tri.e1_packed.data_ptr<float>());
+    params.tri_e2_packed = reinterpret_cast<const float4 *>(tri.e2_packed.data_ptr<float>());
+    params.tri_fn_packed = reinterpret_cast<const float4 *>(tri.fn_packed.data_ptr<float>());
     params.face_offsets = tri.face_offsets.data_ptr<int>();
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
     params.n_triangles = tri.n_triangles;
@@ -941,6 +961,17 @@ py::tuple reflection_accumulation_forward_op(
     SceneCache &scene = get_scene(scene_handle);
     const int64_t ray_count = ray_o.size(0);
     const int64_t cell_count = grid_resolution0 * grid_resolution1;
+    const int32_t max_bounces_i = checked_i32(max_bounces, "max_bounces");
+    const int64_t stage_depth_count = max_bounces + 1;
+    const bool stage_sample_count_fits =
+        ray_count <= static_cast<int64_t>(std::numeric_limits<int32_t>::max()) /
+                         std::max<int64_t>(stage_depth_count, 1);
+    const int64_t stage_sample_count =
+        stage_sample_count_fits ? ray_count * stage_depth_count : 0;
+    const bool staged_accum =
+        stage_sample_count_fits &&
+        stage_sample_count >= kStagedReflAccumMinSamples &&
+        stage_sample_count >= cell_count * kStagedReflAccumMinSamplesPerCell;
     auto fopts = ray_o.options();
     auto iopts = scene.global_faces.options();
     at::Tensor power = at::zeros({cell_count}, fopts);
@@ -975,6 +1006,12 @@ py::tuple reflection_accumulation_forward_op(
     at::Tensor material_gain = at::ones({tri.n_triangles}, fopts);
     at::Tensor material_mu_r = at::ones({tri.n_triangles}, fopts);
     at::Tensor material_valid = at::ones({tri.n_triangles}, active.options());
+    at::Tensor stage_cell = staged_accum
+        ? at::full({stage_sample_count}, -1, iopts)
+        : at::Tensor();
+    at::Tensor stage_value = staged_accum
+        ? at::zeros({stage_sample_count, 8}, fopts)
+        : at::Tensor();
 
     AccumParams params = {};
     params.primary_handle = scene.triangle_ias.traversable;
@@ -1010,7 +1047,7 @@ py::tuple reflection_accumulation_forward_op(
     params.tx_pol_x = tx_pol_soa.x.data_ptr<float>();
     params.tx_pol_y = tx_pol_soa.y.data_ptr<float>();
     params.tx_pol_z = tx_pol_soa.z.data_ptr<float>();
-    params.max_bounces = static_cast<int32_t>(max_bounces);
+    params.max_bounces = max_bounces_i;
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.solid_angle_per_ray = 1.0f;
@@ -1049,10 +1086,28 @@ py::tuple reflection_accumulation_forward_op(
     params.out_field_z_re = field_z_re.data_ptr<float>();
     params.out_field_z_im = field_z_im.data_ptr<float>();
     params.out_reflection_count = reflection_count.data_ptr<int>();
+    params.stage_cell = staged_accum ? stage_cell.data_ptr<int>() : nullptr;
+    params.stage_value = staged_accum
+        ? reinterpret_cast<ReflAccumStagedValue *>(stage_value.data_ptr<float>())
+        : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     optix_pipeline_for_scene(scene, reflection_accumulation_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    if (staged_accum) {
+        reduce_refl_accum_staged_cuda(
+            stage_sample_count,
+            stage_cell,
+            stage_value,
+            power,
+            field_x_re,
+            field_x_im,
+            field_y_re,
+            field_y_im,
+            field_z_re,
+            field_z_im,
+            reflection_count);
+    }
     return py::make_tuple(
         power.reshape({grid_resolution1, grid_resolution0}),
         field_x_re.reshape({grid_resolution1, grid_resolution0}),

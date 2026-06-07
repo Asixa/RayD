@@ -2624,7 +2624,7 @@ During `create_scene`, build scene-global edge records:
 - `edge_shape_id`: `(E,) int32`
 - `edge_local_id`: `(E,) int32`
 
-For the first edge milestone, build this topology on host from `faces.cpu()` only during `Scene.build()`. Later replace with CUDA topology construction if build time is a bottleneck.
+Historical note: the first edge milestone allowed host topology construction from `faces.cpu()`. The current implementation supersedes that path with CUDA/CUB topology construction during `Scene.build()`.
 
 - [x] **Step 4: Implement exact nearest point-edge CUDA forward**
 
