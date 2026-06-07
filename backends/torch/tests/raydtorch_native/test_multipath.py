@@ -165,7 +165,7 @@ class MultipathTests(unittest.TestCase):
         self.assertEqual(out[0].shape, (4, 4))
         self.assertEqual(out[-1].dtype, torch.int32)
 
-    def test_dfr_direct_accum_backward_reaches_state_tensors(self):
+    def test_legacy_dfr_direct_entrypoints_are_removed(self):
         scene = rt.Scene()
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
@@ -178,11 +178,10 @@ class MultipathTests(unittest.TestCase):
         edge_pos = torch.tensor([[0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
         edge_dir = torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
         src = torch.tensor([[0.0, -1.0, 0.2]], device="cuda", dtype=torch.float32, requires_grad=True)
-        out = scene.accum_dfr_legacy_direct(edge_pos=edge_pos, edge_dir=edge_dir, src=src)
-        out.power.sum().backward()
-        self.assertIsNotNone(edge_pos.grad)
-        self.assertIsNotNone(edge_dir.grad)
-        self.assertIsNotNone(src.grad)
+        self.assertFalse(hasattr(scene, "accum_dfr_legacy_direct"))
+        self.assertFalse(hasattr(rt._C, "accum_dfr_direct_forward"))
+        with self.assertRaises(TypeError):
+            scene.accum_dfr_direct(edge_pos=edge_pos, edge_dir=edge_dir, src=src)
 
     def test_diffraction_paths_order1_native_binding_smoke(self):
         verts = torch.tensor(
@@ -212,6 +211,10 @@ class MultipathTests(unittest.TestCase):
         active = torch.ones((1,), device="cuda", dtype=torch.bool)
         material_gain = torch.ones((1,), device="cuda", dtype=torch.float32)
         material_valid = torch.ones((1,), device="cuda", dtype=torch.bool)
+        empty_i = torch.empty((0,), device="cuda", dtype=torch.int32)
+        empty_f = torch.empty((0,), device="cuda", dtype=torch.float32)
+        empty_v = torch.empty((0, 3), device="cuda", dtype=torch.float32)
+        empty_b = torch.empty((0,), device="cuda", dtype=torch.bool)
 
         out = rt._C.diffraction_paths_order1_forward(
             scene._native_handle,
@@ -270,6 +273,10 @@ class MultipathTests(unittest.TestCase):
         material_mu_r = torch.ones((1,), device="cuda", dtype=torch.float32)
         material_gain = torch.ones((1,), device="cuda", dtype=torch.float32)
         material_valid = torch.ones((1,), device="cuda", dtype=torch.bool)
+        empty_i = torch.empty((0,), device="cuda", dtype=torch.int32)
+        empty_f = torch.empty((0,), device="cuda", dtype=torch.float32)
+        empty_v = torch.empty((0, 3), device="cuda", dtype=torch.float32)
+        empty_b = torch.empty((0,), device="cuda", dtype=torch.bool)
 
         out = rt._C.diffraction_accumulation_forward(
             scene._native_handle,
@@ -305,6 +312,20 @@ class MultipathTests(unittest.TestCase):
             1.0,
             4,
             0,
+            0,
+            0,
+            1,
+            empty_b,
+            empty_i,
+            empty_v,
+            empty_v,
+            empty_f,
+            empty_f,
+            empty_v,
+            empty_v,
+            empty_i,
+            empty_i,
+            empty_f,
         )
         self.assertEqual(out[0].shape, (4, 4))
         self.assertEqual(out[1].dtype, torch.float32)
@@ -347,3 +368,132 @@ class MultipathTests(unittest.TestCase):
         out = scene.accum_dfr_direct(states=states, grid=grid, wavelength=1.0, direct_samples=4)
         self.assertEqual(out.power.shape, (4, 4))
         self.assertEqual(out.field_x_re.dtype, torch.float32)
+
+    def test_scene_accum_dfr_direct_backward_reaches_state_and_material(self):
+        verts = torch.tensor(
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+
+        edge_pos = torch.tensor([[0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        edge_dir = torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        edge_t_min = torch.tensor([-0.5], device="cuda", dtype=torch.float32, requires_grad=True)
+        edge_t_max = torch.tensor([0.5], device="cuda", dtype=torch.float32, requires_grad=True)
+        exterior_angle = torch.tensor([1.5 * torch.pi], device="cuda", dtype=torch.float32, requires_grad=True)
+        src = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        src_power = torch.tensor([2.0], device="cuda", dtype=torch.float32, requires_grad=True)
+        wi = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32, requires_grad=True)
+        states = rt.DfrStates(
+            edge_index=torch.tensor([0], device="cuda", dtype=torch.int32),
+            edge_pos=edge_pos,
+            edge_dir=edge_dir,
+            edge_t_min=edge_t_min,
+            edge_t_max=edge_t_max,
+            n0=torch.tensor([[0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32),
+            n1=torch.tensor([[0.0, -1.0, 0.0]], device="cuda", dtype=torch.float32),
+            prim0=torch.tensor([-1], device="cuda", dtype=torch.int32),
+            prim1=torch.tensor([-1], device="cuda", dtype=torch.int32),
+            exterior_angle=exterior_angle,
+            src=src,
+            src_power=src_power,
+            wi=wi,
+            d0=torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
+            count=1,
+        )
+        gain = torch.tensor([1.0], device="cuda", dtype=torch.float32, requires_grad=True)
+        material = rt.DfrMaterial(
+            eta_r=torch.tensor([4.0], device="cuda", dtype=torch.float32),
+            sigma=torch.tensor([0.0], device="cuda", dtype=torch.float32),
+            mu_r=torch.tensor([1.0], device="cuda", dtype=torch.float32),
+            gain=gain,
+            valid=torch.tensor([True], device="cuda", dtype=torch.bool),
+        )
+        grid = rt.DfrGrid(axis=2, position=-1.0, resolution0=1, resolution1=1, cell_area=4.0)
+        out = scene.accum_dfr_direct(
+            states=states,
+            grid=grid,
+            material=material,
+            wavelength=0.125,
+            seed=17,
+            direct_samples=64,
+        )
+        (out.power.sum() + out.field_x_re.sum()).backward()
+        for tensor in (edge_pos, edge_dir, edge_t_min, edge_t_max, exterior_angle, src, src_power, wi, gain):
+            self.assertIsNotNone(tensor.grad)
+            self.assertTrue(bool(torch.isfinite(tensor.grad).all().item()))
+
+    def test_scene_accum_dfr_direct_jvp_reaches_power_and_field_x_re(self):
+        verts = torch.tensor(
+            [[-1.0, -1.0, 10.0], [1.0, -1.0, 10.0], [-1.0, 1.0, 10.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+
+        edge_pos = torch.tensor([[0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32)
+        states = rt.DfrStates(
+            edge_index=torch.tensor([0], device="cuda", dtype=torch.int32),
+            edge_pos=edge_pos,
+            edge_dir=torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
+            edge_t_min=torch.tensor([-0.5], device="cuda", dtype=torch.float32),
+            edge_t_max=torch.tensor([0.5], device="cuda", dtype=torch.float32),
+            n0=torch.tensor([[0.0, 1.0, 0.0]], device="cuda", dtype=torch.float32),
+            n1=torch.tensor([[0.0, -1.0, 0.0]], device="cuda", dtype=torch.float32),
+            prim0=torch.tensor([-1], device="cuda", dtype=torch.int32),
+            prim1=torch.tensor([-1], device="cuda", dtype=torch.int32),
+            exterior_angle=torch.tensor([1.5 * torch.pi], device="cuda", dtype=torch.float32),
+            src=torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32),
+            src_power=torch.tensor([2.0], device="cuda", dtype=torch.float32),
+            wi=torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
+            d0=torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32),
+            count=1,
+        )
+        material = rt.DfrMaterial(
+            eta_r=torch.tensor([4.0], device="cuda", dtype=torch.float32),
+            sigma=torch.tensor([0.0], device="cuda", dtype=torch.float32),
+            mu_r=torch.tensor([1.0], device="cuda", dtype=torch.float32),
+            gain=torch.tensor([1.0], device="cuda", dtype=torch.float32),
+            valid=torch.tensor([True], device="cuda", dtype=torch.bool),
+        )
+        grid = rt.DfrGrid(axis=2, position=-1.0, resolution0=1, resolution1=1, cell_area=4.0)
+        with torch.autograd.forward_ad.dual_level():
+            dual_edge_pos = torch.autograd.forward_ad.make_dual(edge_pos, torch.ones_like(edge_pos) * 0.01)
+            dual_states = rt.DfrStates(
+                edge_index=states.edge_index,
+                edge_pos=dual_edge_pos,
+                edge_dir=states.edge_dir,
+                edge_t_min=states.edge_t_min,
+                edge_t_max=states.edge_t_max,
+                n0=states.n0,
+                n1=states.n1,
+                prim0=states.prim0,
+                prim1=states.prim1,
+                exterior_angle=states.exterior_angle,
+                src=states.src,
+                src_power=states.src_power,
+                wi=states.wi,
+                d0=states.d0,
+                count=states.count,
+            )
+            out = scene.accum_dfr_direct(
+                states=dual_states,
+                grid=grid,
+                material=material,
+                wavelength=0.125,
+                seed=17,
+                direct_samples=64,
+            )
+            _power, tangent_power = torch.autograd.forward_ad.unpack_dual(out.power)
+            _field_x_re, tangent_field_x_re = torch.autograd.forward_ad.unpack_dual(out.field_x_re)
+        self.assertIsNotNone(tangent_power)
+        self.assertIsNotNone(tangent_field_x_re)
+        self.assertTrue(bool(torch.isfinite(tangent_power).all().item()))
+        self.assertTrue(bool(torch.isfinite(tangent_field_x_re).all().item()))

@@ -5,7 +5,7 @@ import torch
 from . import _C
 from .types import (
     DfrAccum,
-    DfrDirectAccum,
+    DfrCoherentAccum,
     DfrGrid,
     DfrMaterial,
     DfrPaths,
@@ -436,63 +436,6 @@ def trace_refl_epc_field(
     return ReflEpcField(*values[:5])
 
 
-class _AccumDfrDirectFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor):
-        if _C is None:
-            raise RuntimeError("RayDTorch extension is not built yet.")
-        return _C.accum_dfr_direct_forward(edge_pos, edge_dir, src)
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        edge_pos, edge_dir, src = inputs
-        edge_pos = torch.autograd.forward_ad.unpack_dual(edge_pos).primal
-        edge_dir = torch.autograd.forward_ad.unpack_dual(edge_dir).primal
-        src = torch.autograd.forward_ad.unpack_dual(src).primal
-        ctx.save_for_backward(edge_pos, edge_dir, src)
-        ctx.save_for_forward(edge_pos, edge_dir, src)
-
-    @staticmethod
-    def backward(ctx, *grad_outputs):
-        edge_pos, edge_dir, src = ctx.saved_tensors
-        grad_power = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros((edge_pos.shape[0],), device=edge_pos.device, dtype=edge_pos.dtype)
-        grad_field_x_re = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(grad_power)
-        grad_field_x_im = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(grad_power)
-        grad_edge_pos, grad_edge_dir, grad_src = _C.accum_dfr_direct_backward(
-            edge_pos,
-            edge_dir,
-            src,
-            grad_power,
-            grad_field_x_re,
-            grad_field_x_im,
-        )
-        return grad_edge_pos, grad_edge_dir, grad_src
-
-    @staticmethod
-    def jvp(ctx, grad_edge_pos, grad_edge_dir, grad_src):
-        edge_pos, edge_dir, src = ctx.saved_tensors
-        if grad_edge_pos is None:
-            grad_edge_pos = torch.zeros_like(edge_pos)
-        if grad_edge_dir is None:
-            grad_edge_dir = torch.zeros_like(edge_dir)
-        if grad_src is None:
-            grad_src = torch.zeros_like(src)
-        with torch._C._DisableFuncTorch():
-            return _C.accum_dfr_direct_jvp(
-                _native_tensor(edge_pos),
-                _native_tensor(edge_dir),
-                _native_tensor(src),
-                _native_tensor(grad_edge_pos),
-                _native_tensor(grad_edge_dir),
-                _native_tensor(grad_src),
-            )
-
-
-def accum_dfr_direct(edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor) -> DfrDirectAccum:
-    values = _AccumDfrDirectFunction.apply(edge_pos, edge_dir, src)
-    return DfrDirectAccum(*values)
-
-
 def _contig_states(states: DfrStates) -> DfrStates:
     states = states.with_default_vectors()
     n = states.state_count
@@ -567,6 +510,262 @@ def trace_dfr_paths_order1_native(
     return DfrPaths(capacity, *values)
 
 
+class _DfrDirectAccumFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(*args):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        active = args[1]
+        state_edge_index = args[2]
+        state_edge_pos = args[3]
+        state_edge_t_min = args[5]
+        empty_b = active.new_empty((0,))
+        empty_i = state_edge_index.new_empty((0,))
+        empty_f = state_edge_t_min.new_empty((0,))
+        empty_v = state_edge_pos.new_empty((0, 3))
+        return _C.diffraction_accumulation_forward(
+            *args,
+            1,
+            empty_b,
+            empty_i,
+            empty_v,
+            empty_v,
+            empty_f,
+            empty_f,
+            empty_v,
+            empty_v,
+            empty_i,
+            empty_i,
+            empty_f,
+        )
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.scene_handle = int(inputs[0])
+        ctx.grid_axis = int(inputs[21])
+        ctx.grid_position = float(inputs[22])
+        ctx.grid_coord0_min = float(inputs[23])
+        ctx.grid_coord0_max = float(inputs[24])
+        ctx.grid_coord1_min = float(inputs[25])
+        ctx.grid_coord1_max = float(inputs[26])
+        ctx.grid_resolution0 = int(inputs[27])
+        ctx.grid_resolution1 = int(inputs[28])
+        ctx.grid_cell_area = float(inputs[29])
+        ctx.wavelength = float(inputs[30])
+        ctx.direct_samples = int(inputs[31])
+        ctx.keller_samples = int(inputs[32])
+        ctx.suffix_samples = int(inputs[33])
+        ctx.seed = int(inputs[34])
+        saved = (
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            inputs[6],
+            inputs[9],
+            inputs[10],
+            inputs[11],
+            inputs[12],
+            inputs[13],
+            inputs[14],
+            inputs[19],
+            inputs[20],
+            output[14],
+            output[15],
+            output[16],
+            output[17],
+            output[18],
+        )
+        ctx.save_for_backward(*saved)
+        ctx.save_for_forward(*saved)
+        ctx.mark_non_differentiable(*output[7:19])
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        (
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            state_wi,
+            material_gain,
+            material_valid,
+            tape_active,
+            tape_state_idx,
+            tape_cell,
+            tape_material_idx,
+            tape_edge_u,
+        ) = ctx.saved_tensors
+        grad_power = grad_outputs[0]
+        if grad_power is None:
+            grad_power = torch.zeros(
+                (ctx.grid_resolution1, ctx.grid_resolution0),
+                device=state_edge_pos.device,
+                dtype=state_edge_pos.dtype,
+            )
+        grad_field_x_re = grad_outputs[1]
+        if grad_field_x_re is None:
+            grad_field_x_re = torch.zeros(
+                (ctx.grid_resolution1, ctx.grid_resolution0),
+                device=state_edge_pos.device,
+                dtype=state_edge_pos.dtype,
+            )
+        (
+            grad_state_edge_pos,
+            grad_state_edge_dir,
+            grad_state_edge_t_min,
+            grad_state_edge_t_max,
+            grad_state_src,
+            grad_state_wi,
+            grad_state_src_power,
+            grad_state_exterior_angle,
+            grad_material_gain,
+        ) = _C.diffraction_accumulation_direct_backward(
+            ctx.scene_handle,
+            tape_active,
+            tape_state_idx,
+            tape_cell,
+            tape_material_idx,
+            tape_edge_u,
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            state_wi,
+            material_gain,
+            material_valid,
+            ctx.grid_axis,
+            ctx.grid_position,
+            ctx.grid_coord0_min,
+            ctx.grid_coord0_max,
+            ctx.grid_coord1_min,
+            ctx.grid_coord1_max,
+            ctx.grid_resolution0,
+            ctx.grid_resolution1,
+            ctx.grid_cell_area,
+            ctx.wavelength,
+            ctx.direct_samples,
+            ctx.keller_samples,
+            ctx.suffix_samples,
+            ctx.seed,
+            grad_power.contiguous(),
+            grad_field_x_re.contiguous(),
+        )
+        grads = [None] * 35
+        grads[3] = grad_state_edge_pos
+        grads[4] = grad_state_edge_dir
+        grads[5] = grad_state_edge_t_min
+        grads[6] = grad_state_edge_t_max
+        grads[11] = grad_state_exterior_angle
+        grads[12] = grad_state_src
+        grads[13] = grad_state_src_power
+        grads[14] = grad_state_wi
+        grads[19] = grad_material_gain
+        return tuple(grads)
+
+    @staticmethod
+    def jvp(ctx, *grad_inputs):
+        (
+            state_edge_pos,
+            state_edge_dir,
+            state_edge_t_min,
+            state_edge_t_max,
+            state_prim0,
+            state_prim1,
+            state_exterior_angle,
+            state_src,
+            state_src_power,
+            state_wi,
+            material_gain,
+            material_valid,
+            tape_active,
+            tape_state_idx,
+            tape_cell,
+            tape_material_idx,
+            tape_edge_u,
+        ) = ctx.saved_tensors
+
+        def tangent_at(index: int, primal: torch.Tensor) -> torch.Tensor:
+            tangent = grad_inputs[index] if index < len(grad_inputs) else None
+            return torch.zeros_like(primal) if tangent is None else tangent
+
+        with torch._C._DisableFuncTorch():
+            dot_power, dot_field_x_re = _C.diffraction_accumulation_direct_jvp(
+                ctx.scene_handle,
+                _native_tensor(tape_active),
+                _native_tensor(tape_state_idx),
+                _native_tensor(tape_cell),
+                _native_tensor(tape_material_idx),
+                _native_tensor(tape_edge_u),
+                _native_tensor(state_edge_pos),
+                _native_tensor(state_edge_dir),
+                _native_tensor(state_edge_t_min),
+                _native_tensor(state_edge_t_max),
+                _native_tensor(state_prim0),
+                _native_tensor(state_prim1),
+                _native_tensor(state_exterior_angle),
+                _native_tensor(state_src),
+                _native_tensor(state_src_power),
+                _native_tensor(state_wi),
+                _native_tensor(material_gain),
+                _native_tensor(material_valid),
+                ctx.grid_axis,
+                ctx.grid_position,
+                ctx.grid_coord0_min,
+                ctx.grid_coord0_max,
+                ctx.grid_coord1_min,
+                ctx.grid_coord1_max,
+                ctx.grid_resolution0,
+                ctx.grid_resolution1,
+                ctx.grid_cell_area,
+                ctx.wavelength,
+                ctx.direct_samples,
+                ctx.keller_samples,
+                ctx.suffix_samples,
+                ctx.seed,
+                _native_tensor(tangent_at(3, state_edge_pos)),
+                _native_tensor(tangent_at(4, state_edge_dir)),
+                _native_tensor(tangent_at(5, state_edge_t_min)),
+                _native_tensor(tangent_at(6, state_edge_t_max)),
+                _native_tensor(tangent_at(11, state_exterior_angle)),
+                _native_tensor(tangent_at(12, state_src)),
+                _native_tensor(tangent_at(13, state_src_power)),
+                _native_tensor(tangent_at(14, state_wi)),
+                _native_tensor(tangent_at(19, material_gain)),
+            )
+        zero = torch.zeros_like(dot_power)
+        return (
+            dot_power,
+            dot_field_x_re,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
 def accum_dfr_direct_native(
     scene_handle: int,
     states: DfrStates,
@@ -577,12 +776,12 @@ def accum_dfr_direct_native(
     wavelength: float,
     direct_samples: int,
     keller_samples: int = 0,
+    suffix_samples: int = 0,
+    seed: int = 0,
 ) -> DfrAccum:
-    if _C is None:
-        raise RuntimeError("RayDTorch extension is not built yet.")
     states = _contig_states(states)
     material = _contig_material(material)
-    values = _C.diffraction_accumulation_forward(
+    values = _DfrDirectAccumFunction.apply(
         int(scene_handle),
         active.contiguous(),
         states.edge_index,
@@ -616,9 +815,139 @@ def accum_dfr_direct_native(
         float(wavelength),
         int(direct_samples),
         int(keller_samples),
+        int(suffix_samples),
+        int(seed),
     )
     grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
     return DfrAccum(grid_cell_count, *values[:14])
+
+
+def accum_dfr_chain_native(
+    scene_handle: int,
+    initial_states: DfrStates,
+    recursive_states: DfrStates,
+    grid: DfrGrid,
+    material: DfrMaterial,
+    *,
+    active: torch.Tensor,
+    recursive_active: torch.Tensor,
+    wavelength: float,
+    direct_samples: int,
+    keller_samples: int = 0,
+    suffix_samples: int = 0,
+    seed: int = 0,
+    max_order: int = 2,
+) -> DfrAccum:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    initial_states = _contig_states(initial_states)
+    recursive_states = _contig_states(recursive_states)
+    material = _contig_material(material)
+    values = _C.diffraction_accumulation_forward(
+        int(scene_handle),
+        active.contiguous(),
+        initial_states.edge_index,
+        initial_states.edge_pos,
+        initial_states.edge_dir,
+        initial_states.edge_t_min,
+        initial_states.edge_t_max,
+        initial_states.n0,
+        initial_states.n1,
+        initial_states.prim0,
+        initial_states.prim1,
+        initial_states.exterior_angle,
+        initial_states.src,
+        initial_states.src_power,
+        initial_states.wi,
+        initial_states.d0,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+        int(grid.axis),
+        float(grid.position),
+        float(grid.coord0_min),
+        float(grid.coord0_max),
+        float(grid.coord1_min),
+        float(grid.coord1_max),
+        int(grid.resolution0),
+        int(grid.resolution1),
+        grid.resolved_cell_area(),
+        float(wavelength),
+        int(direct_samples),
+        int(keller_samples),
+        int(suffix_samples),
+        int(seed),
+        int(max_order),
+        recursive_active.contiguous(),
+        recursive_states.edge_index,
+        recursive_states.edge_pos,
+        recursive_states.edge_dir,
+        recursive_states.edge_t_min,
+        recursive_states.edge_t_max,
+        recursive_states.n0,
+        recursive_states.n1,
+        recursive_states.prim0,
+        recursive_states.prim1,
+        recursive_states.exterior_angle,
+    )
+    grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+    return DfrAccum(grid_cell_count, *values[:14])
+
+
+def accum_dfr_coherent_direct_native(
+    scene_handle: int,
+    states: DfrStates,
+    grid: DfrGrid,
+    material: DfrMaterial,
+    *,
+    active: torch.Tensor,
+    wavelength: float,
+    select_diffraction_point: bool = True,
+    prefilter_visibility: bool = True,
+) -> DfrCoherentAccum:
+    if _C is None:
+        raise RuntimeError("RayDTorch extension is not built yet.")
+    states = _contig_states(states)
+    material = _contig_material(material)
+    values = _C.diffraction_coherent_accumulation_forward(
+        int(scene_handle),
+        active.contiguous(),
+        states.edge_index,
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.n0,
+        states.n1,
+        states.prim0,
+        states.prim1,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        states.wi,
+        states.d0,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
+        material.gain,
+        material.valid,
+        int(grid.axis),
+        float(grid.position),
+        float(grid.coord0_min),
+        float(grid.coord0_max),
+        float(grid.coord1_min),
+        float(grid.coord1_max),
+        int(grid.resolution0),
+        int(grid.resolution1),
+        grid.resolved_cell_area(),
+        float(wavelength),
+        bool(select_diffraction_point),
+        bool(prefilter_visibility),
+    )
+    grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+    return DfrCoherentAccum(grid_cell_count, *values)
 
 
 class NativeOpUnavailable(RuntimeError):

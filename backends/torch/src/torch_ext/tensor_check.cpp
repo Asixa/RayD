@@ -1,4 +1,4 @@
-#include <raydtorch/tensor_check.h>
+#include <raydtorch/common/tensor_check.h>
 
 #include <stdexcept>
 #include <string>

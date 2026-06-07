@@ -95,13 +95,6 @@ class ReflEpcField:
 
 
 @dataclass(frozen=True)
-class DfrDirectAccum:
-    power: torch.Tensor
-    field_x_re: torch.Tensor
-    field_x_im: torch.Tensor
-
-
-@dataclass(frozen=True)
 class DfrGrid:
     axis: int = 2
     position: float = 0.0
@@ -205,6 +198,27 @@ class DfrAccum:
     edge_vis_rejects: torch.Tensor
     utd_rejects: torch.Tensor
     edge_uses: torch.Tensor
+
+
+@dataclass(frozen=True)
+class DfrCoherentAccum:
+    grid_cell_count: int
+    direct_field_x_re: torch.Tensor
+    direct_field_x_im: torch.Tensor
+    direct_field_y_re: torch.Tensor
+    direct_field_y_im: torch.Tensor
+    direct_field_z_re: torch.Tensor
+    direct_field_z_im: torch.Tensor
+    multi_field_x_re: torch.Tensor
+    multi_field_x_im: torch.Tensor
+    multi_field_y_re: torch.Tensor
+    multi_field_y_im: torch.Tensor
+    multi_field_z_re: torch.Tensor
+    multi_field_z_im: torch.Tensor
+    direct_count: torch.Tensor
+    multi_count: torch.Tensor
+    visibility_reject_count: torch.Tensor
+    utd_reject_count: torch.Tensor
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,6 @@ from .mesh import Mesh
 from .scene import Scene
 from .types import (
     DfrAccum,
-    DfrDirectAccum,
     DfrGrid,
     DfrMaterial,
     DfrPaths,
@@ -31,7 +30,6 @@ from .types import (
 
 __all__ = [
     "DfrAccum",
-    "DfrDirectAccum",
     "DfrGrid",
     "DfrMaterial",
     "DfrPaths",

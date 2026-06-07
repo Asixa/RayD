@@ -5,7 +5,8 @@ import weakref
 import torch
 
 from . import _C
-from .autograd import accum_dfr_direct as _legacy_accum_dfr_direct
+from .autograd import accum_dfr_chain_native as _accum_dfr_chain_native
+from .autograd import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct_native
 from .autograd import accum_dfr_direct_native as _accum_dfr_direct_native
 from .autograd import intersect as _intersect
 from .autograd import nearest_edge as _nearest_edge
@@ -184,10 +185,6 @@ class Scene:
             wavelength=float(wavelength),
         )
 
-    def accum_dfr_legacy_direct(self, *, edge_pos: torch.Tensor, edge_dir: torch.Tensor, src: torch.Tensor):
-        self._require_ready()
-        return _legacy_accum_dfr_direct(edge_pos.contiguous(), edge_dir.contiguous(), src.contiguous())
-
     def accum_dfr_direct(
         self,
         *,
@@ -198,14 +195,11 @@ class Scene:
         wavelength: float = 1.0,
         direct_samples: int = 0,
         keller_samples: int = 0,
-        edge_pos: torch.Tensor | None = None,
-        edge_dir: torch.Tensor | None = None,
-        src: torch.Tensor | None = None,
+        suffix_samples: int = 0,
+        seed: int = 0,
     ):
         handle = self._require_ready()
         if states is None:
-            if edge_pos is not None and edge_dir is not None and src is not None:
-                return self.accum_dfr_legacy_direct(edge_pos=edge_pos, edge_dir=edge_dir, src=src)
             raise TypeError("Scene.accum_dfr_direct() requires RayD-style DfrStates and DfrGrid.")
         if grid is None:
             raise TypeError("Scene.accum_dfr_direct() requires DfrGrid when states are provided.")
@@ -222,10 +216,79 @@ class Scene:
             wavelength=float(wavelength),
             direct_samples=int(direct_samples),
             keller_samples=int(keller_samples),
+            suffix_samples=int(suffix_samples),
+            seed=int(seed),
         )
 
-    def accum_dfr(self, **kwargs):
-        return self.accum_dfr_direct(**kwargs)
+    def accum_dfr(
+        self,
+        initial_states: DfrStates | None = None,
+        recursive_states: DfrStates | None = None,
+        grid: DfrGrid | None = None,
+        material: DfrMaterial | None = None,
+        active: torch.Tensor | None = None,
+        recursive_active: torch.Tensor | None = None,
+        wavelength: float = 1.0,
+        direct_samples: int = 0,
+        keller_samples: int = 0,
+        suffix_samples: int = 0,
+        seed: int = 0,
+        max_order: int = 2,
+        **kwargs,
+    ):
+        if initial_states is None and recursive_states is None:
+            return self.accum_dfr_direct(**kwargs)
+        handle = self._require_ready()
+        if initial_states is None or recursive_states is None or grid is None:
+            raise TypeError("Scene.accum_dfr() requires initial_states, recursive_states, and grid.")
+        if material is None:
+            material = self._default_dfr_material(device=initial_states.edge_pos.device, dtype=initial_states.edge_pos.dtype)
+        if active is None:
+            active = torch.ones((initial_states.state_count,), device=initial_states.edge_pos.device, dtype=torch.bool)
+        if recursive_active is None:
+            recursive_active = torch.ones((recursive_states.state_count,), device=recursive_states.edge_pos.device, dtype=torch.bool)
+        return _accum_dfr_chain_native(
+            handle,
+            initial_states,
+            recursive_states,
+            grid,
+            material,
+            active=active,
+            recursive_active=recursive_active,
+            wavelength=float(wavelength),
+            direct_samples=int(direct_samples),
+            keller_samples=int(keller_samples),
+            suffix_samples=int(suffix_samples),
+            seed=int(seed),
+            max_order=int(max_order),
+        )
+
+    def accum_dfr_coherent_direct(
+        self,
+        *,
+        states: DfrStates,
+        grid: DfrGrid,
+        material: DfrMaterial | None = None,
+        active: torch.Tensor | None = None,
+        wavelength: float = 1.0,
+        select_diffraction_point: bool = True,
+        prefilter_visibility: bool = True,
+    ):
+        handle = self._require_ready()
+        if material is None:
+            material = self._default_dfr_material(device=states.edge_pos.device, dtype=states.edge_pos.dtype)
+        if active is None:
+            active = torch.ones((states.state_count,), device=states.edge_pos.device, dtype=torch.bool)
+        return _accum_dfr_coherent_direct_native(
+            handle,
+            states,
+            grid,
+            material,
+            active=active,
+            wavelength=float(wavelength),
+            select_diffraction_point=bool(select_diffraction_point),
+            prefilter_visibility=bool(prefilter_visibility),
+        )
 
     def update_mesh_vertices(self, mesh_id: int, positions):
         handle = self._require_ready()
