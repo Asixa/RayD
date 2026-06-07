@@ -6,8 +6,10 @@
 > repository benchmark before being accepted.
 >
 > - Target GPU: NVIDIA GeForce RTX 5080 (Blackwell, compute_120), Torch CUDA 12.8, Windows.
-> - Benchmark of record: `tests/benchmark_raydtorch_native.py` and
->   `tests/benchmark_rayd_vs_raydtorch.py`.
+> - Benchmark of record: `tests/benchmark_raydtorch_native.py`,
+>   `tests/benchmark_rayd_vs_raydtorch.py`, and the RayD-latest-style
+>   three-backend intersection stress benchmark
+>   `tests/benchmark_raydtorch_rayd_mitsuba_stress.py`.
 > - Known-slow paths per [raydtorch_native_performance.md](raydtorch_native_performance.md):
 >   **scene build > reflection trace > nearest-edge**.
 
@@ -167,6 +169,45 @@ For this benchmark shape, RayDTorch now meets the RayD-comparison target for
 scene build, intersect, nearest-edge, reflection trace, direct diffraction, and
 order-1 diffraction path export. Keep release-size and Nsight-backed benchmarks
 before claiming broad superiority across all scenes and multipath workloads.
+
+The `grid=64`, `queries=4096` RayD/RayDTorch benchmark is intentionally a
+fast multipath regression test and is too light to be the only performance
+claim. RayD's current Mitsuba comparison benchmark uses `mesh_resolution` /
+`ray_grid_side` scenarios, with the default `64:128` shape already casting
+16,384 rays. RayDTorch now has a matching three-backend stress harness:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+  --rayd-source local --rayd-root E:\Code\RayDi `
+  --scenario rayd-latest:64:128 `
+  --scenario release:192:256 `
+  --repeats 5 --warmup 2 --mitsuba-preliminary
+```
+
+This script reports static and dynamic `full` and `reduced` intersection
+performance for RayDTorch, RayD, and Mitsuba. The `reduced` mode maps to
+RayDTorch/RayD `RayFlags.None` and Mitsuba `ray_intersect(..., RayFlags.Minimal,
+False)`. With `--mitsuba-preliminary`, it also reports Mitsuba's
+`ray_intersect_preliminary` t-only path as a Mitsuba-only lower-level baseline.
+Mitsuba is not used for nearest-edge, reflection, or diffraction totals because
+those public APIs do not have a one-to-one equivalent in the current RayDTorch
+benchmark.
+
+For real scaling curves rather than hand-picked sizes, run:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+  --preset large `
+  --rayd-source local --rayd-root E:\Code\RayDi `
+  --mitsuba-preliminary
+```
+
+The sweep script writes JSON, CSV, and PNG/SVG plots under
+`artifacts/benchmarks/scaling/<preset>/`. The `large` preset reaches about
+2.10M triangles and 10M requested rays; `extreme` includes a 100,663,296-ray
+entry. For 10M/100M requested rays, the default mode measures a fixed ray batch
+and projects total time from the required batch count. Add `--execute-total-rays`
+to run every batch explicitly.
 
 ## Contents
 

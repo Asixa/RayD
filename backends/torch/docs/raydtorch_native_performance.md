@@ -32,6 +32,47 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_ray
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
+The command above is a fast RayD/RayDTorch multipath regression shape. It is
+not the only acceptance shape: it casts only 4,096 rays. For RayD latest-style
+intersection pressure and Mitsuba comparison, use:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+  --rayd-source local --rayd-root E:\Code\RayDi `
+  --scenario rayd-latest:64:128 `
+  --scenario release:192:256 `
+  --repeats 5 --warmup 2 --mitsuba-preliminary
+```
+
+This stress script matches RayD's `mesh_resolution/ray_grid_side` convention.
+`rayd-latest:64:128` casts 16,384 rays, while `release:192:256` casts 65,536
+rays. It reports RayDTorch, RayD, and Mitsuba static/dynamic intersection
+performance for full materialized fields and reduced t-only paths; Mitsuba
+`ray_intersect_preliminary` is reported as an extra Mitsuba-only lower-level
+baseline when `--mitsuba-preliminary` is set.
+
+For scaling sweeps instead of a few fixed sizes, use:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+  --preset standard `
+  --rayd-source local --rayd-root E:\Code\RayDi `
+  --mitsuba-preliminary
+```
+
+The sweep emits `sweep.json`, `sweep.csv`, and PNG/SVG plots under
+`artifacts/benchmarks/scaling/<preset>/`. Presets:
+
+- `smoke`: quick script/plot validation.
+- `standard`: up to 768 mesh resolution, about 1.18M triangles, and 1M requested rays.
+- `large`: up to 1024 mesh resolution, about 2.10M triangles, and 10M requested rays.
+- `extreme`: includes 100,663,296 requested rays.
+
+Large ray counts are represented by a fixed ray batch plus a batch count. By
+default the script measures per-batch throughput and projects total time for the
+requested ray count. Add `--execute-total-rays` when the goal is to actually run
+all batches for the 10M/100M ray entries.
+
 Current same-script static-vs-static result:
 
 ```json
