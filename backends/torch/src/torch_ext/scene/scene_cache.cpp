@@ -1,6 +1,7 @@
 #include <raydtorch/scene/cache.h>
 #include <raydtorch/common/optix_context.h>
 #include <raydtorch/common/tensor_check.h>
+#include <raydtorch/edge/bvh.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -479,41 +480,27 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
 
     std::vector<float> radii = compute_edge_search_radii(p0_x, p0_y, p0_z, e1_x, e1_y, e1_z);
     scene.edge_accels.resize(radii.size());
-    at::TensorOptions byte_options =
-        at::TensorOptions().device(at::Device(at::kCUDA, scene.device_index)).dtype(at::kByte);
+    at::Device device(at::kCUDA, scene.device_index);
+    at::TensorOptions byte_options = at::TensorOptions().device(device).dtype(at::kByte);
+    at::TensorOptions float_options = at::TensorOptions().device(device).dtype(at::kFloat);
 
     for (size_t gas_index = 0; gas_index < radii.size(); ++gas_index) {
         OptixEdgeAccel &accel = scene.edge_accels[gas_index];
         const float radius = radii[gas_index];
-        std::vector<float> aabb_host(static_cast<size_t>(edge_count) * 6);
-        for (int64_t edge = 0; edge < edge_count; ++edge) {
-            const float x0 = p0_x[edge];
-            const float y0 = p0_y[edge];
-            const float z0 = p0_z[edge];
-            const float x1 = x0 + e1_x[edge];
-            const float y1 = y0 + e1_y[edge];
-            const float z1 = z0 + e1_z[edge];
-            aabb_host[edge * 6 + 0] = std::min(x0, x1) - radius;
-            aabb_host[edge * 6 + 1] = std::min(y0, y1) - radius;
-            aabb_host[edge * 6 + 2] = std::min(z0, z1) - radius;
-            aabb_host[edge * 6 + 3] = std::max(x0, x1) + radius;
-            aabb_host[edge * 6 + 4] = std::max(y0, y1) + radius;
-            aabb_host[edge * 6 + 5] = std::max(z0, z1) + radius;
-        }
-
-        accel.aabb_buffer =
-            at::empty({static_cast<int64_t>(aabb_host.size() * sizeof(float))}, byte_options);
-        cuda_check(
-            cudaMemcpyAsync(
-                accel.aabb_buffer.data_ptr<uint8_t>(),
-                aabb_host.data(),
-                aabb_host.size() * sizeof(float),
-                cudaMemcpyHostToDevice,
-                stream),
-            "cudaMemcpyAsync(edge AABB)");
+        accel.aabb_buffer = at::empty({edge_count, 6}, float_options);
+        compute_edge_optix_aabbs_cuda(
+            edge_count,
+            scene.edge_p0_x,
+            scene.edge_p0_y,
+            scene.edge_p0_z,
+            scene.edge_e1_x,
+            scene.edge_e1_y,
+            scene.edge_e1_z,
+            radius,
+            accel.aabb_buffer);
 
         CUdeviceptr aabb_buffer =
-            reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<uint8_t>());
+            reinterpret_cast<CUdeviceptr>(accel.aabb_buffer.data_ptr<float>());
         uint32_t input_flags = OPTIX_GEOMETRY_FLAG_NONE;
         OptixBuildInput build_input = {};
         build_input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;

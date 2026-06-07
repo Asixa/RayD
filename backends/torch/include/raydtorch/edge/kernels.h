@@ -39,6 +39,17 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     const at::Tensor &ray_tmax,
     const at::Tensor &active);
 
+void compute_edge_optix_aabbs_cuda(
+    int64_t edge_count,
+    const at::Tensor &edge_p0_x,
+    const at::Tensor &edge_p0_y,
+    const at::Tensor &edge_p0_z,
+    const at::Tensor &edge_e1_x,
+    const at::Tensor &edge_e1_y,
+    const at::Tensor &edge_e1_z,
+    float radius,
+    at::Tensor &out_aabbs);
+
 struct EdgeBackwardOutputs {
     at::Tensor grad_vertices;
     at::Tensor grad_point;

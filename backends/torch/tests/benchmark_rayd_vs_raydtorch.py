@@ -73,16 +73,16 @@ def _grid_data(grid: int):
     return verts, faces_t
 
 
-def _torch_scene(verts: torch.Tensor, faces: torch.Tensor):
+def _torch_scene(verts: torch.Tensor, faces: torch.Tensor, dynamic: bool):
     scene = rt.Scene()
-    scene.add_mesh(rt.Mesh(verts, faces, edges_enabled=True), dynamic=True)
+    scene.add_mesh(rt.Mesh(verts, faces, edges_enabled=True), dynamic=dynamic)
     t0 = time.perf_counter()
     scene.build()
     _sync_torch()
     return scene, (time.perf_counter() - t0) * 1000.0
 
 
-def _rayd_scene(rayd, cuda, dr, verts: torch.Tensor, faces: torch.Tensor):
+def _rayd_scene(rayd, cuda, dr, verts: torch.Tensor, faces: torch.Tensor, dynamic: bool):
     v = verts.detach().cpu()
     f = faces.detach().cpu()
     mesh = rayd.Mesh(
@@ -90,7 +90,7 @@ def _rayd_scene(rayd, cuda, dr, verts: torch.Tensor, faces: torch.Tensor):
         cuda.Array3i(f[:, 0].tolist(), f[:, 1].tolist(), f[:, 2].tolist()),
     )
     scene = rayd.Scene()
-    scene.add_mesh(mesh)
+    scene.add_mesh(mesh, dynamic)
     t0 = time.perf_counter()
     scene.build()
     dr.sync_thread()
@@ -197,6 +197,7 @@ def main() -> None:
     parser.add_argument("--queries", type=int, default=4096)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=10)
+    parser.add_argument("--dynamic", action="store_true")
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA torch is required")
@@ -204,8 +205,8 @@ def main() -> None:
     rayd, cuda, dr = _load_rayd()
     torch.manual_seed(17)
     verts, faces = _grid_data(args.grid)
-    scene_t, torch_build_ms = _torch_scene(verts, faces)
-    scene_d, rayd_build_ms = _rayd_scene(rayd, cuda, dr, verts, faces)
+    scene_t, torch_build_ms = _torch_scene(verts, faces, args.dynamic)
+    scene_d, rayd_build_ms = _rayd_scene(rayd, cuda, dr, verts, faces, args.dynamic)
 
     ray_o = torch.rand((args.queries, 3), device="cuda", dtype=torch.float32)
     ray_o[:, 2] = -1.0
@@ -273,6 +274,7 @@ def main() -> None:
             {
                 "grid": args.grid,
                 "queries": args.queries,
+                "dynamic": args.dynamic,
                 "warmup": args.warmup,
                 "repeat": args.repeat,
                 "raydtorch": torch_result,
