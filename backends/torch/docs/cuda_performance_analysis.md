@@ -18,10 +18,9 @@ Implemented in the current worktree:
 - CUDA build defaults now target modern GPUs instead of stale `sm_52`:
   `75-real;80-real;86-real;89-real;120-real;120-virtual`.
 - OptiX PTX builds use fast math behind `RAYDTORCH_OPTIX_FAST_MATH`.
-- `Scene.intersect(ray, flags=...)` now exposes RayD-compatible
-  `RayFlags.None/Geometric/ShadingN/UV/All`. There is no public
-  `Scene.intersect_t()` API; the t-only/minimal path is reached through
-  `flags=getattr(rt.RayFlags, "None")`.
+- `Scene.intersect(ray, flags=...)` now exposes the RayD-compatible
+  `RayFlags.None/Geometric/ShadingN/UV/All` contract. The t-only/minimal
+  path is reached through `flags=getattr(rt.RayFlags, "None")`.
 - No-AD `intersect` uses an on-demand native path:
   - `None`: launches OptiX and returns only `t`.
   - `Geometric`: returns `t`, `p`, barycentric, ids, and `geo_n`.
@@ -38,7 +37,10 @@ Implemented in the current worktree:
 - Visibility-style OptiX traces use first-hit termination where ignore lists are
   not required.
 - Diffraction path export uses warp-aggregated path-slot reservation and a
-  single primary-scene launch for order-1 export.
+  single primary-scene launch for order-1 export. It also avoids redundant
+  zero-field stores and skips unused p1/p2 component writes for order-1 paths.
+- Diffraction direct no-AD accumulation bypasses autograd tape export; AD/JVP/VJP
+  still uses the full tape-producing path.
 
 Fallbacks that remain intentionally present:
 
@@ -47,44 +49,50 @@ Fallbacks that remain intentionally present:
 - Intersect AD/JVP/VJP still uses the full legacy field path; the selective
   RayFlags path is no-AD only.
 - Diffraction direct/chain AD paths keep their existing full-output contract.
+  The no-tape direct path is only selected when neither reverse-mode nor
+  forward-mode AD is active.
 
 Latest verification:
 
 - Incremental native build succeeded via `scripts/dev_build_native.ps1`.
+- `python -m unittest tests.raydtorch_native.test_multipath -v`: 20 passed.
 - `python -m unittest discover tests.raydtorch_native -v`: 62 passed, 12 skipped.
 - Opt-in RayD parity:
   `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
-- `git diff --check`: no whitespace errors.
+- `git diff --check`: no whitespace errors; Git only reported existing LF/CRLF
+  conversion warnings for touched files.
 
 Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
 `warmup=8`, `repeat=60`, RayD package resolved to `E:\Code\RayDi\rayd`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2270.554 | 1521.943 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1198 | 0.0373 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1358 | 0.0474 | RayDTorch faster |
-| nearest edge | 1.2326 | 1.0820 | RayDTorch faster |
-| reflection trace | 0.2448 | 0.1752 | RayDTorch faster |
-| diffraction direct | 0.3364 | 0.3874 | RayDTorch slower |
-| diffraction paths | 0.2456 | 0.3420 | RayDTorch slower |
+| build | 2304.980 | 1543.822 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1326 | 0.0412 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1344 | 0.0553 | RayDTorch faster |
+| nearest edge | 1.5010 | 1.0620 | RayDTorch faster |
+| reflection trace | 0.9430 | 0.2127 | RayDTorch faster |
+| diffraction direct | 0.4528 | 0.3509 | RayDTorch faster |
+| diffraction paths | 0.4157 | 0.2430 | RayDTorch faster |
 
-Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`, `repeat=20`:
+Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=8`, `repeat=60`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2299.382 | 1542.196 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1144 | 0.0393 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1244 | 0.0500 | RayDTorch faster |
-| nearest edge | 1.1812 | 1.0330 | RayDTorch faster |
-| reflection trace | 0.2165 | 0.1772 | RayDTorch faster |
-| diffraction direct | 0.3706 | 0.4162 | RayDTorch slower |
-| diffraction paths | 0.2787 | 0.2892 | near parity, RayDTorch slightly slower |
+| build | 2295.566 | 1544.259 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1302 | 0.0400 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1327 | 0.0490 | RayDTorch faster |
+| nearest edge | 1.2432 | 1.0781 | RayDTorch faster |
+| reflection trace | 0.2752 | 0.1795 | RayDTorch faster |
+| diffraction direct | 0.3596 | 0.3040 | RayDTorch faster |
+| diffraction paths | 0.2775 | 0.2752 | RayDTorch slightly faster |
 
-Remaining performance work should focus on diffraction direct/paths. Intersect
-and reflection now meet the current RayD-comparison target for this benchmark
-shape.
+For this benchmark shape, RayDTorch now meets the current RayD-comparison target:
+intersect and reflection are substantially faster; nearest-edge, direct
+diffraction, order-1 diffraction paths, and scene build are faster or at parity.
+Keep release-size and Nsight-backed benchmarks before claiming broad superiority
+across all scenes and multipath workloads.
 
 ## Contents
 

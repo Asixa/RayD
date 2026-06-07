@@ -270,12 +270,8 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor out_p0_x = at::zeros({capacity}, fopts);
     at::Tensor out_p0_y = at::zeros({capacity}, fopts);
     at::Tensor out_p0_z = at::zeros({capacity}, fopts);
-    at::Tensor out_p1_x = at::zeros({capacity}, fopts);
-    at::Tensor out_p1_y = at::zeros({capacity}, fopts);
-    at::Tensor out_p1_z = at::zeros({capacity}, fopts);
-    at::Tensor out_p2_x = at::zeros({capacity}, fopts);
-    at::Tensor out_p2_y = at::zeros({capacity}, fopts);
-    at::Tensor out_p2_z = at::zeros({capacity}, fopts);
+    at::Tensor out_p1 = at::zeros({capacity, 3}, fopts);
+    at::Tensor out_p2 = at::zeros({capacity, 3}, fopts);
     if (n_rays == 0 || capacity_i32 == 0) {
         return py::make_tuple(
             out_count,
@@ -294,8 +290,8 @@ py::tuple diffraction_paths_order1_forward_op(
             out_field_z_re,
             out_field_z_im,
             at::stack({out_p0_x, out_p0_y, out_p0_z}, 1).contiguous(),
-            at::stack({out_p1_x, out_p1_y, out_p1_z}, 1).contiguous(),
-            at::stack({out_p2_x, out_p2_y, out_p2_z}, 1).contiguous());
+            out_p1,
+            out_p2);
     }
 
     Vec3SoA tx_soa = split_vec3(tx_pos);
@@ -306,7 +302,6 @@ py::tuple diffraction_paths_order1_forward_op(
     Vec3SoA state_n1_soa = split_vec3(state_n1);
     Vec3SoA state_src_soa = split_vec3(state_src);
     at::Tensor active_contig = active_mask_for_states(active, state_count, "diffraction_paths_order1_forward");
-    at::Tensor temp_visibility = at::zeros({n_rays}, active.options());
 
     DfrPathParams params = {};
     params.primary_handle = scene.triangle_ias.traversable;
@@ -359,7 +354,7 @@ py::tuple diffraction_paths_order1_forward_op(
     params.sample_count = 1;
     params.return_geom = 1;
     params.receiver_model = RAYDTORCH_DFR_MATCHED_ISO;
-    params.temp_visibility = mutable_mask_ptr(temp_visibility);
+    params.temp_visibility = nullptr;
     params.out_count = out_count.data_ptr<int>();
     params.out_valid = mutable_mask_ptr(out_valid);
     params.out_tx_id = out_tx_id.data_ptr<int>();
@@ -378,12 +373,12 @@ py::tuple diffraction_paths_order1_forward_op(
     params.out_p0_x = out_p0_x.data_ptr<float>();
     params.out_p0_y = out_p0_y.data_ptr<float>();
     params.out_p0_z = out_p0_z.data_ptr<float>();
-    params.out_p1_x = out_p1_x.data_ptr<float>();
-    params.out_p1_y = out_p1_y.data_ptr<float>();
-    params.out_p1_z = out_p1_z.data_ptr<float>();
-    params.out_p2_x = out_p2_x.data_ptr<float>();
-    params.out_p2_y = out_p2_y.data_ptr<float>();
-    params.out_p2_z = out_p2_z.data_ptr<float>();
+    params.out_p1_x = nullptr;
+    params.out_p1_y = nullptr;
+    params.out_p1_z = nullptr;
+    params.out_p2_x = nullptr;
+    params.out_p2_y = nullptr;
+    params.out_p2_z = nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
@@ -406,8 +401,8 @@ py::tuple diffraction_paths_order1_forward_op(
         out_field_z_re,
         out_field_z_im,
         at::stack({out_p0_x, out_p0_y, out_p0_z}, 1).contiguous(),
-        at::stack({out_p1_x, out_p1_y, out_p1_z}, 1).contiguous(),
-        at::stack({out_p2_x, out_p2_y, out_p2_z}, 1).contiguous());
+        out_p1,
+        out_p2);
 }
 
 py::tuple diffraction_accumulation_forward_op(
@@ -457,7 +452,8 @@ py::tuple diffraction_accumulation_forward_op(
     at::Tensor recursive_state_n1,
     at::Tensor recursive_state_prim0,
     at::Tensor recursive_state_prim1,
-    at::Tensor recursive_state_exterior_angle) {
+    at::Tensor recursive_state_exterior_angle,
+    int64_t export_tape) {
     require_mask(active, "active");
     require_flat_i32(state_edge_index, "state_edge_index");
     require_vec3f(state_edge_pos, "state_edge_pos");
@@ -569,11 +565,12 @@ py::tuple diffraction_accumulation_forward_op(
     at::Tensor edge_vis_rejects = at::zeros({1}, iopts);
     at::Tensor utd_rejects = at::zeros({1}, iopts);
     at::Tensor edge_uses = at::zeros({1}, iopts);
-    at::Tensor tape_active = at::zeros({launch_count}, active.options());
-    at::Tensor tape_state_idx = at::full({launch_count}, -1, iopts);
-    at::Tensor tape_cell = at::full({launch_count}, -1, iopts);
-    at::Tensor tape_material_idx = at::full({launch_count}, -1, iopts);
-    at::Tensor tape_edge_u = at::zeros({launch_count}, fopts);
+    const bool write_tape = export_tape != 0;
+    at::Tensor tape_active = write_tape ? at::zeros({launch_count}, active.options()) : at::empty({0}, active.options());
+    at::Tensor tape_state_idx = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_cell = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_material_idx = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_edge_u = write_tape ? at::zeros({launch_count}, fopts) : at::empty({0}, fopts);
     if (state_count == 0 || launch_count == 0) {
         return py::make_tuple(
             power.reshape({grid_resolution1, grid_resolution0}),
@@ -753,11 +750,11 @@ py::tuple diffraction_accumulation_forward_op(
     params.out_utd_rejects = utd_rejects.data_ptr<int>();
     params.out_edge_uses = edge_uses.data_ptr<int>();
     params.temp_visibility = mutable_mask_ptr(temp_visibility);
-    params.tape_active = mutable_mask_ptr(tape_active);
-    params.tape_state_idx = tape_state_idx.data_ptr<int>();
-    params.tape_cell = tape_cell.data_ptr<int>();
-    params.tape_material_idx = tape_material_idx.data_ptr<int>();
-    params.tape_edge_u = tape_edge_u.data_ptr<float>();
+    params.tape_active = write_tape ? mutable_mask_ptr(tape_active) : nullptr;
+    params.tape_state_idx = write_tape ? tape_state_idx.data_ptr<int>() : nullptr;
+    params.tape_cell = write_tape ? tape_cell.data_ptr<int>() : nullptr;
+    params.tape_material_idx = write_tape ? tape_material_idx.data_ptr<int>() : nullptr;
+    params.tape_edge_u = write_tape ? tape_edge_u.data_ptr<float>() : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());

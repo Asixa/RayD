@@ -25,6 +25,14 @@ def _native_tensor(value: torch.Tensor) -> torch.Tensor:
     return value
 
 
+def _needs_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
+    for value in values:
+        unpacked = torch.autograd.forward_ad.unpack_dual(value)
+        if unpacked.primal.requires_grad or unpacked.tangent is not None:
+            return True
+    return False
+
+
 class _IntersectFunction(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -641,6 +649,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             empty_i,
             empty_i,
             empty_f,
+            1,
         )
 
     @staticmethod
@@ -885,6 +894,73 @@ def accum_dfr_direct_native(
 ) -> DfrAccum:
     states = _contig_states(states)
     material = _contig_material(material)
+    if not _needs_reverse_or_forward_ad(
+        states.edge_pos,
+        states.edge_dir,
+        states.edge_t_min,
+        states.edge_t_max,
+        states.exterior_angle,
+        states.src,
+        states.src_power,
+        states.wi,
+        material.gain,
+    ):
+        empty_b = active.new_empty((0,))
+        empty_i = states.edge_index.new_empty((0,))
+        empty_f = states.edge_t_min.new_empty((0,))
+        empty_v = states.edge_pos.new_empty((0, 3))
+        values = _C.diffraction_accumulation_forward(
+            int(scene_handle),
+            active.contiguous(),
+            states.edge_index,
+            states.edge_pos,
+            states.edge_dir,
+            states.edge_t_min,
+            states.edge_t_max,
+            states.n0,
+            states.n1,
+            states.prim0,
+            states.prim1,
+            states.exterior_angle,
+            states.src,
+            states.src_power,
+            states.wi,
+            states.d0,
+            material.eta_r,
+            material.sigma,
+            material.mu_r,
+            material.gain,
+            material.valid,
+            int(grid.axis),
+            float(grid.position),
+            float(grid.coord0_min),
+            float(grid.coord0_max),
+            float(grid.coord1_min),
+            float(grid.coord1_max),
+            int(grid.resolution0),
+            int(grid.resolution1),
+            grid.resolved_cell_area(),
+            float(wavelength),
+            int(direct_samples),
+            int(keller_samples),
+            int(suffix_samples),
+            int(seed),
+            1,
+            empty_b,
+            empty_i,
+            empty_v,
+            empty_v,
+            empty_f,
+            empty_f,
+            empty_v,
+            empty_v,
+            empty_i,
+            empty_i,
+            empty_f,
+            0,
+        )
+        grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+        return DfrAccum(grid_cell_count, *values[:14])
     values = _DfrDirectAccumFunction.apply(
         int(scene_handle),
         active.contiguous(),
@@ -1075,7 +1151,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             grad_power.contiguous(),
             grad_field_x_re.contiguous(),
         )
-        grads = [None] * 47
+        grads = [None] * 48
         grads[3] = grad_state_edge_pos
         grads[4] = grad_state_edge_dir
         grads[5] = grad_state_edge_t_min
@@ -1269,6 +1345,7 @@ def accum_dfr_chain_native(
         recursive_states.prim0,
         recursive_states.prim1,
         recursive_states.exterior_angle,
+        1,
     )
     grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
     return DfrAccum(grid_cell_count, *values[:14])

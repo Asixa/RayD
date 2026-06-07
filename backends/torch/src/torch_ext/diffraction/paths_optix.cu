@@ -278,21 +278,11 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];
-    params.out_edge1[out_idx] = -1;
-    params.out_edge2[out_idx] = -1;
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
-    params.out_field_y_re[out_idx] = 0.f;
-    params.out_field_y_im[out_idx] = 0.f;
-    params.out_field_z_re[out_idx] = 0.f;
-    params.out_field_z_im[out_idx] = 0.f;
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
-    write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
-                out_idx, make_f3(0.f, 0.f, 0.f));
-    write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
-                out_idx, make_f3(0.f, 0.f, 0.f));
 }
 
 static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
@@ -422,21 +412,11 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
     params.out_edge0[out_idx] = params.state_edge_index[state_idx];
-    params.out_edge1[out_idx] = -1;
-    params.out_edge2[out_idx] = -1;
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
-    params.out_field_y_re[out_idx] = 0.f;
-    params.out_field_y_im[out_idx] = 0.f;
-    params.out_field_z_re[out_idx] = 0.f;
-    params.out_field_z_im[out_idx] = 0.f;
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
-    write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
-                out_idx, make_f3(0.f, 0.f, 0.f));
-    write_point(params.out_p2_x, params.out_p2_y, params.out_p2_z,
-                out_idx, make_f3(0.f, 0.f, 0.f));
 }
 
 extern "C" __global__ void __raygen__diffraction_paths_order1_primary() {

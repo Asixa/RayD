@@ -528,6 +528,7 @@ class MultipathTests(unittest.TestCase):
             empty_i,
             empty_i,
             empty_f,
+            1,
         )
         self.assertEqual(out[0].shape, (4, 4))
         self.assertEqual(out[1].dtype, torch.float32)

@@ -2292,7 +2292,7 @@ Append to `tests/raydtorch_native/test_intersect_grad.py`:
 Append to `tests/raydtorch_native/test_intersect_grad.py`:
 
 ```python
-    def test_intersect_torch_func_jvp(self):
+    def test_intersect_autograd_func_jvp(self):
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         ray = rt.Ray(
             torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),

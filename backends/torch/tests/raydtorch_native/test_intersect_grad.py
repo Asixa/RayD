@@ -82,7 +82,7 @@ class IntersectGradientTests(unittest.TestCase):
         fd = (scene_p.intersect(ray).t - scene_m.intersect(ray).t) / (2 * eps)
         torch.testing.assert_close(analytic, fd[0], atol=5e-3, rtol=5e-3)
 
-    def test_intersect_torch_func_jvp(self):
+    def test_intersect_autograd_func_jvp(self):
         faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
         ray = rt.Ray(
             torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32),
