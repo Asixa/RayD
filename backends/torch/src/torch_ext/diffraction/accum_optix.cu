@@ -441,6 +441,23 @@ static __forceinline__ __device__ void run_coherent_utd_lane(int state_idx, int 
         return;
     }
     const int owner = params.coherent_owner_code != nullptr ? params.coherent_owner_code[state_idx] : 0;
+    if (params.coherent_stage_key != nullptr && params.coherent_stage_value != nullptr) {
+        const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+        const int key = owner == utd::OWNERSHIP_MIXED ? grid_cell_count + cell : cell;
+        const int slot = cell * params.state_count + state_idx;
+        DfrCoherentStagedValue value;
+        value.a = make_float4(out.vectorField.x.re,
+                              out.vectorField.x.im,
+                              out.vectorField.y.re,
+                              out.vectorField.y.im);
+        value.b = make_float4(out.vectorField.z.re,
+                              out.vectorField.z.im,
+                              1.0f,
+                              0.0f);
+        params.coherent_stage_key[slot] = key;
+        params.coherent_stage_value[slot] = value;
+        return;
+    }
     if (owner == utd::OWNERSHIP_MIXED) {
         const WarpCellGroup cell_group = warp_cell_group(cell);
         atomic_add_same_cell(params.out_multi_field_x_re, cell, out.vectorField.x.re, cell_group);
@@ -1487,6 +1504,18 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
     const float field_im = amplitude * sinf(phase);
     const bool is_multi = params.state_prefix_depth != nullptr &&
                           params.state_prefix_depth[state_idx] > 0;
+
+    if (params.coherent_stage_key != nullptr && params.coherent_stage_value != nullptr) {
+        const int grid_cell_count = params.grid_resolution0 * params.grid_resolution1;
+        const int key = is_multi ? grid_cell_count + cell : cell;
+        const int slot = cell * params.state_count + state_idx;
+        DfrCoherentStagedValue value;
+        value.a = make_float4(field_re, field_im, 0.0f, 0.0f);
+        value.b = make_float4(0.0f, 0.0f, 1.0f, 0.0f);
+        params.coherent_stage_key[slot] = key;
+        params.coherent_stage_value[slot] = value;
+        return;
+    }
 
     if (is_multi) {
         const WarpCellGroup cell_group = warp_cell_group(cell);

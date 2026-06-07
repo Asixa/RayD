@@ -1680,6 +1680,15 @@ py::tuple diffraction_coherent_accumulation_forward_op(
             multi_x_re, multi_x_im, multi_y_re, multi_y_im, multi_z_re, multi_z_im,
             direct_count, multi_count, visibility_reject_count, utd_reject_count);
     }
+    const bool staged_coherent_accum =
+        launch_count64 >= kStagedDfrAccumMinSamples &&
+        launch_count64 >= cell_count * kStagedDfrAccumMinSamplesPerCell;
+    at::Tensor coherent_stage_key = staged_coherent_accum
+        ? at::full({launch_count64}, -1, iopts)
+        : at::Tensor();
+    at::Tensor coherent_stage_value = staged_coherent_accum
+        ? at::zeros({launch_count64, 8}, fopts)
+        : at::Tensor();
 
     Vec3SoA state_edge_pos_soa = split_vec3(state_edge_pos);
     Vec3SoA state_edge_dir_soa = split_vec3(state_edge_dir);
@@ -1781,10 +1790,36 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     params.out_multi_count = multi_count.data_ptr<int>();
     params.out_visibility_reject_count = visibility_reject_count.data_ptr<int>();
     params.out_utd_reject_count = utd_reject_count.data_ptr<int>();
+    params.coherent_stage_key =
+        staged_coherent_accum ? coherent_stage_key.data_ptr<int>() : nullptr;
+    params.coherent_stage_value = staged_coherent_accum
+        ? reinterpret_cast<DfrCoherentStagedValue *>(coherent_stage_value.data_ptr<float>())
+        : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
     pipeline->launch(11, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+    if (staged_coherent_accum) {
+        reduce_dfr_coherent_accum_staged_cuda(
+            launch_count64,
+            cell_count,
+            coherent_stage_key,
+            coherent_stage_value,
+            direct_x_re,
+            direct_x_im,
+            direct_y_re,
+            direct_y_im,
+            direct_z_re,
+            direct_z_im,
+            multi_x_re,
+            multi_x_im,
+            multi_y_re,
+            multi_y_im,
+            multi_z_re,
+            multi_z_im,
+            direct_count,
+            multi_count);
+    }
 
     return py::make_tuple(
         direct_x_re.reshape({grid_resolution1, grid_resolution0}),

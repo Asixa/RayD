@@ -70,6 +70,10 @@ Implemented in the current worktree:
   thresholded staging path: OptiX writes one `(cell, value)` record per sample,
   then a CUDA/CUB radix sort + reduce-by-key collapses high-contention cells
   before scattering to the output grid.
+- Coherent diffraction direct/multi field accumulation also has a thresholded
+  staging path: each state/cell lane writes one keyed 8-float record, CUB reduces
+  by direct-vs-multi cell key, and one scatter pass updates the 12 field arrays
+  plus per-cell counts.
 - Diffraction path export uses warp-aggregated path-slot reservation and a
   single primary-scene launch for order-1 export. It also avoids redundant
   zero-field stores and skips unused p1/p2 component writes for order-1 paths.
@@ -106,6 +110,10 @@ Latest verification:
 - High-contention staged diffraction accumulation parity check at
   `direct_samples=4096`: max `power` diff `1.43e-6`, max `field_x_re` diff
   `3.05e-5`; direct counts and edge-use counts both matched at `4096`.
+- High-contention coherent staged smoke: repeating one coherent state 4x on a
+  32x32 grid triggered the staged path; all six direct field components matched
+  the single-state result after dividing by 4, direct count scaled from `1024`
+  to `4096`, and multi count stayed `0`.
 - Reflection staged accumulation path compiles and is wired behind a high-contention
   threshold. Current public native smoke uses default air-air material parameters, so
   reflection accumulation remains zero and does not yet prove a speedup for that path.
@@ -199,8 +207,8 @@ every kernel before any code is touched.
 
 This document is both a status record and a remaining backlog. Confirm impact ordering with
 the [measurement plan](#measurement-plan) before investing in the remaining larger refactors:
-split-scene support, exact stack sizing, coherent multi-output sort-level reductions,
-materialized reflection-accumulation benchmarks, and additional GAS/IAS sync work.
+split-scene support, exact stack sizing, materialized reflection-accumulation benchmarks,
+and additional GAS/IAS sync work.
 
 ---
 
@@ -212,7 +220,7 @@ materialized reflection-accumulation benchmarks, and additional GAS/IAS sync wor
 | **P1 build** | 4, 5, 6, 7 | GPU edge topology + D2H radii fixed; edge sync partially improved; static GAS compaction landed |
 | **P1 edge** | 11, 12 | Point/ray tier launches collapsed; point/ray payload split landed |
 | **P1 refl** | 15, 16, 17 | Bounce-major trace writes and packed hit gather landed; split-mode is inactive in current Torch call sites |
-| **P2 accum** | 19, 20, 25, 26 | Same-cell warp atomics, path-counter aggregation, reflection staged reduce, and thresholded no-AD diffraction sort/reduce landed |
+| **P2 accum** | 19, 20, 25, 26 | Same-cell warp atomics, path-counter aggregation, reflection staged reduce, and thresholded diffraction sort/reduce landed |
 
 Impact legend: **High** = likely measurable on the benchmark; **Med** = real but
 secondary; **Low** = correctness-neutral cleanup / small constant.
@@ -501,7 +509,7 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Implemented: path export reserves output slots per warp using one `atomicAdd` per active
   warp group. Prefix-sum allocation remains a larger alternative.
 
-### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation + staged reduce for direct/Keller] — High`
+### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation + staged reduce] — High`
 
 - Location: `accum_optix.cu:445-460` (same class of issue as item 19).
 - Implemented: coherent direct/multi field outputs now use same-cell warp aggregation for
@@ -513,8 +521,13 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
   `reduce_dfr_accum_staged_cuda()` uses CUB radix sort and reduce-by-key before one
   scatter pass updates the output tensors. AD, recursive, suffix, and low-contention
   direct paths keep the existing warp-aggregated atomic path.
-- Remaining larger work: extend block/sort-level reductions to coherent multi-output UTD
-  paths if Nsight still shows global atomic pressure there.
+- Implemented for coherent direct/multi UTD accumulation: when
+  `state_count * cell_count >= 2048` and at least 4 states per cell are expected, OptiX
+  stages an 8-float direct/multi keyed value per lane. `reduce_dfr_coherent_accum_staged_cuda()`
+  sorts and reduces by key, then scatters reduced direct and multi field components plus
+  per-cell counts. Low-contention coherent calls keep the existing warp-aggregated atomic path.
+- Remaining larger work: use Nsight to decide whether staged sort cost beats atomics across
+  larger coherent workloads and tune the threshold if needed.
 
 ### 27. Path output scatters 12 SoA complex components via `out_idx` `[needs Nsight] — Med`
 
@@ -614,10 +627,9 @@ What to look for:
    and traversal cost across larger/random query distributions.
 4. **Reflection remaining work**: revisit split-scene double traces (item 17) and validate
    packed hit-gather register/memory counters with Nsight on multi-bounce scenes.
-5. **Accumulation next level**: if Nsight still shows atomic pressure after warp
-   aggregation and the staged paths, extend block-level or sort/segmented reductions
-   to coherent multi-output UTD paths and add a nonzero-material reflection accumulation
-   benchmark.
+5. **Accumulation next level**: validate the staged direct/Keller, coherent UTD, and
+   reflection hooks with Nsight on larger workloads; tune thresholds and add a
+   nonzero-material reflection accumulation benchmark.
 
 Accuracy guard: items 3, 19, 25, 26, 28 (fast-math, reassociated/atomic reductions) change
 the floating-point contract. Keep the native AD and opt-in RayD parity tests green after each.

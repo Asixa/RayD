@@ -13,6 +13,13 @@
 
 namespace raydtorch {
 
+struct DfrCoherentStagedValue {
+    // xyzw = field_x_re, field_x_im, field_y_re, field_y_im
+    float4 a;
+    // xyzw = field_z_re, field_z_im, count, unused
+    float4 b;
+};
+
 /// Launch parameters for the native order-1 diffraction accumulation pipeline.
 struct DfrAccumParams {
     OptixTraversableHandle primary_handle;
@@ -260,6 +267,10 @@ struct DfrAccumParams {
     // stage_value = (power, field_x_re, direct_count, keller_count).
     int *stage_cell;
     float4 *stage_value;
+    // Optional coherent UTD staging path. Key is cell for direct and
+    // grid_cell_count + cell for multi.
+    int *coherent_stage_key;
+    DfrCoherentStagedValue *coherent_stage_value;
 };
 
 } // namespace raydtorch
