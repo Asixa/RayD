@@ -213,7 +213,8 @@ void launch_intersect_optix(
     params.traversable = scene.triangle_ias.traversable;
     params.ray_o = ray_o.data_ptr<float>();
     params.ray_d = ray_d.data_ptr<float>();
-    params.ray_tmax = ray_tmax.numel() == 0 ? nullptr : ray_tmax.data_ptr<float>();
+    params.ray_tmax =
+        (!ray_tmax.defined() || ray_tmax.numel() == 0) ? nullptr : ray_tmax.data_ptr<float>();
     params.active = optional_mask_ptr(active);
     params.out_t = out_t.data_ptr<float>();
     params.out_shape_id = out_shape_id;

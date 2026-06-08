@@ -658,9 +658,9 @@ IntersectBackwardOutputs intersect_backward_optional_cuda(
     const int64_t ray_count = ray_d.size(0);
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     IntersectBackwardOutputs out;
-    out.grad_vertices = need_grad_vertices ? at::empty_like(vertices) : at::Tensor();
-    out.grad_ray_o = need_grad_ray_o ? at::empty_like(ray_d) : at::Tensor();
-    out.grad_ray_d = need_grad_ray_d ? at::empty_like(ray_d) : at::Tensor();
+    out.grad_vertices = need_grad_vertices ? at::empty(vertices.sizes(), vertices.options()) : at::Tensor();
+    out.grad_ray_o = need_grad_ray_o ? at::empty(ray_d.sizes(), ray_d.options()) : at::Tensor();
+    out.grad_ray_d = need_grad_ray_d ? at::empty(ray_d.sizes(), ray_d.options()) : at::Tensor();
     out.grad_ray_tmax = need_grad_ray_tmax ? at::empty({ray_count}, ray_d.options()) : at::Tensor();
     zero_float_tensor_async(out.grad_vertices, stream);
     if (ray_count == 0 ||
@@ -725,9 +725,9 @@ IntersectBackwardOutputs intersect_backward_t_cuda(
     const int64_t ray_count = ray_d.size(0);
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     IntersectBackwardOutputs out;
-    out.grad_vertices = need_grad_vertices ? at::empty_like(vertices) : at::Tensor();
-    out.grad_ray_o = need_grad_ray_o ? at::empty_like(ray_d) : at::Tensor();
-    out.grad_ray_d = need_grad_ray_d ? at::empty_like(ray_d) : at::Tensor();
+    out.grad_vertices = need_grad_vertices ? at::empty(vertices.sizes(), vertices.options()) : at::Tensor();
+    out.grad_ray_o = need_grad_ray_o ? at::empty(ray_d.sizes(), ray_d.options()) : at::Tensor();
+    out.grad_ray_d = need_grad_ray_d ? at::empty(ray_d.sizes(), ray_d.options()) : at::Tensor();
     out.grad_ray_tmax = need_grad_ray_tmax ? at::empty({ray_count}, ray_d.options()) : at::Tensor();
     if (need_grad_vertices && !need_grad_ray_o && !need_grad_ray_d && !need_grad_ray_tmax) {
         if (launch_intersect_backward_t_vertices_coop(

@@ -1665,6 +1665,8 @@ py::tuple diffraction_accumulation_chain_backward_op(
     at::Tensor recursive_state_exterior_angle,
     at::Tensor material_gain,
     at::Tensor material_valid,
+    int64_t state_limit_arg,
+    int64_t recursive_state_limit_arg,
     int64_t grid_axis,
     double grid_position,
     double grid_coord0_min,
@@ -1684,68 +1686,79 @@ py::tuple diffraction_accumulation_chain_backward_op(
     c10::optional<at::Tensor> grad_field_x_re) {
     require_mask(tape_active, "tape_active");
     require_flat_i32(tape_cell, "tape_cell");
-    require_flat_i32(state_edge_index, "state_edge_index");
-    require_vec3f(state_edge_pos, "state_edge_pos");
-    require_vec3f(state_edge_dir, "state_edge_dir");
-    require_scalar_f(state_edge_t_min, "state_edge_t_min");
-    require_scalar_f(state_edge_t_max, "state_edge_t_max");
-    require_flat_i32(state_prim0, "state_prim0");
-    require_flat_i32(state_prim1, "state_prim1");
-    require_scalar_f(state_exterior_angle, "state_exterior_angle");
-    require_vec3f(state_src, "state_src");
-    require_scalar_f(state_src_power, "state_src_power");
-    require_flat_i32(recursive_state_edge_index, "recursive_state_edge_index");
-    require_vec3f(recursive_state_edge_pos, "recursive_state_edge_pos");
-    require_vec3f(recursive_state_edge_dir, "recursive_state_edge_dir");
-    require_scalar_f(recursive_state_edge_t_min, "recursive_state_edge_t_min");
-    require_scalar_f(recursive_state_edge_t_max, "recursive_state_edge_t_max");
-    require_flat_i32(recursive_state_prim0, "recursive_state_prim0");
-    require_flat_i32(recursive_state_prim1, "recursive_state_prim1");
-    require_scalar_f(recursive_state_exterior_angle, "recursive_state_exterior_angle");
-    require_flat_f32(material_gain, "material_gain");
-    require_mask(material_valid, "material_valid");
+    require_flat_i32_strided(state_edge_index, "state_edge_index");
+    require_vec3f_strided(state_edge_pos, "state_edge_pos");
+    require_vec3f_strided(state_edge_dir, "state_edge_dir");
+    require_flat_f32_strided(state_edge_t_min, "state_edge_t_min");
+    require_flat_f32_strided(state_edge_t_max, "state_edge_t_max");
+    require_flat_i32_strided(state_prim0, "state_prim0");
+    require_flat_i32_strided(state_prim1, "state_prim1");
+    require_flat_f32_strided(state_exterior_angle, "state_exterior_angle");
+    require_vec3f_strided(state_src, "state_src");
+    require_flat_f32_strided(state_src_power, "state_src_power");
+    require_flat_i32_strided(recursive_state_edge_index, "recursive_state_edge_index");
+    require_vec3f_strided(recursive_state_edge_pos, "recursive_state_edge_pos");
+    require_vec3f_strided(recursive_state_edge_dir, "recursive_state_edge_dir");
+    require_flat_f32_strided(recursive_state_edge_t_min, "recursive_state_edge_t_min");
+    require_flat_f32_strided(recursive_state_edge_t_max, "recursive_state_edge_t_max");
+    require_flat_i32_strided(recursive_state_prim0, "recursive_state_prim0");
+    require_flat_i32_strided(recursive_state_prim1, "recursive_state_prim1");
+    require_flat_f32_strided(recursive_state_exterior_angle, "recursive_state_exterior_angle");
+    require_flat_f32_strided(material_gain, "material_gain");
+    require_mask_strided(material_valid, "material_valid");
     const int64_t launch_count = tape_active.size(0);
     require_state_width(tape_cell, launch_count, "tape_cell");
-    const int64_t state_count = state_edge_pos.size(0);
-    const int64_t recursive_state_count = recursive_state_edge_pos.size(0);
+    if (state_limit_arg < 0 || recursive_state_limit_arg < 0)
+        throw std::runtime_error("state counts must be non-negative.");
+    const int64_t state_count = state_limit_arg;
+    const int64_t recursive_state_count = recursive_state_limit_arg;
+    if (state_count > state_edge_pos.size(0))
+        throw std::runtime_error("state_count must not exceed state_edge_pos width.");
+    if (recursive_state_count > recursive_state_edge_pos.size(0))
+        throw std::runtime_error("recursive_state_count must not exceed recursive_state_edge_pos width.");
+    require_state_width(state_edge_index, state_count, "state_edge_index");
+    require_state_width(state_edge_dir, state_count, "state_edge_dir");
+    require_state_width(state_edge_t_min, state_count, "state_edge_t_min");
+    require_state_width(state_edge_t_max, state_count, "state_edge_t_max");
+    require_state_width(state_prim0, state_count, "state_prim0");
+    require_state_width(state_prim1, state_count, "state_prim1");
+    require_state_width(state_exterior_angle, state_count, "state_exterior_angle");
+    require_state_width(state_src, state_count, "state_src");
+    require_state_width(state_src_power, state_count, "state_src_power");
+    require_state_width(recursive_state_edge_index, recursive_state_count, "recursive_state_edge_index");
+    require_state_width(recursive_state_edge_dir, recursive_state_count, "recursive_state_edge_dir");
+    require_state_width(recursive_state_edge_t_min, recursive_state_count, "recursive_state_edge_t_min");
+    require_state_width(recursive_state_edge_t_max, recursive_state_count, "recursive_state_edge_t_max");
+    require_state_width(recursive_state_prim0, recursive_state_count, "recursive_state_prim0");
+    require_state_width(recursive_state_prim1, recursive_state_count, "recursive_state_prim1");
+    require_state_width(recursive_state_exterior_angle, recursive_state_count, "recursive_state_exterior_angle");
     const int64_t material_count = material_gain.size(0);
     if (material_valid.size(0) != material_count)
         throw std::runtime_error("material_valid must match material_gain width.");
 
     SceneCache &scene = get_scene(scene_handle);
     TriangleSoA tri = make_scene_triangle_soa(scene);
-    Vec3SoA state_edge_pos_soa = split_vec3(state_edge_pos);
-    Vec3SoA state_edge_dir_soa = split_vec3(state_edge_dir);
-    Vec3SoA state_src_soa = split_vec3(state_src);
-    Vec3SoA recursive_edge_pos_soa = split_vec3(recursive_state_edge_pos);
-    Vec3SoA recursive_edge_dir_soa = split_vec3(recursive_state_edge_dir);
-    at::Tensor grad_power_flat = flatten_optional_f32(grad_power, "grad_power");
-    at::Tensor grad_field_x_re_flat = flatten_optional_f32(grad_field_x_re, "grad_field_x_re");
-    const int64_t grid_cell_count = grid_resolution0 * grid_resolution1;
-    if (grad_power_flat.defined())
-        require_state_width(grad_power_flat, grid_cell_count, "grad_power");
-    if (grad_field_x_re_flat.defined())
-        require_state_width(grad_field_x_re_flat, grid_cell_count, "grad_field_x_re");
+    Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
+    Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
+    Vec3Input state_src_view = vec3_input(state_src, "state_src");
+    Vec3Input recursive_edge_pos_view = vec3_input(recursive_state_edge_pos, "recursive_state_edge_pos");
+    Vec3Input recursive_edge_dir_view = vec3_input(recursive_state_edge_dir, "recursive_state_edge_dir");
+    GridGradInput grad_power_view =
+        optional_grid_grad_input(grad_power, grid_resolution0, grid_resolution1, "grad_power");
+    GridGradInput grad_field_x_re_view =
+        optional_grid_grad_input(grad_field_x_re, grid_resolution0, grid_resolution1, "grad_field_x_re");
 
-    at::Tensor grad_edge_pos_x = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_edge_pos_y = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_edge_pos_z = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_edge_dir_x = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_edge_dir_y = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_edge_dir_z = at::zeros({state_count}, state_edge_pos.options());
+    at::Tensor grad_edge_pos = at::zeros(state_edge_pos.sizes(), state_edge_pos.options());
+    at::Tensor grad_edge_dir = at::zeros(state_edge_dir.sizes(), state_edge_dir.options());
     at::Tensor grad_edge_t_min = at::zeros_like(state_edge_t_min);
     at::Tensor grad_edge_t_max = at::zeros_like(state_edge_t_max);
-    at::Tensor grad_src_x = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_src_y = at::zeros({state_count}, state_edge_pos.options());
-    at::Tensor grad_src_z = at::zeros({state_count}, state_edge_pos.options());
+    at::Tensor grad_src = at::zeros(state_src.sizes(), state_src.options());
     at::Tensor grad_src_power = at::zeros_like(state_src_power);
     at::Tensor grad_exterior_angle = at::zeros_like(state_exterior_angle);
-    at::Tensor grad_recursive_edge_pos_x = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
-    at::Tensor grad_recursive_edge_pos_y = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
-    at::Tensor grad_recursive_edge_pos_z = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
-    at::Tensor grad_recursive_edge_dir_x = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
-    at::Tensor grad_recursive_edge_dir_y = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
-    at::Tensor grad_recursive_edge_dir_z = at::zeros({recursive_state_count}, recursive_state_edge_pos.options());
+    at::Tensor grad_recursive_edge_pos =
+        at::zeros(recursive_state_edge_pos.sizes(), recursive_state_edge_pos.options());
+    at::Tensor grad_recursive_edge_dir =
+        at::zeros(recursive_state_edge_dir.sizes(), recursive_state_edge_dir.options());
     at::Tensor grad_recursive_edge_t_min = at::zeros_like(recursive_state_edge_t_min);
     at::Tensor grad_recursive_edge_t_max = at::zeros_like(recursive_state_edge_t_max);
     at::Tensor grad_recursive_exterior_angle = at::zeros_like(recursive_state_exterior_angle);
@@ -1756,6 +1769,13 @@ py::tuple diffraction_accumulation_chain_backward_op(
     at::Tensor grad_tri_fn_x = at::zeros({tri.n_triangles}, state_edge_pos.options());
     at::Tensor grad_tri_fn_y = at::zeros({tri.n_triangles}, state_edge_pos.options());
     at::Tensor grad_tri_fn_z = at::zeros({tri.n_triangles}, state_edge_pos.options());
+    Vec3Output grad_edge_pos_view = vec3_output(grad_edge_pos, "grad_edge_pos");
+    Vec3Output grad_edge_dir_view = vec3_output(grad_edge_dir, "grad_edge_dir");
+    Vec3Output grad_src_view = vec3_output(grad_src, "grad_src");
+    Vec3Output grad_recursive_edge_pos_view =
+        vec3_output(grad_recursive_edge_pos, "grad_recursive_edge_pos");
+    Vec3Output grad_recursive_edge_dir_view =
+        vec3_output(grad_recursive_edge_dir, "grad_recursive_edge_dir");
 
     DfrChainAccumADParams params = {};
     params.n_rays = checked_i32(launch_count, "n_rays");
@@ -1781,33 +1801,55 @@ py::tuple diffraction_accumulation_chain_backward_op(
     params.tape_active = mask_ptr(tape_active);
     params.tape_cell = tape_cell.data_ptr<int>();
     params.state_edge_index = state_edge_index.data_ptr<int>();
-    params.state_edge_pos_x = state_edge_pos_soa.x.data_ptr<float>();
-    params.state_edge_pos_y = state_edge_pos_soa.y.data_ptr<float>();
-    params.state_edge_pos_z = state_edge_pos_soa.z.data_ptr<float>();
-    params.state_edge_dir_x = state_edge_dir_soa.x.data_ptr<float>();
-    params.state_edge_dir_y = state_edge_dir_soa.y.data_ptr<float>();
-    params.state_edge_dir_z = state_edge_dir_soa.z.data_ptr<float>();
+    params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
+    params.state_edge_pos_x = state_edge_pos_view.x;
+    params.state_edge_pos_y = state_edge_pos_view.y;
+    params.state_edge_pos_z = state_edge_pos_view.z;
+    params.state_edge_pos_stride = state_edge_pos_view.stride;
+    params.state_edge_dir_x = state_edge_dir_view.x;
+    params.state_edge_dir_y = state_edge_dir_view.y;
+    params.state_edge_dir_z = state_edge_dir_view.z;
+    params.state_edge_dir_stride = state_edge_dir_view.stride;
     params.state_edge_t_min = state_edge_t_min.data_ptr<float>();
+    params.state_edge_t_min_stride = stride_i32(state_edge_t_min, 0, "state_edge_t_min_stride");
     params.state_edge_t_max = state_edge_t_max.data_ptr<float>();
-    params.state_src_x = state_src_soa.x.data_ptr<float>();
-    params.state_src_y = state_src_soa.y.data_ptr<float>();
-    params.state_src_z = state_src_soa.z.data_ptr<float>();
+    params.state_edge_t_max_stride = stride_i32(state_edge_t_max, 0, "state_edge_t_max_stride");
+    params.state_src_x = state_src_view.x;
+    params.state_src_y = state_src_view.y;
+    params.state_src_z = state_src_view.z;
+    params.state_src_stride = state_src_view.stride;
     params.state_src_power = state_src_power.data_ptr<float>();
+    params.state_src_power_stride = stride_i32(state_src_power, 0, "state_src_power_stride");
     params.state_exterior_angle = state_exterior_angle.data_ptr<float>();
+    params.state_exterior_angle_stride = stride_i32(state_exterior_angle, 0, "state_exterior_angle_stride");
     params.state_prim0 = state_prim0.data_ptr<int>();
+    params.state_prim0_stride = stride_i32(state_prim0, 0, "state_prim0_stride");
     params.state_prim1 = state_prim1.data_ptr<int>();
+    params.state_prim1_stride = stride_i32(state_prim1, 0, "state_prim1_stride");
     params.recursive_state_edge_index = recursive_state_edge_index.data_ptr<int>();
-    params.recursive_state_edge_pos_x = recursive_edge_pos_soa.x.data_ptr<float>();
-    params.recursive_state_edge_pos_y = recursive_edge_pos_soa.y.data_ptr<float>();
-    params.recursive_state_edge_pos_z = recursive_edge_pos_soa.z.data_ptr<float>();
-    params.recursive_state_edge_dir_x = recursive_edge_dir_soa.x.data_ptr<float>();
-    params.recursive_state_edge_dir_y = recursive_edge_dir_soa.y.data_ptr<float>();
-    params.recursive_state_edge_dir_z = recursive_edge_dir_soa.z.data_ptr<float>();
+    params.recursive_state_edge_index_stride =
+        stride_i32(recursive_state_edge_index, 0, "recursive_state_edge_index_stride");
+    params.recursive_state_edge_pos_x = recursive_edge_pos_view.x;
+    params.recursive_state_edge_pos_y = recursive_edge_pos_view.y;
+    params.recursive_state_edge_pos_z = recursive_edge_pos_view.z;
+    params.recursive_state_edge_pos_stride = recursive_edge_pos_view.stride;
+    params.recursive_state_edge_dir_x = recursive_edge_dir_view.x;
+    params.recursive_state_edge_dir_y = recursive_edge_dir_view.y;
+    params.recursive_state_edge_dir_z = recursive_edge_dir_view.z;
+    params.recursive_state_edge_dir_stride = recursive_edge_dir_view.stride;
     params.recursive_state_edge_t_min = recursive_state_edge_t_min.data_ptr<float>();
+    params.recursive_state_edge_t_min_stride =
+        stride_i32(recursive_state_edge_t_min, 0, "recursive_state_edge_t_min_stride");
     params.recursive_state_edge_t_max = recursive_state_edge_t_max.data_ptr<float>();
+    params.recursive_state_edge_t_max_stride =
+        stride_i32(recursive_state_edge_t_max, 0, "recursive_state_edge_t_max_stride");
     params.recursive_state_exterior_angle = recursive_state_exterior_angle.data_ptr<float>();
+    params.recursive_state_exterior_angle_stride =
+        stride_i32(recursive_state_exterior_angle, 0, "recursive_state_exterior_angle_stride");
     params.recursive_state_prim0 = recursive_state_prim0.data_ptr<int>();
+    params.recursive_state_prim0_stride = stride_i32(recursive_state_prim0, 0, "recursive_state_prim0_stride");
     params.recursive_state_prim1 = recursive_state_prim1.data_ptr<int>();
+    params.recursive_state_prim1_stride = stride_i32(recursive_state_prim1, 0, "recursive_state_prim1_stride");
     params.tri_p0_x = tri.p0_x.data_ptr<float>();
     params.tri_p0_y = tri.p0_y.data_ptr<float>();
     params.tri_p0_z = tri.p0_z.data_ptr<float>();
@@ -1821,32 +1863,57 @@ py::tuple diffraction_accumulation_chain_backward_op(
     params.tri_fn_y = tri.fn_y.data_ptr<float>();
     params.tri_fn_z = tri.fn_z.data_ptr<float>();
     params.material_gain = material_gain.data_ptr<float>();
+    params.material_gain_stride = stride_i32(material_gain, 0, "material_gain_stride");
     params.material_valid = mask_ptr(material_valid);
-    params.grad_out_power = grad_power_flat.defined() ? grad_power_flat.data_ptr<float>() : nullptr;
-    params.grad_out_field_x_re = grad_field_x_re_flat.defined() ? grad_field_x_re_flat.data_ptr<float>() : nullptr;
-    params.grad_state_edge_pos_x = grad_edge_pos_x.data_ptr<float>();
-    params.grad_state_edge_pos_y = grad_edge_pos_y.data_ptr<float>();
-    params.grad_state_edge_pos_z = grad_edge_pos_z.data_ptr<float>();
-    params.grad_state_edge_dir_x = grad_edge_dir_x.data_ptr<float>();
-    params.grad_state_edge_dir_y = grad_edge_dir_y.data_ptr<float>();
-    params.grad_state_edge_dir_z = grad_edge_dir_z.data_ptr<float>();
+    params.material_valid_stride = stride_i32(material_valid, 0, "material_valid_stride");
+    params.grad_out_power = grad_power_view.ptr;
+    params.grad_out_power_rank = grad_power_view.rank;
+    params.grad_out_power_stride0 = grad_power_view.stride0;
+    params.grad_out_power_stride1 = grad_power_view.stride1;
+    params.grad_out_field_x_re = grad_field_x_re_view.ptr;
+    params.grad_out_field_x_re_rank = grad_field_x_re_view.rank;
+    params.grad_out_field_x_re_stride0 = grad_field_x_re_view.stride0;
+    params.grad_out_field_x_re_stride1 = grad_field_x_re_view.stride1;
+    params.grad_state_edge_pos_x = grad_edge_pos_view.x;
+    params.grad_state_edge_pos_y = grad_edge_pos_view.y;
+    params.grad_state_edge_pos_z = grad_edge_pos_view.z;
+    params.grad_state_edge_pos_stride = grad_edge_pos_view.stride;
+    params.grad_state_edge_dir_x = grad_edge_dir_view.x;
+    params.grad_state_edge_dir_y = grad_edge_dir_view.y;
+    params.grad_state_edge_dir_z = grad_edge_dir_view.z;
+    params.grad_state_edge_dir_stride = grad_edge_dir_view.stride;
     params.grad_state_edge_t_min = grad_edge_t_min.data_ptr<float>();
+    params.grad_state_edge_t_min_stride = stride_i32(grad_edge_t_min, 0, "grad_state_edge_t_min_stride");
     params.grad_state_edge_t_max = grad_edge_t_max.data_ptr<float>();
-    params.grad_state_src_x = grad_src_x.data_ptr<float>();
-    params.grad_state_src_y = grad_src_y.data_ptr<float>();
-    params.grad_state_src_z = grad_src_z.data_ptr<float>();
+    params.grad_state_edge_t_max_stride = stride_i32(grad_edge_t_max, 0, "grad_state_edge_t_max_stride");
+    params.grad_state_src_x = grad_src_view.x;
+    params.grad_state_src_y = grad_src_view.y;
+    params.grad_state_src_z = grad_src_view.z;
+    params.grad_state_src_stride = grad_src_view.stride;
     params.grad_state_src_power = grad_src_power.data_ptr<float>();
+    params.grad_state_src_power_stride = stride_i32(grad_src_power, 0, "grad_state_src_power_stride");
     params.grad_state_exterior_angle = grad_exterior_angle.data_ptr<float>();
-    params.grad_recursive_state_edge_pos_x = grad_recursive_edge_pos_x.data_ptr<float>();
-    params.grad_recursive_state_edge_pos_y = grad_recursive_edge_pos_y.data_ptr<float>();
-    params.grad_recursive_state_edge_pos_z = grad_recursive_edge_pos_z.data_ptr<float>();
-    params.grad_recursive_state_edge_dir_x = grad_recursive_edge_dir_x.data_ptr<float>();
-    params.grad_recursive_state_edge_dir_y = grad_recursive_edge_dir_y.data_ptr<float>();
-    params.grad_recursive_state_edge_dir_z = grad_recursive_edge_dir_z.data_ptr<float>();
+    params.grad_state_exterior_angle_stride =
+        stride_i32(grad_exterior_angle, 0, "grad_state_exterior_angle_stride");
+    params.grad_recursive_state_edge_pos_x = grad_recursive_edge_pos_view.x;
+    params.grad_recursive_state_edge_pos_y = grad_recursive_edge_pos_view.y;
+    params.grad_recursive_state_edge_pos_z = grad_recursive_edge_pos_view.z;
+    params.grad_recursive_state_edge_pos_stride = grad_recursive_edge_pos_view.stride;
+    params.grad_recursive_state_edge_dir_x = grad_recursive_edge_dir_view.x;
+    params.grad_recursive_state_edge_dir_y = grad_recursive_edge_dir_view.y;
+    params.grad_recursive_state_edge_dir_z = grad_recursive_edge_dir_view.z;
+    params.grad_recursive_state_edge_dir_stride = grad_recursive_edge_dir_view.stride;
     params.grad_recursive_state_edge_t_min = grad_recursive_edge_t_min.data_ptr<float>();
+    params.grad_recursive_state_edge_t_min_stride =
+        stride_i32(grad_recursive_edge_t_min, 0, "grad_recursive_state_edge_t_min_stride");
     params.grad_recursive_state_edge_t_max = grad_recursive_edge_t_max.data_ptr<float>();
+    params.grad_recursive_state_edge_t_max_stride =
+        stride_i32(grad_recursive_edge_t_max, 0, "grad_recursive_state_edge_t_max_stride");
     params.grad_recursive_state_exterior_angle = grad_recursive_exterior_angle.data_ptr<float>();
+    params.grad_recursive_state_exterior_angle_stride =
+        stride_i32(grad_recursive_exterior_angle, 0, "grad_recursive_state_exterior_angle_stride");
     params.grad_material_gain = grad_material_gain.data_ptr<float>();
+    params.grad_material_gain_stride = stride_i32(grad_material_gain, 0, "grad_material_gain_stride");
     params.grad_tri_p0_x = grad_tri_p0_x.data_ptr<float>();
     params.grad_tri_p0_y = grad_tri_p0_y.data_ptr<float>();
     params.grad_tri_p0_z = grad_tri_p0_z.data_ptr<float>();
@@ -1855,15 +1922,15 @@ py::tuple diffraction_accumulation_chain_backward_op(
     params.grad_tri_fn_z = grad_tri_fn_z.data_ptr<float>();
     dfr_chain_accum_vjp_gpu(params);
     return py::make_tuple(
-        stack_vec3(grad_edge_pos_x, grad_edge_pos_y, grad_edge_pos_z),
-        stack_vec3(grad_edge_dir_x, grad_edge_dir_y, grad_edge_dir_z),
+        grad_edge_pos,
+        grad_edge_dir,
         grad_edge_t_min,
         grad_edge_t_max,
-        stack_vec3(grad_src_x, grad_src_y, grad_src_z),
+        grad_src,
         grad_src_power,
         grad_exterior_angle,
-        stack_vec3(grad_recursive_edge_pos_x, grad_recursive_edge_pos_y, grad_recursive_edge_pos_z),
-        stack_vec3(grad_recursive_edge_dir_x, grad_recursive_edge_dir_y, grad_recursive_edge_dir_z),
+        grad_recursive_edge_pos,
+        grad_recursive_edge_dir,
         grad_recursive_edge_t_min,
         grad_recursive_edge_t_max,
         grad_recursive_exterior_angle,
@@ -1894,6 +1961,8 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     at::Tensor recursive_state_exterior_angle,
     at::Tensor material_gain,
     at::Tensor material_valid,
+    int64_t state_limit_arg,
+    int64_t recursive_state_limit_arg,
     int64_t grid_axis,
     double grid_position,
     double grid_coord0_min,
@@ -1922,36 +1991,83 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     c10::optional<at::Tensor> dot_recursive_state_edge_t_max,
     c10::optional<at::Tensor> dot_recursive_state_exterior_angle,
     c10::optional<at::Tensor> dot_material_gain) {
+    require_mask(tape_active, "tape_active");
+    require_flat_i32(tape_cell, "tape_cell");
+    require_flat_i32_strided(state_edge_index, "state_edge_index");
+    require_vec3f_strided(state_edge_pos, "state_edge_pos");
+    require_vec3f_strided(state_edge_dir, "state_edge_dir");
+    require_flat_f32_strided(state_edge_t_min, "state_edge_t_min");
+    require_flat_f32_strided(state_edge_t_max, "state_edge_t_max");
+    require_flat_i32_strided(state_prim0, "state_prim0");
+    require_flat_i32_strided(state_prim1, "state_prim1");
+    require_flat_f32_strided(state_exterior_angle, "state_exterior_angle");
+    require_vec3f_strided(state_src, "state_src");
+    require_flat_f32_strided(state_src_power, "state_src_power");
+    require_flat_i32_strided(recursive_state_edge_index, "recursive_state_edge_index");
+    require_vec3f_strided(recursive_state_edge_pos, "recursive_state_edge_pos");
+    require_vec3f_strided(recursive_state_edge_dir, "recursive_state_edge_dir");
+    require_flat_f32_strided(recursive_state_edge_t_min, "recursive_state_edge_t_min");
+    require_flat_f32_strided(recursive_state_edge_t_max, "recursive_state_edge_t_max");
+    require_flat_i32_strided(recursive_state_prim0, "recursive_state_prim0");
+    require_flat_i32_strided(recursive_state_prim1, "recursive_state_prim1");
+    require_flat_f32_strided(recursive_state_exterior_angle, "recursive_state_exterior_angle");
+    require_flat_f32_strided(material_gain, "material_gain");
+    require_mask_strided(material_valid, "material_valid");
     SceneCache &scene = get_scene(scene_handle);
     TriangleSoA tri = make_scene_triangle_soa(scene);
-    Vec3SoA state_edge_pos_soa = split_vec3(state_edge_pos);
-    Vec3SoA state_edge_dir_soa = split_vec3(state_edge_dir);
-    Vec3SoA state_src_soa = split_vec3(state_src);
-    Vec3SoA recursive_edge_pos_soa = split_vec3(recursive_state_edge_pos);
-    Vec3SoA recursive_edge_dir_soa = split_vec3(recursive_state_edge_dir);
-    require_optional_vec3f(dot_state_edge_pos, "dot_state_edge_pos");
-    require_optional_vec3f(dot_state_edge_dir, "dot_state_edge_dir");
-    require_optional_scalar_f(dot_state_edge_t_min, "dot_state_edge_t_min");
-    require_optional_scalar_f(dot_state_edge_t_max, "dot_state_edge_t_max");
-    require_optional_scalar_f(dot_state_exterior_angle, "dot_state_exterior_angle");
-    require_optional_vec3f(dot_state_src, "dot_state_src");
-    require_optional_scalar_f(dot_state_src_power, "dot_state_src_power");
-    require_optional_vec3f(dot_recursive_state_edge_pos, "dot_recursive_state_edge_pos");
-    require_optional_vec3f(dot_recursive_state_edge_dir, "dot_recursive_state_edge_dir");
-    require_optional_scalar_f(dot_recursive_state_edge_t_min, "dot_recursive_state_edge_t_min");
-    require_optional_scalar_f(dot_recursive_state_edge_t_max, "dot_recursive_state_edge_t_max");
-    require_optional_scalar_f(dot_recursive_state_exterior_angle, "dot_recursive_state_exterior_angle");
-    require_optional_scalar_f(dot_material_gain, "dot_material_gain");
-    Vec3SoA dot_edge_pos_soa = split_optional_vec3(dot_state_edge_pos);
-    Vec3SoA dot_edge_dir_soa = split_optional_vec3(dot_state_edge_dir);
-    Vec3SoA dot_src_soa = split_optional_vec3(dot_state_src);
-    Vec3SoA dot_recursive_edge_pos_soa = split_optional_vec3(dot_recursive_state_edge_pos);
-    Vec3SoA dot_recursive_edge_dir_soa = split_optional_vec3(dot_recursive_state_edge_dir);
+    Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
+    Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
+    Vec3Input state_src_view = vec3_input(state_src, "state_src");
+    Vec3Input recursive_edge_pos_view = vec3_input(recursive_state_edge_pos, "recursive_state_edge_pos");
+    Vec3Input recursive_edge_dir_view = vec3_input(recursive_state_edge_dir, "recursive_state_edge_dir");
+    require_optional_vec3f_strided(dot_state_edge_pos, "dot_state_edge_pos");
+    require_optional_vec3f_strided(dot_state_edge_dir, "dot_state_edge_dir");
+    require_optional_scalar_f_strided(dot_state_edge_t_min, "dot_state_edge_t_min");
+    require_optional_scalar_f_strided(dot_state_edge_t_max, "dot_state_edge_t_max");
+    require_optional_scalar_f_strided(dot_state_exterior_angle, "dot_state_exterior_angle");
+    require_optional_vec3f_strided(dot_state_src, "dot_state_src");
+    require_optional_scalar_f_strided(dot_state_src_power, "dot_state_src_power");
+    require_optional_vec3f_strided(dot_recursive_state_edge_pos, "dot_recursive_state_edge_pos");
+    require_optional_vec3f_strided(dot_recursive_state_edge_dir, "dot_recursive_state_edge_dir");
+    require_optional_scalar_f_strided(dot_recursive_state_edge_t_min, "dot_recursive_state_edge_t_min");
+    require_optional_scalar_f_strided(dot_recursive_state_edge_t_max, "dot_recursive_state_edge_t_max");
+    require_optional_scalar_f_strided(dot_recursive_state_exterior_angle, "dot_recursive_state_exterior_angle");
+    require_optional_scalar_f_strided(dot_material_gain, "dot_material_gain");
+    Vec3Input dot_edge_pos_view = optional_vec3_input(dot_state_edge_pos, "dot_state_edge_pos");
+    Vec3Input dot_edge_dir_view = optional_vec3_input(dot_state_edge_dir, "dot_state_edge_dir");
+    Vec3Input dot_src_view = optional_vec3_input(dot_state_src, "dot_state_src");
+    Vec3Input dot_recursive_edge_pos_view =
+        optional_vec3_input(dot_recursive_state_edge_pos, "dot_recursive_state_edge_pos");
+    Vec3Input dot_recursive_edge_dir_view =
+        optional_vec3_input(dot_recursive_state_edge_dir, "dot_recursive_state_edge_dir");
     const int64_t launch_count = tape_active.size(0);
-    const int64_t state_count = state_edge_pos.size(0);
-    const int64_t recursive_state_count = recursive_state_edge_pos.size(0);
+    if (state_limit_arg < 0 || recursive_state_limit_arg < 0)
+        throw std::runtime_error("state counts must be non-negative.");
+    const int64_t state_count = state_limit_arg;
+    const int64_t recursive_state_count = recursive_state_limit_arg;
+    if (state_count > state_edge_pos.size(0))
+        throw std::runtime_error("state_count must not exceed state_edge_pos width.");
+    if (recursive_state_count > recursive_state_edge_pos.size(0))
+        throw std::runtime_error("recursive_state_count must not exceed recursive_state_edge_pos width.");
     const int64_t material_count = material_gain.size(0);
     const int64_t cell_count = grid_resolution0 * grid_resolution1;
+    require_state_width(tape_cell, launch_count, "tape_cell");
+    require_state_width(state_edge_index, state_count, "state_edge_index");
+    require_state_width(state_edge_dir, state_count, "state_edge_dir");
+    require_state_width(state_edge_t_min, state_count, "state_edge_t_min");
+    require_state_width(state_edge_t_max, state_count, "state_edge_t_max");
+    require_state_width(state_prim0, state_count, "state_prim0");
+    require_state_width(state_prim1, state_count, "state_prim1");
+    require_state_width(state_exterior_angle, state_count, "state_exterior_angle");
+    require_state_width(state_src, state_count, "state_src");
+    require_state_width(state_src_power, state_count, "state_src_power");
+    require_state_width(recursive_state_edge_index, recursive_state_count, "recursive_state_edge_index");
+    require_state_width(recursive_state_edge_dir, recursive_state_count, "recursive_state_edge_dir");
+    require_state_width(recursive_state_edge_t_min, recursive_state_count, "recursive_state_edge_t_min");
+    require_state_width(recursive_state_edge_t_max, recursive_state_count, "recursive_state_edge_t_max");
+    require_state_width(recursive_state_prim0, recursive_state_count, "recursive_state_prim0");
+    require_state_width(recursive_state_prim1, recursive_state_count, "recursive_state_prim1");
+    require_state_width(recursive_state_exterior_angle, recursive_state_count, "recursive_state_exterior_angle");
     require_optional_state_width(dot_state_edge_pos, state_count, "dot_state_edge_pos");
     require_optional_state_width(dot_state_edge_dir, state_count, "dot_state_edge_dir");
     require_optional_state_width(dot_state_edge_t_min, state_count, "dot_state_edge_t_min");
@@ -1997,33 +2113,55 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     params.tape_active = mask_ptr(tape_active);
     params.tape_cell = tape_cell.data_ptr<int>();
     params.state_edge_index = state_edge_index.data_ptr<int>();
-    params.state_edge_pos_x = state_edge_pos_soa.x.data_ptr<float>();
-    params.state_edge_pos_y = state_edge_pos_soa.y.data_ptr<float>();
-    params.state_edge_pos_z = state_edge_pos_soa.z.data_ptr<float>();
-    params.state_edge_dir_x = state_edge_dir_soa.x.data_ptr<float>();
-    params.state_edge_dir_y = state_edge_dir_soa.y.data_ptr<float>();
-    params.state_edge_dir_z = state_edge_dir_soa.z.data_ptr<float>();
+    params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
+    params.state_edge_pos_x = state_edge_pos_view.x;
+    params.state_edge_pos_y = state_edge_pos_view.y;
+    params.state_edge_pos_z = state_edge_pos_view.z;
+    params.state_edge_pos_stride = state_edge_pos_view.stride;
+    params.state_edge_dir_x = state_edge_dir_view.x;
+    params.state_edge_dir_y = state_edge_dir_view.y;
+    params.state_edge_dir_z = state_edge_dir_view.z;
+    params.state_edge_dir_stride = state_edge_dir_view.stride;
     params.state_edge_t_min = state_edge_t_min.data_ptr<float>();
+    params.state_edge_t_min_stride = stride_i32(state_edge_t_min, 0, "state_edge_t_min_stride");
     params.state_edge_t_max = state_edge_t_max.data_ptr<float>();
-    params.state_src_x = state_src_soa.x.data_ptr<float>();
-    params.state_src_y = state_src_soa.y.data_ptr<float>();
-    params.state_src_z = state_src_soa.z.data_ptr<float>();
+    params.state_edge_t_max_stride = stride_i32(state_edge_t_max, 0, "state_edge_t_max_stride");
+    params.state_src_x = state_src_view.x;
+    params.state_src_y = state_src_view.y;
+    params.state_src_z = state_src_view.z;
+    params.state_src_stride = state_src_view.stride;
     params.state_src_power = state_src_power.data_ptr<float>();
+    params.state_src_power_stride = stride_i32(state_src_power, 0, "state_src_power_stride");
     params.state_exterior_angle = state_exterior_angle.data_ptr<float>();
+    params.state_exterior_angle_stride = stride_i32(state_exterior_angle, 0, "state_exterior_angle_stride");
     params.state_prim0 = state_prim0.data_ptr<int>();
+    params.state_prim0_stride = stride_i32(state_prim0, 0, "state_prim0_stride");
     params.state_prim1 = state_prim1.data_ptr<int>();
+    params.state_prim1_stride = stride_i32(state_prim1, 0, "state_prim1_stride");
     params.recursive_state_edge_index = recursive_state_edge_index.data_ptr<int>();
-    params.recursive_state_edge_pos_x = recursive_edge_pos_soa.x.data_ptr<float>();
-    params.recursive_state_edge_pos_y = recursive_edge_pos_soa.y.data_ptr<float>();
-    params.recursive_state_edge_pos_z = recursive_edge_pos_soa.z.data_ptr<float>();
-    params.recursive_state_edge_dir_x = recursive_edge_dir_soa.x.data_ptr<float>();
-    params.recursive_state_edge_dir_y = recursive_edge_dir_soa.y.data_ptr<float>();
-    params.recursive_state_edge_dir_z = recursive_edge_dir_soa.z.data_ptr<float>();
+    params.recursive_state_edge_index_stride =
+        stride_i32(recursive_state_edge_index, 0, "recursive_state_edge_index_stride");
+    params.recursive_state_edge_pos_x = recursive_edge_pos_view.x;
+    params.recursive_state_edge_pos_y = recursive_edge_pos_view.y;
+    params.recursive_state_edge_pos_z = recursive_edge_pos_view.z;
+    params.recursive_state_edge_pos_stride = recursive_edge_pos_view.stride;
+    params.recursive_state_edge_dir_x = recursive_edge_dir_view.x;
+    params.recursive_state_edge_dir_y = recursive_edge_dir_view.y;
+    params.recursive_state_edge_dir_z = recursive_edge_dir_view.z;
+    params.recursive_state_edge_dir_stride = recursive_edge_dir_view.stride;
     params.recursive_state_edge_t_min = recursive_state_edge_t_min.data_ptr<float>();
+    params.recursive_state_edge_t_min_stride =
+        stride_i32(recursive_state_edge_t_min, 0, "recursive_state_edge_t_min_stride");
     params.recursive_state_edge_t_max = recursive_state_edge_t_max.data_ptr<float>();
+    params.recursive_state_edge_t_max_stride =
+        stride_i32(recursive_state_edge_t_max, 0, "recursive_state_edge_t_max_stride");
     params.recursive_state_exterior_angle = recursive_state_exterior_angle.data_ptr<float>();
+    params.recursive_state_exterior_angle_stride =
+        stride_i32(recursive_state_exterior_angle, 0, "recursive_state_exterior_angle_stride");
     params.recursive_state_prim0 = recursive_state_prim0.data_ptr<int>();
+    params.recursive_state_prim0_stride = stride_i32(recursive_state_prim0, 0, "recursive_state_prim0_stride");
     params.recursive_state_prim1 = recursive_state_prim1.data_ptr<int>();
+    params.recursive_state_prim1_stride = stride_i32(recursive_state_prim1, 0, "recursive_state_prim1_stride");
     params.tri_p0_x = tri.p0_x.data_ptr<float>();
     params.tri_p0_y = tri.p0_y.data_ptr<float>();
     params.tri_p0_z = tri.p0_z.data_ptr<float>();
@@ -2037,30 +2175,53 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     params.tri_fn_y = tri.fn_y.data_ptr<float>();
     params.tri_fn_z = tri.fn_z.data_ptr<float>();
     params.material_gain = material_gain.data_ptr<float>();
+    params.material_gain_stride = stride_i32(material_gain, 0, "material_gain_stride");
     params.material_valid = mask_ptr(material_valid);
-    params.dot_state_edge_pos_x = vec3_ptr(dot_edge_pos_soa.x);
-    params.dot_state_edge_pos_y = vec3_ptr(dot_edge_pos_soa.y);
-    params.dot_state_edge_pos_z = vec3_ptr(dot_edge_pos_soa.z);
-    params.dot_state_edge_dir_x = vec3_ptr(dot_edge_dir_soa.x);
-    params.dot_state_edge_dir_y = vec3_ptr(dot_edge_dir_soa.y);
-    params.dot_state_edge_dir_z = vec3_ptr(dot_edge_dir_soa.z);
+    params.material_valid_stride = stride_i32(material_valid, 0, "material_valid_stride");
+    params.dot_state_edge_pos_x = dot_edge_pos_view.x;
+    params.dot_state_edge_pos_y = dot_edge_pos_view.y;
+    params.dot_state_edge_pos_z = dot_edge_pos_view.z;
+    params.dot_state_edge_pos_stride = dot_edge_pos_view.stride;
+    params.dot_state_edge_dir_x = dot_edge_dir_view.x;
+    params.dot_state_edge_dir_y = dot_edge_dir_view.y;
+    params.dot_state_edge_dir_z = dot_edge_dir_view.z;
+    params.dot_state_edge_dir_stride = dot_edge_dir_view.stride;
     params.dot_state_edge_t_min = optional_scalar_ptr(dot_state_edge_t_min);
+    params.dot_state_edge_t_min_stride =
+        optional_scalar_stride(dot_state_edge_t_min, "dot_state_edge_t_min_stride");
     params.dot_state_edge_t_max = optional_scalar_ptr(dot_state_edge_t_max);
-    params.dot_state_src_x = vec3_ptr(dot_src_soa.x);
-    params.dot_state_src_y = vec3_ptr(dot_src_soa.y);
-    params.dot_state_src_z = vec3_ptr(dot_src_soa.z);
+    params.dot_state_edge_t_max_stride =
+        optional_scalar_stride(dot_state_edge_t_max, "dot_state_edge_t_max_stride");
+    params.dot_state_src_x = dot_src_view.x;
+    params.dot_state_src_y = dot_src_view.y;
+    params.dot_state_src_z = dot_src_view.z;
+    params.dot_state_src_stride = dot_src_view.stride;
     params.dot_state_src_power = optional_scalar_ptr(dot_state_src_power);
+    params.dot_state_src_power_stride =
+        optional_scalar_stride(dot_state_src_power, "dot_state_src_power_stride");
     params.dot_state_exterior_angle = optional_scalar_ptr(dot_state_exterior_angle);
-    params.dot_recursive_state_edge_pos_x = vec3_ptr(dot_recursive_edge_pos_soa.x);
-    params.dot_recursive_state_edge_pos_y = vec3_ptr(dot_recursive_edge_pos_soa.y);
-    params.dot_recursive_state_edge_pos_z = vec3_ptr(dot_recursive_edge_pos_soa.z);
-    params.dot_recursive_state_edge_dir_x = vec3_ptr(dot_recursive_edge_dir_soa.x);
-    params.dot_recursive_state_edge_dir_y = vec3_ptr(dot_recursive_edge_dir_soa.y);
-    params.dot_recursive_state_edge_dir_z = vec3_ptr(dot_recursive_edge_dir_soa.z);
+    params.dot_state_exterior_angle_stride =
+        optional_scalar_stride(dot_state_exterior_angle, "dot_state_exterior_angle_stride");
+    params.dot_recursive_state_edge_pos_x = dot_recursive_edge_pos_view.x;
+    params.dot_recursive_state_edge_pos_y = dot_recursive_edge_pos_view.y;
+    params.dot_recursive_state_edge_pos_z = dot_recursive_edge_pos_view.z;
+    params.dot_recursive_state_edge_pos_stride = dot_recursive_edge_pos_view.stride;
+    params.dot_recursive_state_edge_dir_x = dot_recursive_edge_dir_view.x;
+    params.dot_recursive_state_edge_dir_y = dot_recursive_edge_dir_view.y;
+    params.dot_recursive_state_edge_dir_z = dot_recursive_edge_dir_view.z;
+    params.dot_recursive_state_edge_dir_stride = dot_recursive_edge_dir_view.stride;
     params.dot_recursive_state_edge_t_min = optional_scalar_ptr(dot_recursive_state_edge_t_min);
+    params.dot_recursive_state_edge_t_min_stride =
+        optional_scalar_stride(dot_recursive_state_edge_t_min, "dot_recursive_state_edge_t_min_stride");
     params.dot_recursive_state_edge_t_max = optional_scalar_ptr(dot_recursive_state_edge_t_max);
+    params.dot_recursive_state_edge_t_max_stride =
+        optional_scalar_stride(dot_recursive_state_edge_t_max, "dot_recursive_state_edge_t_max_stride");
     params.dot_recursive_state_exterior_angle = optional_scalar_ptr(dot_recursive_state_exterior_angle);
+    params.dot_recursive_state_exterior_angle_stride = optional_scalar_stride(
+        dot_recursive_state_exterior_angle,
+        "dot_recursive_state_exterior_angle_stride");
     params.dot_material_gain = optional_scalar_ptr(dot_material_gain);
+    params.dot_material_gain_stride = optional_scalar_stride(dot_material_gain, "dot_material_gain_stride");
     params.dot_tri_p0_x = zero_tri.data_ptr<float>();
     params.dot_tri_p0_y = zero_tri.data_ptr<float>();
     params.dot_tri_p0_z = zero_tri.data_ptr<float>();

@@ -430,6 +430,62 @@ class IntersectTVerticesAdFunction
     }
 };
 
+class IntersectTNoActiveVerticesAdFunction
+    : public torch::autograd::Function<IntersectTNoActiveVerticesAdFunction> {
+  public:
+    static torch::autograd::Variable forward(
+        torch::autograd::AutogradContext *ctx,
+        int64_t scene_handle,
+        int64_t request_handle,
+        torch::autograd::Variable vertices) {
+        (void)vertices;
+        IntersectRequest request = take_intersect_request(request_handle);
+        SceneCache &scene = get_scene(scene_handle);
+        IntersectForwardOutputs out =
+            intersect_forward_tape_cuda(scene, request.ray_o, request.ray_d, request.ray_tmax, at::Tensor());
+        ctx->set_materialize_grads(false);
+        ctx->saved_data["scene_handle"] = scene_handle;
+        ctx->save_for_backward({request.ray_o, request.ray_d, out.tape_prim_id});
+        return out.t;
+    }
+
+    static torch::autograd::variable_list backward(
+        torch::autograd::AutogradContext *ctx,
+        torch::autograd::variable_list grad_outputs) {
+        auto saved = ctx->get_saved_variables();
+        const at::Tensor &ray_o = saved[0];
+        const at::Tensor &ray_d = saved[1];
+        const at::Tensor &tape_prim_id = saved[2];
+        const int64_t scene_handle = ctx->saved_data["scene_handle"].toInt();
+        const at::Tensor &grad_t = grad_outputs[0];
+        SceneCache &scene = get_scene(scene_handle);
+        IntersectBackwardOutputs out;
+        if (tensor_has_values(grad_t)) {
+            out = intersect_backward_t_cuda(
+                scene.global_vertices,
+                scene.global_faces,
+                ray_o,
+                ray_d,
+                at::Tensor(),
+                tape_prim_id,
+                at::Tensor(),
+                grad_t,
+                grad_t.stride(0),
+                true,
+                false,
+                false,
+                false);
+        } else {
+            out.grad_vertices = at::zeros_like(scene.global_vertices);
+        }
+        return {
+            at::Tensor(),
+            at::Tensor(),
+            out.grad_vertices,
+        };
+    }
+};
+
 class IntersectVerticesAdFunction
     : public torch::autograd::Function<IntersectVerticesAdFunction> {
   public:
@@ -673,18 +729,25 @@ at::Tensor intersect_ad_t_op(
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
-    SceneCache &scene = get_scene(scene_handle);
-    EmptyIntersectionTensors empty_tensors = empty_intersection_tensors(ray_o, scene.global_faces);
-    if (!active.defined())
-        active = empty_tensors.active;
     const bool vertices_only_reverse =
         vertices.requires_grad() &&
         !ray_o.requires_grad() &&
         !ray_d.requires_grad() &&
         !ray_tmax.requires_grad();
+    if (!vertices_only_reverse && !active.defined()) {
+        SceneCache &scene = get_scene(scene_handle);
+        active = empty_intersection_tensors(ray_o, scene.global_faces).active;
+    }
     if (vertices_only_reverse) {
+        at::Tensor request_ray_tmax = ray_tmax.numel() == 0 ? at::Tensor() : ray_tmax;
         const int64_t request_handle =
-            stash_intersect_request(ray_o, ray_d, ray_tmax, active);
+            stash_intersect_request(ray_o, ray_d, request_ray_tmax, active);
+        if (!active.defined()) {
+            return IntersectTNoActiveVerticesAdFunction::apply(
+                scene_handle,
+                request_handle,
+                vertices);
+        }
         return IntersectTVerticesAdFunction::apply(
             scene_handle,
             request_handle,
@@ -712,24 +775,40 @@ py::tuple intersect_ad_flags_op(
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
-    SceneCache &scene = get_scene(scene_handle);
-    EmptyIntersectionTensors empty_tensors = empty_intersection_tensors(ray_o, scene.global_faces);
-    if (!active.defined())
-        active = empty_tensors.active;
     const bool vertices_only_reverse =
         vertices.requires_grad() &&
         !ray_o.requires_grad() &&
         !ray_d.requires_grad() &&
         !ray_tmax.requires_grad();
+    EmptyIntersectionTensors empty_tensors;
+    bool have_empty_tensors = false;
+    auto ensure_empty_tensors = [&]() -> EmptyIntersectionTensors & {
+        if (!have_empty_tensors) {
+            SceneCache &scene = get_scene(scene_handle);
+            empty_tensors = empty_intersection_tensors(ray_o, scene.global_faces);
+            have_empty_tensors = true;
+        }
+        return empty_tensors;
+    };
+    if (!vertices_only_reverse && !active.defined())
+        active = ensure_empty_tensors().active;
     if (flags == 0) {
         torch::autograd::Variable t;
         if (vertices_only_reverse) {
+            at::Tensor request_ray_tmax = ray_tmax.numel() == 0 ? at::Tensor() : ray_tmax;
             const int64_t request_handle =
-                stash_intersect_request(ray_o, ray_d, ray_tmax, active);
-            t = IntersectTVerticesAdFunction::apply(
-                scene_handle,
-                request_handle,
-                vertices);
+                stash_intersect_request(ray_o, ray_d, request_ray_tmax, active);
+            if (!active.defined()) {
+                t = IntersectTNoActiveVerticesAdFunction::apply(
+                    scene_handle,
+                    request_handle,
+                    vertices);
+            } else {
+                t = IntersectTVerticesAdFunction::apply(
+                    scene_handle,
+                    request_handle,
+                    vertices);
+            }
         } else {
             t = IntersectTAdFunction::apply(
                 scene_handle,
@@ -739,6 +818,7 @@ py::tuple intersect_ad_flags_op(
                 ray_tmax,
                 active);
         }
+        EmptyIntersectionTensors &empty_tensors = ensure_empty_tensors();
         return py::make_tuple(
             t,
             empty_tensors.p,

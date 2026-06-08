@@ -112,19 +112,18 @@ class PublicApiContractTests(unittest.TestCase):
         for token in forbidden:
             self.assertNotIn(token, coherent_source)
 
-    def test_chain_diffraction_noad_branch_precedes_python_contiguous_staging(self):
+    def test_chain_diffraction_public_ad_path_does_not_stage_states_or_material(self):
         source = (ROOT / "raydtorch" / "autograd.py").read_text()
         start = source.index("def accum_dfr_chain_native")
         end = source.index("def accum_dfr_coherent_direct_native")
         chain_source = source[start:end]
-        self.assertLess(
-            chain_source.index("if not _needs_reverse_or_forward_ad"),
-            chain_source.index("initial_states = _contig_states(initial_states)"),
+        forbidden = (
+            "_contig_states(",
+            "_contig_material(",
+            ".contiguous()",
         )
-        self.assertLess(
-            chain_source.index("_C.diffraction_accumulation_forward"),
-            chain_source.index("initial_states = _contig_states(initial_states)"),
-        )
+        for token in forbidden:
+            self.assertNotIn(token, chain_source)
         self.assertIn("initial_states.state_count", chain_source)
         self.assertIn("recursive_states.state_count", chain_source)
 
@@ -152,6 +151,25 @@ class PublicApiContractTests(unittest.TestCase):
         backward_source = source[backward_start:backward_end]
         jvp_start = backward_end
         jvp_end = source.index("py::tuple diffraction_accumulation_chain_backward_op")
+        jvp_source = source[jvp_start:jvp_end]
+        forbidden = (
+            "split_vec3(",
+            "split_optional_vec3(",
+            "flatten_optional_f32(",
+            "stack_vec3(",
+            ".contiguous()",
+        )
+        for token in forbidden:
+            self.assertNotIn(token, backward_source)
+            self.assertNotIn(token, jvp_source)
+
+    def test_chain_diffraction_ad_does_not_stage_vec3_or_upstream_grads_with_aten_copies(self):
+        source = (ROOT / "src" / "torch_ext" / "diffraction" / "ops.cpp").read_text()
+        backward_start = source.index("py::tuple diffraction_accumulation_chain_backward_op")
+        backward_end = source.index("py::tuple diffraction_accumulation_chain_jvp_op")
+        backward_source = source[backward_start:backward_end]
+        jvp_start = backward_end
+        jvp_end = source.index("py::tuple diffraction_coherent_accumulation_forward_op")
         jvp_source = source[jvp_start:jvp_end]
         forbidden = (
             "split_vec3(",

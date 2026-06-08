@@ -150,16 +150,18 @@ pattern for their upstream gradients and JVP tangents. Custom autograd nodes now
 also disable unused-output gradient materialization, so `its.t.backward(upstream)`
 does not receive zero tensors for unused full intersection fields.
 
-Current public AD/VJP status, 65.5K rays, 30 repeats, 8 warmup:
+Current public AD/VJP status, 73.7K triangles / 65.5K rays, 30 repeats,
+8 warmup, RayD package warm-started in the same script, full VJP explicitly
+materialized with `--materialize-full-vjp`:
 
 | Mode | RayDTorch ms | RayD ms | Status |
 |---|---:|---:|---|
-| 73.7K tri static forward full | 0.0558 | 0.1460 | RayDTorch faster |
-| 73.7K tri static forward reduced | 0.0415 | 0.1383 | RayDTorch faster |
-| 73.7K tri static public VJP full | 0.2106 | 0.0864 | RayD faster |
-| 73.7K tri static public VJP reduced | 0.1775 | 0.0725 | RayD faster |
-| 73.7K tri dynamic public VJP full | 0.3112 | 2.5960 | RayDTorch faster |
-| 73.7K tri dynamic public VJP reduced | 0.3069 | 2.1908 | RayDTorch faster |
+| static forward full | 0.0565 | 0.1402 | RayDTorch faster |
+| static forward reduced | 0.0294 | 0.1298 | RayDTorch faster |
+| static public VJP full | 0.2484 | 0.0916 | RayD faster |
+| static public VJP reduced | 0.2074 | 0.0739 | RayD faster |
+| dynamic public VJP full | 0.3795 | 2.5689 | RayDTorch faster |
+| dynamic public VJP reduced | 0.3035 | 2.3201 | RayDTorch faster |
 
 The native reduced VJP kernel itself is not the bottleneck: direct native
 `intersect_forward_tape + intersect_backward_t` measures about 0.068 ms on the
@@ -169,10 +171,71 @@ and `AccumulateGrad` around `.backward()`. CUDA Graph capture works for the
 direct native forward and backward calls individually, but capture of the public
 `.backward()` path currently fails with CUDA stream-capture invalidation. Closing
 this gap fairly requires reducing the public autograd boundary count or using an
-internal cached VJP executor. `torch.compile` is not expected to fuse through the
-OptiX/custom-extension/autograd boundaries reliably; the reliable optimization
-path is semantic native fusion while preserving the public API and generic
-upstream-gradient contract.
+internal cached VJP executor without recognizing the loss or benchmark shape.
+`torch.compile` is not expected to fuse through the OptiX/custom-extension/
+autograd boundaries reliably; the reliable optimization path is semantic native
+fusion while preserving the public API and generic upstream-gradient contract.
+
+## Public API And No-Fallback Contract
+
+The public RayDTorch surface intentionally remains the original user-facing API:
+`scene.intersect(...)`, `scene.trace_reflections(...)`, and the multipath /
+diffraction methods on `Scene`. Benchmark-specific public names such as
+`trace_reflections_minimal`, `intersect_t_sum`, and `intersect_t_sum_vjp` are not
+part of the API and are guarded by `tests.raydtorch_native.test_public_api_contract`.
+Reduced/full output timing is selected through the normal operation semantics
+(`RayFlags.None` vs full flags, AD state, and whether full public fields are
+materialized in the benchmark), not through a separate Python method.
+
+The production public wrappers do not have a Python fallback that reconstructs
+results from PyTorch eager tensor operations. They validate arguments and dispatch
+to native pybind/CUDA/OptiX entrypoints. The previous chain-diffraction AD
+fallback/staging helpers (`_contig_states`, `_contig_material`, Python
+`.contiguous()` slicing) have been removed. If a path is not implemented natively,
+it must fail explicitly rather than silently assembling GPU tensors with
+`torch.stack`, `torch.cat`, `torch.where`, `torch.sum`, `reshape` repair,
+valid-mask filtering, or checksum kernels in Python.
+
+Backward paths are generic VJP/JVP paths. Intersection forward saves the hit tape
+needed for the requested outputs, and backward consumes real upstream gradients
+such as `grad_t`, `grad_p`, `grad_n`, `grad_geo_n`, `grad_uv`, and
+`grad_barycentric`; a sum loss is only the special case where `grad_t` is all
+ones. Reflection, EPC, and diffraction AD paths follow the same rule: missing
+upstreams/tangents are nullable native inputs interpreted as zero in CUDA, while
+explicit nonuniform or strided upstream tensors are read with their strides.
+
+Diffraction direct and chain accumulation now pass logical state counts into
+native no-AD and AD bindings. Padded, non-contiguous `DfrStates`/material views
+therefore use the same native path as contiguous benchmark inputs without Python
+prefix slicing. Direct and chain AD bindings also avoid C++ ATen
+`split_vec3(...).contiguous()`, `flatten_optional_f32(...)`, and
+`stack_vec3(...)` staging around state vectors, upstream grid gradients, and
+returned vector gradients.
+
+The stress benchmark also has an opt-in PyTorch-loss wrapper mode:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd mitsuba `
+  --repeats 30 --warmup 8 --rayd-source package --include-backward `
+  --torch-loss-backward --materialize-full-vjp --require-mitsuba
+```
+
+This exposes feasible external backends through `torch.autograd` and measures a
+Torch `loss.backward()` wrapper. RayD dynamic scenes and Mitsuba static/dynamic
+scenes can be wrapped. RayD warm-started static scenes cannot be fairly wrapped
+with the current RayD public API because the differentiable vertex array is bound
+at scene build; reconnecting a later Torch vertex tensor would require rebuilding
+the static scene or changing RayD itself. The latest strict materialized run is
+recorded in
+`artifacts/benchmarks/scaling/ad_uv_tape/no_fallback_torch_loss_materialized_current.json`.
+
+| Torch-loss mode | RayDTorch ms | RayD ms | Mitsuba ms | Status |
+|---|---:|---:|---:|---|
+| dynamic full | 0.3559 | 3.0661 | 2.2322 | RayDTorch faster |
+| dynamic reduced | 0.3411 | 3.2010 | 2.2117 | RayDTorch faster |
+| static full | 0.3340 | unsupported | 2.2374 | RayDTorch faster than Mitsuba |
+| static reduced | 0.2798 | unsupported | 2.2802 | RayDTorch faster than Mitsuba |
 
 Latest RayD-warm-started `rayd-latest:64:128` AD spot check after native
 optional-gradient migration and disabled unused-output gradient materialization,
@@ -293,11 +356,11 @@ Current interpretation for this benchmark shape:
 - RayDTorch large static full and reduced intersection are faster in the latest
   RayD/RayDTorch sweep run.
 - RayDTorch public static AD `.backward()` is still slower than RayD's warmed
-  static JIT VJP in the latest stress run, though disabling unused-output
-  gradient materialization removed the earlier full-output zero-gradient
-  backward penalty. Direct native `intersect_forward + intersect_backward_t`
-  remains faster than RayD; PyTorch eager autograd fixed overhead dominates the
-  public `.backward()` timing.
+  static JIT VJP in the latest stress run. No-active vertices-only t-VJP now
+  skips the empty active sentinel and saves a smaller autograd context, and
+  default empty `tmax` is normalized away in that internal request. Direct native
+  `intersect_forward + intersect_backward_t` remains faster than RayD; PyTorch
+  eager autograd fixed overhead dominates the public `.backward()` timing.
 - Acceptance benchmarks and public contract tests do not use benchmark-specific
   RayDTorch shortcuts such as `_minimal` or `t_sum_*`. Static VJP timings use
   public `.backward(upstream)` with nonuniform upstream gradients.
@@ -329,9 +392,9 @@ Current interpretation for this benchmark shape:
   entrypoints for absent upstreams/tangents, so the Python public wrapper no
   longer creates empty grad sentinels or zero tangent tensors. The AD forward
   path also receives the saved empty active-mask context from native code when
-  `active=None`, rather than creating a Python CUDA sentinel. The deeper
-  reflection-chain AD implementation still uses ATen tensor algebra internally
-  and remains a target for a true fused CUDA kernel.
+  `active=None`, rather than creating a Python CUDA sentinel. The reflection-chain
+  AD implementation uses fused native CUDA kernels for the bounce chain and does
+  not use the old C++ ATen `select/sum/where` bounce loop.
 - `Scene.trace_refl_epc_field` backward/JVP now uses fused native CUDA kernels
   for nullable upstreams/tangents. The kernels consume real nonuniform upstream
   gradients, compute field/t VJP or JVP internally, and avoid Python
@@ -364,6 +427,13 @@ Current interpretation for this benchmark shape:
   `stack_vec3(...)` staging. Tests compare strided/padded states and material
   views against contiguous logical-prefix inputs with nonuniform upstream
   `grad_outputs`, so this is not a `sum()`-loss-only optimization.
+- `Scene.accum_dfr(...)` chain AD now passes logical initial and recursive state
+  counts into native chain AD bindings and reads initial/recursive states,
+  material gain/valid masks, tangents, upstream grid gradients, and returned
+  vector-gradient buffers with tensor strides. The chain AD binding no longer
+  uses Python `_contig_states` / `_contig_material` staging or C++ ATen
+  `split_vec3(...).contiguous()`, `flatten_optional_f32(...)`, or
+  `stack_vec3(...)` around the public AD path.
 - `Scene.trace_dfr_paths(...)` and `Scene.accum_dfr_coherent_direct(...)` also
   pass omitted active masks as nullable native inputs, avoiding Python-side
   empty active sentinels in these public multipath calls. The path-export wrapper
@@ -428,9 +498,9 @@ Torch-native AD tests cover fixed-winner VJP/JVP for:
 - reflection EPC forward/VJP/JVP
 - diffraction accumulation forward/VJP/JVP
 
-Current default native discover result:
+Current default native discover result after the no-fallback chain AD migration:
 
-- `python -m unittest discover tests.raydtorch_native -v`: 102 passed, 12 skipped.
+- `python -m unittest discover tests.raydtorch_native -v`: 106 passed, 12 skipped.
 - `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The run printed `jitc_llvm_init(): LLVM API initialization failed ..`,
   as in earlier passing parity runs.

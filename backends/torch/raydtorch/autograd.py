@@ -1185,37 +1185,6 @@ def trace_refl_epc_field(
     return ReflEpcField(*values[:5])
 
 
-def _contig_states(states: DfrStates) -> DfrStates:
-    n = states.state_count
-    return DfrStates(
-        edge_index=states.edge_index[:n].contiguous(),
-        edge_pos=states.edge_pos[:n].contiguous(),
-        edge_dir=states.edge_dir[:n].contiguous(),
-        edge_t_min=states.edge_t_min[:n].contiguous(),
-        edge_t_max=states.edge_t_max[:n].contiguous(),
-        n0=states.n0[:n].contiguous(),
-        n1=states.n1[:n].contiguous(),
-        prim0=states.prim0[:n].contiguous(),
-        prim1=states.prim1[:n].contiguous(),
-        exterior_angle=states.exterior_angle[:n].contiguous(),
-        src=states.src[:n].contiguous(),
-        src_power=states.src_power[:n].contiguous(),
-        wi=None if states.wi is None else states.wi[:n].contiguous(),
-        d0=None if states.d0 is None else states.d0[:n].contiguous(),
-        count=states.count,
-    )
-
-
-def _contig_material(material: DfrMaterial) -> DfrMaterial:
-    return DfrMaterial(
-        eta_r=material.eta_r.contiguous(),
-        sigma=material.sigma.contiguous(),
-        mu_r=material.mu_r.contiguous(),
-        gain=material.gain.contiguous(),
-        valid=material.valid.contiguous(),
-    )
-
-
 def trace_dfr_paths_order1_native(
     scene_handle: int,
     tx_positions: torch.Tensor,
@@ -1632,31 +1601,34 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             raise RuntimeError("RayDTorch extension is not built yet.")
         return _C.diffraction_accumulation_forward(
             *args[:21],
-            int(args[2].shape[0]),
-            *args[21:36],
-            int(args[37].shape[0]),
-            *args[36:],
+            int(args[21]),
+            *args[23:38],
+            int(args[22]),
+            *args[38:49],
+            int(args[49]),
         )
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         ctx.set_materialize_grads(False)
         ctx.scene_handle = int(inputs[0])
-        ctx.grid_axis = int(inputs[21])
-        ctx.grid_position = float(inputs[22])
-        ctx.grid_coord0_min = float(inputs[23])
-        ctx.grid_coord0_max = float(inputs[24])
-        ctx.grid_coord1_min = float(inputs[25])
-        ctx.grid_coord1_max = float(inputs[26])
-        ctx.grid_resolution0 = int(inputs[27])
-        ctx.grid_resolution1 = int(inputs[28])
-        ctx.grid_cell_area = float(inputs[29])
-        ctx.wavelength = float(inputs[30])
-        ctx.direct_samples = int(inputs[31])
-        ctx.keller_samples = int(inputs[32])
-        ctx.suffix_samples = int(inputs[33])
-        ctx.seed = int(inputs[34])
-        ctx.max_order = int(inputs[35])
+        ctx.state_count = int(inputs[21])
+        ctx.recursive_state_count = int(inputs[22])
+        ctx.grid_axis = int(inputs[23])
+        ctx.grid_position = float(inputs[24])
+        ctx.grid_coord0_min = float(inputs[25])
+        ctx.grid_coord0_max = float(inputs[26])
+        ctx.grid_coord1_min = float(inputs[27])
+        ctx.grid_coord1_max = float(inputs[28])
+        ctx.grid_resolution0 = int(inputs[29])
+        ctx.grid_resolution1 = int(inputs[30])
+        ctx.grid_cell_area = float(inputs[31])
+        ctx.wavelength = float(inputs[32])
+        ctx.direct_samples = int(inputs[33])
+        ctx.keller_samples = int(inputs[34])
+        ctx.suffix_samples = int(inputs[35])
+        ctx.seed = int(inputs[36])
+        ctx.max_order = int(inputs[37])
         saved = (
             inputs[2],
             inputs[3],
@@ -1670,14 +1642,14 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             inputs[13],
             inputs[19],
             inputs[20],
-            inputs[37],
-            inputs[38],
             inputs[39],
             inputs[40],
             inputs[41],
-            inputs[44],
-            inputs[45],
+            inputs[42],
+            inputs[43],
             inputs[46],
+            inputs[47],
+            inputs[48],
             output[14],
             output[16],
         )
@@ -1751,6 +1723,8 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             recursive_state_exterior_angle,
             material_gain,
             material_valid,
+            ctx.state_count,
+            ctx.recursive_state_count,
             ctx.grid_axis,
             ctx.grid_position,
             ctx.grid_coord0_min,
@@ -1769,7 +1743,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             grad_power,
             grad_field_x_re,
         )
-        grads = [None] * 48
+        grads = [None] * 50
         grads[3] = grad_state_edge_pos
         grads[4] = grad_state_edge_dir
         grads[5] = grad_state_edge_t_min
@@ -1778,11 +1752,11 @@ class _DfrChainAccumFunction(torch.autograd.Function):
         grads[12] = grad_state_src
         grads[13] = grad_state_src_power
         grads[19] = grad_material_gain
-        grads[38] = grad_recursive_state_edge_pos
-        grads[39] = grad_recursive_state_edge_dir
-        grads[40] = grad_recursive_state_edge_t_min
-        grads[41] = grad_recursive_state_edge_t_max
-        grads[46] = grad_recursive_state_exterior_angle
+        grads[40] = grad_recursive_state_edge_pos
+        grads[41] = grad_recursive_state_edge_dir
+        grads[42] = grad_recursive_state_edge_t_min
+        grads[43] = grad_recursive_state_edge_t_max
+        grads[48] = grad_recursive_state_exterior_angle
         return tuple(grads)
 
     @staticmethod
@@ -1840,6 +1814,8 @@ class _DfrChainAccumFunction(torch.autograd.Function):
                 _native_tensor(recursive_state_exterior_angle),
                 _native_tensor(material_gain),
                 _native_tensor(material_valid),
+                ctx.state_count,
+                ctx.recursive_state_count,
                 ctx.grid_axis,
                 ctx.grid_position,
                 ctx.grid_coord0_min,
@@ -1862,11 +1838,11 @@ class _DfrChainAccumFunction(torch.autograd.Function):
                 _native_tangent_or_none(tangent_at(11)),
                 _native_tangent_or_none(tangent_at(12)),
                 _native_tangent_or_none(tangent_at(13)),
-                _native_tangent_or_none(tangent_at(38)),
-                _native_tangent_or_none(tangent_at(39)),
                 _native_tangent_or_none(tangent_at(40)),
                 _native_tangent_or_none(tangent_at(41)),
-                _native_tangent_or_none(tangent_at(46)),
+                _native_tangent_or_none(tangent_at(42)),
+                _native_tangent_or_none(tangent_at(43)),
+                _native_tangent_or_none(tangent_at(48)),
                 _native_tangent_or_none(tangent_at(19)),
             )
         return (
@@ -1981,9 +1957,6 @@ def accum_dfr_chain_native(
         )
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         return DfrAccum(grid_cell_count, *values[:14])
-    initial_states = _contig_states(initial_states)
-    recursive_states = _contig_states(recursive_states)
-    material = _contig_material(material)
     values = _DfrChainAccumFunction.apply(
         int(scene_handle),
         active_arg,
@@ -2006,6 +1979,8 @@ def accum_dfr_chain_native(
         material.mu_r,
         material.gain,
         material.valid,
+        initial_states.state_count,
+        recursive_states.state_count,
         int(grid.axis),
         float(grid.position),
         float(grid.coord0_min),

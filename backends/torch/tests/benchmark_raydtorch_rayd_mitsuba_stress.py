@@ -166,6 +166,11 @@ def _cleanup_torch() -> None:
     torch.cuda.synchronize()
 
 
+def _sync_torch_drjit(dr: Any) -> None:
+    torch.cuda.synchronize()
+    dr.sync_thread()
+
+
 def _load_rayd(source: str, root: Path):
     if source == "local":
         sys.path.insert(0, str(root))
@@ -294,6 +299,8 @@ def _torch_backward_performance(
     *,
     dynamic: bool,
     edges_enabled: bool,
+    loss_backward: bool,
+    materialize_full: bool,
     repeats: int,
     warmup: int,
 ) -> dict[str, Any]:
@@ -327,7 +334,13 @@ def _torch_backward_performance(
                 current_weights = updated_weights if use_updated else weights
             flags = rt.RayFlags.All if mode == "vjp_full" else flags_none
             its = scene.intersect(current_rays, flags=flags)
-            its.t.backward(current_weights)
+            if materialize_full and mode == "vjp_full":
+                _ = (its.p, its.n, its.geo_n, its.uv, its.barycentric, its.prim_id)
+            if loss_backward:
+                loss = torch.sum(its.t * current_weights)
+                loss.backward()
+            else:
+                its.t.backward(current_weights)
             return updated_positions.grad if dynamic and use_updated else base_positions.grad
 
         return run
@@ -495,6 +508,107 @@ def _rayd_backward_performance(
     }
 
 
+def _torch_positions(mesh_data: dict[str, list[float] | list[int]], *, requires_grad: bool) -> torch.Tensor:
+    value = torch.tensor(
+        list(zip(mesh_data["x"], mesh_data["y"], mesh_data["z"])),
+        device="cuda",
+        dtype=torch.float32,
+    ).contiguous()
+    value.requires_grad_(requires_grad)
+    return value
+
+
+def _rayd_torch_loss_backward_performance(
+    rayd: Any,
+    cuda: Any,
+    dr: Any,
+    mesh_data: dict[str, list[float] | list[int]],
+    updated_mesh_data: dict[str, list[float] | list[int]],
+    ray_data: dict[str, list[float]],
+    updated_ray_data: dict[str, list[float]],
+    *,
+    dynamic: bool,
+    materialize_full: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    if not dynamic:
+        return {
+            "unsupported": (
+                "RayD static scenes bind the differentiable vertex array at scene build. "
+                "The current public API does not reconnect a later Torch vertex tensor "
+                "to the warm-started static AD graph without rebuilding the scene."
+            )
+        }
+
+    ad = importlib.import_module("drjit.cuda.ad")
+    mesh = rayd.Mesh(
+        cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
+        cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
+    )
+    scene = rayd.Scene()
+    mesh_id = scene.add_mesh(mesh, dynamic=True)
+    _, build_ms = _time_build(scene.build, dr.sync_thread)
+    base_positions = _torch_positions(mesh_data, requires_grad=True)
+    updated_positions = _torch_positions(updated_mesh_data, requires_grad=True)
+    rays = _rayd_ray_ad(rayd, ad, ray_data)
+    updated_rays = _rayd_ray_ad(rayd, ad, updated_ray_data)
+    weights = torch.linspace(0.5, 1.5, len(ray_data["ox"]), device="cuda", dtype=torch.float32)
+    updated_weights = torch.linspace(1.5, 0.5, len(updated_ray_data["ox"]), device="cuda", dtype=torch.float32)
+    flags_none = getattr(rayd.RayFlags, "None")
+
+    def make_wrapped(current_rays: Any, flags: Any):
+        @dr.wrap(source="torch", target="drjit")
+        def wrapped_t(positions: Any) -> Any:
+            current_positions = ad.Array3f(positions[:, 0], positions[:, 1], positions[:, 2])
+            scene.update_mesh_vertices(mesh_id, current_positions)
+            scene.sync()
+            its = scene.intersect(current_rays, flags=flags)
+            if materialize_full and flags != flags_none:
+                dr.eval(its.t, its.p, its.n, its.uv, its.barycentric, its.prim_id)
+            return its.t
+
+        return wrapped_t
+
+    wrapped: dict[str, tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor]]] = {
+        "vjp_full": (
+            make_wrapped(rays, rayd.RayFlags.All),
+            make_wrapped(updated_rays, rayd.RayFlags.All),
+        ),
+        "vjp_reduced": (
+            make_wrapped(rays, flags_none),
+            make_wrapped(updated_rays, flags_none),
+        ),
+    }
+
+    def make_run(mode: str):
+        use_updated = False
+
+        def run():
+            nonlocal use_updated
+            base_positions.grad = None
+            updated_positions.grad = None
+            use_updated = not use_updated
+            current_positions = updated_positions if use_updated else base_positions
+            current_weights = updated_weights if use_updated else weights
+            current_fn = wrapped[mode][1 if use_updated else 0]
+            t = current_fn(current_positions)
+            loss = torch.sum(t * current_weights)
+            loss.backward()
+            return current_positions.grad
+
+        return run
+
+    query_count = len(updated_ray_data["ox"])
+    return {
+        "build_ms": build_ms,
+        "performance": {
+            mode: _summarize(_measure(make_run(mode), lambda: _sync_torch_drjit(dr), repeats, warmup), query_count)
+            for mode in ("vjp_full", "vjp_reduced")
+        },
+    }
+
+
 def _mitsuba_scene_timed(mi: Any, dr: Any, mesh_data: dict[str, list[float] | list[int]]) -> tuple[Any, Any, float]:
     mesh = mi.Mesh(
         "plane",
@@ -636,12 +750,99 @@ def _mitsuba_backward_performance(
     }
 
 
+def _mitsuba_torch_loss_backward_performance(
+    mi: Any,
+    dr: Any,
+    mesh_data: dict[str, list[float] | list[int]],
+    updated_mesh_data: dict[str, list[float] | list[int]],
+    ray_data: dict[str, list[float]],
+    updated_ray_data: dict[str, list[float]],
+    *,
+    dynamic: bool,
+    materialize_full: bool,
+    repeats: int,
+    warmup: int,
+) -> dict[str, Any]:
+    scene, params, build_ms = _mitsuba_scene_timed(mi, dr, mesh_data)
+    base_positions = _torch_positions(mesh_data, requires_grad=True)
+    updated_positions = _torch_positions(updated_mesh_data, requires_grad=True)
+    rays = _mitsuba_ray(mi, ray_data)
+    updated_rays = _mitsuba_ray(mi, updated_ray_data)
+    weights = torch.linspace(0.5, 1.5, len(ray_data["ox"]), device="cuda", dtype=torch.float32)
+    updated_weights = torch.linspace(1.5, 0.5, len(updated_ray_data["ox"]), device="cuda", dtype=torch.float32)
+
+    def make_wrapped(current_rays: Any, *, reduced: bool):
+        @dr.wrap(source="torch", target="drjit")
+        def wrapped_t(positions: Any) -> Any:
+            current_positions = dr.ravel(mi.Point3f(positions[:, 0], positions[:, 1], positions[:, 2]))
+            params["mesh.vertex_positions"] = current_positions
+            params.set_dirty("mesh.vertex_positions")
+            params.update()
+            if reduced:
+                its = scene.ray_intersect(current_rays, mi.RayFlags.Minimal, False)
+                return its.t
+            its = scene.ray_intersect(current_rays)
+            if materialize_full:
+                dr.eval(its.t, its.p, its.n, its.uv, its.prim_index)
+            return its.t
+
+        return wrapped_t
+
+    wrapped: dict[str, tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor]]] = {
+        "vjp_full": (
+            make_wrapped(rays, reduced=False),
+            make_wrapped(updated_rays, reduced=False),
+        ),
+        "vjp_reduced": (
+            make_wrapped(rays, reduced=True),
+            make_wrapped(updated_rays, reduced=True),
+        ),
+    }
+
+    def make_run(mode: str):
+        use_updated = False
+
+        def run():
+            nonlocal use_updated
+            base_positions.grad = None
+            updated_positions.grad = None
+            if dynamic:
+                use_updated = not use_updated
+            current_positions = updated_positions if dynamic and use_updated else base_positions
+            current_weights = updated_weights if dynamic and use_updated else weights
+            current_fn = wrapped[mode][1 if dynamic and use_updated else 0]
+            t = current_fn(current_positions)
+            loss = torch.sum(t * current_weights)
+            loss.backward()
+            return current_positions.grad
+
+        return run
+
+    query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    return {
+        "build_ms": build_ms,
+        "performance": {
+            mode: _summarize(_measure(make_run(mode), lambda: _sync_torch_drjit(dr), repeats, warmup), query_count)
+            for mode in ("vjp_full", "vjp_reduced")
+        },
+        "note": "Mitsuba Torch-loss wrapper updates scene parameters inside the wrapped op to connect Torch inputs.",
+    }
+
+
 def _speedups(backends: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     torch_backend = backends.get("raydtorch")
     if not torch_backend:
         return out
-    for phase in ("forward_static", "forward_dynamic", "backward_static", "backward_dynamic"):
+    phases = sorted(
+        {
+            phase
+            for backend in backends.values()
+            for phase, value in backend.items()
+            if isinstance(value, dict) and "performance" in value
+        }
+    )
+    for phase in phases:
         torch_phase = torch_backend.get(phase, {}).get("performance", {})
         phase_out: dict[str, Any] = {}
         for other_name, other_backend in backends.items():
@@ -700,6 +901,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 updated_ray_data,
                 dynamic=False,
                 edges_enabled=args.edges,
+                loss_backward=False,
+                materialize_full=args.materialize_full_vjp,
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
@@ -710,9 +913,36 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 updated_ray_data,
                 dynamic=True,
                 edges_enabled=args.edges,
+                loss_backward=False,
+                materialize_full=args.materialize_full_vjp,
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
+            if args.torch_loss_backward:
+                backends["raydtorch"]["backward_static_torch_loss"] = _torch_backward_performance(
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=False,
+                    edges_enabled=args.edges,
+                    loss_backward=True,
+                    materialize_full=args.materialize_full_vjp,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
+                backends["raydtorch"]["backward_dynamic_torch_loss"] = _torch_backward_performance(
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=True,
+                    edges_enabled=args.edges,
+                    loss_backward=True,
+                    materialize_full=args.materialize_full_vjp,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
         _cleanup_torch()
 
     rayd = cuda = dr = None
@@ -769,6 +999,33 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
+            if args.torch_loss_backward:
+                backends["rayd"]["backward_static_torch_loss"] = _rayd_torch_loss_backward_performance(
+                    rayd,
+                    cuda,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=False,
+                    materialize_full=args.materialize_full_vjp,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
+                backends["rayd"]["backward_dynamic_torch_loss"] = _rayd_torch_loss_backward_performance(
+                    rayd,
+                    cuda,
+                    dr,
+                    mesh_data,
+                    updated_mesh_data,
+                    ray_data,
+                    updated_ray_data,
+                    dynamic=True,
+                    materialize_full=args.materialize_full_vjp,
+                    repeats=args.repeats,
+                    warmup=args.warmup,
+                )
         _cleanup_drjit(dr)
 
     if "mitsuba" in args.backends:
@@ -829,6 +1086,31 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                     repeats=args.repeats,
                     warmup=args.warmup,
                 )
+                if args.torch_loss_backward:
+                    backends["mitsuba"]["backward_static_torch_loss"] = _mitsuba_torch_loss_backward_performance(
+                        mi,
+                        dr,
+                        mesh_data,
+                        updated_mesh_data,
+                        ray_data,
+                        updated_ray_data,
+                        dynamic=False,
+                        materialize_full=args.materialize_full_vjp,
+                        repeats=args.repeats,
+                        warmup=args.warmup,
+                    )
+                    backends["mitsuba"]["backward_dynamic_torch_loss"] = _mitsuba_torch_loss_backward_performance(
+                        mi,
+                        dr,
+                        mesh_data,
+                        updated_mesh_data,
+                        ray_data,
+                        updated_ray_data,
+                        dynamic=True,
+                        materialize_full=args.materialize_full_vjp,
+                        repeats=args.repeats,
+                        warmup=args.warmup,
+                    )
             _cleanup_drjit(dr)
 
     return {
@@ -845,6 +1127,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 "vjp_full": "AD forward plus vector-Jacobian product for intersection.t, using full public intersection outputs.",
                 "vjp_reduced": "AD forward plus vector-Jacobian product for intersection.t, using RayFlags.None t-only public outputs where available.",
             },
+            "backward_torch_loss": args.torch_loss_backward,
+            "materialize_full_vjp": args.materialize_full_vjp,
         },
         "backends": backends,
         "speedups": _speedups(backends),
@@ -873,6 +1157,16 @@ def main() -> None:
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
     parser.add_argument("--include-backward", action="store_true")
+    parser.add_argument(
+        "--torch-loss-backward",
+        action="store_true",
+        help="Also measure PyTorch loss.backward wrapper phases where the backend can be exposed through Torch autograd.",
+    )
+    parser.add_argument(
+        "--materialize-full-vjp",
+        action="store_true",
+        help="Materialize full intersection fields before full-output VJP timing.",
+    )
     parser.add_argument("--require-mitsuba", action="store_true")
     parser.add_argument("--json-output", type=Path, default=None)
     args = parser.parse_args()
@@ -898,6 +1192,8 @@ def main() -> None:
             "dynamic_x_offset": args.dynamic_x_offset,
             "backends": args.backends,
             "include_backward": args.include_backward,
+            "torch_loss_backward": args.torch_loss_backward,
+            "materialize_full_vjp": args.materialize_full_vjp,
         },
         "scenarios": [_run_scenario(args, scenario) for scenario in scenarios],
     }

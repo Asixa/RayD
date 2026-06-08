@@ -186,7 +186,11 @@ Implemented in the current worktree:
   strided tangents, strided upstream grid gradients, and a logical
   `states.count` directly in native CUDA. The direct AD C++ binding no longer
   performs `split_vec3(...).contiguous()`, `flatten_optional_f32(...)`, or
-  `stack_vec3(...)` staging. Chain AD is still tracked separately below.
+  `stack_vec3(...)` staging. Chain AD now uses the same no-fallback pattern for
+  initial and recursive states: logical counts are passed to native code,
+  state/material/tangent/upstream tensors are read with strides, and returned
+  vec3 gradients are written directly into AoS tensors instead of being assembled
+  with C++ ATen `stack`.
 - Dynamic edge sync reuses compatible edge GAS/AABB/temp buffers and rebuilds
   in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested but caused
   a severe post-sync nearest-edge traversal regression on the benchmark shape,
@@ -221,12 +225,11 @@ Intentional non-fast paths that remain:
   but the GPU tensor algebra and initialization fan-out have been moved into
   fused native kernels. Removing the remaining allocation overhead needs scratch
   reuse or a broader executor, not Python wrapper cleanup.
-- Diffraction chain AD still keeps its existing C++ ATen SoA/upstream staging
-  around the full-output/tape contract. Direct AD no longer stages those inputs,
-  but both direct and chain AD still allocate public gradient/tangent output
-  tensors through C++ ATen before launching native CUDA kernels. Removing those
-  remaining allocation costs needs scratch reuse or a broader fused executor,
-  not Python wrapper cleanup.
+- Diffraction direct and chain AD no longer keep Python fallback or C++ ATen
+  SoA/upstream staging around the full-output/tape contract. They still allocate
+  public gradient/tangent output tensors through C++ ATen before launching native
+  CUDA kernels. Removing that remaining allocation cost needs scratch reuse or a
+  broader fused executor, not Python wrapper cleanup.
 - Edge GAS true refit remains a guarded backlog item. Current sync uses
   rebuild-in-place when compatible, otherwise a full edge-accel rebuild path.
 
@@ -239,16 +242,16 @@ Latest verification:
   including non-contiguous upstream `grad_p`, expanded `grad_t`, and
   non-contiguous JVP tangent coverage.
 - `python -m unittest tests.raydtorch_native.test_public_api_contract -v`:
-  16 passed, including source-level guards against upstream-gradient/tangent
+  19 passed, including source-level guards against upstream-gradient/tangent
   `.contiguous()` staging, benchmark-only public APIs, unused-output gradient
   materialization, reflection-chain ATen bounce-loop regressions, and
-  `trace_dfr_paths` Python contiguous staging regressions.
-- `python -m unittest tests.raydtorch_native.test_multipath -v`: 31 passed,
+  `trace_dfr_paths` / chain-diffraction Python contiguous staging regressions.
+- `python -m unittest tests.raydtorch_native.test_multipath -v`: 32 passed,
   including non-contiguous reflection EPC upstream/JVP tangent coverage and
   non-contiguous `trace_reflections().image_sources` upstream VJP finite-difference
   coverage, plus strided diffraction path-export endpoint/state/material inputs
-  and no-AD chain accumulation strided initial/recursive logical-count coverage.
-- `python -m unittest discover tests.raydtorch_native -v`: 105 passed, 12 skipped.
+  and no-AD/AD chain accumulation strided initial/recursive logical-count coverage.
+- `python -m unittest discover tests.raydtorch_native -v`: 106 passed, 12 skipped.
 - Opt-in RayD parity:
   `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
@@ -433,28 +436,58 @@ as a derived field but is not plotted. Representative high-repeat AD point:
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
   --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd `
-  --repeats 30 --warmup 8 --rayd-source local --rayd-root E:\Code\RayDi `
+  --repeats 120 --warmup 24 --rayd-source package `
   --include-backward
 ```
 
 | 73.7K triangles / 65.5K rays, current public VJP | RayDTorch | RayD | Status |
 |---|---:|---:|---|
-| Static forward full | 0.0558 ms | 0.1460 ms | RayDTorch faster |
-| Static forward reduced | 0.0415 ms | 0.1383 ms | RayDTorch faster |
-| Static public VJP full | 0.2106 ms | 0.0864 ms | RayD faster |
-| Static public VJP reduced | 0.1775 ms | 0.0725 ms | RayD faster |
-| Dynamic public VJP full | 0.3112 ms | 2.5960 ms | RayDTorch faster |
-| Dynamic public VJP reduced | 0.3069 ms | 2.1908 ms | RayDTorch faster |
+| Static forward full | 0.0474 ms | 0.1411 ms | RayDTorch faster |
+| Static forward reduced | 0.0283 ms | 0.1183 ms | RayDTorch faster |
+| Static public VJP full | 0.1142 ms | 0.0947 ms | RayD faster |
+| Static public VJP reduced | 0.1117 ms | 0.0717 ms | RayD faster |
+| Dynamic public VJP full | 0.2241 ms | 2.3145 ms | RayDTorch faster |
+| Dynamic public VJP reduced | 0.2296 ms | 2.3185 ms | RayDTorch faster |
 
 Conclusion for AD: `RayFlags.None` AD now has a native t+tape forward path and a
 t-only VJP kernel that accepts arbitrary upstream gradients; the removed
 `t_sum_*` benchmark interface is no longer part of the public or acceptance
 surface. Direct native `intersect_forward + intersect_backward_t` measures
 about 0.055-0.069 ms on the 16K/65K-ray stress shapes, faster than RayD's
-static VJP numbers. The remaining public static backward gap is the PyTorch
-eager autograd engine and tensor-allocation layer around `.backward()`, not the
-CUDA VJP math kernel. `torch.compile` still graph-breaks on the pybind custom
-extension boundary in this workload and did not remove that fixed cost.
+static VJP numbers. The no-active vertices-only t-VJP path now avoids the empty
+active sentinel, saves a smaller autograd context, and normalizes default empty
+`tmax` out of the internal request. The remaining public static backward gap is
+the PyTorch eager autograd engine and tensor-allocation layer around
+`.backward()`, not the CUDA VJP math kernel. `torch.compile` still graph-breaks
+on the pybind custom extension boundary in this workload and did not remove that
+fixed cost.
+
+The stress benchmark also supports `--torch-loss-backward`, which wraps feasible
+RayD/Mitsuba paths through `torch.autograd` and measures a Torch
+`loss.backward()` shell. RayD dynamic and Mitsuba static/dynamic paths can be
+wrapped. RayD warm-started static scenes cannot be fairly wrapped without
+rebuilding the static scene or changing RayD, because the differentiable vertex
+array is bound at scene build. The benchmark reports that case as unsupported
+instead of timing a dummy or stale-gradient path.
+
+Latest no-fallback strict materialized three-backend Torch-loss run:
+
+```powershell
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd mitsuba `
+  --repeats 30 --warmup 8 --rayd-source package --include-backward `
+  --torch-loss-backward --materialize-full-vjp --require-mitsuba `
+  --json-output artifacts\benchmarks\scaling\ad_uv_tape\no_fallback_torch_loss_materialized_current.json
+```
+
+73.7K triangles / 65.5K rays:
+
+| Torch-loss mode | RayDTorch | RayD | Mitsuba |
+|---|---:|---:|---:|
+| dynamic full | 0.3559 ms | 3.0661 ms | 2.2322 ms |
+| dynamic reduced | 0.3411 ms | 3.2010 ms | 2.2117 ms |
+| static full | 0.3340 ms | unsupported | 2.2374 ms |
+| static reduced | 0.2798 ms | unsupported | 2.2802 ms |
 
 ## Contents
 
