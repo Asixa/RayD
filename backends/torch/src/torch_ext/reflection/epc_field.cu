@@ -1,17 +1,17 @@
-#include <raydtorch/reflection/epc_field.h>
+#include <raydn/reflection/epc_field.h>
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
 #include <string>
 
-#include <raydtorch/common/complex.cuh>
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/common/native_compat.h>
+#include <raydn/common/complex.cuh>
+#include <raydn/common/math.cuh>
+#include <raydn/common/native_compat.h>
 
 
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -440,4 +440,4 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params) {
         "reflection_epc_field_gpu(): failed to launch field kernel");
 }
 
-} // namespace raydtorch
+} // namespace raydn

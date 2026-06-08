@@ -1,20 +1,20 @@
-#include <raydtorch/reflection/pipeline.h>
+#include <raydn/reflection/pipeline.h>
 
-#include <raydtorch/reflection/accum_params.h>
-#include <raydtorch/reflection/epc_params.h>
-#include <raydtorch/reflection/trace_params.h>
-#include <raydtorch/reflection/visibility_params.h>
-#include <raydtorch/reflection_accumulation_optix_ptx.h>
-#include <raydtorch/reflection_epc_optix_ptx.h>
-#include <raydtorch/reflection_trace_optix_ptx.h>
-#include <raydtorch/segment_visibility_optix_ptx.h>
+#include <raydn/reflection/accum_params.h>
+#include <raydn/reflection/epc_params.h>
+#include <raydn/reflection/trace_params.h>
+#include <raydn/reflection/visibility_params.h>
+#include <raydn/reflection_accumulation_optix_ptx.h>
+#include <raydn/reflection_epc_optix_ptx.h>
+#include <raydn/reflection_trace_optix_ptx.h>
+#include <raydn/segment_visibility_optix_ptx.h>
 
-namespace raydtorch {
+namespace raydn {
 
 OptixPipelineConfig refl_trace_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydtorch_reflection_trace_optix_ptx;
-    config.ptx_size = sizeof(raydtorch_reflection_trace_optix_ptx);
+    config.ptx = raydn_reflection_trace_optix_ptx;
+    config.ptx_size = sizeof(raydn_reflection_trace_optix_ptx);
     config.raygen_entries = {"__raygen__reflection_trace"};
     config.miss_entry = "__miss__reflection";
     config.closesthit_entry = "__closesthit__reflection";
@@ -25,8 +25,8 @@ OptixPipelineConfig refl_trace_pipeline_config() {
 
 OptixPipelineConfig refl_visibility_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydtorch_segment_visibility_optix_ptx;
-    config.ptx_size = sizeof(raydtorch_segment_visibility_optix_ptx);
+    config.ptx = raydn_segment_visibility_optix_ptx;
+    config.ptx_size = sizeof(raydn_segment_visibility_optix_ptx);
     config.raygen_entries = {
         "__raygen__segment_visibility",
         "__raygen__segment_pair_visibility",
@@ -43,8 +43,8 @@ OptixPipelineConfig refl_visibility_pipeline_config() {
 
 OptixPipelineConfig refl_epc_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydtorch_reflection_epc_optix_ptx;
-    config.ptx_size = sizeof(raydtorch_reflection_epc_optix_ptx);
+    config.ptx = raydn_reflection_epc_optix_ptx;
+    config.ptx_size = sizeof(raydn_reflection_epc_optix_ptx);
     config.raygen_entries = {
         "__raygen__reflection_epc",
         "__raygen__reflection_epc_direct",
@@ -60,8 +60,8 @@ OptixPipelineConfig refl_epc_pipeline_config() {
 
 OptixPipelineConfig refl_accum_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydtorch_reflection_accumulation_optix_ptx;
-    config.ptx_size = sizeof(raydtorch_reflection_accumulation_optix_ptx);
+    config.ptx = raydn_reflection_accumulation_optix_ptx;
+    config.ptx_size = sizeof(raydn_reflection_accumulation_optix_ptx);
     config.raygen_entries = {"__raygen__reflection_accumulation"};
     config.miss_entry = "__miss__reflection_accumulation";
     config.closesthit_entry = "__closesthit__reflection_accumulation";
@@ -70,4 +70,4 @@ OptixPipelineConfig refl_accum_pipeline_config() {
     return config;
 }
 
-} // namespace raydtorch
+} // namespace raydn

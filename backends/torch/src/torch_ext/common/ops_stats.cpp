@@ -1,9 +1,9 @@
-#include <raydtorch/common/stats.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/common/stats.h>
+#include <raydn/common/tensor_check.h>
 
 #include <torch/extension.h>
 
-namespace raydtorch {
+namespace raydn {
 
 py::tuple reflection_trace_stats_op(at::Tensor valid, at::Tensor t) {
     require_cuda(valid, "valid");
@@ -72,11 +72,4 @@ at::Tensor intersection_valid_op(at::Tensor t, at::Tensor shape_id) {
     return intersection_valid_cuda(t, shape_id);
 }
 
-void bind_stats_ops(py::module_ &m) {
-    m.def("reflection_trace_stats", &reflection_trace_stats_op);
-    m.def("diffraction_path_stats", &diffraction_path_stats_op);
-    m.def("default_dfr_material", &default_dfr_material_op);
-    m.def("intersection_valid", &intersection_valid_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

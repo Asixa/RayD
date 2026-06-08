@@ -1,4 +1,4 @@
-# RayDTorch Agent Rules
+# RayDN Agent Rules
 
 ## Native CUDA/OptiX Incremental Build
 
@@ -13,15 +13,15 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pip install --no-build-isol
 - After native `.cpp`, `.cu`, `.h`, CMake, or PTX embedding changes, use the incremental helper:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File E:\Code\RayDTorch\scripts\dev_build_native.ps1
+powershell -ExecutionPolicy Bypass -File E:\Code\RayDN\scripts\dev_build_native.ps1
 ```
 
-- The helper runs `cmake --build artifacts/skbuild --config Release --target _raydtorch` and copies the resulting `_raydtorch*.pyd` to the conda site-packages path that the editable import hook actually loads.
+- The helper runs `cmake --build artifacts/skbuild --config Release --target _raydn` and copies the resulting `_raydn*.pyd` to the conda site-packages path that the editable import hook actually loads.
 - Run focused tests with the environment Python directly, for example:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_multipath -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydtorch_native -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydn_native.test_multipath -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydn_native -v
 ```
 
 - Use full `pip install -e .` again only when intentionally regenerating the editable install metadata, changing packaging behavior, or recreating the persistent build directory from scratch.
@@ -35,23 +35,23 @@ above and then run focused numeric/performance tests.
 Run the CUDA tests with the `witwin2` environment Python:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_edge_queries -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_multipath -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_multipath tests.raydtorch_native.test_scene_cache -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydtorch_native -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydn_native.test_edge_queries -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydn_native.test_multipath -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydn_native.test_multipath tests.raydn_native.test_scene_cache -v
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydn_native -v
 ```
 
 Latest recorded native test results, after the nearest-edge no-AD fast path and
 RayD edge topology/cache updates:
 
-- `tests.raydtorch_native.test_edge_queries -v`: 9 tests passed.
-- `unittest discover tests.raydtorch_native -v`: 61 tests passed, 12 skipped.
+- `tests.raydn_native.test_edge_queries -v`: 9 tests passed.
+- `unittest discover tests.raydn_native -v`: 61 tests passed, 12 skipped.
 
 Run external RayD parity explicitly; the normal discover run skips these tests:
 
 ```powershell
-$env:RAYDTORCH_RUN_DR_JIT_PARITY='1'
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_drjit_parity -v
+$env:RAYDN_RUN_DR_JIT_PARITY='1'
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydn_native.test_drjit_parity -v
 ```
 
 Latest recorded opt-in RayD parity result:
@@ -65,11 +65,11 @@ Latest recorded opt-in RayD parity result:
   this warning appeared in the passing run and did not invalidate the parity
   assertions.
 
-Run same-script RayD vs RayDTorch performance comparison:
+Run same-script RayD vs RayDN performance comparison:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydtorch --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydn --grid 64 --queries 4096 --warmup 5 --repeat 30
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydn --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
 Latest recorded same-script static-vs-static performance result, stable repeat
@@ -87,7 +87,7 @@ run:
     "nearest_edge_ms": 1.4299183333302306,
     "reflection_trace_ms": 0.34219333332051366
   },
-  "raydtorch": {
+  "raydn": {
     "build_ms": 1547.1698999972432,
     "diffraction_direct_ms": 0.43191333328043885,
     "intersect_ms": 0.10184333332290407,
@@ -113,7 +113,7 @@ Latest recorded same-script dynamic-vs-dynamic performance result:
     "nearest_edge_ms": 1.5716533331821363,
     "reflection_trace_ms": 0.32191333327015553
   },
-  "raydtorch": {
+  "raydn": {
     "build_ms": 1547.6975999990827,
     "diffraction_direct_ms": 0.42821333336178213,
     "intersect_ms": 0.11110666673630476,
@@ -125,7 +125,7 @@ Latest recorded same-script dynamic-vs-dynamic performance result:
 }
 ```
 
-Latest isolated RayDTorch reflection trace microbenchmark on the same grid:
+Latest isolated RayDN reflection trace microbenchmark on the same grid:
 
 ```json
 {
@@ -139,10 +139,10 @@ Current acceptance interpretation for the covered benchmark shape:
 
 - Numeric parity is currently demonstrated for the covered forward cases and
   fixed-winner Torch VJP/JVP tests.
-- RayDTorch is faster than RayD in the latest same-script static run for scene
+- RayDN is faster than RayD in the latest same-script static run for scene
   build, `intersect`, point `nearest_edge`, reflection trace, and direct
   diffraction accumulation.
-- RayDTorch is faster than RayD in the latest same-script dynamic run for scene
+- RayDN is faster than RayD in the latest same-script dynamic run for scene
   build, `intersect`, point `nearest_edge`, reflection trace, and direct
   diffraction accumulation.
 - The nearest-edge regression was fixed by keeping RayD's SoA OptiX query path,

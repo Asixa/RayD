@@ -1,5 +1,5 @@
-#include <raydtorch/edge/bvh.h>
-#include <raydtorch/common/optix_context.h>
+#include <raydn/edge/bvh.h>
+#include <raydn/common/optix_context.h>
 
 #include <cuda_runtime.h>
 
@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 [[noreturn]] inline void throw_runtime_error_local(const std::string &message) {
     throw std::runtime_error(message);
@@ -133,4 +133,4 @@ void compute_edge_optix_aabbs_cuda(
         out_aabbs.data_ptr<float>());
 }
 
-} // namespace raydtorch
+} // namespace raydn

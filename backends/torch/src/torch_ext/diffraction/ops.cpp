@@ -2,25 +2,25 @@
 #define NOMINMAX
 #endif
 
-#include <raydtorch/diffraction/accum_params.h>
-#include <raydtorch/diffraction/accum_ad.h>
-#include <raydtorch/diffraction/accum_reduce.h>
-#include <raydtorch/diffraction/paths_init.h>
-#include <raydtorch/diffraction/paths_params.h>
-#include <raydtorch/diffraction/pipeline.h>
-#include <raydtorch/scene/geometry_kernels.h>
-#include <raydtorch/common/optix_pipeline.h>
-#include <raydtorch/reflection/kernels.h>
-#include <raydtorch/reflection/pipeline.h>
-#include <raydtorch/common/optix_context.h>
-#include <raydtorch/reflection/accum_params.h>
-#include <raydtorch/reflection/dedup.h>
-#include <raydtorch/reflection/epc_field.h>
-#include <raydtorch/reflection/epc_params.h>
-#include <raydtorch/reflection/trace_params.h>
-#include <raydtorch/reflection/visibility_params.h>
-#include <raydtorch/scene/cache.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/diffraction/accum_params.h>
+#include <raydn/diffraction/accum_ad.h>
+#include <raydn/diffraction/accum_reduce.h>
+#include <raydn/diffraction/paths_init.h>
+#include <raydn/diffraction/paths_params.h>
+#include <raydn/diffraction/pipeline.h>
+#include <raydn/scene/geometry_kernels.h>
+#include <raydn/common/optix_pipeline.h>
+#include <raydn/reflection/kernels.h>
+#include <raydn/reflection/pipeline.h>
+#include <raydn/common/optix_context.h>
+#include <raydn/reflection/accum_params.h>
+#include <raydn/reflection/dedup.h>
+#include <raydn/reflection/epc_field.h>
+#include <raydn/reflection/epc_params.h>
+#include <raydn/reflection/trace_params.h>
+#include <raydn/reflection/visibility_params.h>
+#include <raydn/scene/cache.h>
+#include <raydn/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -32,7 +32,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -620,10 +620,10 @@ py::tuple diffraction_paths_order1_forward_op(
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.seed = 0;
     params.max_order = 1;
-    params.strategy_mask = RAYDTORCH_DFR_DIRECT;
+    params.strategy_mask = RAYDN_DFR_DIRECT;
     params.sample_count = 1;
     params.return_geom = 1;
-    params.receiver_model = RAYDTORCH_DFR_MATCHED_ISO;
+    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
     params.temp_visibility = nullptr;
     params.out_count = out_count.data_ptr<int>();
     params.out_valid = mutable_mask_ptr(out_valid);
@@ -1092,11 +1092,11 @@ py::tuple diffraction_accumulation_forward_op(
     params.keller_samples = keller_launch_count;
     params.suffix_samples = suffix_launch_count;
     params.strategy_mask =
-        (direct_launch_count > 0 ? RAYDTORCH_DFR_DIRECT : 0) |
-        (keller_launch_count > 0 ? RAYDTORCH_DFR_KELLER : 0) |
-        (suffix_launch_count > 0 ? RAYDTORCH_DFR_SUFFIX_REFL : 0);
-    params.sample_sequence = RAYDTORCH_DFR_HASH;
-    params.receiver_model = RAYDTORCH_DFR_MATCHED_ISO;
+        (direct_launch_count > 0 ? RAYDN_DFR_DIRECT : 0) |
+        (keller_launch_count > 0 ? RAYDN_DFR_KELLER : 0) |
+        (suffix_launch_count > 0 ? RAYDN_DFR_SUFFIX_REFL : 0);
+    params.sample_sequence = RAYDN_DFR_HASH;
+    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
     params.select_diffraction_point = 0;
     params.prefilter_visibility = 0;
     params.collect_edge_use = 1;
@@ -2471,7 +2471,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.max_order = 1;
-    params.receiver_model = RAYDTORCH_DFR_MATCHED_ISO;
+    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
     params.select_diffraction_point = select_diffraction_point ? 1 : 0;
     params.prefilter_visibility = prefilter_visibility ? 1 : 0;
     params.collect_debug_counts = 1;
@@ -2542,14 +2542,4 @@ py::tuple diffraction_coherent_accumulation_forward_op(
 }
 
 
-void bind_diffraction_ops(py::module_ &m) {
-    m.def("diffraction_paths_order1_forward", &diffraction_paths_order1_forward_op);
-    m.def("diffraction_accumulation_forward", &diffraction_accumulation_forward_op);
-    m.def("diffraction_accumulation_direct_backward", &diffraction_accumulation_direct_backward_op);
-    m.def("diffraction_accumulation_direct_jvp", &diffraction_accumulation_direct_jvp_op);
-    m.def("diffraction_accumulation_chain_backward", &diffraction_accumulation_chain_backward_op);
-    m.def("diffraction_accumulation_chain_jvp", &diffraction_accumulation_chain_jvp_op);
-    m.def("diffraction_coherent_accumulation_forward", &diffraction_coherent_accumulation_forward_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

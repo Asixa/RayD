@@ -1,7 +1,7 @@
-#include <raydtorch/scene/geometry_kernels.h>
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/common/optix_context.h>
-#include <raydtorch/scene/optix_intersect_params.h>
+#include <raydn/scene/geometry_kernels.h>
+#include <raydn/common/math.cuh>
+#include <raydn/common/optix_context.h>
+#include <raydn/scene/optix_intersect_params.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -15,7 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -228,7 +228,7 @@ void launch_intersect_optix(
     const CUdeviceptr params_device_ptr =
         intersect_params_device_ptr(static_cast<int>(scene.device_index), params, stream);
 
-    raydtorch_OPTIX_CHECK(optixLaunch(
+    raydn_OPTIX_CHECK(optixLaunch(
         optix_entry.intersect_pipeline,
         stream,
         params_device_ptr,
@@ -528,4 +528,4 @@ at::Tensor intersect_forward_t_only_cuda(
     return out_t;
 }
 
-} // namespace raydtorch
+} // namespace raydn

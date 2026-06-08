@@ -1,6 +1,6 @@
-#include <raydtorch/scene/cache_kernels.h>
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/common/optix_context.h>
+#include <raydn/scene/cache_kernels.h>
+#include <raydn/common/math.cuh>
+#include <raydn/common/optix_context.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -12,7 +12,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -977,4 +977,4 @@ EdgeSearchStats compute_edge_search_stats_cuda(
     return stats;
 }
 
-} // namespace raydtorch
+} // namespace raydn

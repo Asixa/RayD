@@ -1,4 +1,4 @@
-#include <raydtorch/common/camera.h>
+#include <raydn/common/camera.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -330,4 +330,4 @@ at::Tensor camera_sample_ray_backward_cuda(
     return grad_sample;
 }
 
-} // namespace raydtorch
+} // namespace raydn

@@ -22,21 +22,21 @@ if (-not (Test-Path $CMakeExe)) {
 }
 
 $Stopwatch = [Diagnostics.Stopwatch]::StartNew()
-& $CMakeExe --build $BuildPath --config $Config --target _raydtorch
+& $CMakeExe --build $BuildPath --config $Config --target _raydn
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-$BuiltExtension = Get-ChildItem (Join-Path $BuildPath $Config) -Filter "_raydtorch*.pyd" |
+$BuiltExtension = Get-ChildItem (Join-Path $BuildPath $Config) -Filter "_raydn*.pyd" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 if ($null -eq $BuiltExtension) {
     throw "Built extension not found under $(Join-Path $BuildPath $Config)"
 }
 
-$Destination = & $PythonExe -c "import importlib.util; spec = importlib.util.find_spec('raydtorch._raydtorch'); print(spec.origin if spec else '')"
+$Destination = & $PythonExe -c "import importlib.util; spec = importlib.util.find_spec('raydn._raydn'); print(spec.origin if spec else '')"
 if (-not $Destination) {
-    throw "Could not resolve currently installed raydtorch._raydtorch destination."
+    throw "Could not resolve currently installed raydn._raydn destination."
 }
 
 Copy-Item -LiteralPath $BuiltExtension.FullName -Destination $Destination -Force

@@ -1,10 +1,10 @@
-#include <raydtorch/scene/geometry_kernels.h>
-#include <raydtorch/reflection/kernels.h>
+#include <raydn/scene/geometry_kernels.h>
+#include <raydn/reflection/kernels.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -53,4 +53,4 @@ VisibilityForwardOutputs visibility_forward_cuda(
     return out;
 }
 
-} // namespace raydtorch
+} // namespace raydn

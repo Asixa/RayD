@@ -1,10 +1,10 @@
-#include <raydtorch/edge/kernels.h>
-#include <raydtorch/scene/cache.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/edge/kernels.h>
+#include <raydn/scene/cache.h>
+#include <raydn/common/tensor_check.h>
 
 #include <torch/extension.h>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -197,14 +197,4 @@ py::tuple nearest_edge_jvp_optional_op(
         out.tangent_tape_d);
 }
 
-void bind_edge_ops(py::module_ &m) {
-    m.def("nearest_edge_forward", &nearest_edge_forward_op);
-    m.def("nearest_edge_forward_noad", &nearest_edge_forward_noad_op);
-    m.def("nearest_edge_ray_forward", &nearest_edge_ray_forward_op);
-    m.def("nearest_edge_backward", &nearest_edge_backward_op);
-    m.def("nearest_edge_backward_optional", &nearest_edge_backward_optional_op);
-    m.def("nearest_edge_jvp", &nearest_edge_jvp_op);
-    m.def("nearest_edge_jvp_optional", &nearest_edge_jvp_optional_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

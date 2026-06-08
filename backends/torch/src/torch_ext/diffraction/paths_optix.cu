@@ -1,10 +1,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/diffraction/paths_params.h>
+#include <raydn/common/math.cuh>
+#include <raydn/diffraction/paths_params.h>
 
-namespace raydtorch {
+namespace raydn {
 
 extern "C" {
 extern __constant__ DfrPathParams params;
@@ -256,8 +256,8 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
         params.state_count <= 0 ||
         params.state_limit <= 0 ||
         params.max_order != 1 ||
-        (params.strategy_mask & RAYDTORCH_DFR_DIRECT) == 0 ||
-        params.receiver_model != RAYDTORCH_DFR_MATCHED_ISO) {
+        (params.strategy_mask & RAYDN_DFR_DIRECT) == 0 ||
+        params.receiver_model != RAYDN_DFR_MATCHED_ISO) {
         return;
     }
 
@@ -358,8 +358,8 @@ static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
         params.state_count <= 0 ||
         params.state_limit <= 0 ||
         params.max_order != 1 ||
-        (params.strategy_mask & RAYDTORCH_DFR_DIRECT) == 0 ||
-        params.receiver_model != RAYDTORCH_DFR_MATCHED_ISO) {
+        (params.strategy_mask & RAYDN_DFR_DIRECT) == 0 ||
+        params.receiver_model != RAYDN_DFR_MATCHED_ISO) {
         return false;
     }
 
@@ -526,5 +526,5 @@ extern "C" __global__ void __raygen__diffraction_paths_order1_target_export_prim
     trace_paths_order1_target_export_primary_impl();
 }
 
-} // namespace raydtorch
+} // namespace raydn
 

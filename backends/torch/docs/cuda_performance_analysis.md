@@ -1,4 +1,4 @@
-# RayDTorch CUDA / OptiX Performance Analysis
+# RayDN CUDA / OptiX Performance Analysis
 
 > Static source analysis and benchmark record from the cuda-optimize workflow.
 > Items are labelled `[verified]` (provable from source) or `[needs Nsight]`
@@ -8,12 +8,12 @@
 > or run an elevated profiler session before adding Nsight-backed claims.
 >
 > - Target GPU: NVIDIA GeForce RTX 5080 (Blackwell, compute_120), Torch CUDA 12.8, Windows.
-> - Benchmark of record: `tests/benchmark_raydtorch_native.py`,
->   `tests/benchmark_rayd_vs_raydtorch.py`, and the RayD-latest-style
+> - Benchmark of record: `tests/benchmark_raydn_native.py`,
+>   `tests/benchmark_rayd_vs_raydn.py`, and the RayD-latest-style
 >   three-backend intersection stress benchmark
->   `tests/benchmark_raydtorch_rayd_mitsuba_stress.py`.
+>   `tests/benchmark_raydn_rayd_mitsuba_stress.py`.
 > - Open performance risks per
->   [raydtorch_native_performance.md](raydtorch_native_performance.md):
+>   [raydn_native_performance.md](raydn_native_performance.md):
 >   **warm-started local scene build** and **public static AD/VJP overhead**.
 
 ## Current implementation status (2026-06-08)
@@ -24,7 +24,7 @@ Implemented in the current worktree:
   `75-real;80-real;86-real;89-real;120-real;120-virtual`.
 - Single-config native builds default to `Release` when the caller did not set
   `CMAKE_BUILD_TYPE`.
-- OptiX PTX builds use fast math behind `RAYDTORCH_OPTIX_FAST_MATH` and now
+- OptiX PTX builds use fast math behind `RAYDN_OPTIX_FAST_MATH` and now
   compile explicit `compute_75` PTX instead of relying on nvcc's old default
   virtual architecture.
 - `Scene.intersect(ray, flags=...)` now exposes the RayD-compatible
@@ -203,7 +203,7 @@ Implemented in the current worktree:
 Intentional non-fast paths that remain:
 
 - Public API and benchmark acceptance tests guard against benchmark-specific
-  shortcuts: no `_minimal` RayDTorch surface and no `t_sum_*` scalar-loss
+  shortcuts: no `_minimal` RayDN surface and no `t_sum_*` scalar-loss
   interface are used for acceptance timing.
 - Intersect `RayFlags.All` AD still routes through the generic dense
   backward/JVP kernels because the public contract includes `p/n/geo_n/uv`
@@ -236,24 +236,24 @@ Intentional non-fast paths that remain:
 Latest verification:
 
 - Incremental native build succeeded via `scripts/dev_build_native.ps1`.
-- `python -m unittest tests.raydtorch_native.test_edge_queries -v`: 11 passed,
+- `python -m unittest tests.raydn_native.test_edge_queries -v`: 11 passed,
   including non-contiguous nearest-edge upstream/JVP tangent coverage.
-- `python -m unittest tests.raydtorch_native.test_intersect_grad -v`: 13 passed,
+- `python -m unittest tests.raydn_native.test_intersect_grad -v`: 13 passed,
   including non-contiguous upstream `grad_p`, expanded `grad_t`, and
   non-contiguous JVP tangent coverage.
-- `python -m unittest tests.raydtorch_native.test_public_api_contract -v`:
+- `python -m unittest tests.raydn_native.test_public_api_contract -v`:
   19 passed, including source-level guards against upstream-gradient/tangent
   `.contiguous()` staging, benchmark-only public APIs, unused-output gradient
   materialization, reflection-chain ATen bounce-loop regressions, and
   `trace_dfr_paths` / chain-diffraction Python contiguous staging regressions.
-- `python -m unittest tests.raydtorch_native.test_multipath -v`: 32 passed,
+- `python -m unittest tests.raydn_native.test_multipath -v`: 32 passed,
   including non-contiguous reflection EPC upstream/JVP tangent coverage and
   non-contiguous `trace_reflections().image_sources` upstream VJP finite-difference
   coverage, plus strided diffraction path-export endpoint/state/material inputs
   and no-AD/AD chain accumulation strided initial/recursive logical-count coverage.
-- `python -m unittest discover tests.raydtorch_native -v`: 106 passed, 12 skipped.
+- `python -m unittest discover tests.raydn_native -v`: 106 passed, 12 skipped.
 - Opt-in RayD parity:
-  `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
+  `RAYDN_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydn_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
 - `compute-sanitizer --tool memcheck` on the large-grid `z=0.5` point
   nearest-edge reproducer completed with `ERROR SUMMARY: 0 errors`.
@@ -268,63 +268,63 @@ Latest verification:
   threshold. Current public native smoke uses default air-air material parameters, so
   reflection accumulation remains zero and does not yet prove a speedup for that path.
 - Multipath smoke benchmark:
-  `python -m tests.benchmark_raydtorch_rayd_mitsuba_multipath --preset smoke --rayd-source local --rayd-root E:\Code\RayDi`
-  completed for RayDTorch, RayD path, and Mitsuba path; outputs are under
+  `python -m tests.benchmark_raydn_rayd_mitsuba_multipath --preset smoke --rayd-source local --rayd-root E:\Code\RayDi`
+  completed for RayDN, RayD path, and Mitsuba path; outputs are under
   `artifacts/benchmarks/multipath/smoke_all/` and contain JSON, CSV, and one
   PNG grouped-bar chart only.
 - Latest multipath standard RayD-path comparison used
-  `python -m tests.benchmark_raydtorch_rayd_mitsuba_multipath --preset standard --backends raydtorch rayd_path --no-plots`.
-  RayDTorch was faster for reflection trace at 65,536 rays / 2 and 4 bounces,
+  `python -m tests.benchmark_raydn_rayd_mitsuba_multipath --preset standard --backends raydn rayd_path --no-plots`.
+  RayDN was faster for reflection trace at 65,536 rays / 2 and 4 bounces,
   1,048,576 rays / 2 bounces, and diffraction export at 65,536 and 1,048,576
   states. The 1,048,576-ray / 4-bounce reflection row was rerun with
   `--repeats 20 --warmup 5` after one standard-run outlier; the focused result
-  was RayDTorch `0.4241 ms` vs RayD `0.7000 ms`.
+  was RayDN `0.4241 ms` vs RayD `0.7000 ms`.
 - `git diff --check`: no whitespace errors; Git only reported existing LF/CRLF
   conversion warnings for touched files.
 - RayD-warm-started AD spot check, `rayd-latest:64:128`, 16,384 rays,
   30 repeats, 8 warmup after native optional-gradient migration and disabled
   unused-output gradient materialization:
-  static public VJP full RayDTorch `0.1621 ms` vs RayD `0.0879 ms`,
-  static public VJP reduced RayDTorch `0.1371 ms` vs RayD `0.0735 ms`,
-  dynamic public VJP full RayDTorch `0.2901 ms` vs RayD `1.6450 ms`,
-  dynamic public VJP reduced RayDTorch `0.2619 ms` vs RayD `1.4679 ms`.
+  static public VJP full RayDN `0.1621 ms` vs RayD `0.0879 ms`,
+  static public VJP reduced RayDN `0.1371 ms` vs RayD `0.0735 ms`,
+  dynamic public VJP full RayDN `0.2901 ms` vs RayD `1.6450 ms`,
+  dynamic public VJP reduced RayDN `0.2619 ms` vs RayD `1.4679 ms`.
 - Post-native-validity/camera/diffraction-stride same-script check, `grid=64`,
   `queries=4096`, RayD warm-started by the same harness:
-  static and dynamic RayDTorch were faster for both intersection modes, nearest
+  static and dynamic RayDN were faster for both intersection modes, nearest
   edge, reflection trace, direct diffraction, diffraction paths, and scene build
   in the package-RayD run shown below. Scene build remains workload/source/cache
   sensitive and should not be treated as universally settled.
 
-Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
+Latest RayD vs RayDN static benchmark, `grid=64`, `queries=4096`,
 `warmup=8`, `repeat=60`, RayD warm-started by the same harness:
 
-| Operation | RayD ms | RayDTorch ms | Status |
+| Operation | RayD ms | RayDN ms | Status |
 |---|---:|---:|---|
-| build | 2385.079 | 1551.944 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.2614 | 0.0381 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.2122 | 0.0490 | RayDTorch faster |
-| nearest edge | 1.7860 | 1.4218 | RayDTorch faster |
-| reflection trace | 0.4695 | 0.0378 | RayDTorch faster |
-| diffraction direct | 0.8475 | 0.2495 | RayDTorch faster |
-| diffraction paths | 0.5785 | 0.1057 | RayDTorch faster |
+| build | 2385.079 | 1551.944 | RayDN faster |
+| intersect `RayFlags.None` | 0.2614 | 0.0381 | RayDN faster |
+| intersect `RayFlags.All` | 0.2122 | 0.0490 | RayDN faster |
+| nearest edge | 1.7860 | 1.4218 | RayDN faster |
+| reflection trace | 0.4695 | 0.0378 | RayDN faster |
+| diffraction direct | 0.8475 | 0.2495 | RayDN faster |
+| diffraction paths | 0.5785 | 0.1057 | RayDN faster |
 
 Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`,
 `repeat=30`:
 
-| Operation | RayD ms | RayDTorch ms | Status |
+| Operation | RayD ms | RayDN ms | Status |
 |---|---:|---:|---|
-| build | 2441.784 | 1545.659 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1648 | 0.0294 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1736 | 0.0586 | RayDTorch faster |
-| nearest edge | 1.8150 | 1.3477 | RayDTorch faster |
-| reflection trace | 0.5682 | 0.0570 | RayDTorch faster |
-| diffraction direct | 0.4756 | 0.3010 | RayDTorch faster |
-| diffraction paths | 0.4139 | 0.0688 | RayDTorch faster |
+| build | 2441.784 | 1545.659 | RayDN faster |
+| intersect `RayFlags.None` | 0.1648 | 0.0294 | RayDN faster |
+| intersect `RayFlags.All` | 0.1736 | 0.0586 | RayDN faster |
+| nearest edge | 1.8150 | 1.3477 | RayDN faster |
+| reflection trace | 0.5682 | 0.0570 | RayDN faster |
+| diffraction direct | 0.4756 | 0.3010 | RayDN faster |
+| diffraction paths | 0.4139 | 0.0688 | RayDN faster |
 
-Latest RayDTorch-native multi-bounce check, `grid=64`, `queries=4096`,
+Latest RayDN-native multi-bounce check, `grid=64`, `queries=4096`,
 `warmup=5`, `repeat=30`, `max_bounces=4`:
 
-| Operation | RayDTorch ms |
+| Operation | RayDN ms |
 |---|---:|
 | build | 1544.059 |
 | dynamic sync | 0.935 |
@@ -339,19 +339,19 @@ The native benchmark's `nearest_edge` uses random 3D points after a dynamic sync
 which drives many queries to the full-radius edge tier; it is not the same
 near-surface edge-query shape as the RayD comparison benchmark above.
 
-For this benchmark shape, RayDTorch now meets the RayD-comparison target for
+For this benchmark shape, RayDN now meets the RayD-comparison target for
 scene build, intersect, nearest-edge, reflection trace, direct diffraction, and
 order-1 diffraction path export. Keep release-size and Nsight-backed benchmarks
 before claiming broad superiority across all scenes and multipath workloads.
 
-The `grid=64`, `queries=4096` RayD/RayDTorch benchmark is intentionally a
+The `grid=64`, `queries=4096` RayD/RayDN benchmark is intentionally a
 fast multipath regression test and is too light to be the only performance
 claim. RayD's current Mitsuba comparison benchmark uses `mesh_resolution` /
 `ray_grid_side` scenarios, with the default `64:128` shape already casting
-16,384 rays. RayDTorch now has a matching three-backend stress harness:
+16,384 rays. RayDN now has a matching three-backend stress harness:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
   --rayd-source local --rayd-root E:\Code\RayDi `
   --scenario rayd-latest:64:128 `
   --scenario release:192:256 `
@@ -359,18 +359,18 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
 ```
 
 This script reports static and dynamic `full` and `reduced` intersection
-performance for RayDTorch, RayD, and Mitsuba. The `reduced` mode maps to
-RayDTorch/RayD `RayFlags.None` and Mitsuba `ray_intersect(..., RayFlags.Minimal,
+performance for RayDN, RayD, and Mitsuba. The `reduced` mode maps to
+RayDN/RayD `RayFlags.None` and Mitsuba `ray_intersect(..., RayFlags.Minimal,
 False)`. With `--mitsuba-preliminary`, it also reports Mitsuba's
 `ray_intersect_preliminary` t-only path as a Mitsuba-only lower-level baseline.
 Mitsuba is not used for nearest-edge, reflection, or diffraction totals because
-those public APIs do not have a one-to-one equivalent in the current RayDTorch
+those public APIs do not have a one-to-one equivalent in the current RayDN
 benchmark.
 
 For real scaling curves rather than hand-picked sizes, run:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset large `
   --rayd-source local --rayd-root E:\Code\RayDi `
   --mitsuba-preliminary
@@ -385,26 +385,26 @@ to run every batch explicitly.
 
 Latest scaling findings from `artifacts/benchmarks/scaling/extreme/sweep.json`:
 
-| Case | RayDTorch | RayD | Mitsuba | Interpretation |
+| Case | RayDN | RayD | Mitsuba | Interpretation |
 |---|---:|---:|---:|---|
-| Static full, 2.10M tris / 100.66M requested rays | 0.3991 ms/batch | 0.3723 ms/batch | 0.5856 ms/batch | RayD is ~7% faster than RayDTorch; both beat Mitsuba public full. |
-| Static reduced/t-only, same case | 0.1840 ms/batch | 0.1999 ms/batch | 0.2583 ms/batch | RayDTorch is fastest among public APIs. |
-| Mitsuba preliminary, same case | n/a | n/a | 0.1785 ms/batch | Lower-level preliminary API can slightly beat RayDTorch reduced here. |
+| Static full, 2.10M tris / 100.66M requested rays | 0.3991 ms/batch | 0.3723 ms/batch | 0.5856 ms/batch | RayD is ~7% faster than RayDN; both beat Mitsuba public full. |
+| Static reduced/t-only, same case | 0.1840 ms/batch | 0.1999 ms/batch | 0.2583 ms/batch | RayDN is fastest among public APIs. |
+| Mitsuba preliminary, same case | n/a | n/a | 0.1785 ms/batch | Lower-level preliminary API can slightly beat RayDN reduced here. |
 
-Across the 15 extreme static/full points, RayD is faster than RayDTorch in 13
+Across the 15 extreme static/full points, RayD is faster than RayDN in 13
 points; the largest observed RayD advantage is about 33% at 524K triangles /
-1.05M requested rays. The cause is not traversal quality alone: RayDTorch
+1.05M requested rays. The cause is not traversal quality alone: RayDN
 `RayFlags.All` materializes the legacy Torch `Intersection` surface
 (`p`, `n`, `geo_n`, `uv`, barycentric and four id arrays), while the RayD/Mitsuba
 comparison path is closer to a lean public hit record. In static/reduced mode,
-where the public contract is just `t`, RayDTorch is faster than RayD throughout
+where the public contract is just `t`, RayDN is faster than RayD throughout
 the extreme sweep and faster than Mitsuba's public minimal API; Mitsuba
 `ray_intersect_preliminary` remains the strongest lower-level t-only baseline.
 
 Latest multipath path-export benchmark:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_multipath `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_multipath `
   --preset smoke --rayd-source local --rayd-root E:\Code\RayDi
 ```
 
@@ -421,7 +421,7 @@ samples; release claims should use higher repeats and larger `ray_count` /
 Latest AD backward coverage:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset smoke --mesh-resolution 64 --mesh-resolution 128 --mesh-resolution 256 `
   --total-rays 16384 --total-rays 65536 --ray-batch-side 256 `
   --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\RayDi `
@@ -434,20 +434,20 @@ subplot per mode and backend bars per case; throughput is still present in JSON
 as a derived field but is not plotted. Representative high-repeat AD point:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
-  --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends raydn rayd `
   --repeats 120 --warmup 24 --rayd-source package `
   --include-backward
 ```
 
-| 73.7K triangles / 65.5K rays, current public VJP | RayDTorch | RayD | Status |
+| 73.7K triangles / 65.5K rays, current public VJP | RayDN | RayD | Status |
 |---|---:|---:|---|
-| Static forward full | 0.0474 ms | 0.1411 ms | RayDTorch faster |
-| Static forward reduced | 0.0283 ms | 0.1183 ms | RayDTorch faster |
+| Static forward full | 0.0474 ms | 0.1411 ms | RayDN faster |
+| Static forward reduced | 0.0283 ms | 0.1183 ms | RayDN faster |
 | Static public VJP full | 0.1142 ms | 0.0947 ms | RayD faster |
 | Static public VJP reduced | 0.1117 ms | 0.0717 ms | RayD faster |
-| Dynamic public VJP full | 0.2241 ms | 2.3145 ms | RayDTorch faster |
-| Dynamic public VJP reduced | 0.2296 ms | 2.3185 ms | RayDTorch faster |
+| Dynamic public VJP full | 0.2241 ms | 2.3145 ms | RayDN faster |
+| Dynamic public VJP reduced | 0.2296 ms | 2.3185 ms | RayDN faster |
 
 Conclusion for AD: `RayFlags.None` AD now has a native t+tape forward path and a
 t-only VJP kernel that accepts arbitrary upstream gradients; the removed
@@ -473,8 +473,8 @@ instead of timing a dummy or stale-gradient path.
 Latest no-fallback strict materialized three-backend Torch-loss run:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
-  --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd mitsuba `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends raydn rayd mitsuba `
   --repeats 30 --warmup 8 --rayd-source package --include-backward `
   --torch-loss-backward --materialize-full-vjp --require-mitsuba `
   --json-output artifacts\benchmarks\scaling\ad_uv_tape\no_fallback_torch_loss_materialized_current.json
@@ -482,7 +482,7 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
 
 73.7K triangles / 65.5K rays:
 
-| Torch-loss mode | RayDTorch | RayD | Mitsuba |
+| Torch-loss mode | RayDN | RayD | Mitsuba |
 |---|---:|---:|---:|
 | dynamic full | 0.3559 ms | 3.0661 ms | 2.2322 ms |
 | dynamic reduced | 0.3411 ms | 3.2010 ms | 2.2117 ms |
@@ -493,13 +493,13 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
 
 - [Executive summary](#executive-summary)
 - [Priority table](#priority-table)
-- [P0 â€” Build configuration](#p0--build-configuration)
-- [P1 â€” Scene build](#p1--scene-build)
-- [P1 â€” Nearest-edge query](#p1--nearest-edge-query)
-- [P1 â€” Reflection trace](#p1--reflection-trace)
-- [P2 â€” Reflection accumulation / EPC / dedup](#p2--reflection-accumulation--epc--dedup)
-- [P2 â€” Diffraction](#p2--diffraction)
-- [Cross-cutting â€” host glue, allocations, syncs](#cross-cutting--host-glue-allocations-syncs)
+- [P0 â€?Build configuration](#p0--build-configuration)
+- [P1 â€?Scene build](#p1--scene-build)
+- [P1 â€?Nearest-edge query](#p1--nearest-edge-query)
+- [P1 â€?Reflection trace](#p1--reflection-trace)
+- [P2 â€?Reflection accumulation / EPC / dedup](#p2--reflection-accumulation--epc--dedup)
+- [P2 â€?Diffraction](#p2--diffraction)
+- [Cross-cutting â€?host glue, allocations, syncs](#cross-cutting--host-glue-allocations-syncs)
 - [Measurement plan](#measurement-plan)
 - [Suggested execution order](#suggested-execution-order)
 
@@ -514,7 +514,7 @@ The three slowest paths each have a clear primary suspect that is provable from 
    remaining build work is mostly OptiX GAS/IAS construction and tensor setup.
 
 2. **Reflection trace** originally wrote per-bounce outputs in a **ray-major layout**
-   (`slot = ray*B + bounce`) across ~17â€“24 separate SoA arrays. The current worktree now
+   (`slot = ray*B + bounce`) across ~17â€?4 separate SoA arrays. The current worktree now
    uses bounce-major internal storage for `max_bounces > 1`, while returning the same public
    `[ray, bounce]` tensors. Nsight should still verify store coalescing and transpose cost.
 
@@ -548,21 +548,21 @@ secondary; **Low** = correctness-neutral cleanup / small constant.
 
 ---
 
-## P0 â€” Build configuration
+## P0 â€?Build configuration
 
 Highest leverage, smallest change. Do these first; they may shift the whole ranking.
 
-### 1. CUDA architecture compiled as `sm_52` on a Blackwell GPU `[verified] â€” High`
+### 1. CUDA architecture compiled as `sm_52` on a Blackwell GPU `[verified] â€?High`
 
-- Evidence: `artifacts/skbuild/CMakeCache.txt` â†’ `CMAKE_CUDA_ARCHITECTURES:STRING=52`.
+- Evidence: `artifacts/skbuild/CMakeCache.txt` â†?`CMAKE_CUDA_ARCHITECTURES:STRING=52`.
   Neither [CMakeLists.txt](../CMakeLists.txt) nor [pyproject.toml](../pyproject.toml) pins an
   architecture, so CMake fell back to the legacy default of 52.
 - Impact: every non-OptiX `.cu` kernel (`cache_kernels`, `geometry_*`, `dedup`,
-  `epc_field`, `backward`, `accum_ad`, â€¦) is generated for Maxwell and JIT-recompiled from
+  `epc_field`, `backward`, `accum_ad`, â€? is generated for Maxwell and JIT-recompiled from
   PTX at runtime, using old-arch scheduling/occupancy heuristics, plus first-run JIT latency.
 - Fix direction depends on whether the build is for **local dev** or a **published wheel**:
   - **Local dev (single known GPU):** `set(CMAKE_CUDA_ARCHITECTURES native)` (builds only for
-    the build machine's GPU â†’ `sm_120` here) or explicit `120`. Simplest and fastest to
+    the build machine's GPU â†?`sm_120` here) or explicit `120`. Simplest and fastest to
     compile; do **not** ship this.
   - **Published wheel (others install it):** use a **multi-architecture list with a low
     virtual/PTX baseline**, e.g.
@@ -571,46 +571,46 @@ Highest leverage, smallest change. Do these first; they may shift the whole rank
     `[tool.scikit-build.cmake.define] CMAKE_CUDA_ARCHITECTURES = "75-real;80-real;86-real;89-real;120-real;120-virtual"`).
     The `-real` entries embed optimized SASS for each target GPU (no JIT); the trailing
     `120-virtual` keeps PTX for forward-compat with future GPUs.
-- Compatibility note (why this matters for distribution): PTX JIT is **forward-only** â€”
-  `compute_XX` PTX runs on compute capability â‰¥ XX, never below; `sm_XX` SASS is arch-bound.
+- Compatibility note (why this matters for distribution): PTX JIT is **forward-only** â€?
+  `compute_XX` PTX runs on compute capability â‰?XX, never below; `sm_XX` SASS is arch-bound.
   - The **lowest virtual/PTX entry sets the minimum supported GPU.** To keep supporting old
     cards, lower the baseline (e.g. add `52-virtual` for Maxwell, `61`/`75` otherwise).
-  - Adding `120` does **not** drop old-GPU support â€” only *replacing* the broad baseline with
+  - Adding `120` does **not** drop old-GPU support â€?only *replacing* the broad baseline with
     a single high arch (`120` or `native`) does. A `120`-only or `native` wheel will **fail to
     load on any pre-Blackwell GPU**, so never publish those.
   - The current `52` build embeds `sm_52` SASS + `compute_52` PTX, so it runs everywhere from
-    Maxwell up â€” but on this RTX 5080 it runs *only* via `compute_52` PTX JIT (slow, plus
+    Maxwell up â€?but on this RTX 5080 it runs *only* via `compute_52` PTX JIT (slow, plus
     first-run JIT latency), which is exactly the defect this item fixes.
-  - Trade-off: each `-real` arch adds a cubin â†’ larger wheel and longer compile time. Pick the
+  - Trade-off: each `-real` arch adds a cubin â†?larger wheel and longer compile time. Pick the
     `-real` set to match the GPUs users actually have (Turing 75 / Ampere 80,86 / Ada 89 /
     Blackwell 120 above).
-- Risk: none for correctness. Re-measure the whole benchmark â€” this can move every number.
+- Risk: none for correctness. Re-measure the whole benchmark â€?this can move every number.
 
-### 2. `CMAKE_BUILD_TYPE` absent / empty in the cache `[implemented] â€” Med`
+### 2. `CMAKE_BUILD_TYPE` absent / empty in the cache `[implemented] â€?Med`
 
 - Evidence: `CMAKE_BUILD_TYPE` does not appear in `artifacts/skbuild/CMakeCache.txt`.
-- Impact: host glue (`scene_cache.cpp`, the `ops.cpp` files â€” heavy STL + tensor code) may
+- Impact: host glue (`scene_cache.cpp`, the `ops.cpp` files â€?heavy STL + tensor code) may
   compile without `/O2`. This directly touches the build path, which is CPU-bound.
 - Implemented: single-config native builds now default to `Release` when
   `CMAKE_BUILD_TYPE` was not explicitly provided. Multi-config Visual Studio builds still
   use the requested configuration.
 
-### 3. OptiX PTX compiled without `--use_fast_math` (and no arch flag) `[implemented] â€” Med`
+### 3. OptiX PTX compiled without `--use_fast_math` (and no arch flag) `[implemented] â€?Med`
 
 - Evidence: every `--ptx` custom command in [CMakeLists.txt:75-310](../CMakeLists.txt#L75)
   passes only `--std=c++17`.
 - Impact: the diffraction / accumulation kernels do many `sincosf` / `sqrtf` / divides (see
   items 28, 19) at full precision. OptiX re-optimizes the PTX, but fast-math semantics must be
   set at the source compile.
-- Implemented: PTX custom commands use `RAYDTORCH_OPTIX_NVCC_FLAGS`, which includes
+- Implemented: PTX custom commands use `RAYDN_OPTIX_NVCC_FLAGS`, which includes
   `--gpu-architecture=compute_75` and, by default, `--use_fast_math`. The explicit PTX
   architecture was required for warp intrinsics such as `__match_any_sync`.
 
 ---
 
-## P1 â€” Scene build
+## P1 â€?Scene build
 
-Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs RayD 95).
+Target of record: `build_ms` â‰?1550 (native, grid 192) / â‰?142 (grid 64 vs RayD 95).
 
 ### 4. Edge topology built on the CPU, single-threaded, via `std::map` `[implemented] - High`
 
@@ -629,9 +629,9 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
   partials into 7 scalar values. The host reads only those final scalars for radius
   selection.
 
-### 6. Up to 3 edge GAS rebuilt on every build *and* every sync `[partial] â€” Med-High`
+### 6. Up to 3 edge GAS rebuilt on every build *and* every sync `[partial] â€?Med-High`
 
-- Location: [scene_cache.cpp:498-556](../src/torch_ext/scene/scene_cache.cpp#L498) â€” loops
+- Location: [scene_cache.cpp:498-556](../src/torch_ext/scene/scene_cache.cpp#L498) â€?loops
   `radii.size()` times, each iteration `optixAccelComputeMemoryUsage` + `optixAccelBuild`.
 - Problem: three custom-primitive GAS are sized and built serially. Historically
   `sync_scene` called `build_edge_accel` again, reallocating and rebuilding every tier.
@@ -649,22 +649,22 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 - Original problem: GAS output buffers were left uncompacted: larger VRAM footprint and worse traversal cache locality.
 - Implemented: static triangle and edge GAS builds request compacted size and call `optixAccelCompact()` when OptiX reports a smaller output. Dynamic triangle/edge paths skip compaction to preserve update/rebuild buffer compatibility.
 
-### 8. `refresh_global_geometry` does many tiny tensor ops + 12 separate SoA buffers `[verified] â€” Med`
+### 8. `refresh_global_geometry` does many tiny tensor ops + 12 separate SoA buffers `[verified] â€?Med`
 
 - Location: [scene_cache.cpp:172-241](../src/torch_ext/scene/scene_cache.cpp#L172).
 - Problem: per-mesh `at::full` / `at::arange` / `(faces + vertex_offset)` / `at::cat` spawn
   many small kernels and temporaries; then 12 distinct `tri_*` tensors
-  (`tri_p0_x â€¦ tri_fn_z`) are allocated.
+  (`tri_p0_x â€?tri_fn_z`) are allocated.
 - Fix direction: write a packed layout directly from one `compute_*` kernel; generate
   shape/local ids in a single kernel; minimize `cat` calls.
 
-### 9. Triangle GAS built serially per mesh `[verified] â€” Med`
+### 9. Triangle GAS built serially per mesh `[verified] â€?Med`
 
 - Location: [scene_cache.cpp:584-586](../src/torch_ext/scene/scene_cache.cpp#L584).
 - Fix direction: for multi-mesh scenes, batch into a single build with multiple build
   inputs, or build on concurrent streams.
 
-### 10. IAS instances constructed on host and re-copied every sync `[verified] â€” Low-Med`
+### 10. IAS instances constructed on host and re-copied every sync `[verified] â€?Low-Med`
 
 - Location: [build_triangle_ias:115-134](../src/torch_ext/scene/scene_cache.cpp#L115).
 - Problem: the identity transforms never change, yet the instance buffer is rebuilt and
@@ -673,7 +673,7 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 
 ---
 
-## P1 â€” Nearest-edge query
+## P1 â€?Nearest-edge query
 
 ### 11. Tiered point/ray query host launches `[implemented] - Med-High`
 
@@ -685,8 +685,8 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
   when the query resolves. Ray query payload 4 now carries the current tier radius bits;
   validity is `edge_id != invalid`, so the 5-payload point/ray pipeline stays intact.
 - Measured effect on the RayD comparison shape after this change: nearest-edge static
-  improved from the previous RayDTorch record of `1.0648 ms` to `1.0081 ms`, while RayD
-  measured `1.2564 ms` in the same run. Dynamic nearest-edge measured RayDTorch
+  improved from the previous RayDN record of `1.0648 ms` to `1.0081 ms`, while RayD
+  measured `1.2564 ms` in the same run. Dynamic nearest-edge measured RayDN
   `1.0102 ms` vs RayD `1.1727 ms`.
 
 ### 11b. Point/ray query SoA setup used ATen split/copy `[implemented] - Med`
@@ -701,8 +701,8 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 - A direct-AoS OptiX experiment was rejected after `compute-sanitizer` found an
   illegal device read in the large-grid, high-z query case. The retained native
   split path passes the same `z=0.5` large-grid memcheck with 0 errors.
-- Latest same-script nearest-edge check after this change: static RayDTorch
-  `0.9638 ms` vs RayD `1.2084 ms`; dynamic RayDTorch `0.9618 ms` vs RayD
+- Latest same-script nearest-edge check after this change: static RayDN
+  `0.9638 ms` vs RayD `1.2084 ms`; dynamic RayDN `0.9618 ms` vs RayD
   `1.2475 ms` (`grid=64`, `queries=4096`, `warmup=5`, `repeat=30`).
 
 ### 12. Edge pipeline reserves 16 payload registers for all raygens `[implemented] - Med`
@@ -710,14 +710,14 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 - Original problem: payload count is per-pipeline, so point/ray raygens paid the full 16-register top-k reservation even though point uses 4 payload values and ray uses 5.
 - Implemented: `edge_optix.cu` now compiles into separate point/ray-only and top-k-only PTX modules. Runtime creates a 5-payload point/ray pipeline and a 16-payload top-k pipeline, each with its own module and SBT records. Confirm register reduction with `launch__registers_per_thread`.
 
-### 13. AoS point/edge coordinates loaded as 3 scalar loads `[verified] â€” Low`
+### 13. AoS point/edge coordinates loaded as 3 scalar loads `[verified] â€?Low`
 
 - Location: [edge_forward.cu:17](../src/torch_ext/edge/edge_forward.cu#L17) `make_aos_f3`;
   [edge_optix.cu:31-51](../src/torch_ext/edge/edge_optix.cu#L31).
 - Fix direction: with 16-byte alignment, vectorize via `float4`/reinterpret (the edge SoA is
   already split into component arrays, so this mainly helps the AoS query points).
 
-### 14. Ray query anyhit calls `optixIgnoreIntersection()` for every candidate `[verified] â€” Low-Med`
+### 14. Ray query anyhit calls `optixIgnoreIntersection()` for every candidate `[verified] â€?Low-Med`
 
 - Location: [edge_optix.cu:380-391](../src/torch_ext/edge/edge_optix.cu#L380). The bigger the
   search radius, the more candidates, the more anyhit invocations.
@@ -726,13 +726,13 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 
 ---
 
-## P1 â€” Reflection trace
+## P1 â€?Reflection trace
 
-### 15. Ray-major output layout â†’ strided, uncoalesced stores `[implemented for B>1] â€” High`
+### 15. Ray-major output layout â†?strided, uncoalesced stores `[implemented for B>1] â€?High`
 
 - Location: [trace_optix.cu:187-216](../src/torch_ext/reflection/trace_optix.cu#L187), feeding
   ~24 independent SoA output arrays defined in
-  [trace_params.h:44-67](../include/raydtorch/reflection/trace_params.h#L44).
+  [trace_params.h:44-67](../include/raydn/reflection/trace_params.h#L44).
 - Original problem: outputs were indexed `slot = ray_index * B + bounce`. For a fixed
   bounce, adjacent threads wrote addresses that differed by `B`, so each warp store could
   degenerate into many transactions.
@@ -757,34 +757,34 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
   change measured `0.2182 ms`. Treat the packed layout as implemented but not yet proven
   by Nsight counters.
 
-### 17. `split_mode` traces twice per bounce (primary + secondary) `[verified] â€” Med`
+### 17. `split_mode` traces twice per bounce (primary + secondary) `[verified] â€?Med`
 
 - Location: [trace_optix.cu:128-136](../src/torch_ext/reflection/trace_optix.cu#L128) and the
   trailing segment [:238-246](../src/torch_ext/reflection/trace_optix.cu#L238).
 - Current Torch call sites set `split_mode=0`, so this is not active in the latest
-  RayD/RayDTorch comparison benchmark. RayDTorch currently builds one triangle IAS for the
+  RayD/RayDN comparison benchmark. RayDN currently builds one triangle IAS for the
   scene, so there is no split-scene double trace on the hot path.
 - Future split-scene support should still prefer merging static/dynamic instances into one
   IAS so one traversal replaces the second per-bounce trace.
 
-### 18. Shared multipath pipeline uses a hardcoded oversized stack `[verified] â€” Low`
+### 18. Shared multipath pipeline uses a hardcoded oversized stack `[verified] â€?Low`
 
-- Location: [optix_pipeline.cpp:231](../src/torch_ext/common/optix_pipeline.cpp#L231) â€”
+- Location: [optix_pipeline.cpp:231](../src/torch_ext/common/optix_pipeline.cpp#L231) â€?
   `optixPipelineSetStackSize(pipeline_, 0, 0, 4096, 2)`. The context pipelines, by contrast,
   compute exact sizes via `optixUtilComputeStackSizes`.
 - Fix direction: compute the multipath stack precisely too, reducing VRAM and potential spill.
 
 ---
 
-## P2 â€” Reflection accumulation / EPC / dedup
+## P2 â€?Reflection accumulation / EPC / dedup
 
 > Mostly from a focused sub-agent read of the accumulation modules; treat impact as
 > `[needs Nsight]` unless noted.
 
-### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[implemented warp aggregation + staged reduce hook] â€” High`
+### 19. Complex-field accumulation via up to 7 `atomicAdd` into hashed cells `[implemented warp aggregation + staged reduce hook] â€?High`
 
 - Location: `accum_optix.cu:377-384`, coherent branch `:445-460`.
-- Problem: many threads atomically add into the same cell â€” serialized, complex-valued
+- Problem: many threads atomically add into the same cell â€?serialized, complex-valued
   (re/im split into separate atomics per component).
 - Implemented: hot reflection and diffraction field/power scatter paths now use same-cell
   warp aggregation before the global atomic. Multi-output paths share one cached
@@ -802,28 +802,28 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
   zero reflection coefficient, so this staged reflection path is compiled and parity-safe
   but not yet tied to a nonzero reflection-accumulation benchmark.
 
-### 20. Audit occlusion/visibility ray flags for `TERMINATE_ON_FIRST_HIT | DISABLE_ANYHIT` `[needs check] â€” High if confirmed`
+### 20. Audit occlusion/visibility ray flags for `TERMINATE_ON_FIRST_HIT | DISABLE_ANYHIT` `[needs check] â€?High if confirmed`
 
 - Already correct: `visibility_optix.cu` uses `OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT`.
 - To verify: the `DISABLE_ANYHIT`-only traces in `accum_optix.cu` / `epc_optix.cu`. **If a
   trace is an occlusion/shadow test**, add `TERMINATE_ON_FIRST_HIT` (and resolve in miss /
   `optixHitObject`). **If it is a nearest-reflection-point search**, the current closest-hit
-  semantics are correct â€” do not change. Decide per call site.
+  semantics are correct â€?do not change. Decide per call site.
 
-### 21. EPC raygen holds ~500 B of stack-local arrays per thread `[needs Nsight] â€” Med`
+### 21. EPC raygen holds ~500 B of stack-local arrays per thread `[needs Nsight] â€?Med`
 
-- Location: `epc_optix.cu:437-550` â€” five `[ReflEpcMaxBounces=8]` float3 arrays.
+- Location: `epc_optix.cu:437-550` â€?five `[ReflEpcMaxBounces=8]` float3 arrays.
 - Problem: high register / local-memory footprint depresses occupancy.
 - Fix direction: shrink live state, process bounces in chunks, check for local-memory spills
   (`launch__registers_per_thread`, local load/store metrics).
 
-### 22. dedup blocks the host with `cudaStreamSynchronize` to return `unique_count` `[needs Nsight] â€” Med`
+### 22. dedup blocks the host with `cudaStreamSynchronize` to return `unique_count` `[needs Nsight] â€?Med`
 
 - Location: dedup.cu host path (count copy + sync).
 - Fix direction: keep the count device-resident and consume it from a follow-up kernel;
   avoid the host stall that serializes the next op.
 
-### 23. EPC field forward setup fan-out `[implemented setup fusion; needs Nsight] â€” Med`
+### 23. EPC field forward setup fan-out `[implemented setup fusion; needs Nsight] â€?Med`
 
 - Location: `ops.cpp:602-796`, `epc_optix.cu`, `epc_field.cu`.
 - Original problem: the public EPC forward prepared ray/slot/material tensors
@@ -837,23 +837,23 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
   EPC field kernel is now the dominant forward cost before adding scratch reuse
   or more fusion.
 
-### 24. dedup compact writes 13 scattered fields per bounce `[needs Nsight] â€” Med`
+### 24. dedup compact writes 13 scattered fields per bounce `[needs Nsight] â€?Med`
 
 - Location: `dedup.cu:285-302`.
 - Fix direction: structured / merged writes.
 
 ---
 
-## P2 â€” Diffraction
+## P2 â€?Diffraction
 
-### 25. Path counter is a single global `atomicAdd(out_count, 1)` `[implemented warp aggregation] â€” High`
+### 25. Path counter is a single global `atomicAdd(out_count, 1)` `[implemented warp aggregation] â€?High`
 
 - Location: `paths_optix.cu:250` / `:394`.
 - Problem: a global atomic serializes all hit-writes.
 - Implemented: path export reserves output slots per warp using one `atomicAdd` per active
   warp group. Prefix-sum allocation remains a larger alternative.
 
-### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation + staged reduce] â€” High`
+### 26. Coherent UTD atomics per cell (6 complex components + counters) `[implemented warp aggregation + staged reduce] â€?High`
 
 - Location: `accum_optix.cu:445-460` (same class of issue as item 19).
 - Implemented: coherent direct/multi field outputs now use same-cell warp aggregation for
@@ -873,17 +873,17 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 - Remaining larger work: use Nsight to decide whether staged sort cost beats atomics across
   larger coherent workloads and tune the threshold if needed.
 
-### 27. Path output scatters 12 SoA complex components via `out_idx` `[needs Nsight] â€” Med`
+### 27. Path output scatters 12 SoA complex components via `out_idx` `[needs Nsight] â€?Med`
 
 - Location: `paths_optix.cu:261-280`.
 - Fix direction: merged / packed writes.
 
-### 28. `sincosf` / `sqrtf` / phase math at full precision `[needs Nsight] â€” Med`
+### 28. `sincosf` / `sqrtf` / phase math at full precision `[needs Nsight] â€?Med`
 
 - Location: `paths_optix.cu:256-259` and similar.
 - Fix direction: pairs with P0-3 (`--use_fast_math`); validate against parity tests.
 
-### 29. AD unit-JVP loop: 36+ serial `add_unit_vjp` + scattered `atomicAdd(ptr+index)` `[needs Nsight] â€” Med (backward only)`
+### 29. AD unit-JVP loop: 36+ serial `add_unit_vjp` + scattered `atomicAdd(ptr+index)` `[needs Nsight] â€?Med (backward only)`
 
 - Location: `accum_ad.cu:1518-1627`, `:1774-1775`.
 - Problem: many small atomics + per-call `nullptr` branches + large intermediate structs
@@ -892,27 +892,27 @@ Target of record: `build_ms` â‰ˆ 1550 (native, grid 192) / â‰ˆ 142 (grid 64 vs R
 
 ---
 
-## Cross-cutting â€” host glue, allocations, syncs
+## Cross-cutting â€?host glue, allocations, syncs
 
-### 30. Many small `at::zeros` / `at::full` / `at::empty` allocations before launches `[verified] â€” Low-Med`
+### 30. Many small `at::zeros` / `at::full` / `at::empty` allocations before launches `[verified] â€?Low-Med`
 
 - Location: `reflection/ops.cpp:252-283`, `diffraction/ops.cpp:255-278`, and similar.
 - Fix direction: batch-allocate output buffers / reuse scratch buffers across calls.
 
-### 31. Every OptiX launch re-copies the full params struct to device `[verified] â€” Low`
+### 31. Every OptiX launch re-copies the full params struct to device `[verified] â€?Low`
 
 - Location: [optix_pipeline.cpp:306](../src/torch_ext/common/optix_pipeline.cpp#L306),
   [edge_forward.cu:257](../src/torch_ext/edge/edge_forward.cu#L257), and each `ops.cpp`.
 - Problem: large struct re-transferred per launch.
 - Fix direction: cache the invariant portion, or stage from a pinned host buffer.
 
-### 32. `hitgroup_record_capacity` rounds up to a minimum of 64 SBT records `[verified] â€” Low`
+### 32. `hitgroup_record_capacity` rounds up to a minimum of 64 SBT records `[verified] â€?Low`
 
 - Location: [optix_pipeline.cpp:107](../src/torch_ext/common/optix_pipeline.cpp#L107).
 - Problem: most pipelines need a single record; an oversized SBT hurts cache locality.
 - Fix direction: verify the minimum is justified; size to the actual record count.
 
-### 33. intersect raygen loads ray origin/dir as 3 scalar loads `[verified] â€” Low`
+### 33. intersect raygen loads ray origin/dir as 3 scalar loads `[verified] â€?Low`
 
 - Location: [optix_intersect.cu:22-29](../src/torch_ext/scene/optix_intersect.cu#L22).
 - Fix direction: vectorize after guaranteeing alignment.
@@ -927,20 +927,20 @@ performance-counter restriction lifted, else `ERR_NVGPUCTRPERM`.
 
 ```powershell
 # 0) Repository benchmark of record
-conda run -n witwin2 python -m tests.benchmark_raydtorch_native --grid 192 --queries 65536
+conda run -n witwin2 python -m tests.benchmark_raydn_native --grid 192 --queries 65536
 
-# 1) System timeline â€” is scene build CPU-bound? where are the D2H copies / AS builds?
+# 1) System timeline â€?is scene build CPU-bound? where are the D2H copies / AS builds?
 nsys profile -o prof --stats=true --force-overwrite=true `
-  python -m tests.benchmark_raydtorch_native --grid 192 --queries 65536
+  python -m tests.benchmark_raydn_native --grid 192 --queries 65536
 
-# 2) Reflection trace â€” store coalescing + occupancy (item 15)
+# 2) Reflection trace â€?store coalescing + occupancy (item 15)
 ncu --set full -k "raygen__reflection_trace" -c 5 -o refl <app>
 ncu --metrics `
   l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_st.ratio,`
   launch__registers_per_thread,launch__occupancy_limit_registers `
   -k "raygen__reflection_trace" -c 5 <app>
 
-# 3) Nearest-edge â€” payload register pressure / occupancy (item 12)
+# 3) Nearest-edge â€?payload register pressure / occupancy (item 12)
 ncu --metrics `
   launch__registers_per_thread,launch__occupancy_limit_registers,`
   sm__warps_active.avg.pct_of_peak_sustained_active `

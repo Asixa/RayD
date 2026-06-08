@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-import raydtorch as rt
+import raydn as rt
 
 from .baseline_utils import write_baseline
 
 
-OUT_DIR = Path(__file__).resolve().parent / "baselines" / "raydtorch_native"
+OUT_DIR = Path(__file__).resolve().parent / "baselines" / "raydn_native"
 
 
 def _as_list(tensor: torch.Tensor):
@@ -81,7 +81,7 @@ def multipath_case():
 
 def main() -> None:
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA torch is required to generate raydtorch baselines.")
+        raise RuntimeError("CUDA torch is required to generate raydn baselines.")
     write_baseline(OUT_DIR / "intersect.json", intersect_case())
     write_baseline(OUT_DIR / "edge_queries.json", edge_case())
     write_baseline(OUT_DIR / "multipath.json", multipath_case())

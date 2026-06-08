@@ -19,11 +19,11 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         "#pragma once\n\n"
-        "namespace raydtorch {\n"
+        "namespace raydn {\n"
         f"inline constexpr char {symbol}[] = {{\n"
         f"{payload}\n"
         "};\n"
-        "} // namespace raydtorch\n",
+        "} // namespace raydn\n",
         encoding="utf-8",
     )
 

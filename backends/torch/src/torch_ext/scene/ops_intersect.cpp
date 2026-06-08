@@ -1,6 +1,6 @@
-#include <raydtorch/scene/geometry_kernels.h>
-#include <raydtorch/scene/cache.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/scene/geometry_kernels.h>
+#include <raydn/scene/cache.h>
+#include <raydn/common/tensor_check.h>
 
 #include <torch/csrc/autograd/custom_function.h>
 #include <torch/extension.h>
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -1075,19 +1075,4 @@ py::tuple intersect_jvp_optional_op(
         out.tangent_barycentric);
 }
 
-void bind_intersect_ops(py::module_ &m) {
-    m.def("intersect_forward", &intersect_forward_op);
-    m.def("intersect_forward_flags", &intersect_forward_flags_op);
-    m.def("intersect_forward_t", &intersect_forward_t_op);
-    m.def("intersect_forward_ad_flags", &intersect_forward_ad_flags_op);
-    m.def("intersect_ad_flags", &intersect_ad_flags_op);
-    m.def("intersect_ad_t", &intersect_ad_t_op);
-    m.def("intersection_empty_fields", &intersection_empty_fields_op);
-    m.def("intersect_backward", &intersect_backward_op);
-    m.def("intersect_backward_optional", &intersect_backward_optional_op);
-    m.def("intersect_backward_t", &intersect_backward_t_op);
-    m.def("intersect_jvp", &intersect_jvp_op);
-    m.def("intersect_jvp_optional", &intersect_jvp_optional_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

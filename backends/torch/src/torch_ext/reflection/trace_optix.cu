@@ -1,10 +1,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/reflection/trace_params.h>
+#include <raydn/common/math.cuh>
+#include <raydn/reflection/trace_params.h>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -358,4 +358,4 @@ extern "C" __global__ void __raygen__reflection_trace() {
         params.out_bounce_count[ray_index] = bounce_count;
 }
 
-} // namespace raydtorch
+} // namespace raydn

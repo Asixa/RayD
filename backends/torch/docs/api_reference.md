@@ -1,9 +1,9 @@
-# RayDTorch API Reference
+# RayDN API Reference
 
-Use RayDTorch as:
+Use RayDN as:
 
 ```python
-import raydtorch as rt
+import raydn as rt
 ```
 
 ## Core Types
@@ -41,6 +41,6 @@ All native geometry and multipath inputs are CUDA tensors. Continuous vector inp
 
 Native operators support VJP and JVP for continuous Torch inputs. Discrete choices such as primitive id, edge id, visibility, and fixed path sequence are non-differentiable and are held fixed from the forward pass. Continuous outputs are recomputed from the fixed winner and live geometry tensors during AD.
 
-RayDTorch does not import or depend on Dr.Jit in the `raydtorch` package path.
+RayDN does not import or depend on Dr.Jit in the `raydn` package path.
 
-See `docs/raydtorch_native_gap_analysis.md` for current acceptance status.
+See `docs/raydn_native_gap_analysis.md` for current acceptance status.

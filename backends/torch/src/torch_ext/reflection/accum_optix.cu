@@ -1,11 +1,11 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydtorch/common/complex.cuh>
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/reflection/accum_params.h>
+#include <raydn/common/complex.cuh>
+#include <raydn/common/math.cuh>
+#include <raydn/reflection/accum_params.h>
 
-namespace raydtorch {
+namespace raydn {
 
 extern "C" {
 extern __constant__ AccumParams params;
@@ -561,4 +561,4 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
     }
 }
 
-} // namespace raydtorch
+} // namespace raydn

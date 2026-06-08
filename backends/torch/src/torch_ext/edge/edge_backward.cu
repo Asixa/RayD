@@ -1,10 +1,10 @@
-#include <raydtorch/edge/kernels.h>
-#include <raydtorch/common/math.cuh>
+#include <raydn/edge/kernels.h>
+#include <raydn/common/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -302,4 +302,4 @@ EdgeJvpOutputs edge_jvp_optional_cuda(
     return out;
 }
 
-} // namespace raydtorch
+} // namespace raydn

@@ -1,14 +1,14 @@
-#include <raydtorch/diffraction/accum_ad.h>
+#include <raydn/diffraction/accum_ad.h>
 
 #include <cuda_runtime.h>
 
 #include <cmath>
 #include <string>
 
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/common/native_compat.h>
+#include <raydn/common/math.cuh>
+#include <raydn/common/native_compat.h>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -2447,5 +2447,5 @@ void dfr_chain_accum_vjp_gpu(const DfrChainAccumADParams &params) {
                      params);
 }
 
-} // namespace raydtorch
+} // namespace raydn
 

@@ -2,24 +2,24 @@
 #define NOMINMAX
 #endif
 
-#include <raydtorch/diffraction/accum_params.h>
-#include <raydtorch/diffraction/accum_ad.h>
-#include <raydtorch/diffraction/paths_params.h>
-#include <raydtorch/diffraction/pipeline.h>
-#include <raydtorch/scene/geometry_kernels.h>
-#include <raydtorch/common/optix_pipeline.h>
-#include <raydtorch/reflection/kernels.h>
-#include <raydtorch/reflection/pipeline.h>
-#include <raydtorch/common/optix_context.h>
-#include <raydtorch/reflection/accum_reduce.h>
-#include <raydtorch/reflection/accum_params.h>
-#include <raydtorch/reflection/dedup.h>
-#include <raydtorch/reflection/epc_field.h>
-#include <raydtorch/reflection/epc_params.h>
-#include <raydtorch/reflection/trace_params.h>
-#include <raydtorch/reflection/visibility_params.h>
-#include <raydtorch/scene/cache.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/diffraction/accum_params.h>
+#include <raydn/diffraction/accum_ad.h>
+#include <raydn/diffraction/paths_params.h>
+#include <raydn/diffraction/pipeline.h>
+#include <raydn/scene/geometry_kernels.h>
+#include <raydn/common/optix_pipeline.h>
+#include <raydn/reflection/kernels.h>
+#include <raydn/reflection/pipeline.h>
+#include <raydn/common/optix_context.h>
+#include <raydn/reflection/accum_reduce.h>
+#include <raydn/reflection/accum_params.h>
+#include <raydn/reflection/dedup.h>
+#include <raydn/reflection/epc_field.h>
+#include <raydn/reflection/epc_params.h>
+#include <raydn/reflection/trace_params.h>
+#include <raydn/reflection/visibility_params.h>
+#include <raydn/scene/cache.h>
+#include <raydn/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -31,7 +31,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -1241,20 +1241,4 @@ py::tuple reflection_accumulation_forward_op(
         reflection_count);
 }
 
-void bind_reflection_ops(py::module_ &m) {
-    m.def("visibility_forward", &visibility_forward_op);
-    m.def("trace_reflections_forward", &trace_reflections_forward_op);
-    m.def("trace_reflections_forward_noad", &trace_reflections_forward_noad_op);
-    m.def("trace_reflections_forward_reduced", &trace_reflections_forward_reduced_op);
-    m.def("trace_reflections_backward", &trace_reflections_backward_op);
-    m.def("trace_reflections_backward_optional", &trace_reflections_backward_optional_op);
-    m.def("trace_reflections_jvp", &trace_reflections_jvp_op);
-    m.def("trace_reflections_jvp_optional", &trace_reflections_jvp_optional_op);
-    m.def("trace_refl_epc_field_forward", &trace_refl_epc_field_forward_op);
-    m.def("trace_refl_epc_field_backward", &trace_refl_epc_field_backward_op);
-    m.def("trace_refl_epc_field_jvp", &trace_refl_epc_field_jvp_op);
-    m.def("reflection_dedup_forward", &reflection_dedup_forward_op);
-    m.def("reflection_accumulation_forward", &reflection_accumulation_forward_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

@@ -1,10 +1,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydtorch/common/math.cuh>
-#include <raydtorch/reflection/epc_params.h>
+#include <raydn/common/math.cuh>
+#include <raydn/reflection/epc_params.h>
 
-namespace raydtorch {
+namespace raydn {
 
 extern "C" {
 extern __constant__ ReflEpcParams params;
@@ -679,4 +679,4 @@ extern "C" __global__ void __raygen__reflection_epc_direct_primary() {
     run_reflection_epc_raygen<true, true>();
 }
 
-} // namespace raydtorch
+} // namespace raydn

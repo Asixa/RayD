@@ -1,22 +1,22 @@
-#include <raydtorch/common/optix_context.h>
+#include <raydn/common/optix_context.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
-#include <raydtorch/edge/optix_params.h>
-#include <raydtorch/edge_optix_point_ray_ptx.h>
-#include <raydtorch/edge_optix_topk_ptx.h>
-#include <raydtorch/optix_intersect_ptx.h>
-#include <raydtorch/reflection_trace_optix_ptx.h>
+#include <raydn/edge/optix_params.h>
+#include <raydn/edge_optix_point_ray_ptx.h>
+#include <raydn/edge_optix_topk_ptx.h>
+#include <raydn/optix_intersect_ptx.h>
+#include <raydn/reflection_trace_optix_ptx.h>
 
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 std::mutex context_mutex;
@@ -45,7 +45,7 @@ void copy_sbt_record(
     at::Tensor &device_record,
     cudaStream_t stream) {
     EmptySbtRecord host_record = {};
-    raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(program_group, &host_record));
+    raydn_OPTIX_CHECK(optixSbtRecordPackHeader(program_group, &host_record));
     cuda_check(
         cudaMemcpyAsync(
             device_record.data_ptr<uint8_t>(),
@@ -62,8 +62,8 @@ void copy_edge_hitgroup_records(
     at::Tensor &device_records,
     cudaStream_t stream) {
     EmptySbtRecord host_records[2] = {};
-    raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(point_group, &host_records[0]));
-    raydtorch_OPTIX_CHECK(optixSbtRecordPackHeader(ray_group, &host_records[1]));
+    raydn_OPTIX_CHECK(optixSbtRecordPackHeader(point_group, &host_records[0]));
+    raydn_OPTIX_CHECK(optixSbtRecordPackHeader(ray_group, &host_records[1]));
     cuda_check(
         cudaMemcpyAsync(
             device_records.data_ptr<uint8_t>(),
@@ -81,7 +81,7 @@ void create_program_group(
     OptixProgramGroupOptions options = {};
     char log[4096] = {};
     size_t log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(
+    raydn_OPTIX_CHECK(
         optixProgramGroupCreate(context, &desc, 1, &options, log, &log_size, out_group));
 }
 } // namespace
@@ -106,9 +106,9 @@ OptixDeviceContextEntry &get_optix_context(int device_index) {
         throw std::runtime_error("Could not get current CUDA context for OptiX.");
 
     OptixDeviceContext optix_ctx = nullptr;
-    raydtorch_OPTIX_CHECK(optixInit());
+    raydn_OPTIX_CHECK(optixInit());
     OptixDeviceContextOptions options = {};
-    raydtorch_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &optix_ctx));
+    raydn_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &optix_ctx));
 
     OptixDeviceContextEntry entry;
     entry.device_index = device_index;
@@ -139,12 +139,12 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
 
     char log[8192] = {};
     size_t log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixModuleCreate(
+    raydn_OPTIX_CHECK(optixModuleCreate(
         entry.optix_context,
         &module_options,
         &pipeline_options,
-        raydtorch_optix_intersect_ptx,
-        sizeof(raydtorch_optix_intersect_ptx),
+        raydn_optix_intersect_ptx,
+        sizeof(raydn_optix_intersect_ptx),
         log,
         &log_size,
         &entry.intersect_module));
@@ -176,7 +176,7 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
     OptixPipelineLinkOptions link_options = {};
     link_options.maxTraceDepth = 1;
     log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+    raydn_OPTIX_CHECK(optixPipelineCreate(
         entry.optix_context,
         &pipeline_options,
         &link_options,
@@ -188,11 +188,11 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
 
     OptixStackSizes stack_sizes = {};
     for (OptixProgramGroup group : program_groups)
-        raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.intersect_pipeline));
+        raydn_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.intersect_pipeline));
     uint32_t direct_callable_stack_from_traversal = 0;
     uint32_t direct_callable_stack_from_state = 0;
     uint32_t continuation_stack = 0;
-    raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
+    raydn_OPTIX_CHECK(optixUtilComputeStackSizes(
         &stack_sizes,
         1,
         0,
@@ -200,7 +200,7 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
         &direct_callable_stack_from_traversal,
         &direct_callable_stack_from_state,
         &continuation_stack));
-    raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
+    raydn_OPTIX_CHECK(optixPipelineSetStackSize(
         entry.intersect_pipeline,
         direct_callable_stack_from_traversal,
         direct_callable_stack_from_state,
@@ -258,22 +258,22 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
 
     char log[8192] = {};
     size_t log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixModuleCreate(
+    raydn_OPTIX_CHECK(optixModuleCreate(
         entry.optix_context,
         &module_options,
         &point_ray_options,
-        raydtorch_edge_optix_point_ray_ptx,
-        sizeof(raydtorch_edge_optix_point_ray_ptx),
+        raydn_edge_optix_point_ray_ptx,
+        sizeof(raydn_edge_optix_point_ray_ptx),
         log,
         &log_size,
         &entry.edge_module));
     log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixModuleCreate(
+    raydn_OPTIX_CHECK(optixModuleCreate(
         entry.optix_context,
         &module_options,
         &topk_options,
-        raydtorch_edge_optix_topk_ptx,
-        sizeof(raydtorch_edge_optix_topk_ptx),
+        raydn_edge_optix_topk_ptx,
+        sizeof(raydn_edge_optix_topk_ptx),
         log,
         &log_size,
         &entry.edge_topk_module));
@@ -355,7 +355,7 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     OptixPipelineLinkOptions link_options = {};
     link_options.maxTraceDepth = 1;
     log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+    raydn_OPTIX_CHECK(optixPipelineCreate(
         entry.optix_context,
         &point_ray_options,
         &link_options,
@@ -365,7 +365,7 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
         &log_size,
         &entry.edge_pipeline));
     log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+    raydn_OPTIX_CHECK(optixPipelineCreate(
         entry.optix_context,
         &topk_options,
         &link_options,
@@ -380,11 +380,11 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
                               int group_count) {
         OptixStackSizes stack_sizes = {};
         for (int i = 0; i < group_count; ++i)
-            raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(groups[i], &stack_sizes, pipeline));
+            raydn_OPTIX_CHECK(optixUtilAccumulateStackSizes(groups[i], &stack_sizes, pipeline));
         uint32_t direct_callable_stack_from_traversal = 0;
         uint32_t direct_callable_stack_from_state = 0;
         uint32_t continuation_stack = 0;
-        raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
+        raydn_OPTIX_CHECK(optixUtilComputeStackSizes(
             &stack_sizes,
             1,
             0,
@@ -392,7 +392,7 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
             &direct_callable_stack_from_traversal,
             &direct_callable_stack_from_state,
             &continuation_stack));
-        raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
+        raydn_OPTIX_CHECK(optixPipelineSetStackSize(
             pipeline,
             direct_callable_stack_from_traversal,
             direct_callable_stack_from_state,
@@ -502,12 +502,12 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
 
     char log[8192] = {};
     size_t log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixModuleCreate(
+    raydn_OPTIX_CHECK(optixModuleCreate(
         entry.optix_context,
         &module_options,
         &pipeline_options,
-        raydtorch_reflection_trace_optix_ptx,
-        sizeof(raydtorch_reflection_trace_optix_ptx),
+        raydn_reflection_trace_optix_ptx,
+        sizeof(raydn_reflection_trace_optix_ptx),
         log,
         &log_size,
         &entry.reflection_trace_module));
@@ -539,7 +539,7 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
     OptixPipelineLinkOptions link_options = {};
     link_options.maxTraceDepth = 1;
     log_size = sizeof(log);
-    raydtorch_OPTIX_CHECK(optixPipelineCreate(
+    raydn_OPTIX_CHECK(optixPipelineCreate(
         entry.optix_context,
         &pipeline_options,
         &link_options,
@@ -551,11 +551,11 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
 
     OptixStackSizes stack_sizes = {};
     for (OptixProgramGroup group : program_groups)
-        raydtorch_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.reflection_trace_pipeline));
+        raydn_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, entry.reflection_trace_pipeline));
     uint32_t direct_callable_stack_from_traversal = 0;
     uint32_t direct_callable_stack_from_state = 0;
     uint32_t continuation_stack = 0;
-    raydtorch_OPTIX_CHECK(optixUtilComputeStackSizes(
+    raydn_OPTIX_CHECK(optixUtilComputeStackSizes(
         &stack_sizes,
         1,
         0,
@@ -563,7 +563,7 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
         &direct_callable_stack_from_traversal,
         &direct_callable_stack_from_state,
         &continuation_stack));
-    raydtorch_OPTIX_CHECK(optixPipelineSetStackSize(
+    raydn_OPTIX_CHECK(optixPipelineSetStackSize(
         entry.reflection_trace_pipeline,
         direct_callable_stack_from_traversal,
         direct_callable_stack_from_state,
@@ -605,4 +605,4 @@ void optix_check(OptixResult result, const char *expr, const char *file, int lin
         " code=" + std::to_string(static_cast<int>(result)));
 }
 
-} // namespace raydtorch
+} // namespace raydn

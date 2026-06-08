@@ -1,12 +1,12 @@
-#include <raydtorch/common/camera.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/common/camera.h>
+#include <raydn/common/tensor_check.h>
 
 #include <torch/extension.h>
 
 #include <stdexcept>
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -112,13 +112,4 @@ at::Tensor camera_sample_ray_backward_op(
         tan_y);
 }
 
-void bind_camera_ops(py::module_ &m) {
-    m.def("camera_sample_to_world", &camera_sample_to_world_op);
-    m.def("camera_sample_to_world_backward", &camera_sample_to_world_backward_op);
-    m.def("camera_world_to_sample", &camera_world_to_sample_op);
-    m.def("camera_world_to_sample_backward", &camera_world_to_sample_backward_op);
-    m.def("camera_sample_ray", &camera_sample_ray_op);
-    m.def("camera_sample_ray_backward", &camera_sample_ray_backward_op);
-}
-
-} // namespace raydtorch
+} // namespace raydn

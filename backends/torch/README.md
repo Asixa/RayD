@@ -1,17 +1,17 @@
-# RayDTorch
+# RayDN
 
-RayDTorch is a Torch-native CUDA/OptiX package for RayD geometry primitives and
+RayDN is a Torch-native CUDA/OptiX package for RayD geometry primitives and
 RayD-style multipath/diffraction kernels.
 
 ```python
-import raydtorch as rt
+import raydn as rt
 ```
 
-The public package name is `raydtorch`; it does not provide `rayd` compatibility aliases, so it can coexist with the original RayD package in the same environment.
+The public package name is `raydn`; it does not provide `rayd` compatibility aliases, so it can coexist with the original RayD package in the same environment.
 
 ## Tensor ABI
 
-RayDTorch APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.
+RayDN APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.
 
 ## Gradient Contract
 
@@ -23,7 +23,7 @@ The native operators support Torch reverse-mode VJP and forward-mode JVP for the
 
 ## Current Status
 
-RayDTorch now builds separate native scene, edge, reflection, and diffraction
+RayDN now builds separate native scene, edge, reflection, and diffraction
 Torch extension bindings. The native build includes OptiX PTX pipelines for
 scene intersection, edge queries, reflection tracing/EPC/visibility/
 accumulation, and diffraction path/accumulation/coherent direct execution.
@@ -36,11 +36,11 @@ coverage exists for geometry, edge, reflection trace, EPC, and diffraction
 accumulation under the fixed-winner contract.
 
 The remaining completion risk is performance acceptance: the same-script
-RayD/RayDTorch benchmark now exists, but current measurements still show
-RayDTorch slower for build, reflection trace, and diffraction direct on the
-recorded benchmark shape. See `docs/raydtorch_native_gap_analysis.md` and
-`docs/raydtorch_native_performance.md`.
+RayD/RayDN benchmark now exists, but current measurements still show
+RayDN slower for build, reflection trace, and diffraction direct on the
+recorded benchmark shape. See `docs/raydn_native_gap_analysis.md` and
+`docs/raydn_native_performance.md`.
 
 ## Dependencies
 
-RayDTorch depends on PyTorch, CUDA, and OptiX for native execution. The RayDTorch package path has no Dr.Jit dependency.
+RayDN depends on PyTorch, CUDA, and OptiX for native execution. The RayDN package path has no Dr.Jit dependency.

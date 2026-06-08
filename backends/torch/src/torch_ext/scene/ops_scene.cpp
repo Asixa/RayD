@@ -1,12 +1,12 @@
-#include <raydtorch/scene/cache.h>
-#include <raydtorch/scene/cache_kernels.h>
-#include <raydtorch/common/tensor_check.h>
+#include <raydn/scene/cache.h>
+#include <raydn/scene/cache_kernels.h>
+#include <raydn/common/tensor_check.h>
 
 #include <torch/extension.h>
 
 #include <string>
 
-namespace raydtorch {
+namespace raydn {
 
 namespace {
 
@@ -82,7 +82,7 @@ int64_t create_scene_op(py::list mesh_specs) {
 
 py::tuple split_scene_vertex_grad_op(int64_t handle, at::Tensor grad_vertices) {
     std::vector<at::Tensor> parts =
-        split_scene_vertex_grad(c10::make_intrusive<SceneHandle>(handle), grad_vertices);
+        split_scene_vertex_grad(c10::make_intrusive<SceneHandle>(handle, false), grad_vertices);
     py::tuple result(parts.size());
     for (size_t i = 0; i < parts.size(); ++i)
         result[i] = parts[i];
@@ -110,7 +110,7 @@ std::vector<at::Tensor> split_scene_vertex_grad(
 }
 
 py::object pack_scene_vertex_tangents_op(int64_t handle, py::args tangent_args) {
-    c10::intrusive_ptr<SceneHandle> scene = c10::make_intrusive<SceneHandle>(handle);
+    c10::intrusive_ptr<SceneHandle> scene = c10::make_intrusive<SceneHandle>(handle, false);
     SceneCache &cache = get_scene(handle);
     if (static_cast<size_t>(py::len(tangent_args)) != cache.meshes.size()) {
         throw std::runtime_error("pack_scene_vertex_tangents() expects one tangent per mesh.");
@@ -164,16 +164,4 @@ at::Tensor pack_scene_vertex_tangents(
     return global_tangent;
 }
 
-void bind_scene_ops(py::module_ &m) {
-    m.def("create_scene", &create_scene_op);
-    m.def("destroy_scene", &destroy_scene);
-    m.def("scene_version", static_cast<int64_t (*)(int64_t)>(&scene_version));
-    m.def("scene_num_meshes", static_cast<int64_t (*)(int64_t)>(&scene_num_meshes));
-    m.def("scene_edge_count", static_cast<int64_t (*)(int64_t)>(&scene_edge_count));
-    m.def("split_scene_vertex_grad", &split_scene_vertex_grad_op);
-    m.def("pack_scene_vertex_tangents", &pack_scene_vertex_tangents_op);
-    m.def("update_mesh_vertices", static_cast<void (*)(int64_t, int64_t, at::Tensor)>(&update_mesh_vertices));
-    m.def("sync_scene", static_cast<void (*)(int64_t)>(&sync_scene));
-}
-
-} // namespace raydtorch
+} // namespace raydn
