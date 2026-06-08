@@ -370,6 +370,7 @@ if(RAYDTORCH_BUILD_NATIVE)
     pybind11_add_module(
         _raydtorch
         src/torch_ext/module.cpp
+        src/torch_ext/library.cpp
         src/torch_ext/tensor_check.cpp
         src/torch_ext/scene/scene_cache.cpp
         src/torch_ext/common/optix_pipeline.cpp

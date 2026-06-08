@@ -52,6 +52,7 @@ def _has_forward_ad(*values: torch.Tensor) -> bool:
 class Scene:
     def __init__(self) -> None:
         self._meshes: list[tuple[Mesh, bool]] = []
+        self._native_scene = None
         self._native_handle: int | None = None
         self._finalizer: weakref.finalize | None = None
         self._ready = False
@@ -62,6 +63,7 @@ class Scene:
             raise TypeError("Scene.add_mesh() expects raydtorch.Mesh.")
         if self._native_handle is not None:
             _C.destroy_scene(self._native_handle)
+            self._native_scene = None
             self._native_handle = None
         self._meshes.append((mesh, bool(dynamic)))
         self._ready = False
@@ -85,8 +87,28 @@ class Scene:
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
         specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
+        mesh_flags = []
+        for mesh, dynamic in self._meshes:
+            flags = 0
+            if mesh.use_face_normals:
+                flags |= 1
+            if mesh.edges_enabled:
+                flags |= 2
+            if dynamic:
+                flags |= 4
+            mesh_flags.append(flags)
         with torch._C._DisableFuncTorch():
-            handle = int(_C.create_scene(specs))
+            native_scene = torch.classes.raydn.Scene(
+                [spec["vertices"] for spec in specs],
+                [spec["faces"] for spec in specs],
+                [spec["uv"] for spec in specs],
+                [spec["face_uv"] for spec in specs],
+                [spec["to_world_left"] for spec in specs],
+                [spec["to_world_right"] for spec in specs],
+                mesh_flags,
+            )
+            handle = int(native_scene.handle())
+        self._native_scene = native_scene
         self._native_handle = handle
         self._finalizer = weakref.finalize(self, _C.destroy_scene, handle)
         self._ready = True
@@ -96,6 +118,11 @@ class Scene:
         if not self._ready or self._native_handle is None:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_handle
+
+    def _require_native_scene(self):
+        if not self._ready or self._native_scene is None:
+            raise RuntimeError("Scene is not ready. Call build() before querying.")
+        return self._native_scene
 
     def _mesh_vertex_tensors(self) -> tuple[torch.Tensor, ...]:
         return tuple(mesh.vertices for mesh, _dynamic in self._meshes)

@@ -709,7 +709,7 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
 }
 } // namespace
 
-int64_t create_scene(std::vector<MeshRecord> meshes) {
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
     if (meshes.empty())
         throw std::runtime_error("Scene.build(): at least one mesh is required.");
 
@@ -731,7 +731,8 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
             throw std::runtime_error("Scene.build(): transform tensors must be on the scene device.");
     }
 
-    auto scene = std::make_unique<SceneCache>();
+    auto scene_unique = std::make_unique<SceneCache>();
+    SceneCache *scene = scene_unique.get();
     scene->handle = next_handle.fetch_add(1);
     scene->device_index = device_index;
     scene->meshes = std::move(meshes);
@@ -743,8 +744,12 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
     build_triangle_ias(*scene, optix_entry.optix_context, torch_ctx.stream);
     build_edge_topology(*scene);
     build_edge_accel(*scene, optix_entry.optix_context, torch_ctx.stream);
-    const int64_t handle = scene->handle;
+    return scene_unique;
+}
 
+int64_t create_scene(std::vector<MeshRecord> meshes) {
+    auto scene = create_scene_cache(std::move(meshes));
+    const int64_t handle = scene->handle;
     std::lock_guard<std::mutex> lock(scenes_mutex);
     scenes.emplace(handle, std::move(scene));
     return handle;
@@ -822,6 +827,26 @@ void sync_scene(int64_t handle) {
         scene.version += 1;
         scene.edge_version += 1;
     }
+}
+
+int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene) {
+    return scene_version(scene->handle);
+}
+
+int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene) {
+    return scene_num_meshes(scene->handle);
+}
+
+int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene) {
+    return scene_edge_count(scene->handle);
+}
+
+void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices) {
+    update_mesh_vertices(scene->handle, mesh_id, std::move(vertices));
+}
+
+void sync_scene(c10::intrusive_ptr<SceneHandle> scene) {
+    sync_scene(scene->handle);
 }
 
 } // namespace raydtorch

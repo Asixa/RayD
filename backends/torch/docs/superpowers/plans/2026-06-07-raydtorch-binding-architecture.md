@@ -10,7 +10,7 @@ Last reviewed: 2026-06-07
 **Architecture:** One shared library, migrated in two proof stages before the broad fan-out. First register one small dispatcher pilot while keeping the current `int64_t scene_handle` registry, proving that the existing compute layer can be called through `torch.ops` without changing Scene lifetime. Then split Scene construction into an intrusive-pointer cache factory plus a legacy handle wrapper, introduce TorchBind `Scene`, and move the pilot op to the typed Scene argument. After both proofs pass, migrate the remaining op families.
 
 Final binding tiers are chosen by call-site requirement:
-1. `TORCH_LIBRARY` operators for functional tensor primitives (forward / backward / JVP). Callable from Python (`torch.ops.raydn.*`) and C++ after the `_raydn` shared library is loaded, schema-checked, and usable from consumer-owned autograd wrappers.
+1. `TORCH_LIBRARY` operators for functional tensor primitives (forward / backward / JVP). Callable from Python (`torch.ops.raydn.*`) and C++ after the extension shared library is loaded, schema-checked, and usable from consumer-owned autograd wrappers. During Tasks 0-10 the loaded extension is `_raydtorch`; after the final rename it is `_raydn`.
 2. `torch::class_<SceneCache>` (TorchBind) for the Scene/cache lifecycle handle. It becomes a typed argument to the ops, is reference-counted, and removes the global `get_scene(int64)` registry from the dispatcher path.
 3. `pybind11` for Python-only surfaces: `build_info`, capability probes, debug/introspection, one-off utilities, and any conversion that returns arbitrary Python objects.
    The OptiX context / pipeline / SBT stays an internal C++ owned resource and is not bound at all (only its status is reported through a probe).
@@ -21,7 +21,7 @@ Final binding tiers are chosen by call-site requirement:
 
 **Environment:** All commands use the conda environment `witwin2`.
 
-**Naming decision:** Use `rayd-native` as the distribution/display name and `raydn` as the code namespace. Register ops under the `raydn` dispatcher namespace (`torch.ops.raydn.*`) and the custom class under `torch.classes.raydn.Scene`. The Python import package becomes `raydn`; the pybind extension name becomes `_raydn`. `rayd-native` is not used as an import or dispatcher namespace because hyphens are not valid there.
+**Naming decision:** Use `rayd-native` as the final distribution/display name and `raydn` as the final import/code namespace. Register dispatcher ops under `raydn` (`torch.ops.raydn.*`) and the custom class under `torch.classes.raydn.Scene` from the first dispatcher proof, because these names are the new native contract. Keep the existing Python import package `raydtorch` and pybind extension `_raydtorch` during Tasks 0-10 so binding behavior can be proven without rename churn. The Python package, extension target/module, packaging metadata, tests, docs, and user-facing strings are hard-cut to `raydn` only in the final rename task. `rayd-native` is not used as an import or dispatcher namespace because hyphens are not valid there.
 
 ---
 
@@ -62,7 +62,7 @@ Pick the binding tier from what the call site requires, not from a desire to mak
 - Do not compile rayd-native `.cu`/`.cpp` sources directly into a consumer's extension. rayd-native stays one shared library; consumers call through the dispatcher.
 - Do not hand-write a separate native core C++ header/library API or export internal structs as a stable ABI. The dispatcher schema is the C++ contract.
 - Do not register an `Autograd`-key kernel for these primitives inside rayd-native initially. Consumers own the `torch.autograd.Function`. The `raydn/autograd.py` wrapper remains a reference/standalone path, not the consumer hot path.
-- Do not change tensor ABI or result dataclass semantics while renaming the package. The import rename is a hard cut to `raydn`; do not add a `raydtorch` compatibility shim.
+- Do not change tensor ABI or result dataclass semantics while renaming the package. The import rename happens last and is a hard cut to `raydn`; do not add a `raydtorch` compatibility shim.
 - Do not introduce a Dr.Jit dependency. The package stays Dr.Jit-free.
 - Do not fold forward/backward/jvp into a single fused op. Keep them separate primitives so the consumer can schedule its own tape policy.
 
@@ -98,7 +98,7 @@ TORCH_LIBRARY_IMPL(raydn, CUDA, m):
   m.impl("intersect_backward", &intersect_backward_op);  //   (no py::tuple in the op layer)
   m.impl("intersect_jvp",      &intersect_jvp_op);
 
-PYBIND11_MODULE(_raydn, m):       // Python-only glue
+PYBIND11_MODULE(_raydtorch, m):   // Python-only glue during Tasks 0-10; _raydn after final rename
   m.def("build_info", ...);           //   returns py::dict
   // capability probes, debug dumps, one-off utilities, arbitrary-object conversions
 
@@ -113,10 +113,11 @@ Notes:
   2. split Scene construction into an intrusive-pointer cache factory, then switch the pilot op to `torch.classes.raydn.Scene`.
 - Scene construction should be factored as `c10::intrusive_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes)`. The legacy `int64_t create_scene(std::vector<MeshRecord>)` becomes a wrapper that calls the cache factory and stores the intrusive pointer in the old registry during migration.
 - Fixed multi-tensor returns use fixed tuple schemas, not `Tensor[]`. The forward output-vs-tape split is still documented next to each registration (e.g. `intersect_forward` = 10 public outputs + 3 tape: `[t,p,n,geo_n,uv,barycentric,shape_id,prim_id,local_prim_id,global_prim_id, tape_prim_id,tape_barycentric,tape_t]`). Use `Tensor[]` only where the number of tensors is genuinely variable.
-- Custom-class method/argument types are limited to IValue-convertible types. `update_vertices`/`sync` are already IValue-clean (int, Tensor). The **build path is not**: today `create_scene_op(py::list mesh_specs)` reads `py::dict` specs, which cannot cross the dispatcher. It is reshaped in Task 3 into flat, index-aligned per-mesh lists with an empty-tensor sentinel for absent optionals and an `int64` flag bitmask. The ergonomic dict/kwargs API stays in the Python `raydn.Scene` wrapper (Task 7), which assembles the lists and calls the IValue-clean init. Anything else with a non-IValue C++ interface stays on pybind.
-- No `Autograd`-key kernel is registered for these ops initially (the consumer owns the `torch.autograd.Function`). Consequence: calling `torch.ops.raydn.*_forward` directly on `requires_grad` inputs runs forward without tracking gradients. Document this loudly; keep the Python wrappers in `raydn/autograd.py` as the only blessed grad-enabled path. Do **not** add an Autograd-key "raise" kernel until a focused test proves it does not break calls from inside `torch.autograd.Function.forward`.
+- Custom-class method/argument types are limited to IValue-convertible types. `update_vertices`/`sync` are already IValue-clean (int, Tensor). The **build path is not**: today `create_scene_op(py::list mesh_specs)` reads `py::dict` specs, which cannot cross the dispatcher. It is reshaped in Task 3 into flat, index-aligned per-mesh lists with an empty-tensor sentinel for absent optionals and an `int64` flag bitmask. The ergonomic dict/kwargs API stays in the Python `raydtorch.Scene` wrapper until the final rename task, then becomes `raydn.Scene`; the wrapper assembles the lists and calls the IValue-clean init. Anything else with a non-IValue C++ interface stays on pybind until a task explicitly reshapes it.
+- Optional Tensor arguments in dispatcher schemas use `Tensor?` / `c10::optional<at::Tensor>` when a real `None` is part of the public contract, and empty tensor sentinels only when the existing ABI already treats empty as meaningful. Do not carry `py::object` into a dispatcher implementation.
+- No `Autograd`-key kernel is registered for these ops initially (the consumer owns the `torch.autograd.Function`). Consequence: calling `torch.ops.raydn.*_forward` directly on `requires_grad` inputs runs forward without tracking gradients. Document this loudly; keep the Python wrappers in `raydtorch/autograd.py` during Tasks 0-10, then `raydn/autograd.py` after the final rename, as the only blessed grad-enabled path. Do **not** add an Autograd-key "raise" kernel until a focused test proves it does not break calls from inside `torch.autograd.Function.forward`.
 - Capsules are retired for the Scene path: the custom class is the typed, lifetime-managed opaque handle. Keep capsules only for throwaway Python-internal plumbing, and never pass a capsule into a dispatcher op.
-- C++ consumers must ensure the `_raydn` shared library has been loaded before calling the dispatcher. Python consumers satisfy this by `import raydn`; pure C++ tests must explicitly load the extension or link/load the library before `c10::Dispatcher::findSchemaOrThrow`.
+- C++ consumers must ensure the extension shared library has been loaded before calling the dispatcher. During Tasks 0-10 this is `_raydtorch` and Python consumers satisfy it by `import raydtorch`; after the final rename this is `_raydn` and Python consumers satisfy it by `import raydn`. Pure C++ tests must explicitly load the extension or link/load the library before `c10::Dispatcher::findSchemaOrThrow`.
 
 ## Internal Value Container
 
@@ -147,7 +148,7 @@ The op layer, the `*_cuda` launchers, and the op return structs (`IntersectForwa
 - [ ] Register the CUDA implementations with `TORCH_LIBRARY_IMPL(raydn, CUDA, ...)`.
 - [ ] Keep the existing pybind `bind_intersect_ops` temporarily so nothing breaks during migration.
 - [ ] Verify `torch.ops.raydn.intersect_forward(...)` is callable from Python and returns the same tensors as `_C.intersect_forward(...)`.
-- [ ] Add a C++ dispatcher-call smoke test that first loads `_raydn`, then calls `c10::Dispatcher::singleton().findSchemaOrThrow(...)`; this proves the C++ boundary exists after the shared library is loaded.
+- [ ] Add a C++ dispatcher-call smoke test that first loads `_raydtorch`, then calls `c10::Dispatcher::singleton().findSchemaOrThrow(...)`; this proves the C++ boundary exists after the shared library is loaded before package rename.
 - [ ] Do not register Scene construction in the dispatcher yet.
 
 ### Task 2: Split Scene construction from the legacy global registry
@@ -181,58 +182,91 @@ The op layer, the `*_cuda` launchers, and the op return structs (`IntersectForwa
 - [ ] Change the dispatcher schemas for the pilot intersect ops from `int scene_handle` to `__torch__.torch.classes.raydn.Scene scene`.
 - [ ] Keep legacy pybind wrappers on `int64_t scene_handle` until the Python package is migrated.
 - [ ] Verify `torch.ops.raydn.intersect_forward(scene_obj, ...)` matches the legacy `_C.intersect_forward(handle, ...)`.
-- [ ] Verify the C++ dispatcher smoke test passes with a typed custom-class argument after explicitly loading `_raydn`.
+- [ ] Verify the C++ dispatcher smoke test passes with a typed custom-class argument after explicitly loading `_raydtorch` before package rename.
 
-### Task 5: Migrate edge / reflection / diffraction op cores and dispatcher schemas
+### Task 5: Migrate edge op cores and dispatcher schemas
 
-**Files:** `src/torch_ext/edge/ops_edge.cpp`, `src/torch_ext/reflection/ops.cpp`, `src/torch_ext/diffraction/ops.cpp`, dispatcher registration file, `CMakeLists.txt`
+**Files:** `src/torch_ext/edge/ops_edge.cpp`, dispatcher registration file, `CMakeLists.txt`, `tests/raydtorch_native/test_edge_queries.py`
 
 - [ ] Repeat the Task 0 pattern for edge queries: core functions return fixed tuples or named output structs converted to fixed tuples; pybind wrappers stay thin during migration.
-- [ ] Register edge forward/backward/jvp and no-AD fast-path ops under `TORCH_LIBRARY(raydn, ...)` with typed Scene where needed.
-- [ ] Repeat the pattern for reflection visibility, reflection trace, EPC field, dedup, and accumulation ops.
-- [ ] Repeat the pattern for diffraction paths, direct/Keller/suffix/chain accumulation, and coherent direct ops.
+- [ ] Register `nearest_edge_forward`, `nearest_edge_forward_noad`, `nearest_edge_ray_forward`, `nearest_edge_backward`, `nearest_edge_backward_optional`, `nearest_edge_jvp`, and `nearest_edge_jvp_optional` under `TORCH_LIBRARY(raydn, ...)`.
+- [ ] Use typed `Scene` for scene-dependent forward ops and backward/JVP ops that need scene geometry.
+- [ ] Convert optional upstream grads/tangents from `py::object` to `Tensor?` / `c10::optional<at::Tensor>` in dispatcher cores.
 - [ ] Keep all forward tape tensors in the fixed return tuple, with an index map documented next to each schema.
-- [ ] After each family migrates, run its focused unittest before starting the next family.
+- [ ] Verify pybind and dispatcher outputs match for point nearest-edge, ray nearest-edge, backward, and JVP.
+- [ ] Run `C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_edge_queries -v`.
 
-### Task 6: Keep the pybind tier for Python-only surfaces
+### Task 6: Migrate reflection visibility / trace / EPC / accumulation dispatcher schemas
 
-**Files:** `src/torch_ext/module.cpp`
+**Files:** `src/torch_ext/reflection/ops.cpp`, dispatcher registration file, `CMakeLists.txt`, `tests/raydtorch_native/test_multipath.py`
 
-- [ ] Reduce the pybind module to Python-only surfaces: `build_info`, capability/OptiX-status probes, debug dumps, one-off utilities, arbitrary-object conversions. During early tasks this module is still `PYBIND11_MODULE(_raydtorch, ...)`; after Task 7 it is `PYBIND11_MODULE(_raydn, ...)`.
-- [ ] Ensure the pybind module and the `TORCH_LIBRARY`/`torch::class_` registrations coexist in the same shared library and both load on `import raydn`.
+- [ ] Repeat the dispatcher-safe core pattern for `visibility_forward`.
+- [ ] Repeat the pattern for `trace_reflections_forward`, `trace_reflections_forward_noad`, `trace_reflections_forward_reduced`, `trace_reflections_backward`, `trace_reflections_backward_optional`, `trace_reflections_jvp`, and `trace_reflections_jvp_optional`.
+- [ ] Repeat the pattern for `trace_refl_epc_field_forward`, `trace_refl_epc_field_backward`, and `trace_refl_epc_field_jvp`.
+- [ ] Register `reflection_dedup_forward` and `reflection_accumulation_forward` if they are kept as Tensor hot-path primitives; otherwise explicitly document why they remain pybind-only.
+- [ ] Convert optional active masks, upstream grads, and tangents from `py::object` to dispatcher-safe optional Tensor or empty-sentinel semantics without adding Python-side staging/copies.
+- [ ] Keep all forward tape tensors in fixed tuple schemas, with index maps documented next to each schema.
+- [ ] Run `C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_multipath -v`.
+
+### Task 7: Migrate diffraction paths and accumulation dispatcher schemas
+
+**Files:** `src/torch_ext/diffraction/ops.cpp`, dispatcher registration file, `CMakeLists.txt`, `tests/raydtorch_native/test_multipath.py`
+
+- [ ] Repeat the dispatcher-safe core pattern for `diffraction_paths_order1_forward`.
+- [ ] Repeat the pattern for `diffraction_accumulation_forward`, `diffraction_accumulation_direct_backward`, `diffraction_accumulation_direct_jvp`, `diffraction_accumulation_chain_backward`, and `diffraction_accumulation_chain_jvp`.
+- [ ] Register `diffraction_coherent_accumulation_forward`.
+- [ ] Convert optional active masks, recursive active masks, upstream grads, and tangents from `py::object` to dispatcher-safe optional Tensor or empty-sentinel semantics without adding Python-side staging/copies.
+- [ ] Keep all forward tape tensors in fixed tuple schemas, with index maps documented next to each schema.
+- [ ] Run `C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.raydtorch_native.test_multipath -v`.
+
+### Task 8: Migrate dispatcher-safe common utility ops and multi-mesh helpers
+
+**Files:** `src/torch_ext/common/ops_stats.cpp`, `src/torch_ext/common/ops_camera.cpp`, `src/torch_ext/scene/ops_scene.cpp`, dispatcher registration file, `raydtorch/autograd.py`, `raydtorch/camera.py`, `raydtorch/types.py`, tests
+
+- [ ] Decide and document each non-scene pybind Tensor op: camera sampling/backward, `intersection_valid`, `default_dfr_material`, `reflection_trace_stats`, and `diffraction_path_stats` should move to dispatcher if they are Tensor hot-path primitives.
+- [ ] Register dispatcher schemas for all migrated common utility ops and keep pybind wrappers thin until Python call sites move.
+- [ ] Replace `split_scene_vertex_grad(py::tuple)` with a dispatcher-safe helper surface. Prefer `Tensor[] split_scene_vertex_grad(Scene scene, Tensor grad_vertices)` because the return count is genuinely variable by mesh count.
+- [ ] Replace `pack_scene_vertex_tangents(py::args)` with a dispatcher-safe helper surface. Prefer `Tensor? pack_scene_vertex_tangents(Scene scene, Tensor?[] tangents)` or an explicit empty-tensor sentinel list, and document the chosen convention next to the schema.
+- [ ] Update Python autograd wrappers to call `torch.ops.raydn.*` for migrated ops while the Python import package still remains `raydtorch`.
+- [ ] Keep behavior, saved tape policy, `mark_non_differentiable`, VJP, and JVP unchanged.
+- [ ] Run focused camera, public API contract, intersect gradient, edge, and multipath tests.
+
+### Task 9: Reduce pybind to Python-only glue and remove dispatcher-path registry dependency
+
+**Files:** `src/torch_ext/module.cpp`, op binding files, `src/torch_ext/scene/scene_cache.cpp`, `include/raydtorch/scene/cache.h`, Python package files
+
+- [ ] Remove pybind `m.def`s for ops that now have dispatcher registrations and Python dispatcher call sites.
+- [ ] Keep pybind only for Python-only surfaces: `build_info`, capability/OptiX-status probes, debug dumps, one-off utilities, and arbitrary-object conversions.
+- [ ] Keep legacy `int64_t` scene registry only while any remaining Python path needs it; delete it after all scene-dependent Python calls use `torch.classes.raydn.Scene`.
+- [ ] Ensure the pybind module and the `TORCH_LIBRARY`/`torch::class_` registrations coexist in the same shared library and both load on `import raydtorch` during this task.
 - [ ] Confirm OptiX context/pipeline/SBT remain internal and unbound; expose only status through a probe.
+- [ ] Run `C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.raydtorch_native -v`.
 
-### Task 7: Rename the Python package to `raydn` and call the dispatcher
+### Task 10: Consumer-callability proof and no-regression gates
 
-**Files:** `pyproject.toml`, `CMakeLists.txt`, current `raydtorch/` package files, target `raydn/` package files, tests
+**Files:** `tests/` (new), short C++ or Python harness, existing `tests/`
 
-- [ ] Rename the import package from `raydtorch` to `raydn` and update packaging metadata so the distribution/display name is `rayd-native`.
-- [ ] Rename the pybind extension target/module from `_raydtorch` to `_raydn`, keeping the shared library self-registration behavior unchanged.
-- [ ] `raydn.Scene` becomes a thin wrapper around `torch.classes.raydn.Scene`.
-- [ ] The wrapper still exposes `is_ready`, `num_meshes`, `version`, `edge_count`, `add_mesh`, `build`, `update_mesh_vertices`, and `sync` with the current public behavior.
-- [ ] `raydn/autograd.py` `torch.autograd.Function`s call `torch.ops.raydn.<op>` instead of `_C.<op>`; behavior (tape save/restore, `mark_non_differentiable`, JVP) unchanged. This stays the reference/standalone autograd path.
-- [ ] Remove pybind op `m.def`s that are now dispatcher ops; delete the global scene registry once nothing depends on it.
-- [ ] Keep the public tensor ABI and dataclass result types (`Intersection`, `NearestPointEdge`, `ReflEpcField`, `DfrAccum`, ...) identical.
-- [ ] Hard-cut all tests and docs to import `raydn` only; do not keep a `raydtorch` compatibility shim.
-
-### Task 8: Consumer-callability proof
-
-**Files:** `tests/` (new), short C++ or Python harness
-
-- [ ] Demonstrate the redner-style consumer pattern: a `torch.autograd.Function` defined outside rayd-native that calls `torch.ops.raydn.intersect_forward/backward/jvp` with a `torch.classes.raydn.Scene`, and matches finite differences.
-- [ ] Demonstrate one op invoked through the C++ dispatcher after explicit library load returning correct results, to prove the C++ boundary exists without pybind function calls.
+- [ ] Demonstrate the redner-style consumer pattern before package rename: a `torch.autograd.Function` defined outside rayd-native calls `torch.ops.raydn.intersect_forward/backward/jvp` with `torch.classes.raydn.Scene` and matches finite differences.
+- [ ] Demonstrate one op invoked through the C++ dispatcher after explicit `_raydtorch` library load returning correct results, to prove the C++ boundary exists without pybind function calls.
 - [ ] Demonstrate that directly calling `torch.ops.raydn.*_forward` on `requires_grad` inputs does not silently replace the documented autograd path; document the observed behavior.
-
-### Task 9: Parity and no-regression gates
-
-**Files:** existing `tests/`
-
-- [ ] All existing opt-in RayD parity tests (intersect, multi-mesh ids, nearest-edge, visibility, reflection trace, diffraction paths, direct/Keller/suffix accumulation, order-2/3 chains, coherent direct) pass unchanged through the dispatcher path.
+- [ ] All existing opt-in RayD parity tests pass unchanged through the dispatcher path.
 - [ ] Existing VJP/JVP tests pass for geometry, edge, reflection trace, EPC, and diffraction accumulation.
 - [ ] No Dr.Jit import anywhere; single shared library; no process-global scene registry on the dispatcher path.
 - [ ] Performance unchanged within noise versus the current pybind path on the maintained benchmark (`docs/raydtorch_native_performance.md` shapes).
 
-### Task 10: Documentation
+### Task 11: Final package rename to `raydn`
+
+**Files:** `pyproject.toml`, `CMakeLists.txt`, current `raydtorch/` package files, target `raydn/` package files, tests, docs
+
+- [ ] Rename the import package from `raydtorch` to `raydn` and update packaging metadata so the distribution/display name is `rayd-native`.
+- [ ] Rename the pybind extension target/module from `_raydtorch` to `_raydn`, keeping the shared library self-registration behavior unchanged.
+- [ ] `raydn.Scene` remains a thin wrapper around `torch.classes.raydn.Scene`.
+- [ ] The wrapper still exposes `is_ready`, `num_meshes`, `version`, `edge_count`, `add_mesh`, `build`, `update_mesh_vertices`, and `sync` with the current public behavior.
+- [ ] `raydn/autograd.py` `torch.autograd.Function`s continue to call `torch.ops.raydn.<op>`; behavior (tape save/restore, `mark_non_differentiable`, JVP) unchanged. This stays the reference/standalone autograd path.
+- [ ] Keep the public tensor ABI and dataclass result types (`Intersection`, `NearestPointEdge`, `ReflEpcField`, `DfrAccum`, ...) identical.
+- [ ] Hard-cut all tests and docs to import `raydn` only; do not keep a `raydtorch` compatibility shim.
+
+### Task 12: Documentation
 
 **Files:** `README.md`, `docs/api_reference.md`
 
@@ -242,7 +276,7 @@ The op layer, the `*_cuda` launchers, and the op return structs (`IntersectForwa
 
 ## Verification Gates
 
-- `torch.ops.raydn.*` ops and `torch.classes.raydn.Scene` are callable from both Python and the C++ dispatcher from a single loaded shared library.
+- Before the final package rename, `torch.ops.raydn.*` ops and `torch.classes.raydn.Scene` are callable from both Python and the C++ dispatcher after loading `_raydtorch`; after the final rename the same dispatcher surface works after loading `_raydn`.
 - Final dispatcher op layer has no `py::tuple` return types and no pybind dependency; pybind remains only for Python-only glue.
 - The Scene lifetime is reference-counted through the custom class; no global `get_scene` registry remains on the dispatcher path.
 - Fixed-layout forward returns use fixed tuple schemas and expose the saved tape; forward/backward/jvp remain separate primitives; no `Autograd`-key kernel is registered initially.
@@ -251,7 +285,7 @@ The op layer, the `*_cuda` launchers, and the op return structs (`IntersectForwa
 
 ## Sequencing Note
 
-This migration is not a blocker for a consumer's first integration slice. A consumer (channel path-primal slice) can validate its design against the existing pybind `_C.*` / `raydtorch.Scene` Python API first, then this plan lands the clean `TORCH_LIBRARY` + `torch::class_` boundary once the design is proven and profiling justifies removing the Python re-entry. Do Task 0-1 first as the smallest dispatcher proof, Task 2-4 as the Scene lifetime proof, then fan out Task 5 across the remaining op families.
+This migration is not a blocker for a consumer's first integration slice. A consumer (channel path-primal slice) can validate its design against the existing pybind `_C.*` / `raydtorch.Scene` Python API first, then this plan lands the clean `TORCH_LIBRARY` + `torch::class_` boundary once the design is proven and profiling justifies removing the Python re-entry. Do Task 0-1 first as the smallest dispatcher proof, Task 2-4 as the Scene lifetime proof, then migrate one op family at a time in Tasks 5-8. Reduce pybind and prove no regressions in Tasks 9-10. Do the package/import/extension rename last in Task 11 so rename churn cannot mask binding regressions.
 
 ## Open Questions
 
@@ -265,8 +299,8 @@ Resolved since first draft:
 - **Non-IValue surfaces:** only `create_scene_op(py::list)`; resolved by the flat Scene init. All 28 compute ops are already IValue-clean.
 - **Internal value container:** `at::Tensor` at the host layer; share device `.cuh` math with the consumer (see Internal Value Container).
 - **Migration sequencing:** first prove dispatcher registration with legacy `int64_t scene_handle`, then introduce TorchBind Scene, then migrate the rest of the op families.
-- **Naming:** distribution/display name is `rayd-native`; Python import package, Torch dispatcher namespace, and Torch custom-class namespace are `raydn`; pybind extension target is `_raydn`.
-- **Import compatibility:** hard cut to `import raydn`; do not keep a temporary `raydtorch` compatibility shim.
+- **Naming:** final distribution/display name is `rayd-native`; final Python import package is `raydn`; Torch dispatcher namespace and Torch custom-class namespace are `raydn` from the dispatcher proof onward; pybind extension target remains `_raydtorch` until the final rename to `_raydn`.
+- **Import compatibility:** package rename is last; when it happens, hard cut to `import raydn`; do not keep a temporary `raydtorch` compatibility shim.
 - **Scene serialization:** Scene is in-process only. Do not implement TorchScript pickling/serialization for `torch.classes.raydn.Scene`.
 
 ## Relationship to Other Plans

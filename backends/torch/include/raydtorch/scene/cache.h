@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ATen/ATen.h>
+#include <torch/custom_class.h>
 #include <optix.h>
 
 #include <cstdint>
@@ -94,13 +95,36 @@ struct SceneCache {
     at::Tensor tri_fn_packed;
 };
 
+struct SceneHandle : torch::CustomClassHolder {
+    explicit SceneHandle(int64_t handle_) : handle(handle_) {}
+    int64_t handle = 0;
+};
+
+std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes);
 int64_t create_scene(std::vector<MeshRecord> meshes);
 void destroy_scene(int64_t handle);
 SceneCache &get_scene(int64_t handle);
+c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
+    std::vector<at::Tensor> vertices,
+    std::vector<at::Tensor> faces,
+    std::vector<at::Tensor> uv,
+    std::vector<at::Tensor> face_uv,
+    std::vector<at::Tensor> to_world_left,
+    std::vector<at::Tensor> to_world_right,
+    std::vector<int64_t> mesh_flags);
 int64_t scene_version(int64_t handle);
 int64_t scene_num_meshes(int64_t handle);
 int64_t scene_edge_count(int64_t handle);
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices);
 void sync_scene(int64_t handle);
+int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
+int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene);
+int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene);
+void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices);
+void sync_scene(c10::intrusive_ptr<SceneHandle> scene);
+std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> scene, at::Tensor grad_vertices);
+at::Tensor pack_scene_vertex_tangents(
+    c10::intrusive_ptr<SceneHandle> scene,
+    std::vector<c10::optional<at::Tensor>> tangents);
 
 } // namespace raydtorch
