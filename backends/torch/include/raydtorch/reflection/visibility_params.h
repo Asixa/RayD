@@ -16,6 +16,13 @@ struct SegmentVisibilityParams {
     int n_meshes = 0;
 
     // Segment endpoints; end_b is the second endpoint for the segment-pair kind.
+    // AoS pointers are optional `[n, 3]` fast inputs used by the public segment
+    // query to avoid splitting user-provided endpoint tensors into temporary SoA
+    // buffers. Split SoA fields remain for axial/chain internals and older call
+    // sites.
+    const float *start_aos = nullptr;
+    const float *end_aos = nullptr;
+    const float *end_b_aos = nullptr;
     const float *start_x = nullptr;
     const float *start_y = nullptr;
     const float *start_z = nullptr;
@@ -53,6 +60,7 @@ struct SegmentVisibilityParams {
     uint8_t *out_visible_b = nullptr; ///< Second-endpoint output (segment-pair kind).
     int *out_first_blocked_segment = nullptr; ///< First occluded segment (chain kind).
     int *out_first_blocked_prim = nullptr;    ///< Primitive that blocked a segment query when requested.
+    float *out_t = nullptr; ///< Optional segment tape distance; public visibility keeps `inf`.
 };
 
 } // namespace raydtorch

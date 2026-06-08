@@ -160,6 +160,50 @@ __global__ void init_edge_point_public_outputs_kernel(
     }
 }
 
+__global__ void split_vec3_to_soa_kernel(
+    const float *__restrict__ value,
+    int64_t count,
+    int64_t stride0,
+    int64_t stride1,
+    float *__restrict__ x,
+    float *__restrict__ y,
+    float *__restrict__ z) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count)
+        return;
+    const float *row = value + static_cast<int64_t>(idx) * stride0;
+    x[idx] = row[0 * stride1];
+    y[idx] = row[1 * stride1];
+    z[idx] = row[2 * stride1];
+}
+
+__global__ void split_ray_vec3_to_soa_kernel(
+    const float *__restrict__ ray_o,
+    const float *__restrict__ ray_d,
+    int64_t count,
+    int64_t ray_o_stride0,
+    int64_t ray_o_stride1,
+    int64_t ray_d_stride0,
+    int64_t ray_d_stride1,
+    float *__restrict__ query_x,
+    float *__restrict__ query_y,
+    float *__restrict__ query_z,
+    float *__restrict__ ray_dx,
+    float *__restrict__ ray_dy,
+    float *__restrict__ ray_dz) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count)
+        return;
+    const float *origin = ray_o + static_cast<int64_t>(idx) * ray_o_stride0;
+    const float *direction = ray_d + static_cast<int64_t>(idx) * ray_d_stride0;
+    query_x[idx] = origin[0 * ray_o_stride1];
+    query_y[idx] = origin[1 * ray_o_stride1];
+    query_z[idx] = origin[2 * ray_o_stride1];
+    ray_dx[idx] = direction[0 * ray_d_stride1];
+    ray_dy[idx] = direction[1 * ray_d_stride1];
+    ray_dz[idx] = direction[2 * ray_d_stride1];
+}
+
 __global__ void init_edge_ray_outputs_kernel(
     const bool *__restrict__ active,
     int64_t ray_count,
@@ -183,7 +227,7 @@ __global__ void init_edge_ray_outputs_kernel(
     edge_id[ray_idx] = -1;
     global_edge_id[ray_idx] = -1;
     tape_edge_id[ray_idx] = -1;
-    unresolved[ray_idx] = active[ray_idx];
+    unresolved[ray_idx] = active == nullptr || active[ray_idx];
     for (int axis = 0; axis < 3; ++axis) {
         point[ray_idx * 3 + axis] = 0.f;
         edge_point[ray_idx * 3 + axis] = 0.f;
@@ -318,9 +362,17 @@ EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &
     OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(scene.device_index));
     ensure_edge_pipeline(optix_entry);
 
-    at::Tensor query_x = point.select(1, 0).contiguous();
-    at::Tensor query_y = point.select(1, 1).contiguous();
-    at::Tensor query_z = point.select(1, 2).contiguous();
+    at::Tensor query_x = at::empty({point_count}, fopts);
+    at::Tensor query_y = at::empty({point_count}, fopts);
+    at::Tensor query_z = at::empty({point_count}, fopts);
+    split_vec3_to_soa_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+        point.data_ptr<float>(),
+        point_count,
+        point.stride(0),
+        point.stride(1),
+        query_x.data_ptr<float>(),
+        query_y.data_ptr<float>(),
+        query_z.data_ptr<float>());
 
     EdgeOptixQueryParams params = {};
     fill_edge_geometry_params(scene, edge_count, params);
@@ -384,9 +436,17 @@ EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const a
     OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(scene.device_index));
     ensure_edge_pipeline(optix_entry);
 
-    at::Tensor query_x = point.select(1, 0).contiguous();
-    at::Tensor query_y = point.select(1, 1).contiguous();
-    at::Tensor query_z = point.select(1, 2).contiguous();
+    at::Tensor query_x = at::empty({point_count}, fopts);
+    at::Tensor query_y = at::empty({point_count}, fopts);
+    at::Tensor query_z = at::empty({point_count}, fopts);
+    split_vec3_to_soa_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+        point.data_ptr<float>(),
+        point_count,
+        point.stride(0),
+        point.stride(1),
+        query_x.data_ptr<float>(),
+        query_y.data_ptr<float>(),
+        query_z.data_ptr<float>());
 
     EdgeOptixQueryParams params = {};
     fill_edge_geometry_params(scene, edge_count, params);
@@ -439,9 +499,9 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     const int threads = 128;
     const int blocks = static_cast<int>((ray_count + threads - 1) / threads);
     at::Tensor unresolved = at::empty({ray_count}, bopts);
-    at::Tensor active_c = active.contiguous();
+    at::Tensor active_c = active.numel() == 0 ? active : active.contiguous();
     init_edge_ray_outputs_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
-        active_c.data_ptr<bool>(),
+        active_c.numel() == 0 ? nullptr : active_c.data_ptr<bool>(),
         ray_count,
         out.distance.data_ptr<float>(),
         out.ray_t.data_ptr<float>(),
@@ -460,12 +520,27 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(scene.device_index));
     ensure_edge_pipeline(optix_entry);
 
-    at::Tensor query_x = ray_o.select(1, 0).contiguous();
-    at::Tensor query_y = ray_o.select(1, 1).contiguous();
-    at::Tensor query_z = ray_o.select(1, 2).contiguous();
-    at::Tensor ray_dx = ray_d.select(1, 0).contiguous();
-    at::Tensor ray_dy = ray_d.select(1, 1).contiguous();
-    at::Tensor ray_dz = ray_d.select(1, 2).contiguous();
+    at::Tensor query_x = at::empty({ray_count}, fopts);
+    at::Tensor query_y = at::empty({ray_count}, fopts);
+    at::Tensor query_z = at::empty({ray_count}, fopts);
+    at::Tensor ray_dx = at::empty({ray_count}, fopts);
+    at::Tensor ray_dy = at::empty({ray_count}, fopts);
+    at::Tensor ray_dz = at::empty({ray_count}, fopts);
+    split_ray_vec3_to_soa_kernel<<<blocks, threads, 0, torch_ctx.stream>>>(
+        ray_o.data_ptr<float>(),
+        ray_d.data_ptr<float>(),
+        ray_count,
+        ray_o.stride(0),
+        ray_o.stride(1),
+        ray_d.stride(0),
+        ray_d.stride(1),
+        query_x.data_ptr<float>(),
+        query_y.data_ptr<float>(),
+        query_z.data_ptr<float>(),
+        ray_dx.data_ptr<float>(),
+        ray_dy.data_ptr<float>(),
+        ray_dz.data_ptr<float>());
+
     at::Tensor stage_edge_id = at::empty({ray_count}, iopts);
     at::Tensor stage_distance_sq = at::empty({ray_count}, fopts);
     at::Tensor stage_ray_t = at::empty({ray_count}, fopts);
@@ -480,7 +555,7 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     params.ray_dx = ray_dx.data_ptr<float>();
     params.ray_dy = ray_dy.data_ptr<float>();
     params.ray_dz = ray_dz.data_ptr<float>();
-    params.ray_tmax = ray_tmax.data_ptr<float>();
+    params.ray_tmax = ray_tmax.numel() == 0 ? nullptr : ray_tmax.data_ptr<float>();
     params.active_mask = reinterpret_cast<const uint8_t *>(unresolved.data_ptr<bool>());
     params.query_count = static_cast<int>(ray_count);
     params.out_edge_ids = stage_edge_id.data_ptr<int>();

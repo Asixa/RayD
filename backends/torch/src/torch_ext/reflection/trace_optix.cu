@@ -101,6 +101,26 @@ static __forceinline__ __device__ void write_empty_output_slot(unsigned int ray_
         params.out_global_prim_ids[slot] = -1;
     if (params.out_valid != nullptr)
         params.out_valid[ray_index * params.max_bounces + bounce] = 0u;
+    if (params.out_bary != nullptr) {
+        params.out_bary[slot * 3 + 0] = 0.0f;
+        params.out_bary[slot * 3 + 1] = 0.0f;
+        params.out_bary[slot * 3 + 2] = 0.0f;
+    }
+    if (params.out_hit != nullptr) {
+        params.out_hit[slot * 3 + 0] = 0.0f;
+        params.out_hit[slot * 3 + 1] = 0.0f;
+        params.out_hit[slot * 3 + 2] = 0.0f;
+    }
+    if (params.out_norm != nullptr) {
+        params.out_norm[slot * 3 + 0] = 0.0f;
+        params.out_norm[slot * 3 + 1] = 0.0f;
+        params.out_norm[slot * 3 + 2] = 0.0f;
+    }
+    if (params.out_img != nullptr) {
+        params.out_img[slot * 3 + 0] = 0.0f;
+        params.out_img[slot * 3 + 1] = 0.0f;
+        params.out_img[slot * 3 + 2] = 0.0f;
+    }
 }
 
 struct TriangleData {
@@ -186,7 +206,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
     int bounce_count = 0;
 
     for (int bounce = 0; bounce < B; ++bounce) {
-        const float tmax_input = bounce == 0 ? params.ray_tmax[ray_index] : kRayTMax;
+        const float tmax_input =
+            bounce == 0 && params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : kRayTMax;
         const float trace_tmax = isfinite(tmax_input) ? tmax_input : kRayTMax;
 
         HitPayload hit_primary;
@@ -225,9 +246,10 @@ extern "C" __global__ void __raygen__reflection_trace() {
             geo_normal = -1.0f * geo_normal;
 
         const bool write_image_source =
-            params.out_img_x != nullptr &&
-            params.out_img_y != nullptr &&
-            params.out_img_z != nullptr;
+            params.out_img != nullptr ||
+            (params.out_img_x != nullptr &&
+             params.out_img_y != nullptr &&
+             params.out_img_z != nullptr);
         if (write_image_source) {
             const float image_distance = dot3(image_source - hit_point, geo_normal);
             image_source = image_source - 2.0f * image_distance * geo_normal;
@@ -248,22 +270,43 @@ extern "C" __global__ void __raygen__reflection_trace() {
             params.out_bary_u[slot] = bary_u;
         if (params.out_bary_v != nullptr)
             params.out_bary_v[slot] = bary_v;
+        if (params.out_bary != nullptr) {
+            params.out_bary[slot * 3 + 0] = 1.0f - bary_u - bary_v;
+            params.out_bary[slot * 3 + 1] = bary_u;
+            params.out_bary[slot * 3 + 2] = bary_v;
+        }
         if (params.out_hit_x != nullptr)
             params.out_hit_x[slot] = hit_point.x;
         if (params.out_hit_y != nullptr)
             params.out_hit_y[slot] = hit_point.y;
         if (params.out_hit_z != nullptr)
             params.out_hit_z[slot] = hit_point.z;
+        if (params.out_hit != nullptr) {
+            params.out_hit[slot * 3 + 0] = hit_point.x;
+            params.out_hit[slot * 3 + 1] = hit_point.y;
+            params.out_hit[slot * 3 + 2] = hit_point.z;
+        }
         if (params.out_norm_x != nullptr)
             params.out_norm_x[slot] = geo_normal.x;
         if (params.out_norm_y != nullptr)
             params.out_norm_y[slot] = geo_normal.y;
         if (params.out_norm_z != nullptr)
             params.out_norm_z[slot] = geo_normal.z;
+        if (params.out_norm != nullptr) {
+            params.out_norm[slot * 3 + 0] = geo_normal.x;
+            params.out_norm[slot * 3 + 1] = geo_normal.y;
+            params.out_norm[slot * 3 + 2] = geo_normal.z;
+        }
         if (write_image_source) {
-            params.out_img_x[slot] = image_source.x;
-            params.out_img_y[slot] = image_source.y;
-            params.out_img_z[slot] = image_source.z;
+            if (params.out_img != nullptr) {
+                params.out_img[slot * 3 + 0] = image_source.x;
+                params.out_img[slot * 3 + 1] = image_source.y;
+                params.out_img[slot * 3 + 2] = image_source.z;
+            } else {
+                params.out_img_x[slot] = image_source.x;
+                params.out_img_y[slot] = image_source.y;
+                params.out_img_z[slot] = image_source.z;
+            }
         }
 
         const float dot_dn = dot3(direction, geo_normal);

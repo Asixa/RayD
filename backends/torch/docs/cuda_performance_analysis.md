@@ -1,19 +1,22 @@
 # RayDTorch CUDA / OptiX Performance Analysis
 
-> Static source analysis by Claude (cuda-optimize). No profiler run yet — items are
-> labelled `[verified]` (provable from source) or `[needs Nsight]` (impact needs
-> measurement). Every change below should be re-measured with `nsys`/`ncu` against the
-> repository benchmark before being accepted.
+> Static source analysis and benchmark record from the cuda-optimize workflow.
+> Items are labelled `[verified]` (provable from source) or `[needs Nsight]`
+> (impact needs profiler measurement). Nsight Systems was not available on PATH
+> in the current environment. Nsight Compute 2025.2 was available, but a focused
+> capture failed with `ERR_NVGPUCTRPERM`; enable NVIDIA GPU performance counters
+> or run an elevated profiler session before adding Nsight-backed claims.
 >
 > - Target GPU: NVIDIA GeForce RTX 5080 (Blackwell, compute_120), Torch CUDA 12.8, Windows.
 > - Benchmark of record: `tests/benchmark_raydtorch_native.py`,
 >   `tests/benchmark_rayd_vs_raydtorch.py`, and the RayD-latest-style
 >   three-backend intersection stress benchmark
 >   `tests/benchmark_raydtorch_rayd_mitsuba_stress.py`.
-> - Known-slow paths per [raydtorch_native_performance.md](raydtorch_native_performance.md):
->   **scene build > reflection trace > nearest-edge**.
+> - Open performance risks per
+>   [raydtorch_native_performance.md](raydtorch_native_performance.md):
+>   **warm-started local scene build** and **public static AD/VJP overhead**.
 
-## Current implementation status (2026-06-07)
+## Current implementation status (2026-06-08)
 
 Implemented in the current worktree:
 
@@ -53,13 +56,74 @@ Implemented in the current worktree:
 - The edge OptiX pipeline is split by payload pressure: point/ray queries use
   a 5-payload point/ray PTX/module/pipeline, while top-k keeps its separate
   16-payload PTX/module/pipeline.
-- Edge point/ray nearest-edge queries now use one OptiX launch per query batch:
-  raygen iterates the existing tight-radius edge GAS tiers on the GPU and early-outs
-  when a query resolves. Top-k keeps the separate 16-payload pipeline.
+- Edge point/ray nearest-edge queries now use one native CUDA setup launch plus
+  one OptiX launch per query batch. The setup kernel splits public `[N,3]`
+  point/ray tensors into SoA inputs without ATen `select().contiguous()`;
+  raygen then iterates the existing tight-radius edge GAS tiers on the GPU and
+  early-outs when a query resolves. Top-k keeps the separate 16-payload pipeline.
 - Static triangle and edge GAS builds use `OPTIX_BUILD_FLAG_ALLOW_COMPACTION`
   and compact when OptiX reports a smaller output. Dynamic triangle/edge paths
   skip compaction to preserve update/rebuild buffer compatibility.
 - Reflection no-AD tracing avoids allocating/writing autograd tape-only arrays.
+- Default ray `tmax` and default mesh transforms now use empty identity/unbounded
+  sentinels instead of constructing full GPU tensors for common defaults.
+- Camera sample/world/ray transforms now route through native CUDA kernels with
+  native VJP wrappers that consume the real upstream gradients.
+- Scene global geometry refresh no longer uses per-mesh `at::cat`, `at::full`,
+  `at::arange`, or `faces + offset` tensor ops. It allocates the final global
+  buffers and packs each mesh with a native CUDA kernel.
+- Multi-mesh AD for `Scene.intersect`, point `Scene.nearest_edge`,
+  `Scene.trace_reflections`, and `Scene.trace_refl_epc_field` no longer uses
+  Python `torch.cat` to build a global vertex tensor. The wrappers keep the
+  original mesh tensors as autograd inputs, pack JVP tangents with native
+  scene-cache kernels, and split global VJP gradients back to mesh leaves in
+  C++.
+- `Scene.intersect` full-output VJP/JVP now passes nullable upstream gradients
+  and tangents into native optional kernels. Missing `p/n/geo_n/uv/barycentric`
+  gradients and missing ray/vertex tangents are interpreted as zero inside the
+  CUDA kernel rather than by Python `torch.zeros_like`; explicit nonuniform
+  upstream gradients are still consumed directly. Full-output backward and
+  JVP tangent inputs are read with tensor strides in CUDA, so non-contiguous or
+  expanded upstreams do not require C++ ATen `.contiguous()` staging copies.
+  JVP public outputs are also materialized according to `RayFlags` inside native
+  code, so inactive `p/n/geo_n/uv/barycentric` tangents no longer require Python `Tensor.new_empty`
+  sentinels and the CUDA kernel skips the disabled output writes. Forward-AD
+  `active=None` also stays nullable through the Python public wrapper; the
+  native binding returns the saved empty active-mask context as a hidden output.
+- Point `Scene.nearest_edge` VJP/JVP uses the same optional-gradient pattern:
+  Python no longer creates zero upstream tensors or sums duplicate `edge_t`
+  upstreams before calling native code. Its JVP hidden `tape_s/tape_d` zero
+  tangents are now written by the same native edge JVP kernel instead of Python
+  `torch.zeros_like`. Explicit upstream gradients and tangents are read with
+  tensor strides in CUDA, avoiding C++ ATen `.contiguous()` staging.
+- `Scene.trace_reflections` VJP/JVP now routes missing upstream gradients and
+  missing tangents through internal optional native entrypoints. Python no
+  longer creates empty grad sentinels or `torch.zeros_like` tangent tensors for
+  this public wrapper; explicit upstream gradients for `t` and `image_sources`
+  are still passed through. AD forward also saves omitted active masks from a
+  native hidden output instead of creating Python empty active-mask sentinels.
+- `Scene.trace_refl_epc_field` backward/JVP now uses fused native CUDA kernels
+  for the EPC field derivative path. Python passes nullable upstream gradients
+  and tangents; the CUDA kernels compute `receiver - source`, field
+  `sin/cos/(1+t)` derivatives, t-only intersection VJP/JVP, and
+  source/receiver/vertex gradients without Python `torch.zeros_like` or the
+  previous C++ ATen tensor-algebra chain. EPC upstream gradients and tangents
+  are also consumed with tensor strides, so sliced/transposed inputs do not need
+  C++ `.contiguous()` staging. AD forward also accepts omitted active masks as
+  nullable native input and returns the saved active context as a hidden output.
+- `Scene.trace_refl_epc_field` forward now fuses the public ray setup and EPC
+  temporary initialization into `reflection_epc_forward_setup_kernel`: source
+  and receiver AoS-to-SoA splitting, `receiver - source`, ray `tmax`, valid/path
+  defaults, per-slot id/normal defaults, first-blocked defaults, and first-tape
+  barycentric initialization are written in one CUDA launch. The field kernel
+  also writes the first resolved/trace primitive ids directly, avoiding the
+  previous C++ ATen `zeros/full/ones/sub/sum/sqrt/select/reshape/contiguous`
+  fan-out around the OptiX EPC and field launches.
+- `Scene.visible` public segment visibility now passes contiguous `[N,3]`
+  endpoints as AoS pointers directly into the OptiX raygen. The raygen writes
+  `visible`, first-blocking primitive, and the legacy `tape_t=inf` output in the
+  same launch, avoiding Python endpoint copies plus the previous native
+  `select().contiguous()` SoA split and `at::full` initialization fan-out.
 - Reflection trace uses bounce-major internal output storage when
   `max_bounces > 1`, then returns the existing public `[ray, bounce]` tensors.
   This targets coalesced per-bounce stores without changing the Python or AD
@@ -87,8 +151,42 @@ Implemented in the current worktree:
 - Diffraction path export uses warp-aggregated path-slot reservation and a
   single primary-scene launch for order-1 export. It also avoids redundant
   zero-field stores and skips unused p1/p2 component writes for order-1 paths.
+- Diffraction path export initializes all public output buffers with one native
+  CUDA kernel and writes `p0` directly into the public AoS tensor from OptiX,
+  avoiding the previous `at::zeros/full` fan-out and `at::stack(...).contiguous()`.
 - Diffraction direct no-AD accumulation bypasses autograd tape export; AD/JVP/VJP
   still uses the full tape-producing path.
+- Diffraction path export, coherent direct accumulation, and direct/chain
+  accumulation forward accept nullable active arguments in the internal native
+  bindings. Public wrappers now pass `None` for omitted active masks instead of
+  allocating Python-side empty CUDA sentinels. Public `Scene.accum_dfr_direct(...)`
+  direct no-AD and AD forward paths also pass `None` for unused recursive inputs.
+- Diffraction direct/chain accumulation backward and JVP now pass missing output
+  upstreams plus missing state/material tangents as nullable native arguments.
+  The CUDA AD kernels read null pointers as zero, so Python no longer creates
+  `torch.zeros`/`torch.zeros_like` tensors for `Scene.accum_dfr_direct(...)` or
+  `Scene.accum_dfr(...)` backward/JVP missing inputs. Direct and chain JVP also
+  return the zero tangents for currently non-differentiated public field
+  components from the native binding instead of Python `torch.zeros_like`.
+- `Scene.trace_dfr_paths(...)` no longer calls Python `_contig_states`,
+  `_contig_material`, or endpoint `.contiguous()` staging. The internal native
+  binding accepts a logical `state_limit` plus tensor strides for endpoints,
+  state fields, material gain/valid masks, and active masks, so non-contiguous
+  padded views and `states.count < physical rows` use the same OptiX export path
+  as the contiguous benchmark layout.
+- `Scene.accum_dfr_direct(...)` and `Scene.accum_dfr_coherent_direct(...)`
+  no-AD forward paths pass a logical state limit and read state/material scalar
+  fields plus vec3 state fields with tensor strides in native code. The no-AD
+  accumulation bindings no longer use C++ ATen `split_vec3(...).contiguous()`
+  staging for state vectors. `Scene.accum_dfr(...)` chain no-AD now uses the
+  same internal binding for initial and recursive states, including a recursive
+  logical state limit.
+- `Scene.accum_dfr_direct(...)` AD backward/JVP now keeps the existing
+  full-output/tape contract but consumes strided state/material tensors,
+  strided tangents, strided upstream grid gradients, and a logical
+  `states.count` directly in native CUDA. The direct AD C++ binding no longer
+  performs `split_vec3(...).contiguous()`, `flatten_optional_f32(...)`, or
+  `stack_vec3(...)` staging. Chain AD is still tracked separately below.
 - Dynamic edge sync reuses compatible edge GAS/AABB/temp buffers and rebuilds
   in place. A direct `OPTIX_BUILD_OPERATION_UPDATE` refit was tested but caused
   a severe post-sync nearest-edge traversal regression on the benchmark shape,
@@ -100,26 +198,62 @@ Implemented in the current worktree:
 
 Intentional non-fast paths that remain:
 
+- Public API and benchmark acceptance tests guard against benchmark-specific
+  shortcuts: no `_minimal` RayDTorch surface and no `t_sum_*` scalar-loss
+  interface are used for acceptance timing.
 - Intersect `RayFlags.All` AD still routes through the generic dense
   backward/JVP kernels because the public contract includes `p/n/geo_n/uv`
-  and barycentric gradients. `RayFlags.None` now has a t-only backward kernel,
-  but static differentiable `sum(t)` remains slower than RayD on some measured
-  shapes because RayDTorch still returns a dense PyTorch `grad_vertices`.
-- Diffraction direct/chain AD paths keep their existing full-output contract.
-  The no-tape direct path is only selected when neither reverse-mode nor
-  forward-mode AD is active.
+  and barycentric gradients. `RayFlags.None` now has a t-only native VJP kernel
+  for arbitrary upstream `grad_t`, but public static `.backward()` remains
+  slower than RayD on some measured shapes because PyTorch eager autograd still
+  builds and executes the graph around a dense `grad_vertices` tensor.
+- A lazy `Intersection` materialization experiment for static reverse-AD
+  `flags=All` was measured but not retained. It helped the `.t.backward(...)`
+  case, but it would make a "full VJP" benchmark avoid materializing full public
+  intersection fields before the VJP, so it is not a fair full-output comparison.
+- Reflection-chain backward/JVP now uses fused native CUDA kernels and consumes
+  nullable, stride-aware upstream gradients/tangents for `t` and `image_sources`.
+  It no longer uses the old C++ ATen bounce loop (`select`, `sum`, `where`-style
+  masking, zero tensors, and copies). Remaining cost here is tensor allocation
+  and the public autograd boundary, not PyTorch eager tensor algebra.
+- `Scene.trace_refl_epc_field` forward still allocates public outputs and
+  temporary tensors through C++ ATen before launching native CUDA/OptiX work,
+  but the GPU tensor algebra and initialization fan-out have been moved into
+  fused native kernels. Removing the remaining allocation overhead needs scratch
+  reuse or a broader executor, not Python wrapper cleanup.
+- Diffraction chain AD still keeps its existing C++ ATen SoA/upstream staging
+  around the full-output/tape contract. Direct AD no longer stages those inputs,
+  but both direct and chain AD still allocate public gradient/tangent output
+  tensors through C++ ATen before launching native CUDA kernels. Removing those
+  remaining allocation costs needs scratch reuse or a broader fused executor,
+  not Python wrapper cleanup.
 - Edge GAS true refit remains a guarded backlog item. Current sync uses
   rebuild-in-place when compatible, otherwise a full edge-accel rebuild path.
 
 Latest verification:
 
 - Incremental native build succeeded via `scripts/dev_build_native.ps1`.
-- `python -m unittest tests.raydtorch_native.test_edge_queries -v`: 9 passed.
-- `python -m unittest tests.raydtorch_native.test_multipath -v`: 20 passed.
-- `python -m unittest discover tests.raydtorch_native -v`: 64 passed, 12 skipped.
+- `python -m unittest tests.raydtorch_native.test_edge_queries -v`: 11 passed,
+  including non-contiguous nearest-edge upstream/JVP tangent coverage.
+- `python -m unittest tests.raydtorch_native.test_intersect_grad -v`: 13 passed,
+  including non-contiguous upstream `grad_p`, expanded `grad_t`, and
+  non-contiguous JVP tangent coverage.
+- `python -m unittest tests.raydtorch_native.test_public_api_contract -v`:
+  16 passed, including source-level guards against upstream-gradient/tangent
+  `.contiguous()` staging, benchmark-only public APIs, unused-output gradient
+  materialization, reflection-chain ATen bounce-loop regressions, and
+  `trace_dfr_paths` Python contiguous staging regressions.
+- `python -m unittest tests.raydtorch_native.test_multipath -v`: 31 passed,
+  including non-contiguous reflection EPC upstream/JVP tangent coverage and
+  non-contiguous `trace_reflections().image_sources` upstream VJP finite-difference
+  coverage, plus strided diffraction path-export endpoint/state/material inputs
+  and no-AD chain accumulation strided initial/recursive logical-count coverage.
+- `python -m unittest discover tests.raydtorch_native -v`: 105 passed, 12 skipped.
 - Opt-in RayD parity:
   `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
   12 passed. The known `jitc_llvm_init()` warning appeared and did not affect assertions.
+- `compute-sanitizer --tool memcheck` on the large-grid `z=0.5` point
+  nearest-edge reproducer completed with `ERROR SUMMARY: 0 errors`.
 - High-contention staged diffraction accumulation parity check at
   `direct_samples=4096`: max `power` diff `1.43e-6`, max `field_x_re` diff
   `3.05e-5`; direct counts and edge-use counts both matched at `4096`.
@@ -135,33 +269,54 @@ Latest verification:
   completed for RayDTorch, RayD path, and Mitsuba path; outputs are under
   `artifacts/benchmarks/multipath/smoke_all/` and contain JSON, CSV, and one
   PNG grouped-bar chart only.
+- Latest multipath standard RayD-path comparison used
+  `python -m tests.benchmark_raydtorch_rayd_mitsuba_multipath --preset standard --backends raydtorch rayd_path --no-plots`.
+  RayDTorch was faster for reflection trace at 65,536 rays / 2 and 4 bounces,
+  1,048,576 rays / 2 bounces, and diffraction export at 65,536 and 1,048,576
+  states. The 1,048,576-ray / 4-bounce reflection row was rerun with
+  `--repeats 20 --warmup 5` after one standard-run outlier; the focused result
+  was RayDTorch `0.4241 ms` vs RayD `0.7000 ms`.
 - `git diff --check`: no whitespace errors; Git only reported existing LF/CRLF
   conversion warnings for touched files.
+- RayD-warm-started AD spot check, `rayd-latest:64:128`, 16,384 rays,
+  30 repeats, 8 warmup after native optional-gradient migration and disabled
+  unused-output gradient materialization:
+  static public VJP full RayDTorch `0.1621 ms` vs RayD `0.0879 ms`,
+  static public VJP reduced RayDTorch `0.1371 ms` vs RayD `0.0735 ms`,
+  dynamic public VJP full RayDTorch `0.2901 ms` vs RayD `1.6450 ms`,
+  dynamic public VJP reduced RayDTorch `0.2619 ms` vs RayD `1.4679 ms`.
+- Post-native-validity/camera/diffraction-stride same-script check, `grid=64`,
+  `queries=4096`, RayD warm-started by the same harness:
+  static and dynamic RayDTorch were faster for both intersection modes, nearest
+  edge, reflection trace, direct diffraction, diffraction paths, and scene build
+  in the package-RayD run shown below. Scene build remains workload/source/cache
+  sensitive and should not be treated as universally settled.
 
 Latest RayD vs RayDTorch static benchmark, `grid=64`, `queries=4096`,
-`warmup=5`, `repeat=30`, RayD package resolved to `E:\Code\RayDi\rayd`:
+`warmup=8`, `repeat=60`, RayD warm-started by the same harness:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2300.180 | 1539.985 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1206 | 0.0365 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1212 | 0.0519 | RayDTorch faster |
-| nearest edge | 1.1823 | 0.9765 | RayDTorch faster |
-| reflection trace | 0.2058 | 0.1702 | RayDTorch faster |
-| diffraction direct | 0.3330 | 0.2251 | RayDTorch faster |
-| diffraction paths | 0.2792 | 0.2515 | RayDTorch faster |
+| build | 2385.079 | 1551.944 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.2614 | 0.0381 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.2122 | 0.0490 | RayDTorch faster |
+| nearest edge | 1.7860 | 1.4218 | RayDTorch faster |
+| reflection trace | 0.4695 | 0.0378 | RayDTorch faster |
+| diffraction direct | 0.8475 | 0.2495 | RayDTorch faster |
+| diffraction paths | 0.5785 | 0.1057 | RayDTorch faster |
 
-Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`, `repeat=30`:
+Latest dynamic benchmark, `grid=64`, `queries=4096`, `warmup=5`,
+`repeat=30`:
 
 | Operation | RayD ms | RayDTorch ms | Status |
 |---|---:|---:|---|
-| build | 2280.680 | 1518.062 | RayDTorch faster |
-| intersect `RayFlags.None` | 0.1232 | 0.0366 | RayDTorch faster |
-| intersect `RayFlags.All` | 0.1335 | 0.0470 | RayDTorch faster |
-| nearest edge | 1.1542 | 0.9761 | RayDTorch faster |
-| reflection trace | 0.3805 | 0.1725 | RayDTorch faster |
-| diffraction direct | 0.3091 | 0.2347 | RayDTorch faster |
-| diffraction paths | 0.3089 | 0.2189 | RayDTorch faster |
+| build | 2441.784 | 1545.659 | RayDTorch faster |
+| intersect `RayFlags.None` | 0.1648 | 0.0294 | RayDTorch faster |
+| intersect `RayFlags.All` | 0.1736 | 0.0586 | RayDTorch faster |
+| nearest edge | 1.8150 | 1.3477 | RayDTorch faster |
+| reflection trace | 0.5682 | 0.0570 | RayDTorch faster |
+| diffraction direct | 0.4756 | 0.3010 | RayDTorch faster |
+| diffraction paths | 0.4139 | 0.0688 | RayDTorch faster |
 
 Latest RayDTorch-native multi-bounce check, `grid=64`, `queries=4096`,
 `warmup=5`, `repeat=30`, `max_bounces=4`:
@@ -251,8 +406,9 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
 ```
 
 This is the RayD latest-style multipath path benchmark, not the Sionna solver
-benchmark: `reflection_trace` uses the parallel-reflector scene with minimal
-path export, and `diffraction_export` uses the synthetic single-edge state path.
+benchmark: `reflection_trace` uses the parallel-reflector scene with public
+reduced path fields, and `diffraction_export` uses the synthetic single-edge
+state path.
 The script writes `multipath.json`, `multipath.csv`, and
 `time_ms_multipath.png` to one output folder and does not emit SVG or throughput
 plots. The smoke run is only a path/plot validation because it uses two timed
@@ -272,38 +428,33 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorc
 
 The sweep plots absolute time only. Operation charts use grouped bars with one
 subplot per mode and backend bars per case; throughput is still present in JSON
-as a derived field but is not plotted. Representative high-repeat static AD point:
+as a derived field but is not plotted. Representative high-repeat AD point:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorch_rayd_mitsuba_sweep `
-  --preset smoke --mesh-resolution 256 --total-rays 65536 --ray-batch-side 256 `
+C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_rayd_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends raydtorch rayd `
   --repeats 30 --warmup 8 --rayd-source local --rayd-root E:\Code\RayDi `
-  --include-backward --backends raydtorch rayd `
-  --output-dir artifacts\benchmarks\scaling\ad_uv_tape_r30_256_65k
+  --include-backward
 ```
 
-| 131K triangles / 65.5K rays, historical high-repeat | RayDTorch | RayD | Status |
+| 73.7K triangles / 65.5K rays, current public VJP | RayDTorch | RayD | Status |
 |---|---:|---:|---|
-| Static forward full | 0.0643 ms | 0.1318 ms | RayDTorch faster |
-| Static forward reduced | 0.0504 ms | 0.1332 ms | RayDTorch faster |
-| Static backward `t_sum_full` | 0.5326 ms | 0.1915 ms | RayD faster |
-| Static backward `t_sum_reduced` | 0.4936 ms | 0.2065 ms | RayD faster |
-| Dynamic backward `t_sum_full` | 0.8601 ms | 2.8418 ms | RayDTorch faster, but dynamic update costs differ by backend |
-| Dynamic backward `t_sum_reduced` | 0.6820 ms | 2.8144 ms | RayDTorch faster, but dynamic update costs differ by backend |
+| Static forward full | 0.0558 ms | 0.1460 ms | RayDTorch faster |
+| Static forward reduced | 0.0415 ms | 0.1383 ms | RayDTorch faster |
+| Static public VJP full | 0.2106 ms | 0.0864 ms | RayD faster |
+| Static public VJP reduced | 0.1775 ms | 0.0725 ms | RayD faster |
+| Dynamic public VJP full | 0.3112 ms | 2.5960 ms | RayDTorch faster |
+| Dynamic public VJP reduced | 0.3069 ms | 2.1908 ms | RayDTorch faster |
 
-After the dedicated t-only backward kernel, the same single-backend RayDTorch
-shape measured:
-
-| RayDTorch-only check | Static `t_sum_reduced` | Dynamic `t_sum_reduced` |
-|---|---:|---:|
-| 8.19K triangles / 65.5K rays | 0.3140 ms | 0.6306 ms |
-| 131K triangles / 65.5K rays | 0.3718 ms | 0.6902 ms |
-
-Conclusion for AD: `RayFlags.None` AD now has the right specialized backward
-shape and no longer pays the full public-output gradient bridge. It narrows the
-gap, especially at larger mesh sizes, but RayD can still be faster for static
-backward because RayDTorch must materialize a dense PyTorch `grad_vertices`
-tensor and still scatters per-hit vertex gradients.
+Conclusion for AD: `RayFlags.None` AD now has a native t+tape forward path and a
+t-only VJP kernel that accepts arbitrary upstream gradients; the removed
+`t_sum_*` benchmark interface is no longer part of the public or acceptance
+surface. Direct native `intersect_forward + intersect_backward_t` measures
+about 0.055-0.069 ms on the 16K/65K-ray stress shapes, faster than RayD's
+static VJP numbers. The remaining public static backward gap is the PyTorch
+eager autograd engine and tensor-allocation layer around `.backward()`, not the
+CUDA VJP math kernel. `torch.compile` still graph-breaks on the pybind custom
+extension boundary in this workload and did not remove that fixed cost.
 
 ## Contents
 
@@ -505,6 +656,22 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
   measured `1.2564 ms` in the same run. Dynamic nearest-edge measured RayDTorch
   `1.0102 ms` vs RayD `1.1727 ms`.
 
+### 11b. Point/ray query SoA setup used ATen split/copy `[implemented] - Med`
+
+- Original problem: public point/ray nearest-edge still prepared OptiX SoA query
+  inputs with C++ ATen `select(1, axis).contiguous()` calls, creating 3 launches
+  for point queries and 6 launches for ray queries before the OptiX query.
+- Implemented: point queries now launch one native CUDA split kernel, and ray
+  queries launch one native CUDA split kernel that writes both origin and
+  direction SoA arrays. This preserves the existing public API and OptiX SoA
+  traversal path while removing PyTorch eager tensor ops from this setup.
+- A direct-AoS OptiX experiment was rejected after `compute-sanitizer` found an
+  illegal device read in the large-grid, high-z query case. The retained native
+  split path passes the same `z=0.5` large-grid memcheck with 0 errors.
+- Latest same-script nearest-edge check after this change: static RayDTorch
+  `0.9638 ms` vs RayD `1.2084 ms`; dynamic RayDTorch `0.9618 ms` vs RayD
+  `1.2475 ms` (`grid=64`, `queries=4096`, `warmup=5`, `repeat=30`).
+
 ### 12. Edge pipeline reserves 16 payload registers for all raygens `[implemented] - Med`
 
 - Original problem: payload count is per-pipeline, so point/ray raygens paid the full 16-register top-k reservation even though point uses 4 payload values and ray uses 5.
@@ -623,12 +790,19 @@ Target of record: `build_ms` ≈ 1550 (native, grid 192) / ≈ 142 (grid 64 vs R
 - Fix direction: keep the count device-resident and consume it from a follow-up kernel;
   avoid the host stall that serializes the next op.
 
-### 23. EPC field / backward recompute forward state per bounce `[needs Nsight] — Med`
+### 23. EPC field forward setup fan-out `[implemented setup fusion; needs Nsight] — Med`
 
-- Location: `epc_field.cu:186-259`, `backward.cu:132-215`.
-- Problem: origins / directions / normals are re-gathered and recomputed each bounce instead
-  of being cached or passed down.
-- Fix direction: cache the forward intermediates to cut repeated global traffic.
+- Location: `ops.cpp:602-796`, `epc_optix.cu`, `epc_field.cu`.
+- Original problem: the public EPC forward prepared ray/slot/material tensors
+  with C++ ATen operations around the OptiX EPC launch and EPC field launch.
+- Implemented: ray AoS-to-SoA setup, ray direction/tmax, EPC temp defaults,
+  per-slot id/normal defaults, first-blocked defaults, first-tape barycentric
+  defaults, material defaults, polarization defaults, optional y/z field writes,
+  and first resolved/trace primitive extraction now live in native CUDA kernels.
+- Remaining work: public and temporary tensor allocation still goes through
+  C++ ATen. Nsight should verify whether allocation, OptiX EPC traversal, or the
+  EPC field kernel is now the dominant forward cost before adding scratch reuse
+  or more fusion.
 
 ### 24. dedup compact writes 13 scattered fields per bounce `[needs Nsight] — Med`
 

@@ -217,28 +217,28 @@ def run_raydtorch_reflection_trace(args: argparse.Namespace, ray_count: int, max
     ray = _torch_reflection_ray(ray_count)
 
     def call_kernel():
-        chain = scene.trace_reflections_minimal(ray, max_bounces=max_bounces)
+        chain = scene.trace_reflections(ray, max_bounces=max_bounces)
         return chain.valid, chain.t, chain.prim_ids
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
     valid, t, _prim_ids = measured.pop("last_value")
-    slot_count = valid.sum()
-    full_depth_count = (valid.sum(dim=1) == max_bounces).sum()
-    checksum = torch.where(valid, t, torch.zeros_like(t)).sum()
+    counts, checksum = rt._C.reflection_trace_stats(valid.contiguous(), t.contiguous())
+    slot_count = int(counts[0].item())
+    full_depth_count = int(counts[1].item())
     result = _base_metric(
         backend="raydtorch",
         workload="reflection_trace",
         scene="parallel_reflectors",
         input_count=ray_count,
-        valid_path_count=int(slot_count.item()),
+        valid_path_count=slot_count,
         estimated_output_bytes=_reflection_trace_output_bytes(ray_count, max_bounces),
         timing=measured,
         build_ms=build_ms,
         ray_count=ray_count,
         max_bounces=max_bounces,
-        valid_full_depth_path_count=int(full_depth_count.item()),
-        valid_bounce_slot_count=int(slot_count.item()),
-        path_length_checksum=float(checksum.item()),
+        valid_full_depth_path_count=full_depth_count,
+        valid_bounce_slot_count=slot_count,
+        path_length_checksum=float(checksum[0].item()),
     )
     _cleanup_torch()
     return result
@@ -308,7 +308,6 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
     material = _torch_dfr_material()
     tx = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
     rx = torch.tensor([[0.0, 0.0, -1.0]], device="cuda", dtype=torch.float32)
-    active = torch.ones((1,), device="cuda", dtype=torch.bool)
 
     def call_kernel():
         paths = scene.trace_dfr_paths(
@@ -316,7 +315,6 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
             rx_positions=rx,
             states=states,
             material=material,
-            active=active,
             max_paths=state_count,
             wavelength=0.125,
         )
@@ -335,8 +333,12 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
     count, valid, _rx_id, _edge0, delay, _field_x_re, _field_x_im, _p0, _p1, _p2 = measured.pop("last_value")
-    checksum = torch.where(valid, delay, torch.zeros_like(delay)).sum()
-    valid_count = int(count[0].item())
+    valid_count_tensor, checksum = rt._C.diffraction_path_stats(
+        count.contiguous(),
+        valid.contiguous(),
+        delay.contiguous(),
+    )
+    valid_count = int(valid_count_tensor[0].item())
     result = _base_metric(
         backend="raydtorch",
         workload="diffraction_export",
@@ -348,7 +350,7 @@ def run_raydtorch_diffraction_export(args: argparse.Namespace, state_count: int)
         build_ms=build_ms,
         state_count=state_count,
         path_capacity=state_count,
-        path_length_checksum=float(checksum.item()),
+        path_length_checksum=float(checksum[0].item()),
     )
     _cleanup_torch()
     return result
@@ -879,7 +881,7 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         squeeze=False,
     )
     titles = {
-        "reflection_trace": "Reflection trace: parallel reflectors, minimal path export",
+        "reflection_trace": "Reflection trace: parallel reflectors, public reduced path fields",
         "diffraction_export": "Diffraction path export: synthetic single-edge states",
     }
     for workload_index, workload in enumerate(workloads):

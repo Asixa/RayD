@@ -29,6 +29,27 @@ class IntersectForwardTests(unittest.TestCase):
         self.assertEqual(int(its.shape_id[1].item()), -1)
         self.assertTrue(torch.isinf(its.t[1]))
 
+    def test_default_tmax_sentinel_matches_unbounded_tmax(self):
+        verts = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts, faces))
+        scene.build()
+        ray_o = torch.tensor([[0.25, 0.25, -1.0]], device="cuda", dtype=torch.float32)
+        ray_d = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
+
+        default_hit = scene.intersect(rt.Ray(ray_o, ray_d))
+        explicit_hit = scene.intersect(rt.Ray(ray_o, ray_d, torch.tensor([10.0], device="cuda")))
+        clipped_hit = scene.intersect(rt.Ray(ray_o, ray_d, torch.tensor([0.5], device="cuda")))
+
+        torch.testing.assert_close(default_hit.t, explicit_hit.t)
+        torch.testing.assert_close(default_hit.p, explicit_hit.p)
+        self.assertTrue(torch.isinf(clipped_hit.t[0]))
+
     def test_two_triangles_returns_nearest_hit(self):
         verts = torch.tensor(
             [

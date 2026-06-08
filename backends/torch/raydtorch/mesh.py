@@ -23,6 +23,12 @@ def _require_tensor(value: torch.Tensor, name: str, dtype: torch.dtype, rank: in
         raise ValueError(f"{name} must be contiguous.")
 
 
+def _require_transform(value: torch.Tensor, name: str) -> None:
+    _require_tensor(value, name, torch.float32, 2, 4)
+    if value.shape[0] not in (0, 4):
+        raise ValueError(f"{name} must be empty or have shape (4, 4).")
+
+
 @dataclass
 class Mesh:
     vertices: torch.Tensor
@@ -46,6 +52,10 @@ class Mesh:
         if self.face_uv is None:
             self.face_uv = _empty_tensor((0, 3), torch.int32, self.vertices.device)
         if self.to_world_left is None:
-            self.to_world_left = torch.eye(4, dtype=torch.float32, device=self.vertices.device)
+            self.to_world_left = _empty_tensor((0, 4), torch.float32, self.vertices.device)
+        else:
+            _require_transform(self.to_world_left, "to_world_left")
         if self.to_world_right is None:
-            self.to_world_right = torch.eye(4, dtype=torch.float32, device=self.vertices.device)
+            self.to_world_right = _empty_tensor((0, 4), torch.float32, self.vertices.device)
+        else:
+            _require_transform(self.to_world_right, "to_world_right")

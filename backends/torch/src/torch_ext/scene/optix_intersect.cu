@@ -18,7 +18,7 @@ extern "C" __global__ void __raygen__intersect() {
     float u = 0.f;
     float v = 0.f;
 
-    if (params.active[ray_idx]) {
+    if (params.active == nullptr || params.active[ray_idx]) {
         const float3 origin = make_float3(
             params.ray_o[ray_idx * 3 + 0],
             params.ray_o[ray_idx * 3 + 1],
@@ -32,12 +32,14 @@ extern "C" __global__ void __raygen__intersect() {
         unsigned int p2 = __float_as_uint(u);
         unsigned int p3 = __float_as_uint(v);
         unsigned int p4 = static_cast<unsigned int>(local_prim_id);
+        const float trace_tmax =
+            params.ray_tmax != nullptr ? params.ray_tmax[ray_idx] : __uint_as_float(0x7f7fffffu);
         optixTrace(
             params.traversable,
             origin,
             direction,
             1e-6f,
-            params.ray_tmax[ray_idx],
+            trace_tmax,
             0.0f,
             OptixVisibilityMask(255),
             OPTIX_RAY_FLAG_DISABLE_ANYHIT,

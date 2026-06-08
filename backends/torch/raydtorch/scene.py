@@ -9,16 +9,14 @@ from .autograd import accum_dfr_chain_native as _accum_dfr_chain_native
 from .autograd import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct_native
 from .autograd import accum_dfr_direct_native as _accum_dfr_direct_native
 from .autograd import intersect as _intersect
-from .autograd import intersect_t_sum as _intersect_t_sum
 from .autograd import nearest_edge as _nearest_edge
 from .autograd import nearest_edge_ray as _nearest_edge_ray
 from .autograd import trace_refl_epc_field as _trace_refl_epc_field
 from .autograd import trace_dfr_paths_order1_native as _trace_dfr_paths_order1_native
 from .autograd import trace_reflections as _trace_reflections
-from .autograd import trace_reflections_minimal as _trace_reflections_minimal
 from .autograd import visible as _visible
 from .mesh import Mesh
-from .types import DfrGrid, DfrMaterial, DfrStates, Intersection, Ray, RayFlags
+from .types import DfrGrid, DfrMaterial, DfrStates, Intersection, Ray, RayFlags, _LazyIntersection, _ReducedIntersection
 
 
 def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -33,9 +31,20 @@ def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
 
 
 def _has_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
+    if torch.autograd.forward_ad._current_level < 0:
+        return any(value.requires_grad for value in values)
     for value in values:
         unpacked = torch.autograd.forward_ad.unpack_dual(value)
         if unpacked.primal.requires_grad or unpacked.tangent is not None:
+            return True
+    return False
+
+
+def _has_forward_ad(*values: torch.Tensor) -> bool:
+    if torch.autograd.forward_ad._current_level < 0:
+        return False
+    for value in values:
+        if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
             return True
     return False
 
@@ -88,10 +97,8 @@ class Scene:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_handle
 
-    def _vertices_for_ad(self) -> torch.Tensor:
-        if len(self._meshes) == 1:
-            return self._meshes[0][0].vertices
-        return torch.cat([mesh.vertices for mesh, _dynamic in self._meshes], dim=0).contiguous()
+    def _mesh_vertex_tensors(self) -> tuple[torch.Tensor, ...]:
+        return tuple(mesh.vertices for mesh, _dynamic in self._meshes)
 
     def is_ready(self) -> bool:
         return self._ready
@@ -108,127 +115,150 @@ class Scene:
 
     def intersect(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
         handle = self._require_ready()
-        if active is None:
-            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        vertices = self._vertices_for_ad()
-        flags = RayFlags(flags)
-        if not _has_reverse_or_forward_ad(vertices, ray.o, ray.d, ray.tmax):
+        active_arg = active
+        flags_value = int(flags)
+        if len(self._meshes) == 1 and torch.autograd.forward_ad._current_level < 0:
+            vertices = self._meshes[0][0].vertices
+            if not (vertices.requires_grad or ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad):
+                if flags_value == 0:
+                    t = _C.intersect_forward_t(
+                        handle,
+                        ray.o,
+                        ray.d,
+                        ray.tmax,
+                        active_arg,
+                    )
+                    return _ReducedIntersection(handle, t)
+                values = _C.intersect_forward_flags(
+                    handle,
+                    ray.o,
+                    ray.d,
+                    ray.tmax,
+                    active_arg,
+                    flags_value,
+                )
+                return Intersection(*values)
+            if flags_value != 0:
+                def load_t():
+                    return _C.intersect_ad_t(handle, vertices, ray.o, ray.d, ray.tmax, active_arg)
+
+                def load_full():
+                    values = _C.intersect_ad_flags(
+                        handle,
+                        vertices,
+                        ray.o,
+                        ray.d,
+                        ray.tmax,
+                        active_arg,
+                        flags_value,
+                    )
+                    return Intersection(*values)
+
+                return _LazyIntersection(load_t, load_full)
+            t = _C.intersect_ad_t(handle, vertices, ray.o, ray.d, ray.tmax, active_arg)
+            return _ReducedIntersection(handle, t)
+        mesh_vertices = self._mesh_vertex_tensors()
+        if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
+            if flags_value == 0:
+                t = _C.intersect_forward_t(
+                    handle,
+                    ray.o,
+                    ray.d,
+                    ray.tmax,
+                    active_arg,
+                )
+                return _ReducedIntersection(handle, t)
             values = _C.intersect_forward_flags(
                 handle,
                 ray.o,
                 ray.d,
                 ray.tmax,
-                active.contiguous(),
-                int(flags),
+                active_arg,
+                flags_value,
             )
             return Intersection(*values)
-        return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous(), int(flags))
+        if len(mesh_vertices) == 1:
+            vertices = mesh_vertices[0]
+            if not _has_forward_ad(vertices, ray.o, ray.d, ray.tmax):
+                if flags_value != 0:
+                    def load_t():
+                        return _C.intersect_ad_t(handle, vertices, ray.o, ray.d, ray.tmax, active_arg)
 
-    def intersect_t_sum(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
-        handle = self._require_ready()
-        if active is None:
-            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        vertices = self._vertices_for_ad()
-        flags = RayFlags(flags)
-        return _intersect_t_sum(handle, vertices, ray.o, ray.d, ray.tmax, active.contiguous(), int(flags))
+                    def load_full():
+                        values = _C.intersect_ad_flags(
+                            handle,
+                            vertices,
+                            ray.o,
+                            ray.d,
+                            ray.tmax,
+                            active_arg,
+                            flags_value,
+                        )
+                        return Intersection(*values)
 
-    def intersect_t_sum_vjp(
-        self,
-        ray: Ray,
-        active=None,
-        flags: RayFlags = RayFlags.All,
-        need_grad_vertices: bool = True,
-        need_grad_ray_o: bool = False,
-        need_grad_ray_d: bool = False,
-        need_grad_ray_tmax: bool = False,
-    ):
-        handle = self._require_ready()
-        if active is None:
-            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        flags = RayFlags(flags)
-        return _C.intersect_t_sum_vjp(
+                    return _LazyIntersection(load_t, load_full)
+                t = _C.intersect_ad_t(handle, vertices, ray.o, ray.d, ray.tmax, active_arg)
+                return _ReducedIntersection(handle, t)
+            return _intersect(handle, vertices, ray.o, ray.d, ray.tmax, active_arg, flags_value)
+        return _intersect(
             handle,
+            mesh_vertices[0],
             ray.o,
             ray.d,
             ray.tmax,
-            active.contiguous(),
-            int(flags),
-            bool(need_grad_vertices),
-            bool(need_grad_ray_o),
-            bool(need_grad_ray_d),
-            bool(need_grad_ray_tmax),
+            active_arg,
+            flags_value,
+            mesh_vertices=mesh_vertices,
         )
 
     def nearest_edge(self, point: torch.Tensor | Ray):
         handle = self._require_ready()
-        vertices = self._vertices_for_ad()
+        mesh_vertices = self._mesh_vertex_tensors()
         if isinstance(point, Ray):
-            active = torch.ones((point.o.shape[0],), device=point.o.device, dtype=torch.bool)
             return _nearest_edge_ray(
                 handle,
-                vertices,
+                mesh_vertices[0],
                 point.o,
                 point.d,
                 point.tmax,
-                active,
+                None,
             )
-        return _nearest_edge(handle, vertices, point.contiguous())
+        return _nearest_edge(handle, mesh_vertices[0], point, mesh_vertices=mesh_vertices)
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active=None):
         handle = self._require_ready()
-        start = start.contiguous()
-        end = end.contiguous()
-        if active is None:
-            active = torch.ones((start.shape[0],), device=start.device, dtype=torch.bool)
-        return _visible(handle, start, end, active.contiguous())
+        return _visible(handle, start, end, active)
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active=None):
         handle = self._require_ready()
-        if active is None:
-            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        vertices = self._vertices_for_ad()
+        mesh_vertices = self._mesh_vertex_tensors()
         return _trace_reflections(
             handle,
-            vertices,
+            mesh_vertices[0],
             ray.o,
             ray.d,
             ray.tmax,
-            active.contiguous(),
+            active,
             int(max_bounces),
-        )
-
-    def trace_reflections_minimal(self, ray: Ray, max_bounces: int, active=None):
-        handle = self._require_ready()
-        if active is None:
-            active = torch.ones((ray.o.shape[0],), device=ray.o.device, dtype=torch.bool)
-        return _trace_reflections_minimal(
-            handle,
-            ray.o,
-            ray.d,
-            ray.tmax,
-            active.contiguous(),
-            int(max_bounces),
+            mesh_vertices=mesh_vertices,
         )
 
     def trace_refl_epc_field(self, source: torch.Tensor, receiver: torch.Tensor, max_bounces: int, active=None):
         handle = self._require_ready()
-        source = source.contiguous()
-        receiver = receiver.contiguous()
-        if active is None:
-            active = torch.ones((source.shape[0],), device=source.device, dtype=torch.bool)
-        vertices = self._vertices_for_ad()
+        mesh_vertices = self._mesh_vertex_tensors()
         return _trace_refl_epc_field(
             handle,
-            vertices,
+            mesh_vertices[0],
             source,
             receiver,
-            active.contiguous(),
+            active,
             int(max_bounces),
+            mesh_vertices=mesh_vertices,
         )
 
-    def _default_dfr_material(self, *, device: torch.device, dtype: torch.dtype) -> DfrMaterial:
+    def _default_dfr_material(self, *, like: torch.Tensor) -> DfrMaterial:
         face_count = sum(int(mesh.faces.shape[0]) for mesh, _dynamic in self._meshes)
-        return DfrMaterial.default(face_count, device=device, dtype=dtype)
+        return DfrMaterial(*_C.default_dfr_material(face_count, like))
 
     def trace_dfr_paths(
         self,
@@ -243,9 +273,7 @@ class Scene:
     ):
         handle = self._require_ready()
         if material is None:
-            material = self._default_dfr_material(device=states.edge_pos.device, dtype=states.edge_pos.dtype)
-        if active is None:
-            active = torch.ones((states.state_count,), device=states.edge_pos.device, dtype=torch.bool)
+            material = self._default_dfr_material(like=states.edge_pos)
         if max_paths is None:
             max_paths = states.state_count
         return _trace_dfr_paths_order1_native(
@@ -278,9 +306,7 @@ class Scene:
         if grid is None:
             raise TypeError("Scene.accum_dfr_direct() requires DfrGrid when states are provided.")
         if material is None:
-            material = self._default_dfr_material(device=states.edge_pos.device, dtype=states.edge_pos.dtype)
-        if active is None:
-            active = torch.ones((states.state_count,), device=states.edge_pos.device, dtype=torch.bool)
+            material = self._default_dfr_material(like=states.edge_pos)
         return _accum_dfr_direct_native(
             handle,
             states,
@@ -316,11 +342,7 @@ class Scene:
         if initial_states is None or recursive_states is None or grid is None:
             raise TypeError("Scene.accum_dfr() requires initial_states, recursive_states, and grid.")
         if material is None:
-            material = self._default_dfr_material(device=initial_states.edge_pos.device, dtype=initial_states.edge_pos.dtype)
-        if active is None:
-            active = torch.ones((initial_states.state_count,), device=initial_states.edge_pos.device, dtype=torch.bool)
-        if recursive_active is None:
-            recursive_active = torch.ones((recursive_states.state_count,), device=recursive_states.edge_pos.device, dtype=torch.bool)
+            material = self._default_dfr_material(like=initial_states.edge_pos)
         return _accum_dfr_chain_native(
             handle,
             initial_states,
@@ -350,9 +372,7 @@ class Scene:
     ):
         handle = self._require_ready()
         if material is None:
-            material = self._default_dfr_material(device=states.edge_pos.device, dtype=states.edge_pos.dtype)
-        if active is None:
-            active = torch.ones((states.state_count,), device=states.edge_pos.device, dtype=torch.bool)
+            material = self._default_dfr_material(like=states.edge_pos)
         return _accum_dfr_coherent_direct_native(
             handle,
             states,

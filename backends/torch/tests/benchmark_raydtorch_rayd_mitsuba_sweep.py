@@ -426,8 +426,8 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         "full": "Forward: full public outputs (RayFlags.All)",
         "reduced": "Forward: t-only public output (RayFlags.None / Minimal)",
         "preliminary": "Forward: t-only preliminary intersection",
-        "t_sum_full": "AD backward: loss=sum(t), full public outputs (RayFlags.All)",
-        "t_sum_reduced": "AD backward: loss=sum(t), t-only public output (RayFlags.None)",
+        "vjp_full": "AD backward: vector-Jacobian product for t, full public outputs (RayFlags.All)",
+        "vjp_reduced": "AD backward: vector-Jacobian product for t, t-only public output (RayFlags.None)",
     }
 
     def mode_title(mode: str, mode_backends: list[str]) -> str:

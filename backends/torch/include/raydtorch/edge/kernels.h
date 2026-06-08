@@ -78,10 +78,25 @@ EdgeBackwardOutputs edge_backward_cuda(
     const at::Tensor &grad_edge_point,
     const at::Tensor &grad_edge_t);
 
+EdgeBackwardOutputs edge_backward_optional_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &edge_v0,
+    const at::Tensor &edge_v1,
+    const at::Tensor &point,
+    const at::Tensor &tape_edge_id,
+    const at::Tensor &tape_s,
+    const at::Tensor &tape_d,
+    const at::Tensor *grad_distance,
+    const at::Tensor *grad_edge_point,
+    const at::Tensor *grad_edge_t,
+    const at::Tensor *grad_edge_t_alias);
+
 struct EdgeJvpOutputs {
     at::Tensor tangent_distance;
     at::Tensor tangent_edge_point;
     at::Tensor tangent_edge_t;
+    at::Tensor tangent_tape_s;
+    at::Tensor tangent_tape_d;
 };
 
 EdgeJvpOutputs edge_jvp_cuda(
@@ -94,5 +109,16 @@ EdgeJvpOutputs edge_jvp_cuda(
     const at::Tensor &tape_d,
     const at::Tensor &tangent_vertices,
     const at::Tensor &tangent_point);
+
+EdgeJvpOutputs edge_jvp_optional_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &edge_v0,
+    const at::Tensor &edge_v1,
+    const at::Tensor &point,
+    const at::Tensor &tape_edge_id,
+    const at::Tensor &tape_s,
+    const at::Tensor &tape_d,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_point);
 
 } // namespace raydtorch

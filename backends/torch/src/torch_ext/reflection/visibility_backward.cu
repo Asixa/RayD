@@ -8,6 +8,12 @@ namespace raydtorch {
 
 namespace {
 
+const bool *optional_mask_ptr(const at::Tensor &active) {
+    if (!active.defined() || active.numel() == 0)
+        return nullptr;
+    return active.data_ptr<bool>();
+}
+
 __global__ void visibility_from_intersection_kernel(
     const int *__restrict__ prim_id,
     const bool *__restrict__ active,
@@ -16,7 +22,7 @@ __global__ void visibility_from_intersection_kernel(
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= count)
         return;
-    visible[idx] = active[idx] && prim_id[idx] < 0;
+    visible[idx] = (active == nullptr || active[idx]) && prim_id[idx] < 0;
 }
 
 } // namespace
@@ -41,7 +47,7 @@ VisibilityForwardOutputs visibility_forward_cuda(
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(start.get_device()).stream();
     visibility_from_intersection_kernel<<<blocks, threads, 0, stream>>>(
         hit.global_prim_id.data_ptr<int>(),
-        active.data_ptr<bool>(),
+        optional_mask_ptr(active),
         count,
         out.visible.data_ptr<bool>());
     return out;

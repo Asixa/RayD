@@ -16,6 +16,15 @@ class TensorContractTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "faces must be torch.int32"):
             rt.Mesh(verts, faces)
 
+    def test_mesh_default_transforms_are_empty_identity_sentinels(self):
+        verts = torch.zeros((3, 3), device="cuda", dtype=torch.float32)
+        faces = torch.zeros((1, 3), device="cuda", dtype=torch.int32)
+        mesh = rt.Mesh(verts, faces)
+        self.assertEqual(mesh.to_world_left.shape, (0, 4))
+        self.assertEqual(mesh.to_world_right.shape, (0, 4))
+        self.assertEqual(mesh.to_world_left.dtype, torch.float32)
+        self.assertEqual(mesh.to_world_left.device.type, "cuda")
+
     def test_mesh_rejects_cpu_tensors(self):
         verts = torch.zeros((3, 3), dtype=torch.float32)
         faces = torch.zeros((1, 3), dtype=torch.int32)
@@ -26,7 +35,7 @@ class TensorContractTests(unittest.TestCase):
         o = torch.zeros((2, 3), device="cuda", dtype=torch.float32)
         d = torch.zeros((2, 3), device="cuda", dtype=torch.float32)
         ray = rt.Ray(o, d)
-        self.assertEqual(ray.tmax.shape, (2,))
+        self.assertEqual(ray.tmax.shape, (0,))
         self.assertEqual(ray.tmax.dtype, torch.float32)
         self.assertEqual(ray.tmax.device.type, "cuda")
 

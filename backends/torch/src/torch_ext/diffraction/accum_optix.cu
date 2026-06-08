@@ -73,6 +73,18 @@ static __forceinline__ __device__ HitPayload choose_hit(HitPayload a, HitPayload
     return __uint_as_float(a.t) <= __uint_as_float(b.t) ? a : b;
 }
 
+static __forceinline__ __device__ bool active_for_state(
+    const uint8_t *mask,
+    int width,
+    int stride,
+    int state_idx) {
+    if (mask == nullptr) {
+        return true;
+    }
+    const int active_idx = width == 1 ? 0 : state_idx;
+    return mask[active_idx * stride] != 0u;
+}
+
 template <bool PrimaryOnly>
 static __forceinline__ __device__ HitPayload trace_scene_impl(float3 origin,
                                                               float3 direction,
@@ -179,15 +191,151 @@ static __forceinline__ __device__ float uniform01(unsigned int lane,
 static __forceinline__ __device__ float3 state_vec(const float *x,
                                                    const float *y,
                                                    const float *z,
+                                                   int stride,
                                                    int idx) {
-    return make_f3(x[idx], y[idx], z[idx]);
+    const int offset = idx * stride;
+    return make_f3(x[offset], y[offset], z[offset]);
+}
+
+static __forceinline__ __device__ float3 optional_state_vec(const float *x,
+                                                            const float *y,
+                                                            const float *z,
+                                                            int stride,
+                                                            int idx) {
+    const int offset = idx * stride;
+    return make_f3(x != nullptr ? x[offset] : 0.f,
+                   y != nullptr ? y[offset] : 0.f,
+                   z != nullptr ? z[offset] : 0.f);
 }
 
 static __forceinline__ __device__ float3 recursive_state_vec(const float *x,
                                                              const float *y,
                                                              const float *z,
+                                                             int stride,
                                                              int idx) {
-    return make_f3(x[idx], y[idx], z[idx]);
+    const int offset = idx * stride;
+    return make_f3(x[offset], y[offset], z[offset]);
+}
+
+static __forceinline__ __device__ float read_f32(const float *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
+static __forceinline__ __device__ int read_i32(const int *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
+static __forceinline__ __device__ uint8_t read_u8(const uint8_t *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
+static __forceinline__ __device__ int state_edge_index_at(int idx) {
+    return read_i32(params.state_edge_index, params.state_edge_index_stride, idx);
+}
+
+static __forceinline__ __device__ float3 state_edge_pos_at(int idx) {
+    return state_vec(params.state_edge_pos_x,
+                     params.state_edge_pos_y,
+                     params.state_edge_pos_z,
+                     params.state_edge_pos_stride,
+                     idx);
+}
+
+static __forceinline__ __device__ float3 state_edge_dir_at(int idx) {
+    return state_vec(params.state_edge_dir_x,
+                     params.state_edge_dir_y,
+                     params.state_edge_dir_z,
+                     params.state_edge_dir_stride,
+                     idx);
+}
+
+static __forceinline__ __device__ float state_edge_t_min_at(int idx) {
+    return read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, idx);
+}
+
+static __forceinline__ __device__ float state_edge_t_max_at(int idx) {
+    return read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, idx);
+}
+
+static __forceinline__ __device__ int state_prim0_at(int idx) {
+    return read_i32(params.state_prim0, params.state_prim0_stride, idx);
+}
+
+static __forceinline__ __device__ int state_prim1_at(int idx) {
+    return read_i32(params.state_prim1, params.state_prim1_stride, idx);
+}
+
+static __forceinline__ __device__ float state_exterior_angle_at(int idx) {
+    return read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, idx);
+}
+
+static __forceinline__ __device__ float state_src_power_at(int idx) {
+    return read_f32(params.state_src_power, params.state_src_power_stride, idx);
+}
+
+static __forceinline__ __device__ float3 state_src_at(int idx) {
+    return state_vec(params.state_src_x,
+                     params.state_src_y,
+                     params.state_src_z,
+                     params.state_src_stride,
+                     idx);
+}
+
+static __forceinline__ __device__ float3 state_wi_at(int idx) {
+    return optional_state_vec(params.state_wi_x,
+                              params.state_wi_y,
+                              params.state_wi_z,
+                              params.state_wi_stride,
+                              idx);
+}
+
+static __forceinline__ __device__ int recursive_state_edge_index_at(int idx) {
+    return read_i32(params.recursive_state_edge_index, params.recursive_state_edge_index_stride, idx);
+}
+
+static __forceinline__ __device__ float3 recursive_state_edge_pos_at(int idx) {
+    return recursive_state_vec(params.recursive_state_edge_pos_x,
+                               params.recursive_state_edge_pos_y,
+                               params.recursive_state_edge_pos_z,
+                               params.recursive_state_edge_pos_stride,
+                               idx);
+}
+
+static __forceinline__ __device__ float3 recursive_state_edge_dir_at(int idx) {
+    return recursive_state_vec(params.recursive_state_edge_dir_x,
+                               params.recursive_state_edge_dir_y,
+                               params.recursive_state_edge_dir_z,
+                               params.recursive_state_edge_dir_stride,
+                               idx);
+}
+
+static __forceinline__ __device__ float recursive_state_edge_t_min_at(int idx) {
+    return read_f32(params.recursive_state_edge_t_min, params.recursive_state_edge_t_min_stride, idx);
+}
+
+static __forceinline__ __device__ float recursive_state_edge_t_max_at(int idx) {
+    return read_f32(params.recursive_state_edge_t_max, params.recursive_state_edge_t_max_stride, idx);
+}
+
+static __forceinline__ __device__ int recursive_state_prim0_at(int idx) {
+    return read_i32(params.recursive_state_prim0, params.recursive_state_prim0_stride, idx);
+}
+
+static __forceinline__ __device__ int recursive_state_prim1_at(int idx) {
+    return read_i32(params.recursive_state_prim1, params.recursive_state_prim1_stride, idx);
+}
+
+static __forceinline__ __device__ float recursive_state_exterior_angle_at(int idx) {
+    return read_f32(params.recursive_state_exterior_angle, params.recursive_state_exterior_angle_stride, idx);
+}
+
+static __forceinline__ __device__ bool material_valid_at(int prim) {
+    return params.material_valid == nullptr ||
+           read_u8(params.material_valid, params.material_valid_stride, prim) != 0u;
+}
+
+static __forceinline__ __device__ float material_gain_at(int prim) {
+    return read_f32(params.material_gain, params.material_gain_stride, prim);
 }
 
 static __forceinline__ __device__ float3 grid_cell_center(int cell) {
@@ -525,11 +673,7 @@ static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
                                                        float3 edge_dir,
                                                        float3 &target,
                                                        int &cell) {
-    const float3 incident =
-        state_vec(params.state_wi_x,
-                  params.state_wi_y,
-                  params.state_wi_z,
-                  state_idx);
+    const float3 incident = state_wi_at(state_idx);
     return keller_grid_hit_from_incident(incident, lane, 1u, edge_point, edge_dir, target, cell);
 }
 
@@ -539,12 +683,10 @@ static __forceinline__ __device__ int material_index_for_faces(int face0_prim,
         return -1;
     }
     int prim = face0_prim;
-    if (prim < 0 || prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+    if (prim < 0 || prim >= params.material_count || !material_valid_at(prim)) {
         prim = face1_prim;
     }
-    if (prim < 0 || prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+    if (prim < 0 || prim >= params.material_count || !material_valid_at(prim)) {
         return -1;
     }
     return prim;
@@ -556,30 +698,29 @@ static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
     if (prim < 0) {
         return 1.f;
     }
-    return fmaxf(params.material_gain[prim], 0.f);
+    return fmaxf(material_gain_at(prim), 0.f);
 }
 
 static __forceinline__ __device__ float material_gain_for_state(int state_idx) {
-    return material_gain_for_faces(params.state_prim0[state_idx],
-                                   params.state_prim1[state_idx]);
+    return material_gain_for_faces(state_prim0_at(state_idx),
+                                   state_prim1_at(state_idx));
 }
 
 static __forceinline__ __device__ float material_gain_for_prim(int prim) {
     if (params.material_gain == nullptr ||
         prim < 0 ||
         prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        !material_valid_at(prim)) {
         return 1.f;
     }
-    return fmaxf(params.material_gain[prim], 0.f);
+    return fmaxf(material_gain_at(prim), 0.f);
 }
 
 static __forceinline__ __device__ bool suffix_candidate_valid(int prim) {
     return prim >= 0 &&
            prim < params.n_triangles &&
            prim < params.material_count &&
-           params.material_valid != nullptr &&
-           params.material_valid[prim] != 0u;
+           material_valid_at(prim);
 }
 
 static __forceinline__ __device__ bool select_local_suffix_candidate(int face0_prim,
@@ -782,19 +923,18 @@ static __forceinline__ __device__ float diffraction_weight(int state_idx,
                                                            float3 edge_point,
                                                            float3 target,
                                                            int sample_count) {
-    const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 source = state_src_at(state_idx);
     const float source_distance = fmaxf(norm3(edge_point - source), kDfrEps);
     const float target_distance = fmaxf(norm3(target - edge_point), kDfrEps);
     const float edge_length = fmaxf(
-        params.state_edge_t_max[state_idx] - params.state_edge_t_min[state_idx],
+        state_edge_t_max_at(state_idx) - state_edge_t_min_at(state_idx),
         0.f);
     const float exterior_angle =
-        fmaxf(params.state_exterior_angle[state_idx], 0.25f * kPi);
+        fmaxf(state_exterior_angle_at(state_idx), 0.25f * kPi);
     const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
     const float material_gain = material_gain_for_state(state_idx);
     const float sample_norm = 1.f / fmaxf(static_cast<float>(sample_count), 1.f);
-    return params.state_src_power[state_idx] *
+    return state_src_power_at(state_idx) *
            material_gain *
            edge_length *
            params.grid_cell_area *
@@ -881,7 +1021,7 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
     }
 
     const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         return;
     }
 
@@ -889,9 +1029,9 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
     int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
                                 static_cast<unsigned int>(grid_cell_count));
     const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
-    const float edge_t = params.state_edge_t_min[state_idx] +
-                         edge_u * (params.state_edge_t_max[state_idx] -
-                                   params.state_edge_t_min[state_idx]);
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
     if constexpr (IncludeCoherent) {
         if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
             run_coherent_utd_lane<PrimaryOnly>(state_idx, cell);
@@ -899,13 +1039,10 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         }
     }
 
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
-    const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 source = state_src_at(state_idx);
     float3 target = grid_cell_center(cell);
     if constexpr (IncludeKeller) {
         if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
@@ -925,8 +1062,8 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         if (is_suffix) {
             if (!suffix_reflection_connection(edge_point,
                                               target,
-                                              params.state_prim0[state_idx],
-                                              params.state_prim1[state_idx],
+                                              state_prim0_at(state_idx),
+                                              state_prim1_at(state_idx),
                                               lane,
                                               17u,
                                               connection_target,
@@ -991,8 +1128,8 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         }
         if (params.tape_material_idx != nullptr) {
             params.tape_material_idx[lane] =
-                material_index_for_faces(params.state_prim0[state_idx],
-                                         params.state_prim1[state_idx]);
+                material_index_for_faces(state_prim0_at(state_idx),
+                                         state_prim1_at(state_idx));
         }
         if (params.tape_edge_u != nullptr) {
             params.tape_edge_u[lane] = edge_u;
@@ -1078,21 +1215,18 @@ static __forceinline__ __device__ void run_diffraction_order1_source_visibility_
     }
 
     const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         return;
     }
 
     const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
-    const float edge_t = params.state_edge_t_min[state_idx] +
-                         edge_u * (params.state_edge_t_max[state_idx] -
-                                   params.state_edge_t_min[state_idx]);
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
-    const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 source = state_src_at(state_idx);
     params.temp_visibility[lane] =
         visible_segment_impl<PrimaryOnly>(source, edge_point) ? 1u : 0u;
 }
@@ -1130,7 +1264,7 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
         !is_direct && static_cast<int>(lane) < direct_limit + keller_limit;
 
     const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         return;
     }
 
@@ -1138,13 +1272,11 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
     int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
                                 static_cast<unsigned int>(grid_cell_count));
     const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
-    const float edge_t = params.state_edge_t_min[state_idx] +
-                         edge_u * (params.state_edge_t_max[state_idx] -
-                                   params.state_edge_t_min[state_idx]);
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
     float3 target = grid_cell_center(cell);
     if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
@@ -1180,8 +1312,8 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
         }
         if (params.tape_material_idx != nullptr) {
             params.tape_material_idx[lane] =
-                material_index_for_faces(params.state_prim0[state_idx],
-                                         params.state_prim1[state_idx]);
+                material_index_for_faces(state_prim0_at(state_idx),
+                                         state_prim1_at(state_idx));
         }
         if (params.tape_edge_u != nullptr) {
             params.tape_edge_u[lane] = edge_u;
@@ -1246,7 +1378,7 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visib
     }
 
     const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         params.temp_visibility[lane] = 0u;
         return;
     }
@@ -1255,13 +1387,11 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visib
     int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
                                 static_cast<unsigned int>(grid_cell_count));
     const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
-    const float edge_t = params.state_edge_t_min[state_idx] +
-                         edge_u * (params.state_edge_t_max[state_idx] -
-                                   params.state_edge_t_min[state_idx]);
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
     const float3 target = grid_cell_center(cell);
 
@@ -1272,8 +1402,8 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visib
     float3 connection_target = target;
     if (!suffix_reflection_connection(edge_point,
                                       target,
-                                      params.state_prim0[state_idx],
-                                      params.state_prim1[state_idx],
+                                      state_prim0_at(state_idx),
+                                      state_prim1_at(state_idx),
                                       lane,
                                       17u,
                                       connection_target,
@@ -1331,7 +1461,7 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
     }
 
     const int state_idx = static_cast<int>(lane % static_cast<unsigned int>(params.state_count));
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         return;
     }
 
@@ -1339,13 +1469,11 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
     int cell = static_cast<int>((lane / static_cast<unsigned int>(params.state_count)) %
                                 static_cast<unsigned int>(grid_cell_count));
     const float edge_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
-    const float edge_t = params.state_edge_t_min[state_idx] +
-                         edge_u * (params.state_edge_t_max[state_idx] -
-                                   params.state_edge_t_min[state_idx]);
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float edge_t = edge_t_min + edge_u * (edge_t_max - edge_t_min);
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
     const float3 target = grid_cell_center(cell);
 
@@ -1356,8 +1484,8 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
     float3 connection_target = target;
     if (!suffix_reflection_connection(edge_point,
                                       target,
-                                      params.state_prim0[state_idx],
-                                      params.state_prim1[state_idx],
+                                      state_prim0_at(state_idx),
+                                      state_prim1_at(state_idx),
                                       lane,
                                       17u,
                                       connection_target,
@@ -1400,8 +1528,8 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
         }
         if (params.tape_material_idx != nullptr) {
             params.tape_material_idx[lane] =
-                material_index_for_faces(params.state_prim0[state_idx],
-                                         params.state_prim1[state_idx]);
+                material_index_for_faces(state_prim0_at(state_idx),
+                                         state_prim1_at(state_idx));
         }
         if (params.tape_edge_u != nullptr) {
             params.tape_edge_u[lane] = edge_u;
@@ -1437,7 +1565,7 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
     if (cell < 0 || cell >= grid_cell_count) {
         return;
     }
-    if (params.active_mask != nullptr && params.active_mask[state_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, state_idx)) {
         return;
     }
     if (params.coherent_utd_slot_count >= 84 && params.utd_epx != nullptr) {
@@ -1445,14 +1573,11 @@ static __forceinline__ __device__ void run_diffraction_order1_coherent_accumulat
         return;
     }
 
-    const float3 edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
-    const float3 edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
-    const float edge_t_min = params.state_edge_t_min[state_idx];
-    const float edge_t_max = params.state_edge_t_max[state_idx];
-    const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 edge_pos = state_edge_pos_at(state_idx);
+    const float3 edge_dir = normalize3(state_edge_dir_at(state_idx));
+    const float edge_t_min = state_edge_t_min_at(state_idx);
+    const float edge_t_max = state_edge_t_max_at(state_idx);
+    const float3 source = state_src_at(state_idx);
     const float3 target = grid_cell_center(cell);
     float edge_t = 0.5f * (edge_t_min + edge_t_max);
     float visibility_edge_t = edge_t;
@@ -1584,11 +1709,14 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     const int second_idx = static_cast<int>(
         second_hash % static_cast<unsigned int>(params.recursive_state_count));
     int third_idx = -1;
-    if (params.active_mask != nullptr && params.active_mask[first_idx] == 0u) {
+    if (!active_for_state(params.active_mask, params.active_width, params.active_stride, first_idx)) {
         return;
     }
-    if (params.recursive_active_mask != nullptr &&
-        params.recursive_active_mask[second_idx] == 0u) {
+    if (!active_for_state(
+            params.recursive_active_mask,
+            params.recursive_active_width,
+            params.recursive_active_stride,
+            second_idx)) {
         return;
     }
     if (params.max_order == 3) {
@@ -1596,16 +1724,19 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
             lane ^ (static_cast<unsigned int>(params.seed) * 0x85ebca6bu) ^ 0xc2b2ae35u);
         third_idx = static_cast<int>(
             third_hash % static_cast<unsigned int>(params.recursive_state_count));
-        if (params.recursive_active_mask != nullptr &&
-            params.recursive_active_mask[third_idx] == 0u) {
+        if (!active_for_state(
+                params.recursive_active_mask,
+                params.recursive_active_width,
+                params.recursive_active_stride,
+                third_idx)) {
             return;
         }
     }
 
-    const int first_edge_index = params.state_edge_index[first_idx];
-    const int second_edge_index = params.recursive_state_edge_index[second_idx];
+    const int first_edge_index = state_edge_index_at(first_idx);
+    const int second_edge_index = recursive_state_edge_index_at(second_idx);
     const int third_edge_index =
-        params.max_order == 3 ? params.recursive_state_edge_index[third_idx] : -1;
+        params.max_order == 3 ? recursive_state_edge_index_at(third_idx) : -1;
     if (first_edge_index == second_edge_index ||
         (params.max_order == 3 &&
          (first_edge_index == third_edge_index || second_edge_index == third_edge_index))) {
@@ -1622,53 +1753,31 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     const float first_u = uniform01(lane, 0u, static_cast<unsigned int>(params.seed));
     const float second_u = uniform01(lane, 2u, static_cast<unsigned int>(params.seed));
 
-    const float3 first_edge_pos =
-        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, first_idx);
-    const float3 first_edge_dir =
-        normalize3(state_vec(params.state_edge_dir_x,
-                             params.state_edge_dir_y,
-                             params.state_edge_dir_z,
-                             first_idx));
-    const float first_t = params.state_edge_t_min[first_idx] +
-                          first_u * (params.state_edge_t_max[first_idx] -
-                                     params.state_edge_t_min[first_idx]);
+    const float3 first_edge_pos = state_edge_pos_at(first_idx);
+    const float3 first_edge_dir = normalize3(state_edge_dir_at(first_idx));
+    const float first_t_min = state_edge_t_min_at(first_idx);
+    const float first_t_max = state_edge_t_max_at(first_idx);
+    const float first_t = first_t_min + first_u * (first_t_max - first_t_min);
     const float3 first_point = first_edge_pos + first_t * first_edge_dir;
 
-    const float3 second_edge_pos =
-        recursive_state_vec(params.recursive_state_edge_pos_x,
-                            params.recursive_state_edge_pos_y,
-                            params.recursive_state_edge_pos_z,
-                            second_idx);
-    const float3 second_edge_dir =
-        normalize3(recursive_state_vec(params.recursive_state_edge_dir_x,
-                                       params.recursive_state_edge_dir_y,
-                                       params.recursive_state_edge_dir_z,
-                                       second_idx));
-    const float second_t = params.recursive_state_edge_t_min[second_idx] +
-                           second_u * (params.recursive_state_edge_t_max[second_idx] -
-                                       params.recursive_state_edge_t_min[second_idx]);
+    const float3 second_edge_pos = recursive_state_edge_pos_at(second_idx);
+    const float3 second_edge_dir = normalize3(recursive_state_edge_dir_at(second_idx));
+    const float second_t_min = recursive_state_edge_t_min_at(second_idx);
+    const float second_t_max = recursive_state_edge_t_max_at(second_idx);
+    const float second_t = second_t_min + second_u * (second_t_max - second_t_min);
     const float3 second_point = second_edge_pos + second_t * second_edge_dir;
 
-    const float3 source =
-        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, first_idx);
+    const float3 source = state_src_at(first_idx);
     const float3 target = grid_cell_center(cell);
     float3 third_point = second_point;
     float3 third_edge_dir = second_edge_dir;
     if (params.max_order == 3) {
         const float third_u = uniform01(lane, 4u, static_cast<unsigned int>(params.seed));
-        const float3 third_edge_pos =
-            recursive_state_vec(params.recursive_state_edge_pos_x,
-                                params.recursive_state_edge_pos_y,
-                                params.recursive_state_edge_pos_z,
-                                third_idx);
-        third_edge_dir =
-            normalize3(recursive_state_vec(params.recursive_state_edge_dir_x,
-                                           params.recursive_state_edge_dir_y,
-                                           params.recursive_state_edge_dir_z,
-                                           third_idx));
-        const float third_t = params.recursive_state_edge_t_min[third_idx] +
-                              third_u * (params.recursive_state_edge_t_max[third_idx] -
-                                         params.recursive_state_edge_t_min[third_idx]);
+        const float3 third_edge_pos = recursive_state_edge_pos_at(third_idx);
+        third_edge_dir = normalize3(recursive_state_edge_dir_at(third_idx));
+        const float third_t_min = recursive_state_edge_t_min_at(third_idx);
+        const float third_t_max = recursive_state_edge_t_max_at(third_idx);
+        const float third_t = third_t_min + third_u * (third_t_max - third_t_min);
         third_point = third_edge_pos + third_t * third_edge_dir;
     }
     const float3 terminal_point = params.max_order == 3 ? third_point : second_point;
@@ -1697,12 +1806,12 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     if (is_suffix) {
         const int suffix_face0_prim =
             params.max_order == 3
-                ? params.recursive_state_prim0[third_idx]
-                : params.recursive_state_prim0[second_idx];
+                ? recursive_state_prim0_at(third_idx)
+                : recursive_state_prim0_at(second_idx);
         const int suffix_face1_prim =
             params.max_order == 3
-                ? params.recursive_state_prim1[third_idx]
-                : params.recursive_state_prim1[second_idx];
+                ? recursive_state_prim1_at(third_idx)
+                : recursive_state_prim1_at(second_idx);
         if (!suffix_reflection_connection(terminal_point,
                                           target,
                                           suffix_face0_prim,
@@ -1742,23 +1851,23 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     }
 
     const float first_weight = chain_event_weight(
-        params.state_src_power[first_idx],
-        params.state_prim0[first_idx],
-        params.state_prim1[first_idx],
-        params.state_edge_t_min[first_idx],
-        params.state_edge_t_max[first_idx],
-        params.state_exterior_angle[first_idx],
+        state_src_power_at(first_idx),
+        state_prim0_at(first_idx),
+        state_prim1_at(first_idx),
+        state_edge_t_min_at(first_idx),
+        state_edge_t_max_at(first_idx),
+        state_exterior_angle_at(first_idx),
         source,
         first_point,
         second_point);
     const float3 second_target = params.max_order == 3 ? third_point : final_target;
     const float second_weight = chain_event_weight(
         1.f,
-        params.recursive_state_prim0[second_idx],
-        params.recursive_state_prim1[second_idx],
-        params.recursive_state_edge_t_min[second_idx],
-        params.recursive_state_edge_t_max[second_idx],
-        params.recursive_state_exterior_angle[second_idx],
+        recursive_state_prim0_at(second_idx),
+        recursive_state_prim1_at(second_idx),
+        recursive_state_edge_t_min_at(second_idx),
+        recursive_state_edge_t_max_at(second_idx),
+        recursive_state_exterior_angle_at(second_idx),
         first_point,
         second_point,
         second_target);
@@ -1766,11 +1875,11 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     if (params.max_order == 3) {
         const float third_weight = chain_event_weight(
             1.f,
-            params.recursive_state_prim0[third_idx],
-            params.recursive_state_prim1[third_idx],
-            params.recursive_state_edge_t_min[third_idx],
-            params.recursive_state_edge_t_max[third_idx],
-            params.recursive_state_exterior_angle[third_idx],
+            recursive_state_prim0_at(third_idx),
+            recursive_state_prim1_at(third_idx),
+            recursive_state_edge_t_min_at(third_idx),
+            recursive_state_edge_t_max_at(third_idx),
+            recursive_state_exterior_angle_at(third_idx),
             second_point,
             third_point,
             final_target);
@@ -1809,8 +1918,8 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
         }
         if (params.tape_material_idx != nullptr) {
             params.tape_material_idx[lane] =
-                material_index_for_faces(params.state_prim0[first_idx],
-                                         params.state_prim1[first_idx]);
+                material_index_for_faces(state_prim0_at(first_idx),
+                                         state_prim1_at(first_idx));
         }
         if (params.tape_edge_u != nullptr) {
             params.tape_edge_u[lane] = first_u;

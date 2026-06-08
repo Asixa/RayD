@@ -103,13 +103,30 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
     return hit.hit == 0u;
 }
 
+static __forceinline__ __device__ float read_f32(const float *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
+static __forceinline__ __device__ int read_i32(const int *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
+static __forceinline__ __device__ uint8_t read_u8(const uint8_t *ptr, int stride, int idx) {
+    return ptr[idx * stride];
+}
+
 static __forceinline__ __device__ float3 vec_from_storage(const float *aos,
+                                                          int aos_stride0,
+                                                          int aos_stride1,
                                                           const float *x,
                                                           const float *y,
                                                           const float *z,
                                                           int idx) {
     if (aos != nullptr) {
-        return make_f3(aos + idx * 3);
+        const int base = idx * aos_stride0;
+        return make_float3(aos[base + 0 * aos_stride1],
+                           aos[base + 1 * aos_stride1],
+                           aos[base + 2 * aos_stride1]);
     }
     return make_f3(x[idx], y[idx], z[idx]);
 }
@@ -121,14 +138,16 @@ static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
     }
     int prim = face0_prim;
     if (prim < 0 || prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        (params.material_valid != nullptr &&
+         read_u8(params.material_valid, params.material_valid_stride, prim) == 0u)) {
         prim = face1_prim;
     }
     if (prim < 0 || prim >= params.material_count ||
-        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        (params.material_valid != nullptr &&
+         read_u8(params.material_valid, params.material_valid_stride, prim) == 0u)) {
         return 1.f;
     }
-    return fmaxf(params.material_gain[prim], 0.f);
+    return fmaxf(read_f32(params.material_gain, params.material_gain_stride, prim), 0.f);
 }
 
 static __forceinline__ __device__ bool state_active(int state_idx) {
@@ -136,7 +155,7 @@ static __forceinline__ __device__ bool state_active(int state_idx) {
         return true;
     }
     const int active_idx = params.active_width == 1 ? 0 : state_idx;
-    return params.active_mask[active_idx] != 0u;
+    return params.active_mask[active_idx * params.active_stride] != 0u;
 }
 
 static __forceinline__ __device__ float path_weight(int state_idx,
@@ -144,6 +163,8 @@ static __forceinline__ __device__ float path_weight(int state_idx,
                                                     float3 receiver) {
     const float3 source =
         vec_from_storage(params.state_src_aos,
+                         params.state_src_stride0,
+                         params.state_src_stride1,
                          params.state_src_x,
                          params.state_src_y,
                          params.state_src_z,
@@ -151,15 +172,18 @@ static __forceinline__ __device__ float path_weight(int state_idx,
     const float source_distance = fmaxf(norm3(edge_point - source), kPathEps);
     const float receiver_distance = fmaxf(norm3(receiver - edge_point), kPathEps);
     const float edge_length = fmaxf(
-        params.state_edge_t_max[state_idx] - params.state_edge_t_min[state_idx],
+        read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx) -
+            read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx),
         0.f);
     const float exterior_angle =
-        fmaxf(params.state_exterior_angle[state_idx], 0.25f * kPi);
+        fmaxf(read_f32(params.state_exterior_angle, params.state_exterior_angle_stride, state_idx),
+              0.25f * kPi);
     const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
-    const float material_gain = material_gain_for_faces(params.state_prim0[state_idx],
-                                                       params.state_prim1[state_idx]);
+    const float material_gain =
+        material_gain_for_faces(read_i32(params.state_prim0, params.state_prim0_stride, state_idx),
+                                read_i32(params.state_prim1, params.state_prim1_stride, state_idx));
     const float wave_gain = params.wavelength * (1.f / (4.f * kPi));
-    return params.state_src_power[state_idx] *
+    return read_f32(params.state_src_power, params.state_src_power_stride, state_idx) *
            material_gain *
            edge_length *
            wedge_scale *
@@ -168,11 +192,18 @@ static __forceinline__ __device__ float path_weight(int state_idx,
            (source_distance * source_distance * receiver_distance * receiver_distance);
 }
 
-static __forceinline__ __device__ void write_point(float *x,
+static __forceinline__ __device__ void write_point(float *aos,
+                                                   float *x,
                                                    float *y,
                                                    float *z,
                                                    int idx,
                                                    float3 value) {
+    if (aos != nullptr) {
+        aos[idx * 3 + 0] = value.x;
+        aos[idx * 3 + 1] = value.y;
+        aos[idx * 3 + 2] = value.z;
+        return;
+    }
     if (x == nullptr || y == nullptr || z == nullptr) {
         return;
     }
@@ -242,27 +273,40 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
 
     const float3 source =
         vec_from_storage(params.state_src_aos,
+                         params.state_src_stride0,
+                         params.state_src_stride1,
                          params.state_src_x,
                          params.state_src_y,
                          params.state_src_z,
                          state_idx);
     const float3 edge_pos =
         vec_from_storage(params.state_edge_pos_aos,
+                         params.state_edge_pos_stride0,
+                         params.state_edge_pos_stride1,
                          params.state_edge_pos_x,
                          params.state_edge_pos_y,
                          params.state_edge_pos_z,
                          state_idx);
     const float3 edge_dir =
         normalize3(vec_from_storage(params.state_edge_dir_aos,
+                                    params.state_edge_dir_stride0,
+                                    params.state_edge_dir_stride1,
                                     params.state_edge_dir_x,
                                     params.state_edge_dir_y,
                                     params.state_edge_dir_z,
                                     state_idx));
-    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
-                               params.state_edge_t_max[state_idx]);
+    const float mid_t =
+        0.5f * (read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx) +
+                read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx));
     const float3 edge_point = edge_pos + mid_t * edge_dir;
     const float3 receiver =
-        vec_from_storage(params.rx_pos_aos, params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
+        vec_from_storage(params.rx_pos_aos,
+                         params.rx_pos_stride0,
+                         params.rx_pos_stride1,
+                         params.rx_pos_x,
+                         params.rx_pos_y,
+                         params.rx_pos_z,
+                         rx_idx);
 
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
         !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z) ||
@@ -294,11 +338,12 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     params.out_tx_id[out_idx] = tx_idx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
-    params.out_edge0[out_idx] = params.state_edge_index[state_idx];
+    params.out_edge0[out_idx] =
+        read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
-    write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
+    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
 }
 
@@ -332,18 +377,23 @@ static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
 static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
     const float3 edge_pos =
         vec_from_storage(params.state_edge_pos_aos,
+                         params.state_edge_pos_stride0,
+                         params.state_edge_pos_stride1,
                          params.state_edge_pos_x,
                          params.state_edge_pos_y,
                          params.state_edge_pos_z,
                          state_idx);
     const float3 edge_dir =
         normalize3(vec_from_storage(params.state_edge_dir_aos,
+                                    params.state_edge_dir_stride0,
+                                    params.state_edge_dir_stride1,
                                     params.state_edge_dir_x,
                                     params.state_edge_dir_y,
                                     params.state_edge_dir_z,
                                     state_idx));
-    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
-                               params.state_edge_t_max[state_idx]);
+    const float mid_t =
+        0.5f * (read_f32(params.state_edge_t_min, params.state_edge_t_min_stride, state_idx) +
+                read_f32(params.state_edge_t_max, params.state_edge_t_max_stride, state_idx));
     return edge_pos + mid_t * edge_dir;
 }
 
@@ -374,6 +424,8 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
 
     const float3 source =
         vec_from_storage(params.state_src_aos,
+                         params.state_src_stride0,
+                         params.state_src_stride1,
                          params.state_src_x,
                          params.state_src_y,
                          params.state_src_z,
@@ -406,13 +458,21 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
 
     const float3 source =
         vec_from_storage(params.state_src_aos,
+                         params.state_src_stride0,
+                         params.state_src_stride1,
                          params.state_src_x,
                          params.state_src_y,
                          params.state_src_z,
                          state_idx);
     const float3 edge_point = paths_edge_point(state_idx);
     const float3 receiver =
-        vec_from_storage(params.rx_pos_aos, params.rx_pos_x, params.rx_pos_y, params.rx_pos_z, rx_idx);
+        vec_from_storage(params.rx_pos_aos,
+                         params.rx_pos_stride0,
+                         params.rx_pos_stride1,
+                         params.rx_pos_x,
+                         params.rx_pos_y,
+                         params.rx_pos_z,
+                         rx_idx);
 
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
@@ -441,11 +501,12 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     params.out_tx_id[out_idx] = tx_idx;
     params.out_rx_id[out_idx] = rx_idx;
     params.out_order[out_idx] = 1;
-    params.out_edge0[out_idx] = params.state_edge_index[state_idx];
+    params.out_edge0[out_idx] =
+        read_i32(params.state_edge_index, params.state_edge_index_stride, state_idx);
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
     params.out_field_x_re[out_idx] = amplitude * phase_c;
     params.out_field_x_im[out_idx] = amplitude * phase_s;
-    write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
+    write_point(params.out_p0_aos, params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
 }
 

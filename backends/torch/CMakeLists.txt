@@ -373,6 +373,8 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/tensor_check.cpp
         src/torch_ext/scene/scene_cache.cpp
         src/torch_ext/common/optix_pipeline.cpp
+        src/torch_ext/common/ops_stats.cpp
+        src/torch_ext/common/ops_camera.cpp
         src/torch_ext/reflection/pipeline.cpp
         src/torch_ext/diffraction/pipeline.cpp
         src/torch_ext/scene/ops_scene.cpp
@@ -394,6 +396,9 @@ if(RAYDTORCH_BUILD_NATIVE)
         src/torch_ext/reflection/accum_reduce.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
+        src/torch_ext/diffraction/paths_init.cu
+        src/torch_ext/common/stats.cu
+        src/torch_ext/common/camera.cu
     )
     target_include_directories(
         _raydtorch

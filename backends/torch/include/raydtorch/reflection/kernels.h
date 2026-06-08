@@ -66,8 +66,8 @@ ReflectionBackwardOutputs reflection_chain_backward_cuda(
     const at::Tensor &tape_hit_points,
     const at::Tensor &tape_normals,
     const at::Tensor &image_sources,
-    const at::Tensor &grad_t,
-    const at::Tensor &grad_image_sources);
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_image_sources);
 
 ReflectionJvpOutputs reflection_chain_jvp_cuda(
     const at::Tensor &vertices,
@@ -79,9 +79,9 @@ ReflectionJvpOutputs reflection_chain_jvp_cuda(
     const at::Tensor &tape_barycentric,
     const at::Tensor &tape_hit_points,
     const at::Tensor &tape_normals,
-    const at::Tensor &tangent_vertices,
-    const at::Tensor &tangent_ray_o,
-    const at::Tensor &tangent_ray_d,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
     const at::Tensor &image_sources);
 
 struct ReflEpcBackwardOutputs {
@@ -99,9 +99,12 @@ ReflEpcBackwardOutputs refl_epc_backward_cuda(
     const at::Tensor &tape_prim_id,
     const at::Tensor &tape_barycentric,
     const at::Tensor &tape_t,
-    const at::Tensor &grad_field_real,
-    const at::Tensor &grad_field_imag,
-    const at::Tensor &grad_path_length);
+    const at::Tensor *grad_field_real,
+    const at::Tensor *grad_field_imag,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver);
 
 struct ReflEpcJvpOutputs {
     at::Tensor tangent_field_real;
@@ -118,8 +121,8 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
     const at::Tensor &tape_prim_id,
     const at::Tensor &tape_barycentric,
     const at::Tensor &tape_t,
-    const at::Tensor &tangent_vertices,
-    const at::Tensor &tangent_source,
-    const at::Tensor &tangent_receiver);
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver);
 
 } // namespace raydtorch

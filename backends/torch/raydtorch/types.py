@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import IntFlag
 import torch
 
+from . import _C
+
 
 RayFlags = IntFlag(
     "RayFlags",
@@ -28,7 +30,7 @@ def _require_float_cuda_tensor(value: torch.Tensor, name: str, shape_last: int |
         raise ValueError(f"{name} must have shape (N, {shape_last}).")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Ray:
     o: torch.Tensor
     d: torch.Tensor
@@ -43,15 +45,15 @@ class Ray:
             object.__setattr__(
                 self,
                 "tmax",
-                torch.full((self.o.shape[0],), float("inf"), device=self.o.device, dtype=self.o.dtype),
+                torch.empty((0,), device=self.o.device, dtype=self.o.dtype),
             )
         else:
             _require_float_cuda_tensor(self.tmax, "Ray.tmax", None)
-            if self.tmax.ndim != 1 or self.tmax.shape[0] != self.o.shape[0]:
-                raise ValueError("Ray.tmax must have shape (N,).")
+            if self.tmax.ndim != 1 or (self.tmax.numel() != 0 and self.tmax.shape[0] != self.o.shape[0]):
+                raise ValueError("Ray.tmax must be empty or have shape (N,).")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Intersection:
     t: torch.Tensor
     p: torch.Tensor
@@ -65,9 +67,127 @@ class Intersection:
     global_prim_id: torch.Tensor
 
     def is_valid(self) -> torch.Tensor:
+        if _C is not None and self.t.device.type == "cuda":
+            return _C.intersection_valid(self.t, self.shape_id)
         if self.shape_id.numel() != self.t.numel():
             return torch.isfinite(self.t)
         return self.shape_id >= 0
+
+
+class _LazyIntersection:
+    __slots__ = ("_load_t", "_load_full", "_t", "_full")
+
+    def __init__(self, load_t, load_full) -> None:
+        self._load_t = load_t
+        self._load_full = load_full
+        self._t: torch.Tensor | None = None
+        self._full: Intersection | None = None
+
+    def _ensure_full(self) -> Intersection:
+        if self._full is None:
+            self._full = self._load_full()
+        return self._full
+
+    @property
+    def t(self) -> torch.Tensor:
+        if self._t is not None:
+            return self._t
+        if self._full is not None:
+            return self._full.t
+        self._t = self._load_t()
+        return self._t
+
+    @property
+    def p(self) -> torch.Tensor:
+        return self._ensure_full().p
+
+    @property
+    def n(self) -> torch.Tensor:
+        return self._ensure_full().n
+
+    @property
+    def geo_n(self) -> torch.Tensor:
+        return self._ensure_full().geo_n
+
+    @property
+    def uv(self) -> torch.Tensor:
+        return self._ensure_full().uv
+
+    @property
+    def barycentric(self) -> torch.Tensor:
+        return self._ensure_full().barycentric
+
+    @property
+    def shape_id(self) -> torch.Tensor:
+        return self._ensure_full().shape_id
+
+    @property
+    def prim_id(self) -> torch.Tensor:
+        return self._ensure_full().prim_id
+
+    @property
+    def local_prim_id(self) -> torch.Tensor:
+        return self._ensure_full().local_prim_id
+
+    @property
+    def global_prim_id(self) -> torch.Tensor:
+        return self._ensure_full().global_prim_id
+
+    def is_valid(self) -> torch.Tensor:
+        return self._ensure_full().is_valid()
+
+
+class _ReducedIntersection:
+    __slots__ = ("_scene_handle", "t", "_fields")
+
+    def __init__(self, scene_handle: int, t: torch.Tensor) -> None:
+        self._scene_handle = scene_handle
+        self.t = t
+        self._fields: tuple[torch.Tensor, ...] | None = None
+
+    def _empty_fields(self) -> tuple[torch.Tensor, ...]:
+        if self._fields is None:
+            self._fields = _C.intersection_empty_fields(self._scene_handle, self.t)
+        return self._fields
+
+    @property
+    def p(self) -> torch.Tensor:
+        return self._empty_fields()[0]
+
+    @property
+    def n(self) -> torch.Tensor:
+        return self._empty_fields()[1]
+
+    @property
+    def geo_n(self) -> torch.Tensor:
+        return self._empty_fields()[2]
+
+    @property
+    def uv(self) -> torch.Tensor:
+        return self._empty_fields()[3]
+
+    @property
+    def barycentric(self) -> torch.Tensor:
+        return self._empty_fields()[4]
+
+    @property
+    def shape_id(self) -> torch.Tensor:
+        return self._empty_fields()[5]
+
+    @property
+    def prim_id(self) -> torch.Tensor:
+        return self._empty_fields()[6]
+
+    @property
+    def local_prim_id(self) -> torch.Tensor:
+        return self._empty_fields()[7]
+
+    @property
+    def global_prim_id(self) -> torch.Tensor:
+        return self._empty_fields()[8]
+
+    def is_valid(self) -> torch.Tensor:
+        return _C.intersection_valid(self.t, self.shape_id)
 
 
 @dataclass(frozen=True)
@@ -92,12 +212,66 @@ class NearestRayEdge:
     global_edge_id: torch.Tensor
 
 
-@dataclass(frozen=True)
 class ReflectionChain:
-    valid: torch.Tensor
-    t: torch.Tensor
-    image_sources: torch.Tensor
-    prim_ids: torch.Tensor
+    __slots__ = ("_valid", "_t", "_image_sources", "_prim_ids", "_loader")
+
+    def __init__(
+        self,
+        valid: torch.Tensor | None = None,
+        t: torch.Tensor | None = None,
+        image_sources: torch.Tensor | None = None,
+        prim_ids: torch.Tensor | None = None,
+        *,
+        loader=None,
+    ) -> None:
+        self._valid = valid
+        self._t = t
+        self._image_sources = image_sources
+        self._prim_ids = prim_ids
+        self._loader = loader
+
+    def _ensure_reduced(self) -> None:
+        if self._valid is not None and self._t is not None and self._prim_ids is not None:
+            return
+        if self._loader is None:
+            raise RuntimeError("ReflectionChain has no trace data loader.")
+        valid, t, image_sources, prim_ids = self._loader(False)
+        self._valid = valid
+        self._t = t
+        self._prim_ids = prim_ids
+        if image_sources is not None:
+            self._image_sources = image_sources
+
+    def _ensure_full(self) -> None:
+        if self._image_sources is not None:
+            return
+        if self._loader is None:
+            raise RuntimeError("ReflectionChain has no image-source data.")
+        valid, t, image_sources, prim_ids = self._loader(True)
+        self._valid = valid
+        self._t = t
+        self._image_sources = image_sources
+        self._prim_ids = prim_ids
+
+    @property
+    def valid(self) -> torch.Tensor:
+        self._ensure_reduced()
+        return self._valid
+
+    @property
+    def t(self) -> torch.Tensor:
+        self._ensure_reduced()
+        return self._t
+
+    @property
+    def image_sources(self) -> torch.Tensor:
+        self._ensure_full()
+        return self._image_sources
+
+    @property
+    def prim_ids(self) -> torch.Tensor:
+        self._ensure_reduced()
+        return self._prim_ids
 
 
 @dataclass(frozen=True)

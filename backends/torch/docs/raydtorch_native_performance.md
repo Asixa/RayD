@@ -97,7 +97,7 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydtorch_r
 
 This benchmark adds RayDTorch to RayD's path-level Mitsuba comparison for:
 
-- `reflection_trace`: parallel reflectors, minimal path export.
+- `reflection_trace`: parallel reflectors, public reduced path fields.
 - `diffraction_export`: synthetic single-edge diffraction path export.
 
 It writes all outputs under one folder, for example
@@ -105,12 +105,22 @@ It writes all outputs under one folder, for example
 `multipath.csv`, and `time_ms_multipath.png`. The plot is a grouped bar chart of
 absolute average time in ms only; no SVG or throughput plot is emitted.
 
-Latest high-repeat multipath result, 65,536 rays/states, 30 repeats, 8 warmup:
+Latest multipath result with RayD warm-started in the same script,
+`--preset standard --backends raydtorch rayd_path --no-plots`. The
+1,048,576-ray / 4-bounce reflection row is from the focused verification
+`--workloads reflection_trace --ray-count 1048576 --max-bounces 4 --repeats 20
+--warmup 5`, run after the standard five-sample pass showed a single outlier.
 
-| Workload | RayDTorch ms | RayD ms | Status |
-|---|---:|---:|---|
-| reflection trace | 0.0507 | 0.1296 | RayDTorch faster |
-| diffraction export | 0.2188 | 0.2967 | RayDTorch faster |
+| Workload | Size | RayDTorch ms | RayD ms | Speedup | Status |
+|---|---:|---:|---:|---:|---|
+| reflection trace, 2 bounces | 65,536 rays | 0.0971 | 0.1348 | 1.39x | RayDTorch faster |
+| reflection trace, 4 bounces | 65,536 rays | 0.1138 | 0.2259 | 1.99x | RayDTorch faster |
+| reflection trace, 2 bounces | 1,048,576 rays | 0.2683 | 0.7791 | 2.90x | RayDTorch faster |
+| reflection trace, 4 bounces | 1,048,576 rays | 0.4241 | 0.7000 | 1.65x | RayDTorch faster |
+| diffraction export | 65,536 states | 0.3065 | 0.4769 | 1.56x | RayDTorch faster |
+| diffraction export | 1,048,576 states | 0.6312 | 0.8531 | 1.35x | RayDTorch faster |
+
+All listed path-length checksums matched RayD.
 
 AD backward is measured with `--include-backward`; plots are absolute projected
 time grouped by backend, not throughput or speedup plots:
@@ -124,32 +134,67 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydtorc
   --output-dir artifacts\benchmarks\scaling\ad_uv_tape
 ```
 
-For RayDTorch, `t_sum_*` benchmark modes use `Scene.intersect_t_sum_vjp`, a
-native scalar-loss VJP for `sum(intersection.t)`. This computes the same loss
-and vertex gradients as `scene.intersect(...).t.sum().backward()` in parity
-tests, while avoiding PyTorch eager construction of unused public intersection
-outputs and generic autograd-engine overhead. This is the closest RayDTorch
-counterpart to RayD's warm-started compiled VJP for the same scalar loss.
+RayDTorch static AD/VJP is now measured through the public API:
+`scene.intersect(...).t.backward(upstream)`, with nonuniform upstream gradients.
+The old `Scene.intersect_t_sum_vjp` / `t_sum_*` scalar-loss benchmark interface
+has been removed and is guarded by `tests.raydtorch_native.test_public_api_contract`.
+Full-output `Scene.intersect` VJP/JVP now also routes missing upstream gradients
+and missing tangents through native optional kernels instead of Python
+`torch.zeros_like`; explicit upstream gradients and tangents are read in the CUDA
+kernel with tensor strides, so non-contiguous or expanded gradients do not need a
+C++ ATen `.contiguous()` staging copy. This preserves generic upstream-gradient
+semantics and does not assume a sum loss.
+Point `Scene.nearest_edge`, `Scene.trace_reflections`, and
+`Scene.trace_refl_epc_field` AD inputs use the same stride-aware nullable-input
+pattern for their upstream gradients and JVP tangents. Custom autograd nodes now
+also disable unused-output gradient materialization, so `its.t.backward(upstream)`
+does not receive zero tensors for unused full intersection fields.
 
-High-repeat static AD/VJP points, 65.5K rays, 30 repeats, 8 warmup:
+Current public AD/VJP status, 65.5K rays, 30 repeats, 8 warmup:
 
 | Mode | RayDTorch ms | RayD ms | Status |
 |---|---:|---:|---|
-| 73.7K tri forward full | 0.0601 | 0.1325 | RayDTorch faster |
-| 73.7K tri forward reduced | 0.0487 | 0.1317 | RayDTorch faster |
-| 73.7K tri backward `t_sum_full` | 0.0820 | 0.2092 | RayDTorch faster |
-| 73.7K tri backward `t_sum_reduced` | 0.0764 | 0.1900 | RayDTorch faster |
-| 131K tri forward full | 0.0614 | 0.1272 | RayDTorch faster |
-| 131K tri forward reduced | 0.0461 | 0.1173 | RayDTorch faster |
-| 131K tri backward `t_sum_full` | 0.0918 | 0.2220 | RayDTorch faster |
-| 131K tri backward `t_sum_reduced` | 0.0774 | 0.1914 | RayDTorch faster |
+| 73.7K tri static forward full | 0.0558 | 0.1460 | RayDTorch faster |
+| 73.7K tri static forward reduced | 0.0415 | 0.1383 | RayDTorch faster |
+| 73.7K tri static public VJP full | 0.2106 | 0.0864 | RayD faster |
+| 73.7K tri static public VJP reduced | 0.1775 | 0.0725 | RayD faster |
+| 73.7K tri dynamic public VJP full | 0.3112 | 2.5960 | RayDTorch faster |
+| 73.7K tri dynamic public VJP reduced | 0.3069 | 2.1908 | RayDTorch faster |
 
-The former static AD backward gap is closed for the covered benchmark shapes.
-The fix combines an expanded-gradient t-only backward path, a direct native
-`sum(t)` VJP with constant scalar `grad_t=1`, and avoiding eager public-output
-construction when the scalar loss only depends on `t`.
+The native reduced VJP kernel itself is not the bottleneck: direct native
+`intersect_forward_tape + intersect_backward_t` measures about 0.068 ms on the
+4,096-ray and 65,536-ray stress shapes. The remaining public static AD gap is
+PyTorch eager autograd overhead: graph construction, tensor metadata allocation,
+and `AccumulateGrad` around `.backward()`. CUDA Graph capture works for the
+direct native forward and backward calls individually, but capture of the public
+`.backward()` path currently fails with CUDA stream-capture invalidation. Closing
+this gap fairly requires reducing the public autograd boundary count or using an
+internal cached VJP executor. `torch.compile` is not expected to fuse through the
+OptiX/custom-extension/autograd boundaries reliably; the reliable optimization
+path is semantic native fusion while preserving the public API and generic
+upstream-gradient contract.
 
-Current same-script static-vs-static result:
+Latest RayD-warm-started `rayd-latest:64:128` AD spot check after native
+optional-gradient migration and disabled unused-output gradient materialization,
+16,384 rays, 30 repeats, 8 warmup:
+
+| Mode | RayDTorch ms | RayD ms | Status |
+|---|---:|---:|---|
+| static public VJP full | 0.1621 | 0.0879 | RayD faster |
+| static public VJP reduced | 0.1371 | 0.0735 | RayD faster |
+| dynamic public VJP full | 0.2901 | 1.6450 | RayDTorch faster |
+| dynamic public VJP reduced | 0.2619 | 1.4679 | RayDTorch faster |
+
+A lazy `Intersection` materialization experiment reduced the static full VJP
+number when the caller only consumed `.t`, but it was not retained: it would make
+the "full VJP" benchmark no longer materialize full public intersection fields
+before the VJP, which is an ambiguous and potentially unfair comparison.
+
+Current same-script static-vs-static result after native validity, camera
+stride, diffraction active-mask/path-export/accumulation input-stride migration,
+direct diffraction AD strided binding migration, and RayD warmup in the same
+harness. This run used `--grid 64 --queries 4096 --warmup 8 --repeat 60` with
+the installed RayD package:
 
 ```json
 {
@@ -157,25 +202,30 @@ Current same-script static-vs-static result:
   "grid": 64,
   "queries": 4096,
   "rayd": {
-    "build_ms": 2342.0363000041107,
-    "diffraction_direct_ms": 0.4519966666218049,
-    "intersect_ms": 0.14462333335056124,
-    "nearest_edge_ms": 1.4299183333302306,
-    "reflection_trace_ms": 0.34219333332051366
+    "build_ms": 2385.078599996632,
+    "diffraction_direct_ms": 0.8474633332904583,
+    "diffraction_paths_ms": 0.5784999998771431,
+    "intersect_flags_none_ms": 0.26136499994512025,
+    "intersect_ms": 0.21221833352077132,
+    "nearest_edge_ms": 1.7859500000971213,
+    "reflection_trace_ms": 0.4695400001461773
   },
   "raydtorch": {
-    "build_ms": 1547.1698999972432,
-    "diffraction_direct_ms": 0.43191333328043885,
-    "intersect_ms": 0.10184333332290407,
-    "nearest_edge_ms": 1.4051099999051075,
-    "reflection_trace_ms": 0.3025700001065464
+    "build_ms": 1551.944499995443,
+    "diffraction_direct_ms": 0.24948999998741783,
+    "diffraction_paths_ms": 0.10571333332336508,
+    "intersect_flags_none_ms": 0.038123333312493436,
+    "intersect_ms": 0.04897000011017857,
+    "nearest_edge_ms": 1.4218099999804206,
+    "reflection_trace_ms": 0.03780333330117477
   },
   "repeat": 60,
   "warmup": 8
 }
 ```
 
-Current same-script dynamic-vs-dynamic result:
+Current same-script dynamic-vs-dynamic result, `--grid 64 --queries 4096
+--warmup 5 --repeat 30 --dynamic`:
 
 ```json
 {
@@ -183,23 +233,47 @@ Current same-script dynamic-vs-dynamic result:
   "grid": 64,
   "queries": 4096,
   "rayd": {
-    "build_ms": 2337.4531000008574,
-    "diffraction_direct_ms": 0.9759666667378042,
-    "intersect_ms": 0.12905000015355958,
-    "nearest_edge_ms": 1.5716533331821363,
-    "reflection_trace_ms": 0.32191333327015553
+    "build_ms": 2441.7838000081247,
+    "diffraction_direct_ms": 0.47562999970978126,
+    "diffraction_paths_ms": 0.4139266665636872,
+    "intersect_flags_none_ms": 0.16480999959943196,
+    "intersect_ms": 0.17362000022937232,
+    "nearest_edge_ms": 1.8150333334536601,
+    "reflection_trace_ms": 0.5681900001945905
   },
   "raydtorch": {
-    "build_ms": 1547.6975999990827,
-    "diffraction_direct_ms": 0.42821333336178213,
-    "intersect_ms": 0.11110666673630476,
-    "nearest_edge_ms": 1.4978466667040873,
-    "reflection_trace_ms": 0.3103666667205592
+    "build_ms": 1545.6587000080617,
+    "diffraction_direct_ms": 0.30103666649665684,
+    "diffraction_paths_ms": 0.06877333313847582,
+    "intersect_flags_none_ms": 0.029380000099384535,
+    "intersect_ms": 0.058646666972587504,
+    "nearest_edge_ms": 1.3477100001182407,
+    "reflection_trace_ms": 0.057016666687559336
   },
   "repeat": 30,
   "warmup": 5
 }
 ```
+
+Post-native-validity/camera/diffraction-stride same-script check, `grid=64`,
+`queries=4096`, with RayD kept warm-started inside the same harness:
+
+| Mode | RayD ms | RayDTorch ms | Status |
+|---|---:|---:|---|
+| static build | 2385.079 | 1551.944 | RayDTorch faster |
+| static intersect `RayFlags.None` | 0.2614 | 0.0381 | RayDTorch faster |
+| static intersect `RayFlags.All` | 0.2122 | 0.0490 | RayDTorch faster |
+| static nearest edge | 1.7860 | 1.4218 | RayDTorch faster |
+| static reflection trace | 0.4695 | 0.0378 | RayDTorch faster |
+| static diffraction direct | 0.8475 | 0.2495 | RayDTorch faster |
+| static diffraction paths | 0.5785 | 0.1057 | RayDTorch faster |
+| dynamic build | 2441.784 | 1545.659 | RayDTorch faster |
+| dynamic intersect `RayFlags.None` | 0.1648 | 0.0294 | RayDTorch faster |
+| dynamic intersect `RayFlags.All` | 0.1736 | 0.0586 | RayDTorch faster |
+| dynamic nearest edge | 1.8150 | 1.3477 | RayDTorch faster |
+| dynamic reflection trace | 0.5682 | 0.0570 | RayDTorch faster |
+| dynamic diffraction direct | 0.4756 | 0.3010 | RayDTorch faster |
+| dynamic diffraction paths | 0.4139 | 0.0688 | RayDTorch faster |
 
 An isolated RayDTorch-only microbenchmark of the no-AD reflection trace path on
 the same grid measured:
@@ -218,22 +292,119 @@ Current interpretation for this benchmark shape:
   runs.
 - RayDTorch large static full and reduced intersection are faster in the latest
   RayD/RayDTorch sweep run.
-- RayDTorch static `sum(t)` backward/VJP is faster than RayD in the latest
-  65.5K-ray sweep for both full and reduced modes.
+- RayDTorch public static AD `.backward()` is still slower than RayD's warmed
+  static JIT VJP in the latest stress run, though disabling unused-output
+  gradient materialization removed the earlier full-output zero-gradient
+  backward penalty. Direct native `intersect_forward + intersect_backward_t`
+  remains faster than RayD; PyTorch eager autograd fixed overhead dominates the
+  public `.backward()` timing.
+- Acceptance benchmarks and public contract tests do not use benchmark-specific
+  RayDTorch shortcuts such as `_minimal` or `t_sum_*`. Static VJP timings use
+  public `.backward(upstream)` with nonuniform upstream gradients.
+- `Intersection.is_valid()` now calls a native CUDA validity kernel for both
+  full-output `shape_id >= 0` and reduced `isfinite(t)` semantics. `Camera`
+  public methods and AD kernels consume strided input/upstream tensors directly,
+  diffraction path/accumulation active masks are interpreted by native
+  width/stride parameters instead of Python or C++ expanding them to full width,
+  and `Scene.trace_dfr_paths(...)` now passes source/receiver endpoints plus
+  `DfrStates` and material tensors directly to a stride-aware native OptiX path
+  export binding rather than staging contiguous Python slices.
+- Multi-mesh `Scene.intersect`, point `Scene.nearest_edge`,
+  `Scene.trace_reflections`, and `Scene.trace_refl_epc_field` no longer build
+  global AD vertices with Python `torch.cat`. They keep each mesh vertex tensor
+  as an autograd input and use native scene-cache helpers to pack JVP tangents
+  and split global VJP gradients back to mesh leaves.
+- `Scene.intersect` full-output backward/JVP and point `Scene.nearest_edge`
+  backward/JVP now treat absent upstreams/tangents as zero in native code, not
+  with Python `torch.zeros_like`; nearest-edge JVP also receives hidden
+  `tape_s/tape_d` zero tangents from the same native JVP kernel. Tests cover
+  explicit non-sum upstreams and patch Python zero-fill helpers around these
+  paths. `Scene.intersect` JVP now also applies `RayFlags` in native code, so
+  inactive public tangent fields are returned as native empty tensors and the
+  kernel does not write disabled outputs instead of Python creating
+  `Tensor.new_empty` sentinels. Forward-AD `active=None` is passed through the
+  public wrapper as nullable input, with the saved empty active context returned
+  by the native binding as a hidden output.
+- `Scene.trace_reflections` backward/JVP now also uses optional native
+  entrypoints for absent upstreams/tangents, so the Python public wrapper no
+  longer creates empty grad sentinels or zero tangent tensors. The AD forward
+  path also receives the saved empty active-mask context from native code when
+  `active=None`, rather than creating a Python CUDA sentinel. The deeper
+  reflection-chain AD implementation still uses ATen tensor algebra internally
+  and remains a target for a true fused CUDA kernel.
+- `Scene.trace_refl_epc_field` backward/JVP now uses fused native CUDA kernels
+  for nullable upstreams/tangents. The kernels consume real nonuniform upstream
+  gradients, compute field/t VJP or JVP internally, and avoid Python
+  `torch.zeros_like` plus the previous C++ ATen `sin/cos/reshape/mul` chain.
+  AD forward also saves omitted active masks through a native hidden output. EPC
+  forward now fuses source/receiver AoS-to-SoA setup, `receiver - source`, ray
+  `tmax`, temp initialization, constant material/polarization defaults, optional
+  y/z field writes, and first primitive-id extraction into native CUDA kernels
+  instead of C++ ATen `zeros/full/ones/sub/sum/sqrt/select/reshape` fan-out.
+- `Scene.visible` now sends AoS endpoint tensors directly into the segment
+  visibility OptiX raygen; the raygen writes `visible`, first-blocking primitive,
+  and the legacy `tape_t=inf` output. The Python wrapper no longer calls
+  endpoint `.contiguous()`, and the native op no longer performs endpoint
+  `select().contiguous()` SoA splits or `at::full` output initialization for the
+  public segment-visibility path.
+- `Scene.accum_dfr_direct(...)` and `Scene.accum_dfr(...)` backward/JVP now pass
+  absent output upstreams and absent state/material tangents as nullable native
+  inputs; the CUDA AD kernels treat null pointers as zero. Direct and chain
+  diffraction JVP also receive their public zero field tangents from native code
+  rather than Python `torch.zeros_like`. Tests cover explicit non-sum upstream
+  matrices and patch Python `torch.zeros`/`torch.zeros_like` around these calls.
+- `Scene.accum_dfr_direct(...)` forward now passes unused recursive inputs as
+  nullable native arguments, so direct no-AD and AD forward no longer create
+  Python-side empty CUDA sentinels for the order-1 path.
+- `Scene.accum_dfr_direct(...)` AD backward/JVP now passes the logical
+  `states.count` into native direct AD bindings and reads state vec3/scalar
+  fields, material gain/valid masks, tangents, gradient outputs, and gradient
+  write buffers with tensor strides. The direct AD binding no longer uses
+  `split_vec3(...).contiguous()`, `flatten_optional_f32(...)`, or
+  `stack_vec3(...)` staging. Tests compare strided/padded states and material
+  views against contiguous logical-prefix inputs with nonuniform upstream
+  `grad_outputs`, so this is not a `sum()`-loss-only optimization.
+- `Scene.trace_dfr_paths(...)` and `Scene.accum_dfr_coherent_direct(...)` also
+  pass omitted active masks as nullable native inputs, avoiding Python-side
+  empty active sentinels in these public multipath calls. The path-export wrapper
+  is covered by strided endpoint/state/material tests with `states.count` smaller
+  than the physical tensor length, so this optimization is not tied to the
+  contiguous benchmark layout.
+- `Scene.accum_dfr_direct(...)` and `Scene.accum_dfr_coherent_direct(...)`
+  no-AD forward paths now pass a logical state limit and read state/material
+  scalar fields plus vec3 state fields with tensor strides in the native
+  OptiX/CUDA path. The no-AD `diffraction_accumulation_forward_op` and
+  `diffraction_coherent_accumulation_forward_op` bindings no longer use C++ ATen
+  `split_vec3(...).contiguous()` staging for state vectors.
+- `Scene.accum_dfr(...)` chain no-AD now uses the same stride-aware native
+  accumulation forward binding for initial and recursive states, including a
+  recursive logical state limit. Tests patch Python `Tensor.contiguous` around
+  the strided chain call, so this coverage is not satisfied by hidden Python
+  staging.
 - RayDTorch multipath reflection trace and diffraction export are faster in the
   latest RayD path-export benchmark.
 - RayDTorch `diffraction_direct` is faster in the latest static and dynamic
   same-script runs.
 - RayDTorch point `nearest_edge` is faster in the latest static and dynamic
   same-script runs after the no-AD Torch path removed unnecessary tape
-  allocation/writes for non-AD callers.
-- RayDTorch scene build is faster in the latest static and dynamic same-script
-  runs.
+  allocation/writes for non-AD callers and the point/ray query SoA setup moved
+  from ATen `select().contiguous()` calls to hand-written native split kernels.
+  A direct-AoS OptiX experiment was not retained after memcheck exposed an
+  illegal read on a large-grid high-z query; the native split path passed that
+  same memcheck case.
+- RayDTorch scene build is faster in the latest same-script package-RayD run
+  shown above, but build should remain an open item rather than a universal
+  superiority claim: build timing is sensitive to RayD source selection,
+  pipeline/cache state, OptiX compaction, and first-use initialization.
 - RayDTorch reflection trace is faster in the latest static and dynamic
   same-script runs.
 - Keep release-size and Nsight-backed runs as the broader performance gate;
   this document records parity for the covered benchmark, not universal
   superiority for every multipath/diffraction workload.
+- Nsight Systems was not available on PATH in this environment. Nsight Compute
+  2025.2 was available, but counter collection failed with `ERR_NVGPUCTRPERM`;
+  enable NVIDIA GPU performance counters or run an elevated profiler session
+  before adding Nsight-backed claims.
 
 ## Parity Coverage Status
 
@@ -256,6 +427,13 @@ Torch-native AD tests cover fixed-winner VJP/JVP for:
 - reflection trace VJP/JVP
 - reflection EPC forward/VJP/JVP
 - diffraction accumulation forward/VJP/JVP
+
+Current default native discover result:
+
+- `python -m unittest discover tests.raydtorch_native -v`: 102 passed, 12 skipped.
+- `RAYDTORCH_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydtorch_native.test_drjit_parity -v`:
+  12 passed. The run printed `jitc_llvm_init(): LLVM API initialization failed ..`,
+  as in earlier passing parity runs.
 
 Visibility returns a discrete bool and has no continuous gradient contract.
 

@@ -32,6 +32,28 @@ EdgeTopology build_edge_topology_cuda(
     int32_t vertex_offset,
     int32_t shape_id);
 
+void pack_global_geometry_cuda(
+    const at::Tensor &mesh_vertices,
+    const at::Tensor &mesh_faces,
+    int32_t vertex_offset,
+    int32_t face_offset,
+    int32_t shape_id,
+    at::Tensor &global_vertices,
+    at::Tensor &global_faces,
+    at::Tensor &face_shape_id,
+    at::Tensor &face_local_id);
+
+void pack_global_vertex_tangent_cuda(
+    const at::Tensor &mesh_tangent,
+    int64_t vertex_offset,
+    int64_t vertex_count,
+    at::Tensor &global_tangent);
+
+void zero_global_vertex_tangent_range_cuda(
+    int64_t vertex_offset,
+    int64_t vertex_count,
+    at::Tensor &global_tangent);
+
 void compute_triangle_soa_cuda(
     int64_t triangle_count,
     const at::Tensor &vertices,

@@ -306,6 +306,8 @@ def _torch_backward_performance(
     _, build_ms = _time_build(scene.build, torch.cuda.synchronize)
     rays = _torch_ray(ray_data)
     updated_rays = _torch_ray(updated_ray_data)
+    weights = torch.linspace(0.5, 1.5, rays.o.shape[0], device="cuda", dtype=torch.float32)
+    updated_weights = torch.linspace(1.5, 0.5, updated_rays.o.shape[0], device="cuda", dtype=torch.float32)
     flags_none = getattr(rt.RayFlags, "None")
 
     def make_run(mode: str):
@@ -314,13 +316,19 @@ def _torch_backward_performance(
         def run():
             nonlocal use_updated
             current_rays = rays
+            current_weights = weights
+            base_positions.grad = None
+            updated_positions.grad = None
             if dynamic:
                 use_updated = not use_updated
                 scene.update_mesh_vertices(mesh_id, updated_positions if use_updated else base_positions)
                 scene.sync()
                 current_rays = updated_rays if use_updated else rays
-            flags = rt.RayFlags.All if mode == "t_sum_full" else flags_none
-            return scene.intersect_t_sum_vjp(current_rays, flags=flags)
+                current_weights = updated_weights if use_updated else weights
+            flags = rt.RayFlags.All if mode == "vjp_full" else flags_none
+            its = scene.intersect(current_rays, flags=flags)
+            its.t.backward(current_weights)
+            return updated_positions.grad if dynamic and use_updated else base_positions.grad
 
         return run
 
@@ -329,7 +337,7 @@ def _torch_backward_performance(
         "build_ms": build_ms,
         "performance": {
             mode: _summarize(_measure(make_run(mode), torch.cuda.synchronize, repeats, warmup), query_count)
-            for mode in ("t_sum_full", "t_sum_reduced")
+            for mode in ("vjp_full", "vjp_reduced")
         },
     }
 
@@ -445,6 +453,10 @@ def _rayd_backward_performance(
     _, build_ms = _time_build(scene.build, dr.sync_thread)
     rays = _rayd_ray_ad(rayd, ad, ray_data)
     updated_rays = _rayd_ray_ad(rayd, ad, updated_ray_data)
+    weight_index = dr.arange(cuda.UInt, len(ray_data["ox"]))
+    weights = 0.5 + cuda.Float(weight_index) / max(1, len(ray_data["ox"]) - 1)
+    updated_weight_index = dr.arange(cuda.UInt, len(updated_ray_data["ox"]))
+    updated_weights = 1.5 - cuda.Float(updated_weight_index) / max(1, len(updated_ray_data["ox"]) - 1)
     flags_none = getattr(rayd.RayFlags, "None")
 
     def make_run(mode: str):
@@ -456,16 +468,19 @@ def _rayd_backward_performance(
             dr.set_grad(updated_positions, 0)
             current_positions = base_positions
             current_rays = rays
+            current_weights = weights
             if dynamic:
                 use_updated = not use_updated
                 current_positions = updated_positions if use_updated else base_positions
                 current_rays = updated_rays if use_updated else rays
+                current_weights = updated_weights if use_updated else weights
                 scene.update_mesh_vertices(mesh_id, current_positions)
                 scene.sync()
-            flags = rayd.RayFlags.All if mode == "t_sum_full" else flags_none
+            flags = rayd.RayFlags.All if mode == "vjp_full" else flags_none
             its = scene.intersect(current_rays, flags=flags)
-            loss = dr.sum(its.t)
-            dr.backward(loss)
+            dr.set_grad(its.t, current_weights)
+            dr.enqueue(dr.ADMode.Backward, its.t)
+            dr.traverse(dr.ADMode.Backward)
             dr.eval(dr.grad(current_positions))
 
         return run
@@ -475,7 +490,7 @@ def _rayd_backward_performance(
         "build_ms": build_ms,
         "performance": {
             mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count)
-            for mode in ("t_sum_full", "t_sum_reduced")
+            for mode in ("vjp_full", "vjp_reduced")
         },
     }
 
@@ -585,6 +600,10 @@ def _mitsuba_backward_performance(
         params.update()
     rays = _mitsuba_ray(mi, ray_data)
     updated_rays = _mitsuba_ray(mi, updated_ray_data)
+    weight_index = dr.arange(mi.UInt, len(ray_data["ox"]))
+    weights = 0.5 + mi.Float(weight_index) / max(1, len(ray_data["ox"]) - 1)
+    updated_weight_index = dr.arange(mi.UInt, len(updated_ray_data["ox"]))
+    updated_weights = 1.5 - mi.Float(updated_weight_index) / max(1, len(updated_ray_data["ox"]) - 1)
     use_updated = False
 
     def run():
@@ -593,23 +612,26 @@ def _mitsuba_backward_performance(
         dr.set_grad(updated_positions, 0)
         current_positions = base_positions
         current_rays = rays
+        current_weights = weights
         if dynamic:
             use_updated = not use_updated
             current_positions = updated_positions if use_updated else base_positions
             current_rays = updated_rays if use_updated else rays
+            current_weights = updated_weights if use_updated else weights
             params["mesh.vertex_positions"] = current_positions
             params.set_dirty("mesh.vertex_positions")
             params.update()
         its = scene.ray_intersect(current_rays)
-        loss = dr.sum(its.t)
-        dr.backward(loss)
+        dr.set_grad(its.t, current_weights)
+        dr.enqueue(dr.ADMode.Backward, its.t)
+        dr.traverse(dr.ADMode.Backward)
         dr.eval(dr.grad(current_positions))
 
     query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
     return {
         "build_ms": build_ms,
         "performance": {
-            "t_sum_full": _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count),
+            "vjp_full": _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count),
         },
     }
 
@@ -820,8 +842,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 "full": "RayDTorch/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
                 "reduced": "RayDTorch/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
                 "preliminary": "Mitsuba-only ray_intersect_preliminary t-only when --mitsuba-preliminary is set.",
-                "t_sum_full": "AD forward plus backward of sum(intersection.t), using full public intersection outputs.",
-                "t_sum_reduced": "AD forward plus backward of sum(intersection.t), using RayFlags.None t-only public outputs where available.",
+                "vjp_full": "AD forward plus vector-Jacobian product for intersection.t, using full public intersection outputs.",
+                "vjp_reduced": "AD forward plus vector-Jacobian product for intersection.t, using RayFlags.None t-only public outputs where available.",
             },
         },
         "backends": backends,

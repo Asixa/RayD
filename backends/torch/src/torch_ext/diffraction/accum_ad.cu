@@ -370,13 +370,87 @@ static __forceinline__ __device__ float3 keller_target_jvp(
     return dot_edge_point + dot_t * p.keller_ko + p.keller_ray_t * dot_ko;
 }
 
+static __forceinline__ __device__ float read_f32_strided_or_zero(
+    const float *ptr,
+    int stride,
+    int index) {
+    return ptr != nullptr ? ptr[index * stride] : 0.f;
+}
+
+static __forceinline__ __device__ int read_i32_strided_or_default(
+    const int *ptr,
+    int stride,
+    int index,
+    int default_value) {
+    return ptr != nullptr ? ptr[index * stride] : default_value;
+}
+
+static __forceinline__ __device__ bool read_u8_strided_or_false(
+    const uint8_t *ptr,
+    int stride,
+    int index) {
+    return ptr != nullptr && ptr[index * stride] != 0u;
+}
+
+static __forceinline__ __device__ float3 read_vec_strided_or_zero(
+    const float *x,
+    const float *y,
+    const float *z,
+    int stride,
+    int index) {
+    return make_f3(read_f32_strided_or_zero(x, stride, index),
+                   read_f32_strided_or_zero(y, stride, index),
+                   read_f32_strided_or_zero(z, stride, index));
+}
+
+static __forceinline__ __device__ float read_grid_or_zero(
+    const float *ptr,
+    int rank,
+    int stride0,
+    int stride1,
+    int resolution0,
+    int cell) {
+    if (ptr == nullptr) {
+        return 0.f;
+    }
+    if (rank == 2) {
+        const int x = cell % resolution0;
+        const int y = cell / resolution0;
+        return ptr[y * stride0 + x * stride1];
+    }
+    return ptr[cell * stride0];
+}
+
+static __forceinline__ __device__ void atomic_add_strided(
+    float *ptr,
+    int stride,
+    int index,
+    float value) {
+    if (ptr != nullptr) {
+        atomicAdd(ptr + index * stride, value);
+    }
+}
+
+static __forceinline__ __device__ void atomic_add_vec_strided(
+    float *x,
+    float *y,
+    float *z,
+    int stride,
+    int index,
+    float3 value) {
+    atomic_add_strided(x, stride, index, value.x);
+    atomic_add_strided(y, stride, index, value.y);
+    atomic_add_strided(z, stride, index, value.z);
+}
+
 static __forceinline__ __device__ bool material_valid_for_prim(
     const DfrDirectAccumADParams &params,
     int prim) {
     return prim >= 0 &&
            prim < params.material_count &&
            params.material_gain != nullptr &&
-           (params.material_valid == nullptr || params.material_valid[prim] != 0u);
+           (params.material_valid == nullptr ||
+            read_u8_strided_or_false(params.material_valid, params.material_valid_stride, prim));
 }
 
 static __forceinline__ __device__ bool material_valid_for_prim(
@@ -386,6 +460,20 @@ static __forceinline__ __device__ bool material_valid_for_prim(
            prim < params.material_count &&
            params.material_gain != nullptr &&
            (params.material_valid == nullptr || params.material_valid[prim] != 0u);
+}
+
+static __forceinline__ __device__ float material_gain_for_prim(
+    const DfrDirectAccumADParams &params,
+    int prim) {
+    return params.material_gain != nullptr
+               ? read_f32_strided_or_zero(params.material_gain, params.material_gain_stride, prim)
+               : 1.f;
+}
+
+static __forceinline__ __device__ float material_gain_for_prim(
+    const DfrChainAccumADParams &params,
+    int prim) {
+    return params.material_gain != nullptr ? params.material_gain[prim] : 1.f;
 }
 
 static __forceinline__ __device__ int material_index_for_faces(
@@ -593,7 +681,7 @@ static __forceinline__ __device__ bool suffix_reflection_connection(
         return false;
     }
 
-    const float raw_gain = params.material_gain != nullptr ? params.material_gain[prim] : 1.f;
+    const float raw_gain = material_gain_for_prim(params, prim);
     material_gain = fmaxf(raw_gain, 0.f);
     material_active = raw_gain > 0.f && material_valid_for_prim(params, prim);
     reflection_gain = material_gain * material_gain;
@@ -685,33 +773,44 @@ static __forceinline__ __device__ bool load_primal(
         return false;
     }
 
-    p.edge_pos = make_f3(params.state_edge_pos_x[p.state_idx],
-                           params.state_edge_pos_y[p.state_idx],
-                           params.state_edge_pos_z[p.state_idx]);
-    p.edge_dir_raw = make_f3(params.state_edge_dir_x[p.state_idx],
-                               params.state_edge_dir_y[p.state_idx],
-                               params.state_edge_dir_z[p.state_idx]);
+    p.edge_pos = read_vec_strided_or_zero(params.state_edge_pos_x,
+                                          params.state_edge_pos_y,
+                                          params.state_edge_pos_z,
+                                          params.state_edge_pos_stride,
+                                          p.state_idx);
+    p.edge_dir_raw = read_vec_strided_or_zero(params.state_edge_dir_x,
+                                              params.state_edge_dir_y,
+                                              params.state_edge_dir_z,
+                                              params.state_edge_dir_stride,
+                                              p.state_idx);
     p.edge_dir_norm = norm3(p.edge_dir_raw);
     if (!(p.edge_dir_norm > kDfrEps) || !isfinite(p.edge_dir_norm)) {
         return false;
     }
     p.edge_dir = (1.f / p.edge_dir_norm) * p.edge_dir_raw;
-    p.edge_t_min = params.state_edge_t_min[p.state_idx];
-    p.edge_t_max = params.state_edge_t_max[p.state_idx];
+    p.edge_t_min = read_f32_strided_or_zero(params.state_edge_t_min, params.state_edge_t_min_stride, p.state_idx);
+    p.edge_t_max = read_f32_strided_or_zero(params.state_edge_t_max, params.state_edge_t_max_stride, p.state_idx);
     p.edge_t = p.edge_t_min + p.edge_u * (p.edge_t_max - p.edge_t_min);
     p.edge_length = fmaxf(p.edge_t_max - p.edge_t_min, 0.f);
     p.edge_length_active = (p.edge_t_max - p.edge_t_min) > 0.f;
     p.edge_point = p.edge_pos + p.edge_t * p.edge_dir;
-    p.source = make_f3(params.state_src_x[p.state_idx],
-                         params.state_src_y[p.state_idx],
-                         params.state_src_z[p.state_idx]);
-    p.wi_raw = make_f3(params.state_wi_x != nullptr ? params.state_wi_x[p.state_idx] : 0.f,
-                         params.state_wi_y != nullptr ? params.state_wi_y[p.state_idx] : 0.f,
-                         params.state_wi_z != nullptr ? params.state_wi_z[p.state_idx] : 0.f);
+    p.source = read_vec_strided_or_zero(params.state_src_x,
+                                        params.state_src_y,
+                                        params.state_src_z,
+                                        params.state_src_stride,
+                                        p.state_idx);
+    p.wi_raw = read_vec_strided_or_zero(params.state_wi_x,
+                                        params.state_wi_y,
+                                        params.state_wi_z,
+                                        params.state_wi_stride,
+                                        p.state_idx);
     p.wi_norm = norm3(p.wi_raw);
     p.wi = normalize3(p.wi_raw);
-    p.src_power = params.state_src_power[p.state_idx];
-    p.exterior_angle = params.state_exterior_angle[p.state_idx];
+    p.src_power = read_f32_strided_or_zero(params.state_src_power, params.state_src_power_stride, p.state_idx);
+    p.exterior_angle = read_f32_strided_or_zero(
+        params.state_exterior_angle,
+        params.state_exterior_angle_stride,
+        p.state_idx);
     const float exterior_clamped = fmaxf(p.exterior_angle, 0.25f * kPi);
     p.wedge_scale = fminf(exterior_clamped / (2.f * kPi), 2.f);
     p.wedge_active = p.exterior_angle > 0.25f * kPi &&
@@ -719,7 +818,10 @@ static __forceinline__ __device__ bool load_primal(
     p.material_gain = 1.f;
     p.material_active = false;
     if (material_valid_for_prim(params, p.material_idx)) {
-        const float raw_gain = params.material_gain[p.material_idx];
+        const float raw_gain = read_f32_strided_or_zero(
+            params.material_gain,
+            params.material_gain_stride,
+            p.material_idx);
         p.material_gain = fmaxf(raw_gain, 0.f);
         p.material_active = raw_gain > 0.f;
     }
@@ -759,12 +861,16 @@ static __forceinline__ __device__ bool load_primal(
     }
     p.grid_target = p.target;
     if (p.is_suffix) {
-        const int prim0 = params.state_prim0 != nullptr
-                              ? params.state_prim0[p.state_idx]
-                              : -1;
-        const int prim1 = params.state_prim1 != nullptr
-                              ? params.state_prim1[p.state_idx]
-                              : -1;
+        const int prim0 = read_i32_strided_or_default(
+            params.state_prim0,
+            params.state_prim0_stride,
+            p.state_idx,
+            -1);
+        const int prim1 = read_i32_strided_or_default(
+            params.state_prim1,
+            params.state_prim1_stride,
+            p.state_idx,
+            -1);
         if (!suffix_reflection_connection(params,
                                           p.edge_point,
                                           p.grid_target,
@@ -1716,37 +1822,50 @@ static __forceinline__ __device__ float direct_jvp(
     const DirectPrimal &p) {
     DfrTangent tangent = {};
     tangent.edge_pos =
-        read_vec_or_zero(params.dot_state_edge_pos_x,
-                         params.dot_state_edge_pos_y,
-                         params.dot_state_edge_pos_z,
-                         p.state_idx);
+        read_vec_strided_or_zero(params.dot_state_edge_pos_x,
+                                 params.dot_state_edge_pos_y,
+                                 params.dot_state_edge_pos_z,
+                                 params.dot_state_edge_pos_stride,
+                                 p.state_idx);
     tangent.edge_dir_raw =
-        read_vec_or_zero(params.dot_state_edge_dir_x,
-                         params.dot_state_edge_dir_y,
-                         params.dot_state_edge_dir_z,
-                         p.state_idx);
-    tangent.edge_t_min = read_or_zero(params.dot_state_edge_t_min, p.state_idx);
-    tangent.edge_t_max = read_or_zero(params.dot_state_edge_t_max, p.state_idx);
+        read_vec_strided_or_zero(params.dot_state_edge_dir_x,
+                                 params.dot_state_edge_dir_y,
+                                 params.dot_state_edge_dir_z,
+                                 params.dot_state_edge_dir_stride,
+                                 p.state_idx);
+    tangent.edge_t_min =
+        read_f32_strided_or_zero(params.dot_state_edge_t_min, params.dot_state_edge_t_min_stride, p.state_idx);
+    tangent.edge_t_max =
+        read_f32_strided_or_zero(params.dot_state_edge_t_max, params.dot_state_edge_t_max_stride, p.state_idx);
     tangent.source =
-        read_vec_or_zero(params.dot_state_src_x,
-                         params.dot_state_src_y,
-                         params.dot_state_src_z,
-                         p.state_idx);
+        read_vec_strided_or_zero(params.dot_state_src_x,
+                                 params.dot_state_src_y,
+                                 params.dot_state_src_z,
+                                 params.dot_state_src_stride,
+                                 p.state_idx);
     tangent.wi_raw =
-        read_vec_or_zero(params.dot_state_wi_x,
-                         params.dot_state_wi_y,
-                         params.dot_state_wi_z,
-                         p.state_idx);
-    tangent.src_power = read_or_zero(params.dot_state_src_power, p.state_idx);
+        read_vec_strided_or_zero(params.dot_state_wi_x,
+                                 params.dot_state_wi_y,
+                                 params.dot_state_wi_z,
+                                 params.dot_state_wi_stride,
+                                 p.state_idx);
+    tangent.src_power =
+        read_f32_strided_or_zero(params.dot_state_src_power, params.dot_state_src_power_stride, p.state_idx);
     tangent.exterior_angle =
-        read_or_zero(params.dot_state_exterior_angle, p.state_idx);
+        read_f32_strided_or_zero(
+            params.dot_state_exterior_angle,
+            params.dot_state_exterior_angle_stride,
+            p.state_idx);
     tangent.material_gain =
         (p.material_active && p.material_idx >= 0)
-            ? read_or_zero(params.dot_material_gain, p.material_idx)
+            ? read_f32_strided_or_zero(params.dot_material_gain, params.dot_material_gain_stride, p.material_idx)
             : 0.f;
     tangent.suffix_material_gain =
         (p.suffix_material_active && p.suffix_material_idx >= 0)
-            ? read_or_zero(params.dot_material_gain, p.suffix_material_idx)
+            ? read_f32_strided_or_zero(
+                  params.dot_material_gain,
+                  params.dot_material_gain_stride,
+                  p.suffix_material_idx)
             : 0.f;
     if (p.is_suffix && p.suffix_material_idx >= 0) {
         tangent.suffix_p0 =
@@ -1776,77 +1895,194 @@ static __forceinline__ __device__ void add_unit_vjp(
     }
 }
 
+static __forceinline__ __device__ void add_unit_vjp_strided(
+    const DfrDirectAccumADParams &params,
+    const DirectPrimal &p,
+    float grad_contribution,
+    float *ptr,
+    int stride,
+    int index,
+    const DfrTangent &tangent) {
+    if (ptr != nullptr) {
+        const float partial = contribution_jvp(params, p, tangent);
+        atomicAdd(ptr + index * stride, grad_contribution * partial);
+    }
+}
+
 static __forceinline__ __device__ void vjp_by_unit_jvps(
     const DfrDirectAccumADParams &params,
     const DirectPrimal &p,
     float grad_contribution) {
     DfrTangent tangent = {};
     tangent.edge_pos = make_f3(1.f, 0.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_x, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_pos_x,
+                         params.grad_state_edge_pos_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.edge_pos = make_f3(0.f, 1.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_y, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_pos_y,
+                         params.grad_state_edge_pos_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.edge_pos = make_f3(0.f, 0.f, 1.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_pos_z, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_pos_z,
+                         params.grad_state_edge_pos_stride,
+                         p.state_idx,
+                         tangent);
 
     tangent = {};
     tangent.edge_dir_raw = make_f3(1.f, 0.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_x, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_dir_x,
+                         params.grad_state_edge_dir_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.edge_dir_raw = make_f3(0.f, 1.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_y, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_dir_y,
+                         params.grad_state_edge_dir_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.edge_dir_raw = make_f3(0.f, 0.f, 1.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_dir_z, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_dir_z,
+                         params.grad_state_edge_dir_stride,
+                         p.state_idx,
+                         tangent);
 
     tangent = {};
     tangent.edge_t_min = 1.f;
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_t_min, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_t_min,
+                         params.grad_state_edge_t_min_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.edge_t_max = 1.f;
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_edge_t_max, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_edge_t_max,
+                         params.grad_state_edge_t_max_stride,
+                         p.state_idx,
+                         tangent);
 
     tangent = {};
     tangent.source = make_f3(1.f, 0.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_src_x, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_src_x,
+                         params.grad_state_src_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.source = make_f3(0.f, 1.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_src_y, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_src_y,
+                         params.grad_state_src_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.source = make_f3(0.f, 0.f, 1.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_src_z, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_src_z,
+                         params.grad_state_src_stride,
+                         p.state_idx,
+                         tangent);
 
     tangent = {};
     tangent.wi_raw = make_f3(1.f, 0.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_x, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_wi_x,
+                         params.grad_state_wi_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.wi_raw = make_f3(0.f, 1.f, 0.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_y, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_wi_y,
+                         params.grad_state_wi_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.wi_raw = make_f3(0.f, 0.f, 1.f);
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_wi_z, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_wi_z,
+                         params.grad_state_wi_stride,
+                         p.state_idx,
+                         tangent);
 
     tangent = {};
     tangent.src_power = 1.f;
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_src_power, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_src_power,
+                         params.grad_state_src_power_stride,
+                         p.state_idx,
+                         tangent);
     tangent = {};
     tangent.exterior_angle = 1.f;
-    add_unit_vjp(params, p, grad_contribution, params.grad_state_exterior_angle, p.state_idx, tangent);
+    add_unit_vjp_strided(params,
+                         p,
+                         grad_contribution,
+                         params.grad_state_exterior_angle,
+                         params.grad_state_exterior_angle_stride,
+                         p.state_idx,
+                         tangent);
     if (p.material_active && p.material_idx >= 0) {
         tangent = {};
         tangent.material_gain = 1.f;
-        add_unit_vjp(params, p, grad_contribution, params.grad_material_gain, p.material_idx, tangent);
+        add_unit_vjp_strided(params,
+                             p,
+                             grad_contribution,
+                             params.grad_material_gain,
+                             params.grad_material_gain_stride,
+                             p.material_idx,
+                             tangent);
     }
     if (p.suffix_material_active && p.suffix_material_idx >= 0) {
         tangent = {};
         tangent.suffix_material_gain = 1.f;
-        add_unit_vjp(params,
-                     p,
-                     grad_contribution,
-                     params.grad_material_gain,
-                     p.suffix_material_idx,
-                     tangent);
+        add_unit_vjp_strided(params,
+                             p,
+                             grad_contribution,
+                             params.grad_material_gain,
+                             params.grad_material_gain_stride,
+                             p.suffix_material_idx,
+                             tangent);
         tangent = {};
         tangent.suffix_p0 = make_f3(1.f, 0.f, 0.f);
         add_unit_vjp(params, p, grad_contribution, params.grad_tri_p0_x, p.suffix_material_idx, tangent);
@@ -1895,11 +2131,22 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
     }
 
     float grad_contribution =
-        read_or_zero(params.grad_out_power, p.cell);
+        read_grid_or_zero(params.grad_out_power,
+                          params.grad_out_power_rank,
+                          params.grad_out_power_stride0,
+                          params.grad_out_power_stride1,
+                          params.grid_resolution0,
+                          p.cell);
     const float amp = sqrtf(fmaxf(p.contribution, 0.f));
     if (amp > kDfrEps) {
         grad_contribution +=
-            read_or_zero(params.grad_out_field_x_re, p.cell) * 0.5f / amp;
+            read_grid_or_zero(params.grad_out_field_x_re,
+                              params.grad_out_field_x_re_rank,
+                              params.grad_out_field_x_re_stride0,
+                              params.grad_out_field_x_re_stride1,
+                              params.grid_resolution0,
+                              p.cell) *
+            0.5f / amp;
     }
     if (grad_contribution == 0.f || !isfinite(grad_contribution)) {
         return;
@@ -1911,27 +2158,31 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
     }
 
     const float grad_src_power = grad_contribution * p.common_no_src;
-    if (params.grad_state_src_power != nullptr) {
-        atomicAdd(params.grad_state_src_power + p.state_idx, grad_src_power);
-    }
+    atomic_add_strided(params.grad_state_src_power,
+                       params.grad_state_src_power_stride,
+                       p.state_idx,
+                       grad_src_power);
 
-    if (p.material_active &&
-        p.material_idx >= 0 &&
-        params.grad_material_gain != nullptr) {
+    if (p.material_active && p.material_idx >= 0) {
         const float grad_gain =
             grad_contribution * p.contribution / fmaxf(p.material_gain, kDfrEps);
-        atomicAdd(params.grad_material_gain + p.material_idx, grad_gain);
+        atomic_add_strided(params.grad_material_gain,
+                           params.grad_material_gain_stride,
+                           p.material_idx,
+                           grad_gain);
     }
 
     float grad_edge_length = 0.f;
     if (p.edge_length_active && p.edge_length > kDfrEps) {
         grad_edge_length = grad_contribution * p.contribution / p.edge_length;
     }
-    if (p.wedge_active && params.grad_state_exterior_angle != nullptr) {
+    if (p.wedge_active) {
         const float grad_wedge =
             grad_contribution * p.contribution / fmaxf(p.wedge_scale, kDfrEps);
-        atomicAdd(params.grad_state_exterior_angle + p.state_idx,
-                  grad_wedge / (2.f * kPi));
+        atomic_add_strided(params.grad_state_exterior_angle,
+                           params.grad_state_exterior_angle_stride,
+                           p.state_idx,
+                           grad_wedge / (2.f * kPi));
     }
 
     const float3 source_delta = p.edge_point - p.source;
@@ -1945,36 +2196,39 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
 
     const float3 grad_edge_point = grad_contribution * d_contribution_d_edge;
     const float3 grad_source = grad_contribution * d_contribution_d_source;
-    atomic_add_vec(params.grad_state_src_x,
-                   params.grad_state_src_y,
-                   params.grad_state_src_z,
-                   p.state_idx,
-                   grad_source);
-    atomic_add_vec(params.grad_state_edge_pos_x,
-                   params.grad_state_edge_pos_y,
-                   params.grad_state_edge_pos_z,
-                   p.state_idx,
-                   grad_edge_point);
+    atomic_add_vec_strided(params.grad_state_src_x,
+                           params.grad_state_src_y,
+                           params.grad_state_src_z,
+                           params.grad_state_src_stride,
+                           p.state_idx,
+                           grad_source);
+    atomic_add_vec_strided(params.grad_state_edge_pos_x,
+                           params.grad_state_edge_pos_y,
+                           params.grad_state_edge_pos_z,
+                           params.grad_state_edge_pos_stride,
+                           p.state_idx,
+                           grad_edge_point);
 
     const float grad_edge_t = dot3(grad_edge_point, p.edge_dir);
-    if (params.grad_state_edge_t_min != nullptr) {
-        atomicAdd(params.grad_state_edge_t_min + p.state_idx,
-                  (1.f - p.edge_u) * grad_edge_t - grad_edge_length);
-    }
-    if (params.grad_state_edge_t_max != nullptr) {
-        atomicAdd(params.grad_state_edge_t_max + p.state_idx,
-                  p.edge_u * grad_edge_t + grad_edge_length);
-    }
+    atomic_add_strided(params.grad_state_edge_t_min,
+                       params.grad_state_edge_t_min_stride,
+                       p.state_idx,
+                       (1.f - p.edge_u) * grad_edge_t - grad_edge_length);
+    atomic_add_strided(params.grad_state_edge_t_max,
+                       params.grad_state_edge_t_max_stride,
+                       p.state_idx,
+                       p.edge_u * grad_edge_t + grad_edge_length);
 
     const float3 grad_edge_dir = p.edge_t * grad_edge_point;
     const float3 grad_edge_dir_raw =
         (1.f / p.edge_dir_norm) *
         (grad_edge_dir - dot3(p.edge_dir, grad_edge_dir) * p.edge_dir);
-    atomic_add_vec(params.grad_state_edge_dir_x,
-                   params.grad_state_edge_dir_y,
-                   params.grad_state_edge_dir_z,
-                   p.state_idx,
-                   grad_edge_dir_raw);
+    atomic_add_vec_strided(params.grad_state_edge_dir_x,
+                           params.grad_state_edge_dir_y,
+                           params.grad_state_edge_dir_z,
+                           params.grad_state_edge_dir_stride,
+                           p.state_idx,
+                           grad_edge_dir_raw);
 }
 
 __global__ void dfr_chain_accum_jvp_kernel(DfrChainAccumADParams params) {

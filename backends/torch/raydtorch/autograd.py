@@ -18,35 +18,66 @@ from .types import (
 )
 
 
-def _native_tensor(value: torch.Tensor) -> torch.Tensor:
+def _native_tensor(value: torch.Tensor | None) -> torch.Tensor | None:
+    if value is None:
+        return None
     value = torch.autograd.forward_ad.unpack_dual(value).primal
     if torch._C._functorch.is_functorch_wrapped_tensor(value) or torch._C._functorch.is_gradtrackingtensor(value):
         value = torch._C._functorch.get_unwrapped(value)
     return value
 
 
-def _needs_reverse_or_forward_ad(*values: torch.Tensor) -> bool:
+def _native_tangent_or_none(value: torch.Tensor | None) -> torch.Tensor | None:
+    value = _native_tensor(value)
+    if value is None:
+        return None
+    try:
+        value.data_ptr()
+    except RuntimeError:
+        return None
+    return value
+
+
+def _needs_reverse_or_forward_ad(*values: torch.Tensor | None) -> bool:
+    if torch.autograd.forward_ad._current_level < 0:
+        return any(value is not None and value.requires_grad for value in values)
     for value in values:
+        if value is None:
+            continue
         unpacked = torch.autograd.forward_ad.unpack_dual(value)
         if unpacked.primal.requires_grad or unpacked.tangent is not None:
             return True
     return False
 
 
-_RAY_FLAG_GEOMETRIC = 0x01
-_RAY_FLAG_SHADING_N = 0x02
-_RAY_FLAG_UV = 0x04
-_RAY_FLAG_ALL = _RAY_FLAG_GEOMETRIC | _RAY_FLAG_SHADING_N | _RAY_FLAG_UV
+def _needs_forward_ad(*values: torch.Tensor | None) -> bool:
+    if torch.autograd.forward_ad._current_level < 0:
+        return False
+    for value in values:
+        if value is None:
+            continue
+        if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
+            return True
+    return False
 
 
-def _grad_or_zeros(value: torch.Tensor | None, like: torch.Tensor) -> torch.Tensor:
-    if value is not None and value.numel() != 0:
-        return value.contiguous()
-    return torch.zeros_like(like)
+_RAY_FLAG_ALL = 0x01 | 0x02 | 0x04
 
 
 def _has_grad(value: torch.Tensor | None) -> bool:
     return value is not None and value.numel() != 0
+
+
+def _active_ctx_tensor(active: torch.Tensor | None, like: torch.Tensor) -> torch.Tensor:
+    if active is not None:
+        return active
+    return torch.empty((0,), device=like.device, dtype=torch.bool)
+
+
+def _save_optional_tensor(value: torch.Tensor | None, like: torch.Tensor) -> torch.Tensor:
+    if value is not None:
+        return value
+    return torch.empty((0, 3), device=like.device, dtype=like.dtype)
 
 
 class _IntersectFunction(torch.autograd.Function):
@@ -63,11 +94,12 @@ class _IntersectFunction(torch.autograd.Function):
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
         outputs = _C.intersect_forward_ad_flags(int(scene_handle), ray_o, ray_d, ray_tmax, active, int(flags))
-        return outputs[:12]
+        return outputs[:12] + (outputs[13],)
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        scene_handle, vertices, ray_o, ray_d, ray_tmax, active, flags = inputs
+        ctx.set_materialize_grads(False)
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active, flags = inputs
         (
             t,
             _p,
@@ -81,6 +113,7 @@ class _IntersectFunction(torch.autograd.Function):
             global_prim_id,
             tape_prim_id,
             tape_barycentric,
+            active,
         ) = output
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
         ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
@@ -90,18 +123,18 @@ class _IntersectFunction(torch.autograd.Function):
         ctx.flags = int(flags)
         ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, t)
         ctx.save_for_forward(vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, t)
-        ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric)
+        ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric, active)
 
     @staticmethod
     def backward(ctx, *grad_outputs):
         ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
         grad_t = grad_outputs[0]
+        need_grad_vertices = bool(ctx.needs_input_grad[1])
+        need_grad_ray_o = bool(ctx.needs_input_grad[2])
+        need_grad_ray_d = bool(ctx.needs_input_grad[3])
+        need_grad_ray_tmax = bool(ctx.needs_input_grad[4])
         only_t_grad = all(not _has_grad(value) for value in grad_outputs[1:6])
         if ctx.flags == 0 or only_t_grad:
-            need_grad_vertices = bool(ctx.needs_input_grad[1])
-            need_grad_ray_o = bool(ctx.needs_input_grad[2])
-            need_grad_ray_d = bool(ctx.needs_input_grad[3])
-            need_grad_ray_tmax = bool(ctx.needs_input_grad[4])
             if not (
                 _has_grad(grad_t)
                 and (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax)
@@ -129,19 +162,7 @@ class _IntersectFunction(torch.autograd.Function):
                 None,
                 None,
             )
-        grad_t = _grad_or_zeros(grad_t, tape_t)
-        grad_p = _grad_or_zeros(grad_outputs[1], ray_o)
-        grad_n = _grad_or_zeros(grad_outputs[2], ray_o)
-        grad_geo_n = _grad_or_zeros(grad_outputs[3], ray_o)
-        grad_uv = _grad_or_zeros(
-            grad_outputs[4],
-            torch.empty((ray_o.shape[0], 2), device=ray_o.device, dtype=ray_o.dtype),
-        )
-        grad_barycentric = _grad_or_zeros(
-            grad_outputs[5],
-            torch.empty((ray_o.shape[0], 3), device=ray_o.device, dtype=ray_o.dtype),
-        )
-        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward(
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward_optional(
             ctx.scene_handle,
             ray_o,
             ray_d,
@@ -150,25 +171,177 @@ class _IntersectFunction(torch.autograd.Function):
             tape_prim_id,
             tape_barycentric,
             grad_t,
-            grad_p,
-            grad_n,
-            grad_geo_n,
-            grad_uv,
-            grad_barycentric,
+            grad_outputs[1],
+            grad_outputs[2],
+            grad_outputs[3],
+            grad_outputs[4],
+            grad_outputs[5],
+            need_grad_vertices,
+            need_grad_ray_o,
+            need_grad_ray_d,
+            need_grad_ray_tmax,
         )
-        return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
+        return (
+            None,
+            grad_vertices if need_grad_vertices else None,
+            grad_ray_o if need_grad_ray_o else None,
+            grad_ray_d if need_grad_ray_d else None,
+            grad_ray_tmax if need_grad_ray_tmax else None,
+            None,
+            None,
+        )
 
     @staticmethod
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active, grad_flags):
         vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
-        if grad_vertices is None:
-            grad_vertices = torch.zeros_like(vertices)
-        if grad_ray_o is None:
-            grad_ray_o = torch.zeros_like(ray_o)
-        if grad_ray_d is None:
-            grad_ray_d = torch.zeros_like(ray_d)
         with torch._C._DisableFuncTorch():
-            values = _C.intersect_jvp(
+            values = _C.intersect_jvp_optional(
+                ctx.scene_handle,
+                _native_tensor(ray_o),
+                _native_tensor(ray_d),
+                _native_tensor(active),
+                _native_tensor(tape_prim_id),
+                _native_tensor(tape_barycentric),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(grad_ray_o),
+                _native_tangent_or_none(grad_ray_d),
+                ctx.flags,
+            )
+        tangent_t, tangent_p, tangent_n, tangent_geo_n, tangent_uv, tangent_barycentric = values
+        return (
+            tangent_t,
+            tangent_p,
+            tangent_n,
+            tangent_geo_n,
+            tangent_uv,
+            tangent_barycentric,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+class _IntersectMeshesFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        ray_o: torch.Tensor,
+        ray_d: torch.Tensor,
+        ray_tmax: torch.Tensor,
+        active: torch.Tensor,
+        flags: int,
+        *mesh_vertices: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        outputs = _C.intersect_forward_ad_flags(int(scene_handle), ray_o, ray_d, ray_tmax, active, int(flags))
+        return outputs[:12] + (outputs[13],)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, ray_o, ray_d, ray_tmax, _active, flags, *mesh_vertices = inputs
+        (
+            t,
+            _p,
+            _n,
+            _geo_n,
+            _uv,
+            _barycentric,
+            shape_id,
+            prim_id,
+            local_prim_id,
+            global_prim_id,
+            tape_prim_id,
+            tape_barycentric,
+            active,
+        ) = output
+        ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
+        ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
+        ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.flags = int(flags)
+        ctx.mesh_count = len(mesh_vertices)
+        ctx.save_for_backward(ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, t)
+        ctx.save_for_forward(ray_o, ray_d, active, tape_prim_id, tape_barycentric, t)
+        ctx.mark_non_differentiable(shape_id, prim_id, local_prim_id, global_prim_id, tape_prim_id, tape_barycentric, active)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        ray_o, ray_d, ray_tmax, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        grad_t = grad_outputs[0]
+        needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[6 : 6 + ctx.mesh_count])
+        need_grad_vertices = any(needs_mesh_grad)
+        need_grad_ray_o = bool(ctx.needs_input_grad[1])
+        need_grad_ray_d = bool(ctx.needs_input_grad[2])
+        need_grad_ray_tmax = bool(ctx.needs_input_grad[3])
+        only_t_grad = all(not _has_grad(value) for value in grad_outputs[1:6])
+        if ctx.flags == 0 or only_t_grad:
+            if not (
+                _has_grad(grad_t)
+                and (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax)
+            ):
+                return (None, None, None, None, None, None, *([None] * ctx.mesh_count))
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward_t(
+                ctx.scene_handle,
+                ray_o,
+                ray_d,
+                active,
+                tape_prim_id,
+                tape_barycentric,
+                grad_t,
+                need_grad_vertices,
+                need_grad_ray_o,
+                need_grad_ray_d,
+                need_grad_ray_tmax,
+            )
+        else:
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.intersect_backward_optional(
+                ctx.scene_handle,
+                ray_o,
+                ray_d,
+                ray_tmax,
+                active,
+                tape_prim_id,
+                tape_barycentric,
+                grad_t,
+                grad_outputs[1],
+                grad_outputs[2],
+                grad_outputs[3],
+                grad_outputs[4],
+                grad_outputs[5],
+                need_grad_vertices,
+                need_grad_ray_o,
+                need_grad_ray_d,
+                need_grad_ray_tmax,
+            )
+        if need_grad_vertices:
+            mesh_grad_tuple = _C.split_scene_vertex_grad(ctx.scene_handle, grad_vertices)
+            mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+        else:
+            mesh_grads = (None,) * ctx.mesh_count
+        return (
+            None,
+            grad_ray_o if need_grad_ray_o else None,
+            grad_ray_d if need_grad_ray_d else None,
+            grad_ray_tmax if need_grad_ray_tmax else None,
+            None,
+            None,
+            *mesh_grads,
+        )
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active, grad_flags, *grad_mesh_vertices):
+        ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
+        native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
+        with torch._C._DisableFuncTorch():
+            grad_vertices = _C.pack_scene_vertex_tangents(ctx.scene_handle, *native_mesh_tangents)
+        with torch._C._DisableFuncTorch():
+            values = _C.intersect_jvp_optional(
                 ctx.scene_handle,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -176,20 +349,19 @@ class _IntersectFunction(torch.autograd.Function):
                 _native_tensor(tape_prim_id),
                 _native_tensor(tape_barycentric),
                 _native_tensor(grad_vertices),
-                _native_tensor(grad_ray_o),
-                _native_tensor(grad_ray_d),
+                _native_tangent_or_none(grad_ray_o),
+                _native_tangent_or_none(grad_ray_d),
+                ctx.flags,
             )
         tangent_t, tangent_p, tangent_n, tangent_geo_n, tangent_uv, tangent_barycentric = values
-        empty_vec3 = tangent_p.new_empty((0, 3))
-        empty_uv = tangent_uv.new_empty((0, 2))
-        flags = ctx.flags
         return (
             tangent_t,
-            tangent_p if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
-            tangent_n if flags & _RAY_FLAG_SHADING_N else empty_vec3,
-            tangent_geo_n if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
-            tangent_uv if flags & _RAY_FLAG_UV else empty_uv,
-            tangent_barycentric if flags & _RAY_FLAG_GEOMETRIC else empty_vec3,
+            tangent_p,
+            tangent_n,
+            tangent_geo_n,
+            tangent_uv,
+            tangent_barycentric,
+            None,
             None,
             None,
             None,
@@ -205,25 +377,35 @@ def intersect(
     ray_o: torch.Tensor,
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     flags: int = _RAY_FLAG_ALL,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> Intersection:
-    values = _IntersectFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if len(tracked_vertices) > 1:
+        values = _IntersectMeshesFunction.apply(
+            scene_handle,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            int(flags),
+            *tracked_vertices,
+        )
+        return Intersection(*values[:10])
+    if not _needs_forward_ad(vertices, ray_o, ray_d, ray_tmax):
+        values = _C.intersect_ad_flags(int(scene_handle), vertices, ray_o, ray_d, ray_tmax, active, int(flags))
+        return Intersection(*values)
+    values = _IntersectFunction.apply(
+        scene_handle,
+        vertices,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        active,
+        int(flags),
+    )
     return Intersection(*values[:10])
-
-
-def intersect_t_sum(
-    scene_handle: int,
-    vertices: torch.Tensor,
-    ray_o: torch.Tensor,
-    ray_d: torch.Tensor,
-    ray_tmax: torch.Tensor,
-    active: torch.Tensor,
-    flags: int,
-) -> torch.Tensor:
-    if _C is None:
-        raise RuntimeError("RayDTorch extension is not built yet.")
-    return _C.intersect_t_sum_ad(int(scene_handle), vertices, ray_o, ray_d, ray_tmax, active, int(flags))
 
 
 class _NearestEdgeFunction(torch.autograd.Function):
@@ -236,6 +418,7 @@ class _NearestEdgeFunction(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
         scene_handle, vertices, point = inputs
         distance, edge_point, edge_t, shape_id, edge_id, global_edge_id, tape_edge_id, tape_s, tape_d = output
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
@@ -248,41 +431,31 @@ class _NearestEdgeFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
-        grad_distance = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(distance)
-        grad_edge_point = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(point)
-        grad_edge_t = torch.zeros_like(distance)
-        if grad_outputs[2] is not None:
-            grad_edge_t = grad_edge_t + grad_outputs[2].contiguous()
-        if len(grad_outputs) > 7 and grad_outputs[7] is not None:
-            grad_edge_t = grad_edge_t + grad_outputs[7].contiguous()
-        grad_vertices, grad_point = _C.nearest_edge_backward(
+        grad_vertices, grad_point = _C.nearest_edge_backward_optional(
             ctx.scene_handle,
             point,
             tape_edge_id,
             tape_s,
             tape_d,
-            grad_distance,
-            grad_edge_point,
-            grad_edge_t,
+            grad_outputs[0],
+            grad_outputs[1],
+            grad_outputs[2],
+            grad_outputs[7] if len(grad_outputs) > 7 else None,
         )
         return None, grad_vertices, grad_point
 
     @staticmethod
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_point):
         vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
-        if grad_vertices is None:
-            grad_vertices = torch.zeros_like(vertices)
-        if grad_point is None:
-            grad_point = torch.zeros_like(point)
         with torch._C._DisableFuncTorch():
-            tangent_distance, tangent_edge_point, tangent_edge_t = _C.nearest_edge_jvp(
+            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = _C.nearest_edge_jvp_optional(
                 ctx.scene_handle,
                 _native_tensor(point),
                 _native_tensor(tape_edge_id),
                 _native_tensor(tape_s),
                 _native_tensor(tape_d),
-                _native_tensor(grad_vertices),
-                _native_tensor(grad_point),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(grad_point),
             )
         return (
             tangent_distance,
@@ -292,13 +465,85 @@ class _NearestEdgeFunction(torch.autograd.Function):
             None,
             None,
             None,
-            torch.zeros_like(tape_s),
-            torch.zeros_like(tape_d),
+            tangent_tape_s,
+            tangent_tape_d,
         )
 
 
-def _needs_nearest_edge_ad(vertices: torch.Tensor, point: torch.Tensor) -> bool:
-    for value in (vertices, point):
+class _NearestEdgeMeshesFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(scene_handle: int, point: torch.Tensor, *mesh_vertices: torch.Tensor):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.nearest_edge_forward(int(scene_handle), point)
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, point, *mesh_vertices = inputs
+        distance, edge_point, edge_t, shape_id, edge_id, global_edge_id, tape_edge_id, tape_s, tape_d = output
+        point = torch.autograd.forward_ad.unpack_dual(point).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.mesh_count = len(mesh_vertices)
+        ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d, distance)
+        ctx.save_for_forward(point, tape_edge_id, tape_s, tape_d)
+        ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
+        needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[2 : 2 + ctx.mesh_count])
+        need_grad_vertices = any(needs_mesh_grad)
+        need_grad_point = bool(ctx.needs_input_grad[1])
+        grad_vertices, grad_point = _C.nearest_edge_backward_optional(
+            ctx.scene_handle,
+            point,
+            tape_edge_id,
+            tape_s,
+            tape_d,
+            grad_outputs[0],
+            grad_outputs[1],
+            grad_outputs[2],
+            grad_outputs[7] if len(grad_outputs) > 7 else None,
+        )
+        if need_grad_vertices:
+            mesh_grad_tuple = _C.split_scene_vertex_grad(ctx.scene_handle, grad_vertices)
+            mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+        else:
+            mesh_grads = (None,) * ctx.mesh_count
+        return (None, grad_point if need_grad_point else None, *mesh_grads)
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_point, *grad_mesh_vertices):
+        point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
+        with torch._C._DisableFuncTorch():
+            grad_vertices = _C.pack_scene_vertex_tangents(ctx.scene_handle, *native_mesh_tangents)
+        with torch._C._DisableFuncTorch():
+            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = _C.nearest_edge_jvp_optional(
+                ctx.scene_handle,
+                _native_tensor(point),
+                _native_tensor(tape_edge_id),
+                _native_tensor(tape_s),
+                _native_tensor(tape_d),
+                _native_tensor(grad_vertices),
+                _native_tangent_or_none(grad_point),
+            )
+        return (
+            tangent_distance,
+            tangent_edge_point,
+            tangent_edge_t,
+            None,
+            None,
+            None,
+            None,
+            tangent_tape_s,
+            tangent_tape_d,
+        )
+
+
+def _needs_nearest_edge_ad(point: torch.Tensor, *vertices: torch.Tensor) -> bool:
+    for value in (*vertices, point):
         if value.requires_grad:
             return True
         if torch.autograd.forward_ad.unpack_dual(value).tangent is not None:
@@ -306,12 +551,21 @@ def _needs_nearest_edge_ad(vertices: torch.Tensor, point: torch.Tensor) -> bool:
     return False
 
 
-def nearest_edge(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor) -> NearestPointEdge:
+def nearest_edge(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    point: torch.Tensor,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
+) -> NearestPointEdge:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
-    if not _needs_nearest_edge_ad(vertices, point):
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if not _needs_nearest_edge_ad(point, *tracked_vertices):
         values = _C.nearest_edge_forward_noad(int(scene_handle), point)
         return NearestPointEdge(*values)
+    if len(tracked_vertices) > 1:
+        values = _NearestEdgeMeshesFunction.apply(scene_handle, point, *tracked_vertices)
+        return NearestPointEdge(*values[:6])
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
     return NearestPointEdge(*values[:6])
 
@@ -332,6 +586,7 @@ class _NearestEdgeRayFunction(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
         distance, ray_t, point, edge_t, edge_point, shape_id, edge_id, global_edge_id, tape_edge_id = output
         ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
 
@@ -346,13 +601,20 @@ def nearest_edge_ray(
     ray_o: torch.Tensor,
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
 ) -> NearestRayEdge:
-    values = _NearestEdgeRayFunction.apply(scene_handle, vertices, ray_o, ray_d, ray_tmax, active)
+    values = _NearestEdgeRayFunction.apply(
+        scene_handle,
+        vertices,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        _active_ctx_tensor(active, ray_o),
+    )
     return NearestRayEdge(*values[:8])
 
 
-def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor) -> torch.Tensor:
+def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None) -> torch.Tensor:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
     values = _C.visibility_forward(int(scene_handle), start, end, active)
@@ -393,8 +655,9 @@ class _TraceReflectionsFunction(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        scene_handle, vertices, ray_o, ray_d, ray_tmax, active, max_bounces = inputs
-        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_t, tape_hits, tape_normals = output
+        ctx.set_materialize_grads(False)
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active, max_bounces = inputs
+        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_hits, tape_normals, active = output
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
         ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
         ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
@@ -408,7 +671,6 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             active,
             tape_prim_id,
             tape_barycentric,
-            tape_t,
             tape_hits,
             tape_normals,
             image_sources,
@@ -429,9 +691,9 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             prim_ids,
             tape_prim_id,
             tape_barycentric,
-            tape_t,
             tape_hits,
             tape_normals,
+            active,
         )
 
     @staticmethod
@@ -443,16 +705,11 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             active,
             tape_prim_id,
             tape_barycentric,
-            tape_t,
             tape_hits,
             tape_normals,
             image_sources,
         ) = ctx.saved_tensors
-        grad_t = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(tape_t)
-        grad_image_sources = (
-            grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(image_sources)
-        )
-        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.trace_reflections_backward(
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.trace_reflections_backward_optional(
             ctx.scene_handle,
             ray_o,
             ray_d,
@@ -463,8 +720,8 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             tape_hits,
             tape_normals,
             image_sources,
-            grad_t,
-            grad_image_sources,
+            grad_outputs[1],
+            grad_outputs[2],
         )
         return None, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, None, None
 
@@ -490,14 +747,161 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             tape_normals,
             image_sources,
         ) = ctx.saved_tensors
-        if grad_vertices is None:
-            grad_vertices = torch.zeros_like(vertices)
-        if grad_ray_o is None:
-            grad_ray_o = torch.zeros_like(ray_o)
-        if grad_ray_d is None:
-            grad_ray_d = torch.zeros_like(ray_d)
         with torch._C._DisableFuncTorch():
-            tangent_t, tangent_image_sources = _C.trace_reflections_jvp(
+            tangent_t, tangent_image_sources = _C.trace_reflections_jvp_optional(
+                ctx.scene_handle,
+                _native_tensor(ray_o),
+                _native_tensor(ray_d),
+                _native_tensor(active),
+                _native_tensor(tape_prim_id),
+                _native_tensor(tape_barycentric),
+                _native_tensor(tape_hits),
+                _native_tensor(tape_normals),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(grad_ray_o),
+                _native_tangent_or_none(grad_ray_d),
+                _native_tensor(image_sources),
+            )
+        return None, tangent_t, tangent_image_sources, None, None, None, None, None, None
+
+
+class _TraceReflectionsMeshesFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        ray_o: torch.Tensor,
+        ray_d: torch.Tensor,
+        ray_tmax: torch.Tensor,
+        active: torch.Tensor,
+        max_bounces: int,
+        *mesh_vertices: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.trace_reflections_forward(
+            int(scene_handle),
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            int(max_bounces),
+        )
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, ray_o, ray_d, ray_tmax, _active, max_bounces, *mesh_vertices = inputs
+        valid, t, image_sources, prim_ids, tape_prim_id, tape_barycentric, tape_hits, tape_normals, active = output
+        ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
+        ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
+        ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.max_bounces = int(max_bounces)
+        ctx.mesh_count = len(mesh_vertices)
+        ctx.save_for_backward(
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        )
+        ctx.save_for_forward(
+            ray_o,
+            ray_d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        )
+        ctx.mark_non_differentiable(
+            valid,
+            prim_ids,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            active,
+        )
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        (
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        ) = ctx.saved_tensors
+        needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[6 : 6 + ctx.mesh_count])
+        need_grad_vertices = any(needs_mesh_grad)
+        need_grad_ray_o = bool(ctx.needs_input_grad[1])
+        need_grad_ray_d = bool(ctx.needs_input_grad[2])
+        need_grad_ray_tmax = bool(ctx.needs_input_grad[3])
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = _C.trace_reflections_backward_optional(
+            ctx.scene_handle,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+            grad_outputs[1],
+            grad_outputs[2],
+        )
+        if need_grad_vertices:
+            mesh_grad_tuple = _C.split_scene_vertex_grad(ctx.scene_handle, grad_vertices)
+            mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+        else:
+            mesh_grads = (None,) * ctx.mesh_count
+        return (
+            None,
+            grad_ray_o if need_grad_ray_o else None,
+            grad_ray_d if need_grad_ray_d else None,
+            grad_ray_tmax if need_grad_ray_tmax else None,
+            None,
+            None,
+            *mesh_grads,
+        )
+
+    @staticmethod
+    def jvp(
+        ctx,
+        grad_scene_handle,
+        grad_ray_o,
+        grad_ray_d,
+        grad_ray_tmax,
+        grad_active,
+        grad_max_bounces,
+        *grad_mesh_vertices,
+    ):
+        (
+            ray_o,
+            ray_d,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_hits,
+            tape_normals,
+            image_sources,
+        ) = ctx.saved_tensors
+        native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
+        with torch._C._DisableFuncTorch():
+            grad_vertices = _C.pack_scene_vertex_tangents(ctx.scene_handle, *native_mesh_tangents)
+        with torch._C._DisableFuncTorch():
+            tangent_t, tangent_image_sources = _C.trace_reflections_jvp_optional(
                 ctx.scene_handle,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -507,8 +911,8 @@ class _TraceReflectionsFunction(torch.autograd.Function):
                 _native_tensor(tape_hits),
                 _native_tensor(tape_normals),
                 _native_tensor(grad_vertices),
-                _native_tensor(grad_ray_o),
-                _native_tensor(grad_ray_d),
+                _native_tangent_or_none(grad_ray_o),
+                _native_tangent_or_none(grad_ray_d),
                 _native_tensor(image_sources),
             )
         return None, tangent_t, tangent_image_sources, None, None, None, None, None, None
@@ -520,21 +924,47 @@ def trace_reflections(
     ray_o: torch.Tensor,
     ray_d: torch.Tensor,
     ray_tmax: torch.Tensor,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     max_bounces: int,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> ReflectionChain:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
-    if not _needs_trace_reflection_ad(vertices, ray_o, ray_d, ray_tmax):
-        values = _C.trace_reflections_forward_noad(
-            int(scene_handle),
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
+        def load(full: bool):
+            if full:
+                valid, t, image_sources, prim_ids = _C.trace_reflections_forward_noad(
+                    int(scene_handle),
+                    ray_o,
+                    ray_d,
+                    ray_tmax,
+                    active,
+                    int(max_bounces),
+                )
+                return valid, t, image_sources, prim_ids
+            valid, t, prim_ids = _C.trace_reflections_forward_reduced(
+                int(scene_handle),
+                ray_o,
+                ray_d,
+                ray_tmax,
+                active,
+                int(max_bounces),
+            )
+            return valid, t, None, prim_ids
+
+        return ReflectionChain(loader=load)
+    if len(tracked_vertices) > 1:
+        values = _TraceReflectionsMeshesFunction.apply(
+            scene_handle,
             ray_o,
             ray_d,
             ray_tmax,
             active,
             int(max_bounces),
+            *tracked_vertices,
         )
-        return ReflectionChain(*values)
+        return ReflectionChain(*values[:4])
     values = _TraceReflectionsFunction.apply(
         scene_handle,
         vertices,
@@ -545,27 +975,6 @@ def trace_reflections(
         int(max_bounces),
     )
     return ReflectionChain(*values[:4])
-
-
-def trace_reflections_minimal(
-    scene_handle: int,
-    ray_o: torch.Tensor,
-    ray_d: torch.Tensor,
-    ray_tmax: torch.Tensor,
-    active: torch.Tensor,
-    max_bounces: int,
-) -> ReflectionChain:
-    if _C is None:
-        raise RuntimeError("RayDTorch extension is not built yet.")
-    valid, t, prim_ids = _C.trace_reflections_forward_minimal(
-        int(scene_handle),
-        ray_o,
-        ray_d,
-        ray_tmax,
-        active,
-        int(max_bounces),
-    )
-    return ReflectionChain(valid, t, t.new_empty((0, 0, 3)), prim_ids)
 
 
 class _TraceReflEpcFieldFunction(torch.autograd.Function):
@@ -590,8 +999,10 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx, inputs, output):
-        scene_handle, vertices, source, receiver, active, max_bounces = inputs
-        field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, tape_t = output
+        ctx.set_materialize_grads(False)
+        scene_handle, vertices, source, receiver, _active, max_bounces = inputs
+        field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active = output
+        tape_t = path_length
         vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
         source = torch.autograd.forward_ad.unpack_dual(source).primal
         receiver = torch.autograd.forward_ad.unpack_dual(receiver).primal
@@ -599,14 +1010,14 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
         ctx.max_bounces = int(max_bounces)
         ctx.save_for_backward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
         ctx.save_for_forward(vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
-        ctx.mark_non_differentiable(valid, resolved_prim_ids, tape_prim_id)
+        ctx.mark_non_differentiable(valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active)
 
     @staticmethod
     def backward(ctx, *grad_outputs):
         source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
-        grad_field_real = grad_outputs[0].contiguous() if grad_outputs[0] is not None else torch.zeros_like(tape_t)
-        grad_field_imag = grad_outputs[1].contiguous() if grad_outputs[1] is not None else torch.zeros_like(tape_t)
-        grad_path_length = grad_outputs[2].contiguous() if grad_outputs[2] is not None else torch.zeros_like(tape_t)
+        need_grad_vertices = bool(ctx.needs_input_grad[1])
+        need_grad_source = bool(ctx.needs_input_grad[2])
+        need_grad_receiver = bool(ctx.needs_input_grad[3])
         grad_vertices, grad_source, grad_receiver = _C.trace_refl_epc_field_backward(
             ctx.scene_handle,
             source,
@@ -615,21 +1026,118 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
             tape_prim_id,
             tape_barycentric,
             tape_t,
-            grad_field_real,
-            grad_field_imag,
-            grad_path_length,
+            _native_tensor(grad_outputs[0]),
+            _native_tensor(grad_outputs[1]),
+            _native_tensor(grad_outputs[2]),
+            need_grad_vertices,
+            need_grad_source,
+            need_grad_receiver,
         )
-        return None, grad_vertices, grad_source, grad_receiver, None, None
+        return (
+            None,
+            grad_vertices if need_grad_vertices else None,
+            grad_source if need_grad_source else None,
+            grad_receiver if need_grad_receiver else None,
+            None,
+            None,
+        )
 
     @staticmethod
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_source, grad_receiver, grad_active, grad_max_bounces):
-        vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
-        if grad_vertices is None:
-            grad_vertices = torch.zeros_like(vertices)
-        if grad_source is None:
-            grad_source = torch.zeros_like(source)
-        if grad_receiver is None:
-            grad_receiver = torch.zeros_like(receiver)
+        _vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        with torch._C._DisableFuncTorch():
+            tangent_field_real, tangent_field_imag, tangent_path_length = _C.trace_refl_epc_field_jvp(
+                ctx.scene_handle,
+                _native_tensor(source),
+                _native_tensor(receiver),
+                _native_tensor(active),
+                _native_tensor(tape_prim_id),
+                _native_tensor(tape_barycentric),
+                _native_tensor(tape_t),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(grad_source),
+                _native_tangent_or_none(grad_receiver),
+            )
+        return tangent_field_real, tangent_field_imag, tangent_path_length, None, None, None, None, None
+
+
+class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        source: torch.Tensor,
+        receiver: torch.Tensor,
+        active: torch.Tensor,
+        max_bounces: int,
+        *mesh_vertices: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        return _C.trace_refl_epc_field_forward(
+            int(scene_handle),
+            source,
+            receiver,
+            active,
+            int(max_bounces),
+        )
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, source, receiver, _active, max_bounces, *mesh_vertices = inputs
+        field_real, field_imag, path_length, valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active = output
+        tape_t = path_length
+        source = torch.autograd.forward_ad.unpack_dual(source).primal
+        receiver = torch.autograd.forward_ad.unpack_dual(receiver).primal
+        ctx.scene_handle = int(scene_handle)
+        ctx.max_bounces = int(max_bounces)
+        ctx.mesh_count = len(mesh_vertices)
+        ctx.save_for_backward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
+        ctx.save_for_forward(source, receiver, active, tape_prim_id, tape_barycentric, tape_t)
+        ctx.mark_non_differentiable(valid, resolved_prim_ids, tape_prim_id, tape_barycentric, active)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[5 : 5 + ctx.mesh_count])
+        need_grad_vertices = any(needs_mesh_grad)
+        need_grad_source = bool(ctx.needs_input_grad[1])
+        need_grad_receiver = bool(ctx.needs_input_grad[2])
+        grad_vertices, grad_source, grad_receiver = _C.trace_refl_epc_field_backward(
+            ctx.scene_handle,
+            source,
+            receiver,
+            active,
+            tape_prim_id,
+            tape_barycentric,
+            tape_t,
+            _native_tensor(grad_outputs[0]),
+            _native_tensor(grad_outputs[1]),
+            _native_tensor(grad_outputs[2]),
+            need_grad_vertices,
+            need_grad_source,
+            need_grad_receiver,
+        )
+        if need_grad_vertices:
+            mesh_grad_tuple = _C.split_scene_vertex_grad(ctx.scene_handle, grad_vertices)
+            mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+        else:
+            mesh_grads = (None,) * ctx.mesh_count
+        return (
+            None,
+            grad_source if need_grad_source else None,
+            grad_receiver if need_grad_receiver else None,
+            None,
+            None,
+            *mesh_grads,
+        )
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_source, grad_receiver, grad_active, grad_max_bounces, *grad_mesh_vertices):
+        source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
+        native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
+        with torch._C._DisableFuncTorch():
+            grad_vertices = _C.pack_scene_vertex_tangents(ctx.scene_handle, *native_mesh_tangents)
         with torch._C._DisableFuncTorch():
             tangent_field_real, tangent_field_imag, tangent_path_length = _C.trace_refl_epc_field_jvp(
                 ctx.scene_handle,
@@ -640,8 +1148,8 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
                 _native_tensor(tape_barycentric),
                 _native_tensor(tape_t),
                 _native_tensor(grad_vertices),
-                _native_tensor(grad_source),
-                _native_tensor(grad_receiver),
+                _native_tangent_or_none(grad_source),
+                _native_tangent_or_none(grad_receiver),
             )
         return tangent_field_real, tangent_field_imag, tangent_path_length, None, None, None, None, None
 
@@ -651,9 +1159,21 @@ def trace_refl_epc_field(
     vertices: torch.Tensor,
     source: torch.Tensor,
     receiver: torch.Tensor,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     max_bounces: int,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> ReflEpcField:
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if len(tracked_vertices) > 1:
+        values = _TraceReflEpcFieldMeshesFunction.apply(
+            scene_handle,
+            source,
+            receiver,
+            active,
+            int(max_bounces),
+            *tracked_vertices,
+        )
+        return ReflEpcField(*values[:5])
     values = _TraceReflEpcFieldFunction.apply(
         scene_handle,
         vertices,
@@ -666,7 +1186,6 @@ def trace_refl_epc_field(
 
 
 def _contig_states(states: DfrStates) -> DfrStates:
-    states = states.with_default_vectors()
     n = states.state_count
     return DfrStates(
         edge_index=states.edge_index[:n].contiguous(),
@@ -681,8 +1200,8 @@ def _contig_states(states: DfrStates) -> DfrStates:
         exterior_angle=states.exterior_angle[:n].contiguous(),
         src=states.src[:n].contiguous(),
         src_power=states.src_power[:n].contiguous(),
-        wi=states.wi[:n].contiguous(),
-        d0=states.d0[:n].contiguous(),
+        wi=None if states.wi is None else states.wi[:n].contiguous(),
+        d0=None if states.d0 is None else states.d0[:n].contiguous(),
         count=states.count,
     )
 
@@ -704,21 +1223,19 @@ def trace_dfr_paths_order1_native(
     states: DfrStates,
     material: DfrMaterial,
     *,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     max_paths: int,
     wavelength: float,
 ) -> DfrPaths:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
-    states = _contig_states(states)
-    material = _contig_material(material)
     state_limit = min(states.state_count, int(max_paths))
     capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
     values = _C.diffraction_paths_order1_forward(
         int(scene_handle),
-        tx_positions.contiguous(),
-        rx_positions.contiguous(),
-        active.contiguous(),
+        tx_positions,
+        rx_positions,
+        active,
         states.edge_index,
         states.edge_pos,
         states.edge_dir,
@@ -733,6 +1250,7 @@ def trace_dfr_paths_order1_native(
         states.src_power,
         material.gain,
         material.valid,
+        state_limit,
         capacity,
         float(wavelength),
     )
@@ -744,48 +1262,46 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
     def forward(*args):
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
-        active = args[1]
-        state_edge_index = args[2]
-        state_edge_pos = args[3]
-        state_edge_t_min = args[5]
-        empty_b = active.new_empty((0,))
-        empty_i = state_edge_index.new_empty((0,))
-        empty_f = state_edge_t_min.new_empty((0,))
-        empty_v = state_edge_pos.new_empty((0, 3))
         return _C.diffraction_accumulation_forward(
-            *args,
+            *args[:21],
+            int(args[21]),
+            *args[22:],
             1,
-            empty_b,
-            empty_i,
-            empty_v,
-            empty_v,
-            empty_f,
-            empty_f,
-            empty_v,
-            empty_v,
-            empty_i,
-            empty_i,
-            empty_f,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             1,
         )
 
     @staticmethod
     def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
         ctx.scene_handle = int(inputs[0])
-        ctx.grid_axis = int(inputs[21])
-        ctx.grid_position = float(inputs[22])
-        ctx.grid_coord0_min = float(inputs[23])
-        ctx.grid_coord0_max = float(inputs[24])
-        ctx.grid_coord1_min = float(inputs[25])
-        ctx.grid_coord1_max = float(inputs[26])
-        ctx.grid_resolution0 = int(inputs[27])
-        ctx.grid_resolution1 = int(inputs[28])
-        ctx.grid_cell_area = float(inputs[29])
-        ctx.wavelength = float(inputs[30])
-        ctx.direct_samples = int(inputs[31])
-        ctx.keller_samples = int(inputs[32])
-        ctx.suffix_samples = int(inputs[33])
-        ctx.seed = int(inputs[34])
+        ctx.state_count = int(inputs[21])
+        ctx.grid_axis = int(inputs[22])
+        ctx.grid_position = float(inputs[23])
+        ctx.grid_coord0_min = float(inputs[24])
+        ctx.grid_coord0_max = float(inputs[25])
+        ctx.grid_coord1_min = float(inputs[26])
+        ctx.grid_coord1_max = float(inputs[27])
+        ctx.grid_resolution0 = int(inputs[28])
+        ctx.grid_resolution1 = int(inputs[29])
+        ctx.grid_cell_area = float(inputs[30])
+        ctx.wavelength = float(inputs[31])
+        ctx.direct_samples = int(inputs[32])
+        ctx.keller_samples = int(inputs[33])
+        ctx.suffix_samples = int(inputs[34])
+        ctx.seed = int(inputs[35])
+        ctx.has_state_wi = inputs[14] is not None
         saved = (
             inputs[3],
             inputs[4],
@@ -796,7 +1312,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             inputs[11],
             inputs[12],
             inputs[13],
-            inputs[14],
+            _save_optional_tensor(inputs[14], inputs[3]),
             inputs[19],
             inputs[20],
             output[14],
@@ -830,20 +1346,9 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             tape_material_idx,
             tape_edge_u,
         ) = ctx.saved_tensors
-        grad_power = grad_outputs[0]
-        if grad_power is None:
-            grad_power = torch.zeros(
-                (ctx.grid_resolution1, ctx.grid_resolution0),
-                device=state_edge_pos.device,
-                dtype=state_edge_pos.dtype,
-            )
-        grad_field_x_re = grad_outputs[1]
-        if grad_field_x_re is None:
-            grad_field_x_re = torch.zeros(
-                (ctx.grid_resolution1, ctx.grid_resolution0),
-                device=state_edge_pos.device,
-                dtype=state_edge_pos.dtype,
-            )
+        state_wi_arg = state_wi if ctx.has_state_wi else None
+        grad_power = _native_tensor(grad_outputs[0])
+        grad_field_x_re = _native_tensor(grad_outputs[1])
         (
             grad_state_edge_pos,
             grad_state_edge_dir,
@@ -870,9 +1375,10 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             state_exterior_angle,
             state_src,
             state_src_power,
-            state_wi,
+            state_wi_arg,
             material_gain,
             material_valid,
+            ctx.state_count,
             ctx.grid_axis,
             ctx.grid_position,
             ctx.grid_coord0_min,
@@ -887,10 +1393,10 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             ctx.keller_samples,
             ctx.suffix_samples,
             ctx.seed,
-            grad_power.contiguous(),
-            grad_field_x_re.contiguous(),
+            grad_power,
+            grad_field_x_re,
         )
-        grads = [None] * 35
+        grads = [None] * 36
         grads[3] = grad_state_edge_pos
         grads[4] = grad_state_edge_dir
         grads[5] = grad_state_edge_t_min
@@ -898,7 +1404,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
         grads[11] = grad_state_exterior_angle
         grads[12] = grad_state_src
         grads[13] = grad_state_src_power
-        grads[14] = grad_state_wi
+        grads[14] = grad_state_wi if ctx.has_state_wi else None
         grads[19] = grad_material_gain
         return tuple(grads)
 
@@ -923,13 +1429,13 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             tape_material_idx,
             tape_edge_u,
         ) = ctx.saved_tensors
+        state_wi_arg = state_wi if ctx.has_state_wi else None
 
-        def tangent_at(index: int, primal: torch.Tensor) -> torch.Tensor:
-            tangent = grad_inputs[index] if index < len(grad_inputs) else None
-            return torch.zeros_like(primal) if tangent is None else tangent
+        def tangent_at(index: int) -> torch.Tensor | None:
+            return grad_inputs[index] if index < len(grad_inputs) else None
 
         with torch._C._DisableFuncTorch():
-            dot_power, dot_field_x_re = _C.diffraction_accumulation_direct_jvp(
+            dot_power, dot_field_x_re, zero = _C.diffraction_accumulation_direct_jvp(
                 ctx.scene_handle,
                 _native_tensor(tape_active),
                 _native_tensor(tape_state_idx),
@@ -945,9 +1451,10 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
                 _native_tensor(state_exterior_angle),
                 _native_tensor(state_src),
                 _native_tensor(state_src_power),
-                _native_tensor(state_wi),
+                _native_tensor(state_wi_arg),
                 _native_tensor(material_gain),
                 _native_tensor(material_valid),
+                ctx.state_count,
                 ctx.grid_axis,
                 ctx.grid_position,
                 ctx.grid_coord0_min,
@@ -962,17 +1469,16 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
                 ctx.keller_samples,
                 ctx.suffix_samples,
                 ctx.seed,
-                _native_tensor(tangent_at(3, state_edge_pos)),
-                _native_tensor(tangent_at(4, state_edge_dir)),
-                _native_tensor(tangent_at(5, state_edge_t_min)),
-                _native_tensor(tangent_at(6, state_edge_t_max)),
-                _native_tensor(tangent_at(11, state_exterior_angle)),
-                _native_tensor(tangent_at(12, state_src)),
-                _native_tensor(tangent_at(13, state_src_power)),
-                _native_tensor(tangent_at(14, state_wi)),
-                _native_tensor(tangent_at(19, material_gain)),
+                _native_tangent_or_none(tangent_at(3)),
+                _native_tangent_or_none(tangent_at(4)),
+                _native_tangent_or_none(tangent_at(5)),
+                _native_tangent_or_none(tangent_at(6)),
+                _native_tangent_or_none(tangent_at(11)),
+                _native_tangent_or_none(tangent_at(12)),
+                _native_tangent_or_none(tangent_at(13)),
+                _native_tangent_or_none(tangent_at(14)) if ctx.has_state_wi else None,
+                _native_tangent_or_none(tangent_at(19)),
             )
-        zero = torch.zeros_like(dot_power)
         return (
             dot_power,
             dot_field_x_re,
@@ -1002,15 +1508,14 @@ def accum_dfr_direct_native(
     grid: DfrGrid,
     material: DfrMaterial,
     *,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     wavelength: float,
     direct_samples: int,
     keller_samples: int = 0,
     suffix_samples: int = 0,
     seed: int = 0,
 ) -> DfrAccum:
-    states = _contig_states(states)
-    material = _contig_material(material)
+    active_arg = active
     if not _needs_reverse_or_forward_ad(
         states.edge_pos,
         states.edge_dir,
@@ -1022,13 +1527,10 @@ def accum_dfr_direct_native(
         states.wi,
         material.gain,
     ):
-        empty_b = active.new_empty((0,))
-        empty_i = states.edge_index.new_empty((0,))
-        empty_f = states.edge_t_min.new_empty((0,))
-        empty_v = states.edge_pos.new_empty((0, 3))
+        state_limit = states.state_count
         values = _C.diffraction_accumulation_forward(
             int(scene_handle),
-            active.contiguous(),
+            active_arg,
             states.edge_index,
             states.edge_pos,
             states.edge_dir,
@@ -1048,6 +1550,7 @@ def accum_dfr_direct_native(
             material.mu_r,
             material.gain,
             material.valid,
+            state_limit,
             int(grid.axis),
             float(grid.position),
             float(grid.coord0_min),
@@ -1063,24 +1566,26 @@ def accum_dfr_direct_native(
             int(suffix_samples),
             int(seed),
             1,
-            empty_b,
-            empty_i,
-            empty_v,
-            empty_v,
-            empty_f,
-            empty_f,
-            empty_v,
-            empty_v,
-            empty_i,
-            empty_i,
-            empty_f,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             0,
         )
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         return DfrAccum(grid_cell_count, *values[:14])
+    state_limit = states.state_count
     values = _DfrDirectAccumFunction.apply(
         int(scene_handle),
-        active.contiguous(),
+        active_arg,
         states.edge_index,
         states.edge_pos,
         states.edge_dir,
@@ -1100,6 +1605,7 @@ def accum_dfr_direct_native(
         material.mu_r,
         material.gain,
         material.valid,
+        state_limit,
         int(grid.axis),
         float(grid.position),
         float(grid.coord0_min),
@@ -1124,10 +1630,17 @@ class _DfrChainAccumFunction(torch.autograd.Function):
     def forward(*args):
         if _C is None:
             raise RuntimeError("RayDTorch extension is not built yet.")
-        return _C.diffraction_accumulation_forward(*args)
+        return _C.diffraction_accumulation_forward(
+            *args[:21],
+            int(args[2].shape[0]),
+            *args[21:36],
+            int(args[37].shape[0]),
+            *args[36:],
+        )
 
     @staticmethod
     def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
         ctx.scene_handle = int(inputs[0])
         ctx.grid_axis = int(inputs[21])
         ctx.grid_position = float(inputs[22])
@@ -1198,20 +1711,8 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             tape_active,
             tape_cell,
         ) = ctx.saved_tensors
-        grad_power = grad_outputs[0]
-        if grad_power is None:
-            grad_power = torch.zeros(
-                (ctx.grid_resolution1, ctx.grid_resolution0),
-                device=state_edge_pos.device,
-                dtype=state_edge_pos.dtype,
-            )
-        grad_field_x_re = grad_outputs[1]
-        if grad_field_x_re is None:
-            grad_field_x_re = torch.zeros(
-                (ctx.grid_resolution1, ctx.grid_resolution0),
-                device=state_edge_pos.device,
-                dtype=state_edge_pos.dtype,
-            )
+        grad_power = _native_tensor(grad_outputs[0])
+        grad_field_x_re = _native_tensor(grad_outputs[1])
         (
             grad_state_edge_pos,
             grad_state_edge_dir,
@@ -1265,8 +1766,8 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             ctx.suffix_samples,
             ctx.seed,
             ctx.max_order,
-            grad_power.contiguous(),
-            grad_field_x_re.contiguous(),
+            grad_power,
+            grad_field_x_re,
         )
         grads = [None] * 48
         grads[3] = grad_state_edge_pos
@@ -1311,12 +1812,11 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             tape_cell,
         ) = ctx.saved_tensors
 
-        def tangent_at(index: int, primal: torch.Tensor) -> torch.Tensor:
-            tangent = grad_inputs[index] if index < len(grad_inputs) else None
-            return torch.zeros_like(primal) if tangent is None else tangent
+        def tangent_at(index: int) -> torch.Tensor | None:
+            return grad_inputs[index] if index < len(grad_inputs) else None
 
         with torch._C._DisableFuncTorch():
-            dot_power, dot_field_x_re = _C.diffraction_accumulation_chain_jvp(
+            dot_power, dot_field_x_re, zero = _C.diffraction_accumulation_chain_jvp(
                 ctx.scene_handle,
                 _native_tensor(tape_active),
                 _native_tensor(tape_cell),
@@ -1355,21 +1855,20 @@ class _DfrChainAccumFunction(torch.autograd.Function):
                 ctx.suffix_samples,
                 ctx.seed,
                 ctx.max_order,
-                _native_tensor(tangent_at(3, state_edge_pos)),
-                _native_tensor(tangent_at(4, state_edge_dir)),
-                _native_tensor(tangent_at(5, state_edge_t_min)),
-                _native_tensor(tangent_at(6, state_edge_t_max)),
-                _native_tensor(tangent_at(11, state_exterior_angle)),
-                _native_tensor(tangent_at(12, state_src)),
-                _native_tensor(tangent_at(13, state_src_power)),
-                _native_tensor(tangent_at(38, recursive_state_edge_pos)),
-                _native_tensor(tangent_at(39, recursive_state_edge_dir)),
-                _native_tensor(tangent_at(40, recursive_state_edge_t_min)),
-                _native_tensor(tangent_at(41, recursive_state_edge_t_max)),
-                _native_tensor(tangent_at(46, recursive_state_exterior_angle)),
-                _native_tensor(tangent_at(19, material_gain)),
+                _native_tangent_or_none(tangent_at(3)),
+                _native_tangent_or_none(tangent_at(4)),
+                _native_tangent_or_none(tangent_at(5)),
+                _native_tangent_or_none(tangent_at(6)),
+                _native_tangent_or_none(tangent_at(11)),
+                _native_tangent_or_none(tangent_at(12)),
+                _native_tangent_or_none(tangent_at(13)),
+                _native_tangent_or_none(tangent_at(38)),
+                _native_tangent_or_none(tangent_at(39)),
+                _native_tangent_or_none(tangent_at(40)),
+                _native_tangent_or_none(tangent_at(41)),
+                _native_tangent_or_none(tangent_at(46)),
+                _native_tangent_or_none(tangent_at(19)),
             )
-        zero = torch.zeros_like(dot_power)
         return (
             dot_power,
             dot_field_x_re,
@@ -1400,8 +1899,8 @@ def accum_dfr_chain_native(
     grid: DfrGrid,
     material: DfrMaterial,
     *,
-    active: torch.Tensor,
-    recursive_active: torch.Tensor,
+    active: torch.Tensor | None,
+    recursive_active: torch.Tensor | None,
     wavelength: float,
     direct_samples: int,
     keller_samples: int = 0,
@@ -1411,12 +1910,83 @@ def accum_dfr_chain_native(
 ) -> DfrAccum:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
+    active_arg = active
+    recursive_active_arg = recursive_active
+    if not _needs_reverse_or_forward_ad(
+        initial_states.edge_pos,
+        initial_states.edge_dir,
+        initial_states.edge_t_min,
+        initial_states.edge_t_max,
+        initial_states.exterior_angle,
+        initial_states.src,
+        initial_states.src_power,
+        recursive_states.edge_pos,
+        recursive_states.edge_dir,
+        recursive_states.edge_t_min,
+        recursive_states.edge_t_max,
+        recursive_states.exterior_angle,
+        material.gain,
+    ):
+        values = _C.diffraction_accumulation_forward(
+            int(scene_handle),
+            active_arg,
+            initial_states.edge_index,
+            initial_states.edge_pos,
+            initial_states.edge_dir,
+            initial_states.edge_t_min,
+            initial_states.edge_t_max,
+            initial_states.n0,
+            initial_states.n1,
+            initial_states.prim0,
+            initial_states.prim1,
+            initial_states.exterior_angle,
+            initial_states.src,
+            initial_states.src_power,
+            initial_states.wi,
+            initial_states.d0,
+            material.eta_r,
+            material.sigma,
+            material.mu_r,
+            material.gain,
+            material.valid,
+            initial_states.state_count,
+            int(grid.axis),
+            float(grid.position),
+            float(grid.coord0_min),
+            float(grid.coord0_max),
+            float(grid.coord1_min),
+            float(grid.coord1_max),
+            int(grid.resolution0),
+            int(grid.resolution1),
+            grid.resolved_cell_area(),
+            float(wavelength),
+            int(direct_samples),
+            int(keller_samples),
+            int(suffix_samples),
+            int(seed),
+            int(max_order),
+            recursive_states.state_count,
+            recursive_active_arg,
+            recursive_states.edge_index,
+            recursive_states.edge_pos,
+            recursive_states.edge_dir,
+            recursive_states.edge_t_min,
+            recursive_states.edge_t_max,
+            recursive_states.n0,
+            recursive_states.n1,
+            recursive_states.prim0,
+            recursive_states.prim1,
+            recursive_states.exterior_angle,
+            0,
+        )
+        grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
+        return DfrAccum(grid_cell_count, *values[:14])
     initial_states = _contig_states(initial_states)
     recursive_states = _contig_states(recursive_states)
     material = _contig_material(material)
     values = _DfrChainAccumFunction.apply(
         int(scene_handle),
-        active.contiguous(),
+        active_arg,
         initial_states.edge_index,
         initial_states.edge_pos,
         initial_states.edge_dir,
@@ -1451,7 +2021,7 @@ def accum_dfr_chain_native(
         int(suffix_samples),
         int(seed),
         int(max_order),
-        recursive_active.contiguous(),
+        recursive_active_arg,
         recursive_states.edge_index,
         recursive_states.edge_pos,
         recursive_states.edge_dir,
@@ -1474,18 +2044,18 @@ def accum_dfr_coherent_direct_native(
     grid: DfrGrid,
     material: DfrMaterial,
     *,
-    active: torch.Tensor,
+    active: torch.Tensor | None,
     wavelength: float,
     select_diffraction_point: bool = True,
     prefilter_visibility: bool = True,
 ) -> DfrCoherentAccum:
     if _C is None:
         raise RuntimeError("RayDTorch extension is not built yet.")
-    states = _contig_states(states)
-    material = _contig_material(material)
+    active_arg = active
+    state_limit = states.state_count
     values = _C.diffraction_coherent_accumulation_forward(
         int(scene_handle),
-        active.contiguous(),
+        active_arg,
         states.edge_index,
         states.edge_pos,
         states.edge_dir,
@@ -1505,6 +2075,7 @@ def accum_dfr_coherent_direct_native(
         material.mu_r,
         material.gain,
         material.valid,
+        state_limit,
         int(grid.axis),
         float(grid.position),
         float(grid.coord0_min),

@@ -33,6 +33,16 @@ void cuda_check(cudaError_t result, const char *expr) {
         std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
 }
 
+void require_optional_matrix4(const at::Tensor &tensor, std::string_view name) {
+    require_cuda(tensor, name);
+    require_contiguous(tensor, name);
+    require_dtype(tensor, at::kFloat, name);
+    require_rank(tensor, 2, name);
+    require_last_dim(tensor, 4, name);
+    if (tensor.size(0) != 0 && tensor.size(0) != 4)
+        throw std::runtime_error(std::string(name) + " must be empty or have shape (4, 4).");
+}
+
 void compact_accel_if_smaller(
     OptixDeviceContext optix_context,
     cudaStream_t stream,
@@ -234,46 +244,62 @@ void build_triangle_ias(SceneCache &scene, OptixDeviceContext optix_context, cud
 }
 
 void refresh_global_geometry(SceneCache &scene) {
-    std::vector<at::Tensor> vertices;
-    std::vector<at::Tensor> faces;
-    std::vector<at::Tensor> shape_ids;
-    std::vector<at::Tensor> local_ids;
-    vertices.reserve(scene.meshes.size());
-    faces.reserve(scene.meshes.size());
-    shape_ids.reserve(scene.meshes.size());
-    local_ids.reserve(scene.meshes.size());
-
     int64_t vertex_offset = 0;
     int64_t face_offset = 0;
     std::vector<int32_t> face_offsets;
     face_offsets.reserve(scene.meshes.size());
-    for (int64_t mesh_id = 0; mesh_id < static_cast<int64_t>(scene.meshes.size()); ++mesh_id) {
+    for (size_t mesh_id = 0; mesh_id < scene.meshes.size(); ++mesh_id) {
         const MeshRecord &mesh = scene.meshes[mesh_id];
+        if (vertex_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) ||
+            face_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+            throw std::runtime_error("Scene.build(): geometry exceeds int32 indexing limits.");
+        }
         face_offsets.push_back(static_cast<int32_t>(face_offset));
-        vertices.push_back(mesh.vertices.contiguous());
-        faces.push_back((mesh.faces + static_cast<int32_t>(vertex_offset)).contiguous());
-        shape_ids.push_back(at::full(
-            {mesh.faces.size(0)},
-            static_cast<int32_t>(mesh_id),
-            mesh.faces.options()));
-        local_ids.push_back(at::arange(
-            mesh.faces.size(0),
-            mesh.faces.options().dtype(at::kInt)));
+        vertex_offset += mesh.vertices.size(0);
+        face_offset += mesh.faces.size(0);
+    }
+    if (vertex_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) ||
+        face_offset > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        throw std::runtime_error("Scene.build(): geometry exceeds int32 indexing limits.");
+    }
+
+    at::TensorOptions fopts = scene.meshes[0].vertices.options();
+    at::TensorOptions iopts = scene.meshes[0].faces.options();
+    scene.global_vertices = at::empty({vertex_offset, 3}, fopts);
+    scene.global_faces = at::empty({face_offset, 3}, iopts);
+    scene.face_shape_id = at::empty({face_offset}, iopts);
+    scene.face_local_id = at::empty({face_offset}, iopts);
+    scene.face_offsets = at::empty({static_cast<int64_t>(face_offsets.size())}, iopts);
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    cuda_check(
+        cudaMemcpyAsync(
+            scene.face_offsets.data_ptr<int>(),
+            face_offsets.data(),
+            sizeof(int32_t) * face_offsets.size(),
+            cudaMemcpyHostToDevice,
+            torch_ctx.stream),
+        "cudaMemcpyAsync(face offsets)");
+
+    vertex_offset = 0;
+    face_offset = 0;
+    for (int32_t mesh_id = 0; mesh_id < static_cast<int32_t>(scene.meshes.size()); ++mesh_id) {
+        const MeshRecord &mesh = scene.meshes[mesh_id];
+        pack_global_geometry_cuda(
+            mesh.vertices,
+            mesh.faces,
+            static_cast<int32_t>(vertex_offset),
+            static_cast<int32_t>(face_offset),
+            mesh_id,
+            scene.global_vertices,
+            scene.global_faces,
+            scene.face_shape_id,
+            scene.face_local_id);
         vertex_offset += mesh.vertices.size(0);
         face_offset += mesh.faces.size(0);
     }
 
-    scene.global_vertices = at::cat(vertices, 0).contiguous();
-    scene.global_faces = at::cat(faces, 0).contiguous();
-    scene.face_shape_id = at::cat(shape_ids, 0).contiguous();
-    scene.face_local_id = at::cat(local_ids, 0).contiguous();
-    scene.face_offsets = at::tensor(
-        face_offsets,
-        at::TensorOptions().device(at::kCPU).dtype(at::kInt)).to(
-            at::Device(at::kCUDA, scene.device_index));
-
     const int64_t triangle_count = scene.global_faces.size(0);
-    at::TensorOptions fopts = scene.global_vertices.options();
     scene.tri_p0_x = at::empty({triangle_count}, fopts);
     scene.tri_p0_y = at::empty({triangle_count}, fopts);
     scene.tri_p0_z = at::empty({triangle_count}, fopts);
@@ -697,8 +723,12 @@ int64_t create_scene(std::vector<MeshRecord> meshes) {
     for (const MeshRecord &mesh : meshes) {
         require_vec3f(mesh.vertices, "mesh.vertices");
         require_vec3i(mesh.faces, "mesh.faces");
+        require_optional_matrix4(mesh.to_world_left, "mesh.to_world_left");
+        require_optional_matrix4(mesh.to_world_right, "mesh.to_world_right");
         if (mesh.vertices.get_device() != device_index || mesh.faces.get_device() != device_index)
             throw std::runtime_error("Scene.build(): all tensors must be on the same CUDA device.");
+        if (mesh.to_world_left.get_device() != device_index || mesh.to_world_right.get_device() != device_index)
+            throw std::runtime_error("Scene.build(): transform tensors must be on the scene device.");
     }
 
     auto scene = std::make_unique<SceneCache>();

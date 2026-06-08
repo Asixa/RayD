@@ -5,6 +5,7 @@ import math
 
 import torch
 
+from . import _C
 from .types import Ray
 
 
@@ -31,36 +32,121 @@ class Camera:
             raise TypeError("sample must be torch.float32.")
         if sample.ndim != 2 or sample.shape[1] != 2:
             raise ValueError("sample must have shape (N, 2).")
-        return sample.contiguous()
+        return sample
 
-    def sample_to_world(self, sample: torch.Tensor, depth: float = 1.0) -> torch.Tensor:
-        sample = self._require_sample(sample)
-        tan_x = math.tan(math.radians(self.fov_x) * 0.5)
-        tan_y = tan_x / self.aspect
-        x = (sample[:, 0] * 2.0 - 1.0) * tan_x * depth
-        y = (1.0 - sample[:, 1] * 2.0) * tan_y * depth
-        z = torch.full_like(x, depth)
-        return torch.stack((x, y, z), dim=1).contiguous()
-
-    def world_to_sample(self, point: torch.Tensor) -> torch.Tensor:
+    def _require_point(self, point: torch.Tensor) -> torch.Tensor:
         if point.device.type != "cuda":
             raise TypeError("point must be CUDA.")
         if point.dtype != torch.float32:
             raise TypeError("point must be torch.float32.")
         if point.ndim != 2 or point.shape[1] != 3:
             raise ValueError("point must have shape (N, 3).")
-        point = point.contiguous()
+        return point
+
+    def _tan_xy(self) -> tuple[float, float]:
         tan_x = math.tan(math.radians(self.fov_x) * 0.5)
-        tan_y = tan_x / self.aspect
-        safe_z = torch.clamp(point[:, 2], min=1.0e-12)
-        u = point[:, 0] / (safe_z * tan_x) * 0.5 + 0.5
-        v = 0.5 - point[:, 1] / (safe_z * tan_y) * 0.5
-        return torch.stack((u, v), dim=1).contiguous()
+        return tan_x, tan_x / self.aspect
+
+    def sample_to_world(self, sample: torch.Tensor, depth: float = 1.0) -> torch.Tensor:
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        sample = self._require_sample(sample)
+        tan_x, tan_y = self._tan_xy()
+        return _CameraSampleToWorldFunction.apply(sample, tan_x, tan_y, float(depth))
+
+    def world_to_sample(self, point: torch.Tensor) -> torch.Tensor:
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
+        point = self._require_point(point)
+        tan_x, tan_y = self._tan_xy()
+        return _CameraWorldToSampleFunction.apply(point, tan_x, tan_y)
 
     def sample_ray(self, sample: torch.Tensor) -> Ray:
+        if _C is None:
+            raise RuntimeError("RayDTorch extension is not built yet.")
         sample = self._require_sample(sample)
-        target = self.sample_to_world(sample)
-        direction = torch.nn.functional.normalize(target, dim=1)
-        origin_base = torch.zeros((sample.shape[0], 3), device=sample.device, dtype=sample.dtype)
-        origin = origin_base + sample.sum(dim=1, keepdim=True) * 0.0
-        return Ray(origin.contiguous(), direction.contiguous())
+        tan_x, tan_y = self._tan_xy()
+        origin, direction = _CameraSampleRayFunction.apply(sample, tan_x, tan_y)
+        return Ray(origin, direction)
+
+
+class _CameraSampleToWorldFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(sample: torch.Tensor, tan_x: float, tan_y: float, depth: float) -> torch.Tensor:
+        return _C.camera_sample_to_world(sample, float(tan_x), float(tan_y), float(depth))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output) -> None:
+        ctx.set_materialize_grads(False)
+        sample, tan_x, tan_y, depth = inputs
+        ctx.sample_count = int(sample.shape[0])
+        ctx.tan_x = float(tan_x)
+        ctx.tan_y = float(tan_y)
+        ctx.depth = float(depth)
+
+    @staticmethod
+    def backward(ctx, grad_world: torch.Tensor | None):
+        if grad_world is None:
+            return None, None, None, None
+        grad_sample = _C.camera_sample_to_world_backward(
+            grad_world,
+            ctx.sample_count,
+            ctx.tan_x,
+            ctx.tan_y,
+            ctx.depth,
+        )
+        return grad_sample, None, None, None
+
+
+class _CameraWorldToSampleFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(point: torch.Tensor, tan_x: float, tan_y: float) -> torch.Tensor:
+        return _C.camera_world_to_sample(point, float(tan_x), float(tan_y))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output) -> None:
+        ctx.set_materialize_grads(False)
+        point, tan_x, tan_y = inputs
+        ctx.save_for_backward(point)
+        ctx.tan_x = float(tan_x)
+        ctx.tan_y = float(tan_y)
+
+    @staticmethod
+    def backward(ctx, grad_sample: torch.Tensor | None):
+        if grad_sample is None:
+            return None, None, None
+        (point,) = ctx.saved_tensors
+        grad_point = _C.camera_world_to_sample_backward(
+            point,
+            grad_sample,
+            ctx.tan_x,
+            ctx.tan_y,
+        )
+        return grad_point, None, None
+
+
+class _CameraSampleRayFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(sample: torch.Tensor, tan_x: float, tan_y: float):
+        return _C.camera_sample_ray(sample, float(tan_x), float(tan_y))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output) -> None:
+        ctx.set_materialize_grads(False)
+        sample, tan_x, tan_y = inputs
+        ctx.save_for_backward(sample)
+        ctx.tan_x = float(tan_x)
+        ctx.tan_y = float(tan_y)
+
+    @staticmethod
+    def backward(ctx, grad_origin: torch.Tensor | None, grad_direction: torch.Tensor | None):
+        if grad_direction is None:
+            return None, None, None
+        (sample,) = ctx.saved_tensors
+        grad_sample = _C.camera_sample_ray_backward(
+            sample,
+            grad_direction,
+            ctx.tan_x,
+            ctx.tan_y,
+        )
+        return grad_sample, None, None

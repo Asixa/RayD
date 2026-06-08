@@ -18,15 +18,30 @@ static __forceinline__ __device__ bool is_active(unsigned int ray) {
     return params.active_mask == nullptr || params.active_mask[ray] != 0u;
 }
 
+static __forceinline__ __device__ float3 load_aos_vec3(const float *value,
+                                                       unsigned int ray) {
+    const unsigned int base = ray * 3u;
+    return make_f3(value[base + 0u], value[base + 1u], value[base + 2u]);
+}
+
 static __forceinline__ __device__ float3 load_start(unsigned int ray) {
+    if (params.start_aos != nullptr) {
+        return load_aos_vec3(params.start_aos, ray);
+    }
     return make_f3(params.start_x[ray], params.start_y[ray], params.start_z[ray]);
 }
 
 static __forceinline__ __device__ float3 load_end_a(unsigned int ray) {
+    if (params.end_aos != nullptr) {
+        return load_aos_vec3(params.end_aos, ray);
+    }
     return make_f3(params.end_x[ray], params.end_y[ray], params.end_z[ray]);
 }
 
 static __forceinline__ __device__ float3 load_end_b(unsigned int ray) {
+    if (params.end_b_aos != nullptr) {
+        return load_aos_vec3(params.end_b_aos, ray);
+    }
     return make_f3(params.end_b_x[ray], params.end_b_y[ray], params.end_b_z[ray]);
 }
 
@@ -153,6 +168,9 @@ extern "C" __global__ void __raygen__segment_visibility() {
             (visible == 0u && blocker != 0xFFFFFFFFu)
                 ? static_cast<int>(blocker)
                 : -1;
+    }
+    if (params.out_t != nullptr) {
+        params.out_t[ray] = __uint_as_float(0x7f800000u);
     }
 }
 
