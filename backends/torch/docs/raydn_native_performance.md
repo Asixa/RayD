@@ -2,6 +2,71 @@
 
 Measured on Windows with NVIDIA GeForce RTX 5080 and Torch CUDA 12.8.
 
+## 2026-06-12 Optimization Pass
+
+Environment note: the `witwin2` environment now uses conda-forge PyTorch
+2.10.0 (libtorch in `Library\`), and the native build was reconfigured against
+it. PyTorch's consumed Caffe2 cmake config sets `CMAKE_CUDA_ARCHITECTURES` to
+OFF during `find_package(Torch)`; `CMakeLists.txt` now restores the requested
+architecture list after `find_package` and fails configure if it resolves
+empty, so kernels can no longer silently build without `-gencode` flags.
+
+Changes in this pass (all parity- and unit-test green: 109 native tests,
+12 opt-in RayD parity tests):
+
+- Diffraction/paths boolean segment-visibility tests now trace with
+  `TERMINATE_ON_FIRST_HIT | DISABLE_ANYHIT | DISABLE_CLOSESTHIT` and resolve
+  in the miss program; ignore-prim variants keep closest-hit semantics.
+- The diffraction accumulation forward op initializes all field/counter/tape/
+  stage/temp buffers in one fused CUDA kernel instead of ~16 `at::zeros`/
+  `at::full` fills per call.
+- Point nearest-edge queries run only the tightest radius tier on the OptiX
+  path; unresolved queries resolve through an exact shared-memory tiled scan
+  with the original full-radius cutoff semantics. Ray nearest-edge queries
+  keep the previous tier behavior.
+- Shared multipath pipelines size the SBT to the actual record count, compute
+  exact stack sizes via `optixUtilComputeStackSizes`, and upload launch params
+  through a pinned staging ring (event-guarded, 4 slots).
+
+Same-script static comparison, `grid=64`, `queries=4096`, `warmup=8`,
+`repeat=60`, RayD package warm-started in the same harness (warm OptiX disk
+cache; build wall time includes per-process OptiX init and swings tens of ms
+run to run):
+
+| Operation | RayD ms | RayDN ms | Status |
+|---|---:|---:|---|
+| build | 65.1 | 85.0 | init-dominated, see note |
+| intersect `RayFlags.None` | 0.1607 | 0.0415 | RayDN faster |
+| intersect `RayFlags.All` | 0.1502 | 0.0668 | RayDN faster |
+| nearest edge | 1.3469 | 1.0819 | RayDN faster |
+| reflection trace | 0.2730 | 0.0834 | RayDN faster |
+| diffraction direct | 0.4356 | 0.2344 | RayDN faster |
+| diffraction paths | 0.3153 | 0.1227 | RayDN faster |
+
+Steady-state in-process scene build (probe, warm context): 2.4-3.3 ms at
+grid 64 and 4.1-5.2 ms at grid 192; the benchmark `build_ms` is dominated by
+one-time `optixInit`/context creation plus first-use module compiles.
+
+Native benchmark, `grid=192`, `queries=65536` (random 3D points after a
+dynamic sync, mostly far from the surface):
+
+| Metric | Before this pass | After |
+|---|---:|---:|
+| nearest_edge_ms | 230.8 | 27.8 |
+| diffraction_direct_ms | 0.305 | 0.214 |
+| dynamic_sync_ms | 2.25 | 1.53 |
+
+Multipath standard benchmark (RayDN vs RayD path backend, checksums match):
+
+| Workload | Size | RayDN ms | RayD ms |
+|---|---:|---:|---:|
+| reflection trace, 2 bounces | 65,536 rays | 0.165 | 0.189 |
+| reflection trace, 4 bounces | 65,536 rays | 0.218 | 0.250 |
+| reflection trace, 2 bounces | 1,048,576 rays | 0.433 | 0.689 |
+| reflection trace, 4 bounces | 1,048,576 rays | 0.603 | 0.707 |
+| diffraction export | 65,536 states | 0.221 | 0.530 |
+| diffraction export | 1,048,576 states | 0.785 | 1.038 |
+
 Command:
 
 ```powershell

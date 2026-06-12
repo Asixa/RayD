@@ -35,11 +35,13 @@ order-3 diffraction chains, and coherent direct accumulation. Torch VJP/JVP
 coverage exists for geometry, edge, reflection trace, EPC, and diffraction
 accumulation under the fixed-winner contract.
 
-The remaining completion risk is performance acceptance: the same-script
-RayD/RayDN benchmark now exists, but current measurements still show
-RayDN slower for build, reflection trace, and diffraction direct on the
-recorded benchmark shape. See `docs/raydn_native_gap_analysis.md` and
-`docs/raydn_native_performance.md`.
+On the recorded same-script benchmark shape (grid 64, 4,096 queries, warm
+caches), RayDN currently measures faster than RayD for scene build,
+intersect, nearest edge, reflection trace, diffraction paths, and direct
+diffraction accumulation. Far-from-surface nearest-edge queries use a tiled
+exact fallback scan instead of the scene-diagonal OptiX tier. Release-size and
+Nsight-counter-backed runs remain the broader performance gate. See
+`docs/raydn_native_gap_analysis.md` and `docs/raydn_native_performance.md`.
 
 ## Dependencies
 

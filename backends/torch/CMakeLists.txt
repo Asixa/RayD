@@ -65,7 +65,19 @@ if(RAYDN_BUILD_NATIVE)
         message(FATAL_ERROR "Could not locate PyTorch CMake prefix. Install torch in the build environment.")
     endif()
     list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX}")
+    # PyTorch's consumed Caffe2 config (Caffe2/public/cuda.cmake) sets the
+    # normal variable CMAKE_CUDA_ARCHITECTURES to OFF, which would strip all
+    # -gencode flags from every target created below and silently fall back to
+    # nvcc's default architecture. Save the requested value and restore it.
+    set(RAYDN_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
     find_package(Torch REQUIRED)
+    if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYDN_REQUESTED_CUDA_ARCHITECTURES}")
+        set(CMAKE_CUDA_ARCHITECTURES "${RAYDN_REQUESTED_CUDA_ARCHITECTURES}")
+    endif()
+    if(NOT CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "OFF")
+        message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayDN kernels would build without -gencode flags.")
+    endif()
+    message(STATUS "RayDN CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" REQUIRED)
 
     function(pybind11_add_module target)

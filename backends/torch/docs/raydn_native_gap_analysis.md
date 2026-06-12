@@ -1,12 +1,23 @@
 # RayDN Native Gap Analysis
 
-Status: RayDN now contains RayD-style OptiX PTX pipelines for scene
-intersection, edge query, reflection, and diffraction paths. The current code
-also includes Torch VJP/JVP kernels for the supported continuous outputs under
-the fixed-winner contract. The current same-script RayD/RayDN benchmark
-shows parity or better for the covered grid-64/query-4096 static and dynamic
-cases; release-size and Nsight-backed runs should remain the broader
-performance gate.
+Status (2026-06-12): RayDN contains RayD-style OptiX PTX pipelines for scene
+intersection, edge query, reflection, and diffraction paths, plus Torch
+VJP/JVP kernels for the supported continuous outputs under the fixed-winner
+contract. The same-script RayD/RayDN benchmark measures RayDN faster for
+every covered operation on the grid-64/query-4096 static and dynamic shapes,
+and the multipath standard benchmark measures RayDN faster for reflection
+trace (65K/1M rays, 2/4 bounces) and diffraction export (65K/1M states) with
+matching checksums. Far-from-surface point nearest-edge no longer traverses
+the scene-diagonal OptiX tier; it uses the tightest tier plus an exact tiled
+fallback scan (native grid-192/65,536-query nearest-edge: 230.8 ms -> 27.8 ms).
+Release-size and Nsight-counter-backed runs remain the broader performance
+gate; Nsight Compute counters still require an elevated session
+(ERR_NVGPUCTRPERM).
+
+Known remaining RayD-favored case: static public VJP through Torch eager
+`.backward()` (RayD warmed static JIT VJP measured ~1.6-2.1x faster at
+64:128/16,384 rays); the native fwd+bwd kernels themselves measure faster
+than RayD, the gap is the eager autograd boundary.
 
 ## Current Multipath Implementation
 

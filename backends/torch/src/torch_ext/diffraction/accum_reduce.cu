@@ -27,6 +27,39 @@ void require_i32_count(int64_t count, const char *name) {
     }
 }
 
+__global__ void init_dfr_accum_outputs_kernel(DfrAccumInitArgs args, int n) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += blockDim.x * gridDim.x) {
+        if (i < args.cell_count) {
+#pragma unroll
+            for (int field = 0; field < 7; ++field) {
+                if (args.fields[field] != nullptr)
+                    args.fields[field][i] = 0.0f;
+            }
+        }
+        if (i < 7 && args.counters[i] != nullptr)
+            *args.counters[i] = 0;
+        if (i < args.state_count && args.state_prefix_depth != nullptr)
+            args.state_prefix_depth[i] = 0;
+        if (i < args.recursive_state_count && args.recursive_prefix_depth != nullptr)
+            args.recursive_prefix_depth[i] = 0;
+        if (i < args.launch_count) {
+            if (args.temp_visibility != nullptr)
+                args.temp_visibility[i] = 0u;
+            if (args.tape_active != nullptr) {
+                args.tape_active[i] = 0u;
+                args.tape_state_idx[i] = -1;
+                args.tape_cell[i] = -1;
+                args.tape_material_idx[i] = -1;
+                args.tape_edge_u[i] = 0.0f;
+            }
+            if (args.stage_cell != nullptr) {
+                args.stage_cell[i] = -1;
+                args.stage_value[i] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            }
+        }
+    }
+}
+
 struct AddFloat4 {
     __host__ __device__ float4 operator()(float4 a, float4 b) const {
         return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
@@ -147,6 +180,20 @@ __global__ void scatter_dfr_coherent_accum_reduced_kernel(
 }
 
 } // namespace
+
+void init_dfr_accum_outputs_cuda(const DfrAccumInitArgs &args, cudaStream_t stream) {
+    int n = 7;
+    n = std::max(n, static_cast<int>(args.cell_count));
+    n = std::max(n, static_cast<int>(args.launch_count));
+    n = std::max(n, static_cast<int>(args.state_count));
+    n = std::max(n, static_cast<int>(args.recursive_state_count));
+    if (n <= 0)
+        return;
+    const int block = 256;
+    const int grid = std::min((n + block - 1) / block, 4096);
+    init_dfr_accum_outputs_kernel<<<grid, block, 0, stream>>>(args, n);
+    cuda_check(cudaGetLastError(), "init_dfr_accum_outputs_kernel");
+}
 
 void reduce_dfr_accum_staged_cuda(
     int64_t sample_count,

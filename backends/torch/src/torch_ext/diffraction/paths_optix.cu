@@ -87,6 +87,34 @@ static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
     return choose_hit(primary, secondary);
 }
 
+// Boolean occlusion test: terminate on the first hit and skip closest-hit
+// shading entirely. The shared miss program writes payload_0 = 0, so a payload
+// initialized to 1 survives only when something blocks the segment.
+static __forceinline__ __device__ bool occlusion_blocked_handle(OptixTraversableHandle handle,
+                                                                float3 origin,
+                                                                float3 direction,
+                                                                float tmax) {
+    if (handle == 0ull || tmax <= kRayTMin) {
+        return false;
+    }
+    unsigned int blocked = 1u;
+    optixTrace(handle,
+               origin,
+               direction,
+               kRayTMin,
+               tmax,
+               0.0f,
+               255u,
+               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+                   OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                   OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+               0,
+               1,
+               0,
+               blocked);
+    return blocked != 0u;
+}
+
 template <bool SplitScene>
 static __forceinline__ __device__ bool visible_segment(float3 start, float3 end) {
     const float3 delta = end - start;
@@ -95,12 +123,17 @@ static __forceinline__ __device__ bool visible_segment(float3 start, float3 end)
         return true;
     }
     const float3 dir = (1.f / dist) * delta;
-    const HitPayload hit =
-        trace_scene<SplitScene>(
-            start + kDfrRayBias * dir,
-            dir,
-            fmaxf(dist - 2.f * kDfrRayBias, 0.f));
-    return hit.hit == 0u;
+    const float3 origin = start + kDfrRayBias * dir;
+    const float tmax = fmaxf(dist - 2.f * kDfrRayBias, 0.f);
+    if (occlusion_blocked_handle(params.primary_handle, origin, dir, tmax)) {
+        return false;
+    }
+    if constexpr (SplitScene) {
+        if (occlusion_blocked_handle(params.secondary_handle, origin, dir, tmax)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static __forceinline__ __device__ float read_f32(const float *ptr, int stride, int idx) {

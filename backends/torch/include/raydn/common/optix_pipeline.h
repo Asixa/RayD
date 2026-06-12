@@ -4,6 +4,7 @@
 #include <cuda_runtime_api.h>
 #include <optix.h>
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -66,6 +67,13 @@ private:
     at::Tensor miss_record_;
     at::Tensor hitgroup_records_;
     at::Tensor params_buffer_;
+
+    // Pinned host staging ring so launch params upload as a true async DMA.
+    // Each slot's event guards host-side reuse of that slot's pinned buffer.
+    static constexpr int kParamsStagingSlots = 4;
+    std::array<at::Tensor, kParamsStagingSlots> params_staging_;
+    std::array<cudaEvent_t, kParamsStagingSlots> params_staging_events_ = {};
+    int params_staging_cursor_ = 0;
 };
 
 std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(

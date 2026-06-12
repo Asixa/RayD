@@ -8,6 +8,7 @@
 #include <raydn/common/optix_context.h>
 
 #include <algorithm>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -105,8 +106,9 @@ at::Tensor make_sbt_record(
 }
 
 int hitgroup_record_capacity(int hitgroup_record_count) {
-    constexpr int kMinHitgroupRecordCapacity = 64;
-    int capacity = kMinHitgroupRecordCapacity;
+    // Round up to a power of two so pipelines are shared across scenes with
+    // similar mesh counts, but do not pad a single-record SBT to 64 entries.
+    int capacity = 1;
     while (capacity < hitgroup_record_count)
         capacity *= 2;
     return capacity;
@@ -115,6 +117,12 @@ int hitgroup_record_capacity(int hitgroup_record_count) {
 } // namespace
 
 OptixLaunchPipeline::~OptixLaunchPipeline() {
+    for (cudaEvent_t &event : params_staging_events_) {
+        if (event != nullptr) {
+            cudaEventDestroy(event);
+            event = nullptr;
+        }
+    }
     if (pipeline_ != nullptr && optixPipelineDestroy != nullptr)
         optixPipelineDestroy(pipeline_);
     if (hitgroup_ != nullptr && optixProgramGroupDestroy != nullptr)
@@ -228,7 +236,26 @@ void OptixLaunchPipeline::build(
             std::string("OptiX error in optixPipelineCreate(multipath): code=") +
             std::to_string(static_cast<int>(result)) + " log=" + std::string(log, log_size));
     }
-    raydn_OPTIX_CHECK(optixPipelineSetStackSize(pipeline_, 0, 0, 4096, 2));
+    OptixStackSizes stack_sizes = {};
+    for (OptixProgramGroup group : program_groups)
+        raydn_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, pipeline_));
+    uint32_t direct_callable_stack_from_traversal = 0;
+    uint32_t direct_callable_stack_from_state = 0;
+    uint32_t continuation_stack = 0;
+    raydn_OPTIX_CHECK(optixUtilComputeStackSizes(
+        &stack_sizes,
+        link_options.maxTraceDepth,
+        0,
+        0,
+        &direct_callable_stack_from_traversal,
+        &direct_callable_stack_from_state,
+        &continuation_stack));
+    raydn_OPTIX_CHECK(optixPipelineSetStackSize(
+        pipeline_,
+        direct_callable_stack_from_traversal,
+        direct_callable_stack_from_state,
+        continuation_stack,
+        2));
 
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(device_index).stream();
     for (OptixProgramGroup group : raygen_groups_)
@@ -251,9 +278,18 @@ void OptixLaunchPipeline::build(
         "cudaMemcpyAsync(multipath hitgroup records)");
 
     params_size_ = config.params_size;
+    const int64_t params_capacity = static_cast<int64_t>(std::max<size_t>(params_size_, 1024));
     params_buffer_ = at::empty(
-        {static_cast<int64_t>(std::max<size_t>(params_size_, 1024))},
+        {params_capacity},
         at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
+    for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
+        params_staging_[slot] = at::empty(
+            {params_capacity},
+            at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
+        cuda_check(
+            cudaEventCreateWithFlags(&params_staging_events_[slot], cudaEventDisableTiming),
+            "cudaEventCreateWithFlags(params staging)");
+    }
     hitgroup_record_count_ = hitgroup_record_count;
     ready_ = true;
 }
@@ -303,14 +339,25 @@ void OptixLaunchPipeline::launch_impl(
     if (params_buffer_.numel() < static_cast<int64_t>(launch_params_size))
         throw std::runtime_error("OptixLaunchPipeline::launch(): params buffer is too small.");
 
+    const int slot = params_staging_cursor_;
+    params_staging_cursor_ = (params_staging_cursor_ + 1) % kParamsStagingSlots;
+    // Wait until the DMA that last read this pinned slot has finished before
+    // overwriting it; with the ring depth this is almost always a no-op.
+    cuda_check(
+        cudaEventSynchronize(params_staging_events_[slot]),
+        "cudaEventSynchronize(multipath params staging)");
+    std::memcpy(params_staging_[slot].data_ptr<uint8_t>(), params, launch_params_size);
     cuda_check(
         cudaMemcpyAsync(
             params_buffer_.data_ptr<uint8_t>(),
-            params,
+            params_staging_[slot].data_ptr<uint8_t>(),
             launch_params_size,
             cudaMemcpyHostToDevice,
             stream),
         "cudaMemcpyAsync(multipath params)");
+    cuda_check(
+        cudaEventRecord(params_staging_events_[slot], stream),
+        "cudaEventRecord(multipath params staging)");
 
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord =

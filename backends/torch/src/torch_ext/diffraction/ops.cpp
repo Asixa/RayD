@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -867,26 +868,26 @@ py::tuple diffraction_accumulation_forward_op(
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     auto bopts = state_edge_index.options().dtype(at::kBool);
-    at::Tensor power = at::zeros({cell_count}, fopts);
-    at::Tensor field_x_re = at::zeros({cell_count}, fopts);
-    at::Tensor field_x_im = at::zeros({cell_count}, fopts);
-    at::Tensor field_y_re = at::zeros({cell_count}, fopts);
-    at::Tensor field_y_im = at::zeros({cell_count}, fopts);
-    at::Tensor field_z_re = at::zeros({cell_count}, fopts);
-    at::Tensor field_z_im = at::zeros({cell_count}, fopts);
-    at::Tensor direct_count = at::zeros({1}, iopts);
-    at::Tensor keller_count = at::zeros({1}, iopts);
-    at::Tensor suffix_count = at::zeros({1}, iopts);
-    at::Tensor vis_rejects = at::zeros({1}, iopts);
-    at::Tensor edge_vis_rejects = at::zeros({1}, iopts);
-    at::Tensor utd_rejects = at::zeros({1}, iopts);
-    at::Tensor edge_uses = at::zeros({1}, iopts);
+    at::Tensor power = at::empty({cell_count}, fopts);
+    at::Tensor field_x_re = at::empty({cell_count}, fopts);
+    at::Tensor field_x_im = at::empty({cell_count}, fopts);
+    at::Tensor field_y_re = at::empty({cell_count}, fopts);
+    at::Tensor field_y_im = at::empty({cell_count}, fopts);
+    at::Tensor field_z_re = at::empty({cell_count}, fopts);
+    at::Tensor field_z_im = at::empty({cell_count}, fopts);
+    at::Tensor direct_count = at::empty({1}, iopts);
+    at::Tensor keller_count = at::empty({1}, iopts);
+    at::Tensor suffix_count = at::empty({1}, iopts);
+    at::Tensor vis_rejects = at::empty({1}, iopts);
+    at::Tensor edge_vis_rejects = at::empty({1}, iopts);
+    at::Tensor utd_rejects = at::empty({1}, iopts);
+    at::Tensor edge_uses = at::empty({1}, iopts);
     const bool write_tape = export_tape != 0;
-    at::Tensor tape_active = write_tape ? at::zeros({launch_count}, bopts) : at::empty({0}, bopts);
-    at::Tensor tape_state_idx = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
-    at::Tensor tape_cell = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
-    at::Tensor tape_material_idx = write_tape ? at::full({launch_count}, -1, iopts) : at::empty({0}, iopts);
-    at::Tensor tape_edge_u = write_tape ? at::zeros({launch_count}, fopts) : at::empty({0}, fopts);
+    at::Tensor tape_active = write_tape ? at::empty({launch_count}, bopts) : at::empty({0}, bopts);
+    at::Tensor tape_state_idx = write_tape ? at::empty({launch_count}, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_cell = write_tape ? at::empty({launch_count}, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_material_idx = write_tape ? at::empty({launch_count}, iopts) : at::empty({0}, iopts);
+    at::Tensor tape_edge_u = write_tape ? at::empty({launch_count}, fopts) : at::empty({0}, fopts);
     const bool staged_no_suffix_accum =
         !write_tape &&
         !use_recursive &&
@@ -895,11 +896,51 @@ py::tuple diffraction_accumulation_forward_op(
         static_cast<int64_t>(launch_count) >= kStagedDfrAccumMinSamples &&
         static_cast<int64_t>(launch_count) >= cell_count * kStagedDfrAccumMinSamplesPerCell;
     at::Tensor stage_cell = staged_no_suffix_accum
-        ? at::full({launch_count}, -1, iopts)
+        ? at::empty({launch_count}, iopts)
         : at::empty({0}, iopts);
     at::Tensor stage_value = staged_no_suffix_accum
-        ? at::zeros({launch_count, 4}, fopts)
+        ? at::empty({launch_count, 4}, fopts)
         : at::empty({0, 4}, fopts);
+    at::Tensor state_prefix_depth = at::empty({state_count}, iopts);
+    at::Tensor temp_visibility = at::empty({launch_count}, bopts);
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    DfrAccumInitArgs init_args;
+    init_args.cell_count = checked_i32(cell_count, "cell_count");
+    init_args.launch_count = launch_count;
+    init_args.state_count = checked_i32(state_count, "state_count");
+    float *const init_fields[7] = {
+        power.data_ptr<float>(),
+        field_x_re.data_ptr<float>(),
+        field_x_im.data_ptr<float>(),
+        field_y_re.data_ptr<float>(),
+        field_y_im.data_ptr<float>(),
+        field_z_re.data_ptr<float>(),
+        field_z_im.data_ptr<float>()};
+    int *const init_counters[7] = {
+        direct_count.data_ptr<int>(),
+        keller_count.data_ptr<int>(),
+        suffix_count.data_ptr<int>(),
+        vis_rejects.data_ptr<int>(),
+        edge_vis_rejects.data_ptr<int>(),
+        utd_rejects.data_ptr<int>(),
+        edge_uses.data_ptr<int>()};
+    std::memcpy(init_args.fields, init_fields, sizeof(init_fields));
+    std::memcpy(init_args.counters, init_counters, sizeof(init_counters));
+    init_args.state_prefix_depth = state_count > 0 ? state_prefix_depth.data_ptr<int>() : nullptr;
+    init_args.temp_visibility = launch_count > 0 ? mutable_mask_ptr(temp_visibility) : nullptr;
+    if (write_tape && launch_count > 0) {
+        init_args.tape_active = mutable_mask_ptr(tape_active);
+        init_args.tape_state_idx = tape_state_idx.data_ptr<int>();
+        init_args.tape_cell = tape_cell.data_ptr<int>();
+        init_args.tape_material_idx = tape_material_idx.data_ptr<int>();
+        init_args.tape_edge_u = tape_edge_u.data_ptr<float>();
+    }
+    if (staged_no_suffix_accum) {
+        init_args.stage_cell = stage_cell.data_ptr<int>();
+        init_args.stage_value = reinterpret_cast<float4 *>(stage_value.data_ptr<float>());
+    }
+    init_dfr_accum_outputs_cuda(init_args, torch_ctx.stream);
     if (state_count == 0 || launch_count == 0) {
         return py::make_tuple(
             power.reshape({grid_resolution1, grid_resolution0}),
@@ -935,10 +976,7 @@ py::tuple diffraction_accumulation_forward_op(
     if (has_defined_optional_tensor(active)) {
         active_contig = active_mask_for_states(*active, state_count, "diffraction_accumulation_forward");
     }
-    at::Tensor state_prefix_depth = at::zeros({state_count}, iopts);
-    at::Tensor temp_visibility = at::zeros({launch_count}, bopts);
     at::Tensor recursive_active_contig;
-    at::Tensor recursive_prefix_depth;
     Vec3Input recursive_edge_pos_view;
     Vec3Input recursive_edge_dir_view;
     Vec3Input recursive_n0_view;
@@ -950,7 +988,6 @@ py::tuple diffraction_accumulation_forward_op(
                 recursive_state_count,
                 "diffraction_accumulation_forward recursive_active");
         }
-        recursive_prefix_depth = at::zeros({recursive_state_count}, iopts);
         recursive_edge_pos_view = vec3_input(*recursive_state_edge_pos_tensor, "recursive_state_edge_pos");
         recursive_edge_dir_view = vec3_input(*recursive_state_edge_dir_tensor, "recursive_state_edge_dir");
         recursive_n0_view = vec3_input(*recursive_state_n0_tensor, "recursive_state_n0");
@@ -1130,7 +1167,6 @@ py::tuple diffraction_accumulation_forward_op(
         ? reinterpret_cast<float4 *>(stage_value.data_ptr<float>())
         : nullptr;
 
-    TorchCudaContext torch_ctx = current_torch_cuda_context();
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
     if (use_recursive) {
         pipeline->launch(13, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);

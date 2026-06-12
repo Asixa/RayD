@@ -293,6 +293,140 @@ __global__ void finalize_edge_ray_stage_kernel(
     unresolved[ray_idx] = false;
 }
 
+constexpr int kEdgeBruteTile = 128;
+
+// Exact nearest-edge fallback for queries the tight OptiX radius tiers did not
+// resolve. The previous full-radius GAS tier inflated every edge AABB by the
+// scene diagonal, so a far query visited all edge AABBs through the OptiX
+// intersection program; a tiled scan over the edge SoA does the same exact
+// search at a fraction of the cost. The full-radius cutoff is preserved:
+// queries farther than max_radius from every edge stay unresolved.
+__global__ void edge_point_bruteforce_kernel(
+    const float *__restrict__ query_x,
+    const float *__restrict__ query_y,
+    const float *__restrict__ query_z,
+    const bool *__restrict__ unresolved_mask,
+    int point_count,
+    const float *__restrict__ p0_x,
+    const float *__restrict__ p0_y,
+    const float *__restrict__ p0_z,
+    const float *__restrict__ e1_x,
+    const float *__restrict__ e1_y,
+    const float *__restrict__ e1_z,
+    const uint8_t *__restrict__ edge_mask,
+    const int *__restrict__ edge_shape_id,
+    const int *__restrict__ edge_local_id,
+    int edge_count,
+    float max_radius,
+    float *__restrict__ final_distance,
+    float *__restrict__ final_edge_point,
+    float *__restrict__ final_edge_t,
+    int *__restrict__ final_shape_id,
+    int *__restrict__ final_edge_id,
+    int *__restrict__ final_global_edge_id,
+    int *__restrict__ final_tape_edge_id,
+    float *__restrict__ final_tape_s,
+    float *__restrict__ final_tape_d,
+    bool *__restrict__ unresolved_out) {
+    __shared__ float s_p0x[kEdgeBruteTile];
+    __shared__ float s_p0y[kEdgeBruteTile];
+    __shared__ float s_p0z[kEdgeBruteTile];
+    __shared__ float s_e1x[kEdgeBruteTile];
+    __shared__ float s_e1y[kEdgeBruteTile];
+    __shared__ float s_e1z[kEdgeBruteTile];
+    __shared__ uint8_t s_mask[kEdgeBruteTile];
+
+    const int query = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool active = query < point_count && unresolved_mask[query];
+    if (__syncthreads_count(active ? 1 : 0) == 0)
+        return;
+
+    float qx = 0.f;
+    float qy = 0.f;
+    float qz = 0.f;
+    if (active) {
+        qx = query_x[query];
+        qy = query_y[query];
+        qz = query_z[query];
+    }
+    float best_d2 = CUDART_INF_F;
+    float best_t = 0.f;
+    int best_edge = -1;
+
+    for (int tile = 0; tile < edge_count; tile += kEdgeBruteTile) {
+        const int tile_n = min(kEdgeBruteTile, edge_count - tile);
+        for (int j = threadIdx.x; j < tile_n; j += blockDim.x) {
+            s_p0x[j] = p0_x[tile + j];
+            s_p0y[j] = p0_y[tile + j];
+            s_p0z[j] = p0_z[tile + j];
+            s_e1x[j] = e1_x[tile + j];
+            s_e1y[j] = e1_y[tile + j];
+            s_e1z[j] = e1_z[tile + j];
+            s_mask[j] = edge_mask == nullptr ? 1u : edge_mask[tile + j];
+        }
+        __syncthreads();
+        if (active) {
+            for (int j = 0; j < tile_n; ++j) {
+                if (s_mask[j] == 0u)
+                    continue;
+                // Same math as point_segment_distance in edge_optix.cu.
+                const float ex = s_e1x[j];
+                const float ey = s_e1y[j];
+                const float ez = s_e1z[j];
+                const float len2 = ex * ex + ey * ey + ez * ez;
+                const float dx = qx - s_p0x[j];
+                const float dy = qy - s_p0y[j];
+                const float dz = qz - s_p0z[j];
+                float t = len2 > 1.0e-7f ? (dx * ex + dy * ey + dz * ez) / len2 : 0.f;
+                t = fminf(fmaxf(t, 0.f), 1.f);
+                const float qpx = s_p0x[j] + ex * t;
+                const float qpy = s_p0y[j] + ey * t;
+                const float qpz = s_p0z[j] + ez * t;
+                const float rx = qx - qpx;
+                const float ry = qy - qpy;
+                const float rz = qz - qpz;
+                const float d2 = rx * rx + ry * ry + rz * rz;
+                if (d2 < best_d2) {
+                    best_d2 = d2;
+                    best_t = t;
+                    best_edge = tile + j;
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    if (!active || best_edge < 0)
+        return;
+    const float distance = sqrtf(fmaxf(best_d2, 0.f));
+    if (distance > max_radius)
+        return;
+
+    const float3 a = edge_start(p0_x, p0_y, p0_z, best_edge);
+    const float3 e = edge_vector(e1_x, e1_y, e1_z, best_edge);
+    const float3 q = add3(a, mul3(best_t, e));
+    final_distance[query] = distance;
+    final_edge_t[query] = best_t;
+    final_shape_id[query] = edge_shape_id[best_edge];
+    final_edge_id[query] = edge_local_id[best_edge];
+    final_global_edge_id[query] = best_edge;
+    final_edge_point[query * 3 + 0] = q.x;
+    final_edge_point[query * 3 + 1] = q.y;
+    final_edge_point[query * 3 + 2] = q.z;
+    if (final_tape_edge_id != nullptr) {
+        final_tape_edge_id[query] = best_edge;
+    }
+    if (final_tape_s != nullptr) {
+        final_tape_s[query] = best_t;
+    }
+    if (final_tape_d != nullptr) {
+        final_tape_d[query * 3 + 0] = qx - q.x;
+        final_tape_d[query * 3 + 1] = qy - q.y;
+        final_tape_d[query * 3 + 2] = qz - q.z;
+    }
+    unresolved_out[query] = false;
+}
+
 void launch_edge_query(
     OptixDeviceContextEntry &optix_entry,
     cudaStream_t stream,
@@ -395,8 +529,46 @@ EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &
     params.final_tape_d = out.tape_d.data_ptr<float>();
     params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
 
-    launch_edge_query(
-        optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
+    // The widest (scene-diagonal) tier degenerates to an O(edges) scan through
+    // the OptiX intersection program for far queries, and even the middle tier
+    // inflates every edge AABB enough that mid-distance queries visit a large
+    // fraction of the scene. Keep only the tightest tier on the OptiX path and
+    // resolve the remainder with the tiled fallback scan.
+    const float full_search_radius = params.search_radius;
+    params.tier_count = params.tier_count > 1 ? 1 : 0;
+    if (params.tier_count > 0) {
+        launch_edge_query(
+            optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
+    }
+    const int brute_blocks =
+        static_cast<int>((point_count + kEdgeBruteTile - 1) / kEdgeBruteTile);
+    edge_point_bruteforce_kernel<<<brute_blocks, kEdgeBruteTile, 0, torch_ctx.stream>>>(
+        query_x.data_ptr<float>(),
+        query_y.data_ptr<float>(),
+        query_z.data_ptr<float>(),
+        unresolved.data_ptr<bool>(),
+        static_cast<int>(point_count),
+        scene.edge_p0_x.data_ptr<float>(),
+        scene.edge_p0_y.data_ptr<float>(),
+        scene.edge_p0_z.data_ptr<float>(),
+        scene.edge_e1_x.data_ptr<float>(),
+        scene.edge_e1_y.data_ptr<float>(),
+        scene.edge_e1_z.data_ptr<float>(),
+        scene.edge_mask.data_ptr<uint8_t>(),
+        scene.edge_shape_id.data_ptr<int>(),
+        scene.edge_local_id.data_ptr<int>(),
+        static_cast<int>(edge_count),
+        full_search_radius,
+        out.distance.data_ptr<float>(),
+        out.edge_point.data_ptr<float>(),
+        out.edge_t.data_ptr<float>(),
+        out.shape_id.data_ptr<int>(),
+        out.edge_id.data_ptr<int>(),
+        out.global_edge_id.data_ptr<int>(),
+        out.tape_edge_id.data_ptr<int>(),
+        out.tape_s.data_ptr<float>(),
+        out.tape_d.data_ptr<float>(),
+        unresolved.data_ptr<bool>());
     return out;
 }
 
@@ -466,8 +638,42 @@ EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const a
     params.final_global_edge_id = out.global_edge_id.data_ptr<int>();
     params.final_unresolved = reinterpret_cast<uint8_t *>(unresolved.data_ptr<bool>());
 
-    launch_edge_query(
-        optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
+    // Same tightest-tier + fallback split as the tape-producing path above.
+    const float full_search_radius = params.search_radius;
+    params.tier_count = params.tier_count > 1 ? 1 : 0;
+    if (params.tier_count > 0) {
+        launch_edge_query(
+            optix_entry, torch_ctx.stream, params, EdgeOptixLaunchKind::Point, point_count);
+    }
+    const int brute_blocks =
+        static_cast<int>((point_count + kEdgeBruteTile - 1) / kEdgeBruteTile);
+    edge_point_bruteforce_kernel<<<brute_blocks, kEdgeBruteTile, 0, torch_ctx.stream>>>(
+        query_x.data_ptr<float>(),
+        query_y.data_ptr<float>(),
+        query_z.data_ptr<float>(),
+        unresolved.data_ptr<bool>(),
+        static_cast<int>(point_count),
+        scene.edge_p0_x.data_ptr<float>(),
+        scene.edge_p0_y.data_ptr<float>(),
+        scene.edge_p0_z.data_ptr<float>(),
+        scene.edge_e1_x.data_ptr<float>(),
+        scene.edge_e1_y.data_ptr<float>(),
+        scene.edge_e1_z.data_ptr<float>(),
+        scene.edge_mask.data_ptr<uint8_t>(),
+        scene.edge_shape_id.data_ptr<int>(),
+        scene.edge_local_id.data_ptr<int>(),
+        static_cast<int>(edge_count),
+        full_search_radius,
+        out.distance.data_ptr<float>(),
+        out.edge_point.data_ptr<float>(),
+        out.edge_t.data_ptr<float>(),
+        out.shape_id.data_ptr<int>(),
+        out.edge_id.data_ptr<int>(),
+        out.global_edge_id.data_ptr<int>(),
+        nullptr,
+        nullptr,
+        nullptr,
+        unresolved.data_ptr<bool>());
     return out;
 }
 

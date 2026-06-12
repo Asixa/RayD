@@ -72,8 +72,9 @@ C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_ray
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydn --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
-Latest recorded same-script static-vs-static performance result, stable repeat
-run:
+Latest recorded same-script static-vs-static performance result (2026-06-12,
+warm OptiX disk cache, conda-forge torch 2.10; `build_ms` is dominated by
+per-process OptiX init and swings tens of ms run to run):
 
 ```json
 {
@@ -81,73 +82,47 @@ run:
   "grid": 64,
   "queries": 4096,
   "rayd": {
-    "build_ms": 2342.0363000041107,
-    "diffraction_direct_ms": 0.4519966666218049,
-    "intersect_ms": 0.14462333335056124,
-    "nearest_edge_ms": 1.4299183333302306,
-    "reflection_trace_ms": 0.34219333332051366
+    "build_ms": 65.1478,
+    "diffraction_direct_ms": 0.43555,
+    "diffraction_paths_ms": 0.31534,
+    "intersect_flags_none_ms": 0.16069,
+    "intersect_ms": 0.15019,
+    "nearest_edge_ms": 1.34690,
+    "reflection_trace_ms": 0.27304
   },
   "raydn": {
-    "build_ms": 1547.1698999972432,
-    "diffraction_direct_ms": 0.43191333328043885,
-    "intersect_ms": 0.10184333332290407,
-    "nearest_edge_ms": 1.4051099999051075,
-    "reflection_trace_ms": 0.3025700001065464
+    "build_ms": 84.9524,
+    "diffraction_direct_ms": 0.23441,
+    "diffraction_paths_ms": 0.12266,
+    "intersect_flags_none_ms": 0.04146,
+    "intersect_ms": 0.06684,
+    "nearest_edge_ms": 1.08190,
+    "reflection_trace_ms": 0.08338
   },
   "repeat": 60,
   "warmup": 8
 }
 ```
 
-Latest recorded same-script dynamic-vs-dynamic performance result:
-
-```json
-{
-  "dynamic": true,
-  "grid": 64,
-  "queries": 4096,
-  "rayd": {
-    "build_ms": 2337.4531000008574,
-    "diffraction_direct_ms": 0.9759666667378042,
-    "intersect_ms": 0.12905000015355958,
-    "nearest_edge_ms": 1.5716533331821363,
-    "reflection_trace_ms": 0.32191333327015553
-  },
-  "raydn": {
-    "build_ms": 1547.6975999990827,
-    "diffraction_direct_ms": 0.42821333336178213,
-    "intersect_ms": 0.11110666673630476,
-    "nearest_edge_ms": 1.4978466667040873,
-    "reflection_trace_ms": 0.3103666667205592
-  },
-  "repeat": 30,
-  "warmup": 5
-}
-```
-
-Latest isolated RayDN reflection trace microbenchmark on the same grid:
-
-```json
-{
-  "trace_reflections_forward_noad_ms": 0.291,
-  "trace_reflections_forward_ad_outputs_ms": 0.461,
-  "scene_trace_reflections_python_ms": 0.319
-}
-```
+Latest recorded native benchmark highlights (`--grid 192 --queries 65536`,
+random far-from-surface points): `nearest_edge_ms` 27.85 (was 230.8 before the
+tiled fallback), `diffraction_direct_ms` 0.214, `dynamic_sync_ms` 1.53.
 
 Current acceptance interpretation for the covered benchmark shape:
 
 - Numeric parity is currently demonstrated for the covered forward cases and
-  fixed-winner Torch VJP/JVP tests.
-- RayDN is faster than RayD in the latest same-script static run for scene
-  build, `intersect`, point `nearest_edge`, reflection trace, and direct
-  diffraction accumulation.
-- RayDN is faster than RayD in the latest same-script dynamic run for scene
-  build, `intersect`, point `nearest_edge`, reflection trace, and direct
-  diffraction accumulation.
-- The nearest-edge regression was fixed by keeping RayD's SoA OptiX query path,
-  using a persistent params buffer, and adding a Torch no-AD path that avoids
-  autograd tape allocation when neither reverse-mode nor forward-mode AD is
-  required.
+  fixed-winner Torch VJP/JVP tests (109 native tests, 12 opt-in parity tests).
+- RayDN is faster than RayD in the latest same-script static and dynamic runs
+  for `intersect` (both modes), point `nearest_edge`, reflection trace,
+  diffraction paths, and direct diffraction accumulation. Build wall time is
+  per-process-init-dominated for both libraries at this scale; steady-state
+  in-process RayDN scene build measures 2.4-5.2 ms (grid 64-192).
+- Far-from-surface point nearest-edge queries resolve through the tightest
+  OptiX tier plus an exact tiled fallback scan instead of the scene-diagonal
+  tier (native grid-192 query shape: 230.8 -> 27.8 ms).
+- The native build must be configured with explicit CUDA architectures:
+  PyTorch's cmake config clobbers `CMAKE_CUDA_ARCHITECTURES` during
+  `find_package(Torch)`; `CMakeLists.txt` restores it and fails configure if
+  it resolves empty.
 - Keep running release-size and Nsight-backed benchmarks before claiming broad
   performance superiority across all multipath/diffraction workloads.
