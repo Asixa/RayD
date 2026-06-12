@@ -146,6 +146,21 @@ at::Tensor optional_active_from_py(py::object active_obj, int64_t ray_count, con
     return active.contiguous();
 }
 
+at::Tensor optional_active_from_optional(
+    const c10::optional<at::Tensor> &active_opt,
+    int64_t ray_count,
+    const char *name) {
+    if (!active_opt.has_value() || !active_opt->defined())
+        return at::Tensor();
+    const at::Tensor &active = *active_opt;
+    require_mask(active, name);
+    if (active.numel() == 0)
+        return active.contiguous();
+    if (active.size(0) != ray_count)
+        throw std::runtime_error(std::string(name) + " must match the ray batch size.");
+    return active.contiguous();
+}
+
 void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
     require_scalar_f(ray_tmax, "ray_tmax");
     if (ray_tmax.numel() != 0 && ray_tmax.size(0) != ray_count)
@@ -717,18 +732,18 @@ py::tuple intersection_empty_fields_op(int64_t scene_handle, at::Tensor like) {
         empty_tensors.global_prim_id);
 }
 
-at::Tensor intersect_ad_t_op(
+at::Tensor intersect_ad_t_impl(
     int64_t scene_handle,
     at::Tensor vertices,
     at::Tensor ray_o,
     at::Tensor ray_d,
     at::Tensor ray_tmax,
-    py::object active_obj) {
+    c10::optional<at::Tensor> active_opt) {
     require_vec3f(vertices, "vertices");
     require_vec3f(ray_o, "ray_o");
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0));
-    at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
+    at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
     const bool vertices_only_reverse =
         vertices.requires_grad() &&
         !ray_o.requires_grad() &&
@@ -762,19 +777,56 @@ at::Tensor intersect_ad_t_op(
         active);
 }
 
-py::tuple intersect_ad_flags_op(
+at::Tensor intersect_ad_t_nograd_impl(
     int64_t scene_handle,
     at::Tensor vertices,
     at::Tensor ray_o,
     at::Tensor ray_d,
     at::Tensor ray_tmax,
-    py::object active_obj,
+    c10::optional<at::Tensor> active_opt) {
+    (void)vertices;
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_ray_tmax(ray_tmax, ray_o.size(0));
+    at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
+    SceneCache &scene = get_scene(scene_handle);
+    IntersectForwardOutputs out =
+        intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, active);
+    return out.t;
+}
+
+at::Tensor intersect_ad_t_op(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    py::object active_obj) {
+    c10::optional<at::Tensor> active;
+    if (!active_obj.is_none())
+        active = active_obj.cast<at::Tensor>();
+    return intersect_ad_t_impl(
+        scene_handle,
+        std::move(vertices),
+        std::move(ray_o),
+        std::move(ray_d),
+        std::move(ray_tmax),
+        std::move(active));
+}
+
+std::vector<c10::optional<at::Tensor>> intersect_ad_flags_impl(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    c10::optional<at::Tensor> active_opt,
     int64_t flags) {
     require_vec3f(vertices, "vertices");
     require_vec3f(ray_o, "ray_o");
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0));
-    at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
+    at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
     const bool vertices_only_reverse =
         vertices.requires_grad() &&
         !ray_o.requires_grad() &&
@@ -818,48 +870,40 @@ py::tuple intersect_ad_flags_op(
                 ray_tmax,
                 active);
         }
-        EmptyIntersectionTensors &empty_tensors = ensure_empty_tensors();
-        return py::make_tuple(
+        EmptyIntersectionTensors &cached = ensure_empty_tensors();
+        return {
             t,
-            empty_tensors.p,
-            empty_tensors.n,
-            empty_tensors.geo_n,
-            empty_tensors.uv,
-            empty_tensors.barycentric,
-            empty_tensors.shape_id,
-            empty_tensors.prim_id,
-            empty_tensors.local_prim_id,
-            empty_tensors.global_prim_id);
+            cached.p,
+            cached.n,
+            cached.geo_n,
+            cached.uv,
+            cached.barycentric,
+            cached.shape_id,
+            cached.prim_id,
+            cached.local_prim_id,
+            cached.global_prim_id,
+        };
     }
+    torch::autograd::variable_list values;
     if (vertices_only_reverse) {
         const int64_t request_handle =
             stash_intersect_request(ray_o, ray_d, ray_tmax, active);
-        auto values = IntersectVerticesAdFunction::apply(
+        values = IntersectVerticesAdFunction::apply(
             scene_handle,
             request_handle,
             vertices,
             flags);
-        return py::make_tuple(
-            values[0],
-            values[1],
-            values[2],
-            values[3],
-            values[4],
-            values[5],
-            values[6],
-            values[7],
-            values[8],
-            values[9]);
+    } else {
+        values = IntersectAdFunction::apply(
+            scene_handle,
+            vertices,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            active,
+            flags);
     }
-    auto values = IntersectAdFunction::apply(
-        scene_handle,
-        vertices,
-        ray_o,
-        ray_d,
-        ray_tmax,
-        active,
-        flags);
-    return py::make_tuple(
+    return {
         values[0],
         values[1],
         values[2],
@@ -869,7 +913,127 @@ py::tuple intersect_ad_flags_op(
         values[6],
         values[7],
         values[8],
-        values[9]);
+        values[9],
+    };
+}
+
+std::vector<c10::optional<at::Tensor>> intersect_ad_flags_nograd_impl(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    c10::optional<at::Tensor> active_opt,
+    int64_t flags) {
+    (void)vertices;
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_ray_tmax(ray_tmax, ray_o.size(0));
+    at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
+    SceneCache &scene = get_scene(scene_handle);
+    if (flags == 0) {
+        IntersectForwardOutputs out =
+            intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, active);
+        EmptyIntersectionTensors cached = empty_intersection_tensors(ray_o, scene.global_faces);
+        return {
+            out.t,
+            cached.p,
+            cached.n,
+            cached.geo_n,
+            cached.uv,
+            cached.barycentric,
+            cached.shape_id,
+            cached.prim_id,
+            cached.local_prim_id,
+            cached.global_prim_id,
+        };
+    }
+    IntersectForwardOutputs out =
+        intersect_forward_ad_flags_cuda(scene, ray_o, ray_d, ray_tmax, active, flags);
+    return {
+        out.t,
+        out.p,
+        out.n,
+        out.geo_n,
+        out.uv,
+        out.barycentric,
+        out.shape_id,
+        out.prim_id,
+        out.local_prim_id,
+        out.global_prim_id,
+    };
+}
+
+py::tuple intersect_ad_flags_op(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    py::object active_obj,
+    int64_t flags) {
+    c10::optional<at::Tensor> active;
+    if (!active_obj.is_none())
+        active = active_obj.cast<at::Tensor>();
+    auto values = intersect_ad_flags_impl(
+        scene_handle,
+        std::move(vertices),
+        std::move(ray_o),
+        std::move(ray_d),
+        std::move(ray_tmax),
+        std::move(active),
+        flags);
+    py::tuple out(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+        out[i] = py::cast(*values[i]);
+    return out;
+}
+
+// Handle-based functional ops for the torch.compile path: plain int64 scene
+// handles avoid ScriptObject fakification, and autograd is registered from
+// Python via torch.library.register_autograd (see raydn/_compile.py).
+std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_impl(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax) {
+    (void)vertices;
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_ray_tmax(ray_tmax, ray_o.size(0));
+    SceneCache &scene = get_scene(scene_handle);
+    IntersectForwardOutputs out =
+        intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, at::Tensor());
+    return std::make_tuple(out.t, out.tape_prim_id);
+}
+
+at::Tensor intersect_backward_t_h_impl(
+    int64_t scene_handle,
+    at::Tensor vertices,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor tape_prim_id,
+    at::Tensor grad_t) {
+    SceneCache &scene = get_scene(scene_handle);
+    if (vertices.sizes() != scene.global_vertices.sizes())
+        throw std::runtime_error(
+            "intersect_backward_t_h: vertices shape does not match scene geometry.");
+    IntersectBackwardOutputs out = intersect_backward_t_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        at::Tensor(),
+        tape_prim_id,
+        at::Tensor(),
+        grad_t,
+        grad_t.stride(0),
+        true,
+        false,
+        false,
+        false);
+    return out.grad_vertices;
 }
 
 py::tuple intersect_backward_op(

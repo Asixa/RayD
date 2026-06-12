@@ -15,9 +15,15 @@ gate; Nsight Compute counters still require an elevated session
 (ERR_NVGPUCTRPERM).
 
 Known remaining RayD-favored case: static public VJP through Torch eager
-`.backward()` (RayD warmed static JIT VJP measured ~1.6-2.1x faster at
-64:128/16,384 rays); the native fwd+bwd kernels themselves measure faster
-than RayD, the gap is the eager autograd boundary.
+`.backward()`. After the Autograd-key registration and GIL-free dispatch of
+the intersect AD ops (2026-06-12), RayDN measures 0.165-0.218 ms vs RayD
+0.082-0.125 ms on the 16K/65K-ray stress shapes (gap narrowed from
+~1.7-2.9x to ~1.4-2.1x). The residual cost is the PyTorch eager engine
+floor itself: a trivial one-node `mul` backward with one AccumulateGrad
+measures ~0.07-0.13 ms on this machine, which bounds any eager `.backward()`
+implementation. The torch.compile path captures the static t-only VJP with
+zero graph breaks for integration into larger compiled models, but does not
+beat tuned eager on the isolated microbenchmark.
 
 ## Current Multipath Implementation
 

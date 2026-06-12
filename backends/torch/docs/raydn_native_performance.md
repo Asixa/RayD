@@ -27,6 +27,28 @@ Changes in this pass (all parity- and unit-test green: 109 native tests,
 - Shared multipath pipelines size the SBT to the actual record count, compute
   exact stack sizes via `optixUtilComputeStackSizes`, and upload launch params
   through a pinned staging ring (event-guarded, 4 slots).
+- The intersect AD ops (`intersect_ad_t` / `intersect_ad_flags`) are registered
+  at the Autograd dispatch key (C++ `torch::autograd::Function` wrappers) with
+  raw no-graph forwards at the CUDA key. This removes PyTorch's deprecated
+  `autogradNotImplementedFallback` path (and its per-call warning) and drops
+  the GIL/pybind round-trip from the dispatcher entry points. Measured static
+  public VJP at 64:128/16,384 rays: full 0.317 -> 0.185 ms, reduced
+  0.264 -> 0.165 ms (RayD 0.106/0.082; remaining gap is the eager engine
+  floor, measured at ~0.07-0.13 ms for a trivial one-node backward on this
+  machine).
+- torch.compile support: handle-based functional ops
+  (`intersect_forward_tape_h` / `intersect_backward_t_h`) carry plain int64
+  scene handles with `torch.library.register_fake` meta implementations and a
+  `register_autograd` backward, selected by `Scene.intersect` only under
+  `torch.compiler.is_compiling()` for the single-mesh vertices-only-gradient
+  case. A `(t * upstream).sum()` VJP closure compiles with zero graph breaks
+  and matches eager gradients (max diff < 1e-6, inductor via triton-windows).
+  For this isolated microbenchmark compiled execution does not beat tuned
+  eager (the hot work is inside the opaque OptiX op; dynamo guards plus the
+  AOT wrapper add ~0.1 ms), so the compile path's value is integration:
+  RayDN intersect no longer breaks larger compiled graphs. Compiled autograd
+  is not supported with library-registered custom backwards in this torch
+  build.
 
 Same-script static comparison, `grid=64`, `queries=4096`, `warmup=8`,
 `repeat=60`, RayD package warm-started in the same harness (warm OptiX disk

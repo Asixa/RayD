@@ -51,6 +51,7 @@ class Scene:
     def __init__(self) -> None:
         self._meshes: list[tuple[Mesh, bool]] = []
         self._native_scene = None
+        self._native_handle = 0
         self._ready = False
         self._pending_updates = False
 
@@ -102,6 +103,7 @@ class Scene:
                 mesh_flags,
             )
         self._native_scene = native_scene
+        self._native_handle = int(native_scene.handle())
         self._ready = True
         self._pending_updates = False
 
@@ -151,6 +153,21 @@ class Scene:
                     flags_value,
                 )
                 return Intersection(*values)
+            if (
+                torch.compiler.is_compiling()
+                and flags_value == 0
+                and active_arg is None
+                and vertices.requires_grad
+                and not (ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad)
+            ):
+                t, _tape_prim = torch.ops.raydn.intersect_forward_tape_h(
+                    self._native_handle,
+                    vertices,
+                    ray.o,
+                    ray.d,
+                    ray.tmax,
+                )
+                return _ReducedIntersection(scene, t)
             if flags_value != 0:
                 def load_t():
                     return torch.ops.raydn.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)

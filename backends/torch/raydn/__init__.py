@@ -10,6 +10,11 @@ except ImportError as exc:
 else:
     _EXTENSION_IMPORT_ERROR = None
 
+if _C is not None:
+    from . import _compile as _compile_support
+
+    _compile_support.register()
+
 from .camera import Camera
 from .mesh import Mesh
 from .scene import Scene
