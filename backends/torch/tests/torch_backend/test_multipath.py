@@ -118,8 +118,8 @@ class MultipathTests(unittest.TestCase):
         public_grad = verts.grad.detach().clone()
 
         active = torch.empty((0,), device="cuda", dtype=torch.bool)
-        values = torch.ops.raydn.trace_reflections_forward(scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, 1)
-        expected = torch.ops.raydn.intersect_backward_t(
+        values = torch.ops.rayd_torch.trace_reflections_forward(scene._require_native_scene(), ray.o, ray.d, ray.tmax, active, 1)
+        expected = torch.ops.rayd_torch.intersect_backward_t(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -216,7 +216,7 @@ class MultipathTests(unittest.TestCase):
             device="cuda",
             dtype=torch.float32,
         )
-        counts, checksum = torch.ops.raydn.reflection_trace_stats(valid.contiguous(), t.contiguous())
+        counts, checksum = torch.ops.rayd_torch.reflection_trace_stats(valid.contiguous(), t.contiguous())
         self.assertEqual(int(counts[0].item()), 6)
         self.assertEqual(int(counts[1].item()), 1)
         self.assertAlmostEqual(float(checksum[0].item()), 31.0, places=5)
@@ -224,7 +224,7 @@ class MultipathTests(unittest.TestCase):
         path_count = torch.tensor([2], device="cuda", dtype=torch.int32)
         path_valid = torch.tensor([True, False, True], device="cuda", dtype=torch.bool)
         delay = torch.tensor([0.25, 10.0, 0.5], device="cuda", dtype=torch.float32)
-        valid_count, path_checksum = torch.ops.raydn.diffraction_path_stats(path_count, path_valid, delay)
+        valid_count, path_checksum = torch.ops.rayd_torch.diffraction_path_stats(path_count, path_valid, delay)
         self.assertEqual(int(valid_count[0].item()), 2)
         self.assertAlmostEqual(float(path_checksum[0].item()), 0.75, places=5)
 
@@ -482,7 +482,7 @@ class MultipathTests(unittest.TestCase):
         self.assertIsNotNone(receiver.grad)
 
         active = torch.empty((0,), device="cuda", dtype=torch.bool)
-        values = torch.ops.raydn.trace_refl_epc_field_forward(
+        values = torch.ops.rayd_torch.trace_refl_epc_field_forward(
             scene._require_native_scene(),
             source.detach(),
             receiver.detach(),
@@ -495,7 +495,7 @@ class MultipathTests(unittest.TestCase):
         imag_dt = torch.cos(tape_t) * inv_denom - torch.sin(tape_t) * inv_denom * inv_denom
         grad_t = grad_path + grad_real * real_dt + grad_imag * imag_dt
         ray_d = (receiver.detach() - source.detach()).contiguous()
-        expected_vertices, expected_source_ray, expected_ray_d, _ = torch.ops.raydn.intersect_backward_t(
+        expected_vertices, expected_source_ray, expected_ray_d, _ = torch.ops.rayd_torch.intersect_backward_t(
             scene._require_native_scene(),
             source.detach(),
             ray_d,
@@ -610,7 +610,7 @@ class MultipathTests(unittest.TestCase):
         t = torch.ones((slot_count,), device=device, dtype=torch.float32)
         zeros = torch.zeros((slot_count,), device=device, dtype=torch.float32)
         norm_z = torch.ones((slot_count,), device=device, dtype=torch.float32)
-        out = torch.ops.raydn.reflection_dedup_forward(
+        out = torch.ops.rayd_torch.reflection_dedup_forward(
             bounce_count,
             shape_ids,
             prim_ids,
@@ -649,7 +649,7 @@ class MultipathTests(unittest.TestCase):
         ray_tmax = torch.tensor([2.0], device="cuda", dtype=torch.float32)
         active = torch.ones((1,), device="cuda", dtype=torch.bool)
         tx_pol = torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32)
-        out = torch.ops.raydn.reflection_accumulation_forward(
+        out = torch.ops.rayd_torch.reflection_accumulation_forward(
             scene._native_scene,
             ray_o,
             ray_d,
@@ -722,7 +722,7 @@ class MultipathTests(unittest.TestCase):
         empty_v = torch.empty((0, 3), device="cuda", dtype=torch.float32)
         empty_b = torch.empty((0,), device="cuda", dtype=torch.bool)
 
-        out = torch.ops.raydn.diffraction_paths_order1_forward(
+        out = torch.ops.rayd_torch.diffraction_paths_order1_forward(
             scene._native_scene,
             tx_pos,
             rx_pos,
@@ -785,7 +785,7 @@ class MultipathTests(unittest.TestCase):
         material_gain = torch.ones((2,), device="cuda", dtype=torch.float32)
         material_valid = torch.ones((2,), device="cuda", dtype=torch.bool)
 
-        out = torch.ops.raydn.diffraction_paths_order1_forward(
+        out = torch.ops.rayd_torch.diffraction_paths_order1_forward(
             scene._native_scene,
             tx_pos,
             rx_pos,
@@ -1422,7 +1422,7 @@ class MultipathTests(unittest.TestCase):
         empty_v = torch.empty((0, 3), device="cuda", dtype=torch.float32)
         empty_b = torch.empty((0,), device="cuda", dtype=torch.bool)
 
-        out = torch.ops.raydn.diffraction_accumulation_forward(
+        out = torch.ops.rayd_torch.diffraction_accumulation_forward(
             scene._native_scene,
             active,
             state_edge_index,

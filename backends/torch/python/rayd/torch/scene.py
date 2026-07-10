@@ -93,7 +93,7 @@ class Scene:
                 flags |= 4
             mesh_flags.append(flags)
         with torch._C._DisableFuncTorch():
-            native_scene = torch.classes.raydn.Scene(
+            native_scene = torch.classes.rayd_torch.Scene(
                 [spec["vertices"] for spec in specs],
                 [spec["faces"] for spec in specs],
                 [spec["uv"] for spec in specs],
@@ -136,7 +136,7 @@ class Scene:
             vertices = self._meshes[0][0].vertices
             if not (vertices.requires_grad or ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad):
                 if flags_value == 0:
-                    t = torch.ops.raydn.intersect_forward_t(
+                    t = torch.ops.rayd_torch.intersect_forward_t(
                         scene,
                         ray.o,
                         ray.d,
@@ -144,7 +144,7 @@ class Scene:
                         active_arg,
                     )
                     return _ReducedIntersection(scene, t)
-                values = torch.ops.raydn.intersect_forward_flags(
+                values = torch.ops.rayd_torch.intersect_forward_flags(
                     scene,
                     ray.o,
                     ray.d,
@@ -160,7 +160,7 @@ class Scene:
                 and vertices.requires_grad
                 and not (ray.o.requires_grad or ray.d.requires_grad or ray.tmax.requires_grad)
             ):
-                t, _tape_prim = torch.ops.raydn.intersect_forward_tape_h(
+                t, _tape_prim = torch.ops.rayd_torch.intersect_forward_tape_h(
                     self._native_handle,
                     vertices,
                     ray.o,
@@ -170,10 +170,10 @@ class Scene:
                 return _ReducedIntersection(scene, t)
             if flags_value != 0:
                 def load_t():
-                    return torch.ops.raydn.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
+                    return torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
 
                 def load_full():
-                    values = torch.ops.raydn.intersect_ad_flags(
+                    values = torch.ops.rayd_torch.intersect_ad_flags(
                         scene,
                         vertices,
                         ray.o,
@@ -185,12 +185,12 @@ class Scene:
                     return Intersection(*values)
 
                 return _LazyIntersection(load_t, load_full)
-            t = torch.ops.raydn.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
+            t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
             return _ReducedIntersection(scene, t)
         mesh_vertices = self._mesh_vertex_tensors()
         if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
             if flags_value == 0:
-                t = torch.ops.raydn.intersect_forward_t(
+                t = torch.ops.rayd_torch.intersect_forward_t(
                     scene,
                     ray.o,
                     ray.d,
@@ -198,7 +198,7 @@ class Scene:
                     active_arg,
                 )
                 return _ReducedIntersection(scene, t)
-            values = torch.ops.raydn.intersect_forward_flags(
+            values = torch.ops.rayd_torch.intersect_forward_flags(
                 scene,
                 ray.o,
                 ray.d,
@@ -212,10 +212,10 @@ class Scene:
             if not _has_forward_ad(vertices, ray.o, ray.d, ray.tmax):
                 if flags_value != 0:
                     def load_t():
-                        return torch.ops.raydn.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
+                        return torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
 
                     def load_full():
-                        values = torch.ops.raydn.intersect_ad_flags(
+                        values = torch.ops.rayd_torch.intersect_ad_flags(
                             scene,
                             vertices,
                             ray.o,
@@ -227,7 +227,7 @@ class Scene:
                         return Intersection(*values)
 
                     return _LazyIntersection(load_t, load_full)
-                t = torch.ops.raydn.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
+                t = torch.ops.rayd_torch.intersect_ad_t(scene, vertices, ray.o, ray.d, ray.tmax, active_arg)
                 return _ReducedIntersection(scene, t)
             return _intersect(scene, vertices, ray.o, ray.d, ray.tmax, active_arg, flags_value)
         return _intersect(
@@ -288,7 +288,7 @@ class Scene:
 
     def _default_dfr_material(self, *, like: torch.Tensor) -> DfrMaterial:
         face_count = sum(int(mesh.faces.shape[0]) for mesh, _dynamic in self._meshes)
-        return DfrMaterial(*torch.ops.raydn.default_dfr_material(face_count, like))
+        return DfrMaterial(*torch.ops.rayd_torch.default_dfr_material(face_count, like))
 
     def trace_dfr_paths(
         self,

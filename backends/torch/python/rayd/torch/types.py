@@ -68,7 +68,7 @@ class Intersection:
 
     def is_valid(self) -> torch.Tensor:
         if _C is not None and self.t.device.type == "cuda":
-            return torch.ops.raydn.intersection_valid(self.t, self.shape_id)
+            return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
         if self.shape_id.numel() != self.t.numel():
             return torch.isfinite(self.t)
         return self.shape_id >= 0
@@ -147,7 +147,7 @@ class _ReducedIntersection:
 
     def _empty_fields(self) -> tuple[torch.Tensor, ...]:
         if self._fields is None:
-            self._fields = torch.ops.raydn.intersection_empty_fields(self._scene, self.t)
+            self._fields = torch.ops.rayd_torch.intersection_empty_fields(self._scene, self.t)
         return self._fields
 
     @property
@@ -187,7 +187,7 @@ class _ReducedIntersection:
         return self._empty_fields()[8]
 
     def is_valid(self) -> torch.Tensor:
-        return torch.ops.raydn.intersection_valid(self.t, self.shape_id)
+        return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
 
 
 @dataclass(frozen=True)

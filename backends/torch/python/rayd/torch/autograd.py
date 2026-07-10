@@ -93,7 +93,7 @@ class _IntersectFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        outputs = torch.ops.raydn.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
+        outputs = torch.ops.rayd_torch.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
         return tuple(outputs[:12]) + (outputs[13],)
 
     @staticmethod
@@ -140,7 +140,7 @@ class _IntersectFunction(torch.autograd.Function):
                 and (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax)
             ):
                 return None, None, None, None, None, None, None
-            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.intersect_backward_t(
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.intersect_backward_t(
                 ctx.scene,
                 ray_o,
                 ray_d,
@@ -162,7 +162,7 @@ class _IntersectFunction(torch.autograd.Function):
                 None,
                 None,
             )
-        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.intersect_backward_optional(
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.intersect_backward_optional(
             ctx.scene,
             ray_o,
             ray_d,
@@ -195,7 +195,7 @@ class _IntersectFunction(torch.autograd.Function):
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax, grad_active, grad_flags):
         vertices, ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
         with torch._C._DisableFuncTorch():
-            values = torch.ops.raydn.intersect_jvp_optional(
+            values = torch.ops.rayd_torch.intersect_jvp_optional(
                 ctx.scene,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -238,7 +238,7 @@ class _IntersectMeshesFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        outputs = torch.ops.raydn.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
+        outputs = torch.ops.rayd_torch.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
         return tuple(outputs[:12]) + (outputs[13],)
 
     @staticmethod
@@ -286,7 +286,7 @@ class _IntersectMeshesFunction(torch.autograd.Function):
                 and (need_grad_vertices or need_grad_ray_o or need_grad_ray_d or need_grad_ray_tmax)
             ):
                 return (None, None, None, None, None, None, *([None] * ctx.mesh_count))
-            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.intersect_backward_t(
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.intersect_backward_t(
                 ctx.scene,
                 ray_o,
                 ray_d,
@@ -300,7 +300,7 @@ class _IntersectMeshesFunction(torch.autograd.Function):
                 need_grad_ray_tmax,
             )
         else:
-            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.intersect_backward_optional(
+            grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.intersect_backward_optional(
                 ctx.scene,
                 ray_o,
                 ray_d,
@@ -320,7 +320,7 @@ class _IntersectMeshesFunction(torch.autograd.Function):
                 need_grad_ray_tmax,
             )
         if need_grad_vertices:
-            mesh_grad_tuple = torch.ops.raydn.split_scene_vertex_grad(ctx.scene, grad_vertices)
+            mesh_grad_tuple = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
             mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
         else:
             mesh_grads = (None,) * ctx.mesh_count
@@ -339,9 +339,9 @@ class _IntersectMeshesFunction(torch.autograd.Function):
         ray_o, ray_d, active, tape_prim_id, tape_barycentric, _tape_t = ctx.saved_tensors
         native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
         with torch._C._DisableFuncTorch():
-            grad_vertices = torch.ops.raydn.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+            grad_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
         with torch._C._DisableFuncTorch():
-            values = torch.ops.raydn.intersect_jvp_optional(
+            values = torch.ops.rayd_torch.intersect_jvp_optional(
                 ctx.scene,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -394,7 +394,7 @@ def intersect(
         )
         return Intersection(*values[:10])
     if not _needs_forward_ad(vertices, ray_o, ray_d, ray_tmax):
-        values = torch.ops.raydn.intersect_ad_flags(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
+        values = torch.ops.rayd_torch.intersect_ad_flags(scene_handle, vertices, ray_o, ray_d, ray_tmax, active, int(flags))
         return Intersection(*values)
     values = _IntersectFunction.apply(
         scene_handle,
@@ -413,7 +413,7 @@ class _NearestEdgeFunction(torch.autograd.Function):
     def forward(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        outputs = torch.ops.raydn.nearest_edge_forward(scene_handle, point)
+        outputs = torch.ops.rayd_torch.nearest_edge_forward(scene_handle, point)
         return tuple(outputs)
 
     @staticmethod
@@ -431,7 +431,7 @@ class _NearestEdgeFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         point, tape_edge_id, tape_s, tape_d, distance = ctx.saved_tensors
-        grad_vertices, grad_point = torch.ops.raydn.nearest_edge_backward_optional(
+        grad_vertices, grad_point = torch.ops.rayd_torch.nearest_edge_backward_optional(
             ctx.scene,
             point,
             tape_edge_id,
@@ -448,7 +448,7 @@ class _NearestEdgeFunction(torch.autograd.Function):
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_point):
         vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
         with torch._C._DisableFuncTorch():
-            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = torch.ops.raydn.nearest_edge_jvp_optional(
+            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = torch.ops.rayd_torch.nearest_edge_jvp_optional(
                 ctx.scene,
                 _native_tensor(point),
                 _native_tensor(tape_edge_id),
@@ -475,7 +475,7 @@ class _NearestEdgeMeshesFunction(torch.autograd.Function):
     def forward(scene_handle: int, point: torch.Tensor, *mesh_vertices: torch.Tensor):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.nearest_edge_forward(scene_handle, point))
+        return tuple(torch.ops.rayd_torch.nearest_edge_forward(scene_handle, point))
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -495,7 +495,7 @@ class _NearestEdgeMeshesFunction(torch.autograd.Function):
         needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[2 : 2 + ctx.mesh_count])
         need_grad_vertices = any(needs_mesh_grad)
         need_grad_point = bool(ctx.needs_input_grad[1])
-        grad_vertices, grad_point = torch.ops.raydn.nearest_edge_backward_optional(
+        grad_vertices, grad_point = torch.ops.rayd_torch.nearest_edge_backward_optional(
             ctx.scene,
             point,
             tape_edge_id,
@@ -507,7 +507,7 @@ class _NearestEdgeMeshesFunction(torch.autograd.Function):
             grad_outputs[7] if len(grad_outputs) > 7 else None,
         )
         if need_grad_vertices:
-            mesh_grad_tuple = torch.ops.raydn.split_scene_vertex_grad(ctx.scene, grad_vertices)
+            mesh_grad_tuple = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
             mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
         else:
             mesh_grads = (None,) * ctx.mesh_count
@@ -518,9 +518,9 @@ class _NearestEdgeMeshesFunction(torch.autograd.Function):
         point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
         native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
         with torch._C._DisableFuncTorch():
-            grad_vertices = torch.ops.raydn.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+            grad_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
         with torch._C._DisableFuncTorch():
-            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = torch.ops.raydn.nearest_edge_jvp_optional(
+            tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = torch.ops.rayd_torch.nearest_edge_jvp_optional(
                 ctx.scene,
                 _native_tensor(point),
                 _native_tensor(tape_edge_id),
@@ -561,7 +561,7 @@ def nearest_edge(
         raise RuntimeError("RayDN extension is not built yet.")
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_nearest_edge_ad(point, *tracked_vertices):
-        values = torch.ops.raydn.nearest_edge_forward_noad(scene_handle, point)
+        values = torch.ops.rayd_torch.nearest_edge_forward_noad(scene_handle, point)
         return NearestPointEdge(*values)
     if len(tracked_vertices) > 1:
         values = _NearestEdgeMeshesFunction.apply(scene_handle, point, *tracked_vertices)
@@ -582,7 +582,7 @@ class _NearestEdgeRayFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.nearest_edge_ray_forward(scene_handle, ray_o, ray_d, ray_tmax, active))
+        return tuple(torch.ops.rayd_torch.nearest_edge_ray_forward(scene_handle, ray_o, ray_d, ray_tmax, active))
 
     @staticmethod
     def setup_context(ctx, inputs, output):
@@ -617,7 +617,7 @@ def nearest_edge_ray(
 def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None) -> torch.Tensor:
     if _C is None:
         raise RuntimeError("RayDN extension is not built yet.")
-    values = torch.ops.raydn.visibility_forward(scene_handle, start, end, active)
+    values = torch.ops.rayd_torch.visibility_forward(scene_handle, start, end, active)
     return values[0]
 
 
@@ -643,7 +643,7 @@ class _TraceReflectionsFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        outputs = torch.ops.raydn.trace_reflections_forward(
+        outputs = torch.ops.rayd_torch.trace_reflections_forward(
             scene_handle,
             ray_o,
             ray_d,
@@ -709,7 +709,7 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             tape_normals,
             image_sources,
         ) = ctx.saved_tensors
-        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.trace_reflections_backward_optional(
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.trace_reflections_backward_optional(
             ctx.scene,
             ray_o,
             ray_d,
@@ -748,7 +748,7 @@ class _TraceReflectionsFunction(torch.autograd.Function):
             image_sources,
         ) = ctx.saved_tensors
         with torch._C._DisableFuncTorch():
-            tangent_t, tangent_image_sources = torch.ops.raydn.trace_reflections_jvp_optional(
+            tangent_t, tangent_image_sources = torch.ops.rayd_torch.trace_reflections_jvp_optional(
                 ctx.scene,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -778,7 +778,7 @@ class _TraceReflectionsMeshesFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.trace_reflections_forward(
+        return tuple(torch.ops.rayd_torch.trace_reflections_forward(
             scene_handle,
             ray_o,
             ray_d,
@@ -847,7 +847,7 @@ class _TraceReflectionsMeshesFunction(torch.autograd.Function):
         need_grad_ray_o = bool(ctx.needs_input_grad[1])
         need_grad_ray_d = bool(ctx.needs_input_grad[2])
         need_grad_ray_tmax = bool(ctx.needs_input_grad[3])
-        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.raydn.trace_reflections_backward_optional(
+        grad_vertices, grad_ray_o, grad_ray_d, grad_ray_tmax = torch.ops.rayd_torch.trace_reflections_backward_optional(
             ctx.scene,
             ray_o,
             ray_d,
@@ -862,7 +862,7 @@ class _TraceReflectionsMeshesFunction(torch.autograd.Function):
             grad_outputs[2],
         )
         if need_grad_vertices:
-            mesh_grad_tuple = torch.ops.raydn.split_scene_vertex_grad(ctx.scene, grad_vertices)
+            mesh_grad_tuple = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
             mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
         else:
             mesh_grads = (None,) * ctx.mesh_count
@@ -899,9 +899,9 @@ class _TraceReflectionsMeshesFunction(torch.autograd.Function):
         ) = ctx.saved_tensors
         native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
         with torch._C._DisableFuncTorch():
-            grad_vertices = torch.ops.raydn.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+            grad_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
         with torch._C._DisableFuncTorch():
-            tangent_t, tangent_image_sources = torch.ops.raydn.trace_reflections_jvp_optional(
+            tangent_t, tangent_image_sources = torch.ops.rayd_torch.trace_reflections_jvp_optional(
                 ctx.scene,
                 _native_tensor(ray_o),
                 _native_tensor(ray_d),
@@ -934,7 +934,7 @@ def trace_reflections(
     if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
         def load(full: bool):
             if full:
-                valid, t, image_sources, prim_ids = torch.ops.raydn.trace_reflections_forward_noad(
+                valid, t, image_sources, prim_ids = torch.ops.rayd_torch.trace_reflections_forward_noad(
                     scene_handle,
                     ray_o,
                     ray_d,
@@ -943,7 +943,7 @@ def trace_reflections(
                     int(max_bounces),
                 )
                 return valid, t, image_sources, prim_ids
-            valid, t, prim_ids = torch.ops.raydn.trace_reflections_forward_reduced(
+            valid, t, prim_ids = torch.ops.rayd_torch.trace_reflections_forward_reduced(
                 scene_handle,
                 ray_o,
                 ray_d,
@@ -989,7 +989,7 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.trace_refl_epc_field_forward(
+        return tuple(torch.ops.rayd_torch.trace_refl_epc_field_forward(
             scene_handle,
             source,
             receiver,
@@ -1018,7 +1018,7 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
         need_grad_vertices = bool(ctx.needs_input_grad[1])
         need_grad_source = bool(ctx.needs_input_grad[2])
         need_grad_receiver = bool(ctx.needs_input_grad[3])
-        grad_vertices, grad_source, grad_receiver = torch.ops.raydn.trace_refl_epc_field_backward(
+        grad_vertices, grad_source, grad_receiver = torch.ops.rayd_torch.trace_refl_epc_field_backward(
             ctx.scene,
             source,
             receiver,
@@ -1046,7 +1046,7 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
     def jvp(ctx, grad_scene_handle, grad_vertices, grad_source, grad_receiver, grad_active, grad_max_bounces):
         _vertices, source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
         with torch._C._DisableFuncTorch():
-            tangent_field_real, tangent_field_imag, tangent_path_length = torch.ops.raydn.trace_refl_epc_field_jvp(
+            tangent_field_real, tangent_field_imag, tangent_path_length = torch.ops.rayd_torch.trace_refl_epc_field_jvp(
                 ctx.scene,
                 _native_tensor(source),
                 _native_tensor(receiver),
@@ -1073,7 +1073,7 @@ class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
     ):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.trace_refl_epc_field_forward(
+        return tuple(torch.ops.rayd_torch.trace_refl_epc_field_forward(
             scene_handle,
             source,
             receiver,
@@ -1103,7 +1103,7 @@ class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
         need_grad_vertices = any(needs_mesh_grad)
         need_grad_source = bool(ctx.needs_input_grad[1])
         need_grad_receiver = bool(ctx.needs_input_grad[2])
-        grad_vertices, grad_source, grad_receiver = torch.ops.raydn.trace_refl_epc_field_backward(
+        grad_vertices, grad_source, grad_receiver = torch.ops.rayd_torch.trace_refl_epc_field_backward(
             ctx.scene,
             source,
             receiver,
@@ -1119,7 +1119,7 @@ class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
             need_grad_receiver,
         )
         if need_grad_vertices:
-            mesh_grad_tuple = torch.ops.raydn.split_scene_vertex_grad(ctx.scene, grad_vertices)
+            mesh_grad_tuple = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
             mesh_grads = tuple(mesh_grad_tuple[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
         else:
             mesh_grads = (None,) * ctx.mesh_count
@@ -1137,9 +1137,9 @@ class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
         source, receiver, active, tape_prim_id, tape_barycentric, tape_t = ctx.saved_tensors
         native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
         with torch._C._DisableFuncTorch():
-            grad_vertices = torch.ops.raydn.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
+            grad_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(ctx.scene, list(native_mesh_tangents))
         with torch._C._DisableFuncTorch():
-            tangent_field_real, tangent_field_imag, tangent_path_length = torch.ops.raydn.trace_refl_epc_field_jvp(
+            tangent_field_real, tangent_field_imag, tangent_path_length = torch.ops.rayd_torch.trace_refl_epc_field_jvp(
                 ctx.scene,
                 _native_tensor(source),
                 _native_tensor(receiver),
@@ -1200,7 +1200,7 @@ def trace_dfr_paths_order1_native(
         raise RuntimeError("RayDN extension is not built yet.")
     state_limit = min(states.state_count, int(max_paths))
     capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
-    values = torch.ops.raydn.diffraction_paths_order1_forward(
+    values = torch.ops.rayd_torch.diffraction_paths_order1_forward(
         scene_handle,
         tx_positions,
         rx_positions,
@@ -1231,7 +1231,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
     def forward(*args):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.diffraction_accumulation_forward(
+        return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
             *args[:21],
             int(args[21]),
             *args[22:],
@@ -1328,7 +1328,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             grad_state_src_power,
             grad_state_exterior_angle,
             grad_material_gain,
-        ) = torch.ops.raydn.diffraction_accumulation_direct_backward(
+        ) = torch.ops.rayd_torch.diffraction_accumulation_direct_backward(
             ctx.scene,
             tape_active,
             tape_state_idx,
@@ -1404,7 +1404,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             return grad_inputs[index] if index < len(grad_inputs) else None
 
         with torch._C._DisableFuncTorch():
-            dot_power, dot_field_x_re, zero = torch.ops.raydn.diffraction_accumulation_direct_jvp(
+            dot_power, dot_field_x_re, zero = torch.ops.rayd_torch.diffraction_accumulation_direct_jvp(
                 ctx.scene,
                 _native_tensor(tape_active),
                 _native_tensor(tape_state_idx),
@@ -1497,7 +1497,7 @@ def accum_dfr_direct_native(
         material.gain,
     ):
         state_limit = states.state_count
-        values = torch.ops.raydn.diffraction_accumulation_forward(
+        values = torch.ops.rayd_torch.diffraction_accumulation_forward(
             scene_handle,
             active_arg,
             states.edge_index,
@@ -1599,7 +1599,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
     def forward(*args):
         if _C is None:
             raise RuntimeError("RayDN extension is not built yet.")
-        return tuple(torch.ops.raydn.diffraction_accumulation_forward(
+        return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
             *args[:21],
             int(args[21]),
             *args[23:38],
@@ -1699,7 +1699,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             grad_recursive_state_edge_t_max,
             grad_recursive_state_exterior_angle,
             grad_material_gain,
-        ) = torch.ops.raydn.diffraction_accumulation_chain_backward(
+        ) = torch.ops.rayd_torch.diffraction_accumulation_chain_backward(
             ctx.scene,
             tape_active,
             tape_cell,
@@ -1790,7 +1790,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             return grad_inputs[index] if index < len(grad_inputs) else None
 
         with torch._C._DisableFuncTorch():
-            dot_power, dot_field_x_re, zero = torch.ops.raydn.diffraction_accumulation_chain_jvp(
+            dot_power, dot_field_x_re, zero = torch.ops.rayd_torch.diffraction_accumulation_chain_jvp(
                 ctx.scene,
                 _native_tensor(tape_active),
                 _native_tensor(tape_cell),
@@ -1903,7 +1903,7 @@ def accum_dfr_chain_native(
         recursive_states.exterior_angle,
         material.gain,
     ):
-        values = torch.ops.raydn.diffraction_accumulation_forward(
+        values = torch.ops.rayd_torch.diffraction_accumulation_forward(
             scene_handle,
             active_arg,
             initial_states.edge_index,
@@ -2028,7 +2028,7 @@ def accum_dfr_coherent_direct_native(
         raise RuntimeError("RayDN extension is not built yet.")
     active_arg = active
     state_limit = states.state_count
-    values = torch.ops.raydn.diffraction_coherent_accumulation_forward(
+    values = torch.ops.rayd_torch.diffraction_coherent_accumulation_forward(
         scene_handle,
         active_arg,
         states.edge_index,

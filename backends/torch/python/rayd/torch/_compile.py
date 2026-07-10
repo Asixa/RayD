@@ -36,7 +36,7 @@ def _backward(ctx, grad_t, _grad_tape_prim_id):
     if grad_t is None:
         grad_vertices = torch.zeros_like(vertices)
     else:
-        grad_vertices = torch.ops.raydn.intersect_backward_t_h(
+        grad_vertices = torch.ops.rayd_torch.intersect_backward_t_h(
             ctx.scene_handle,
             vertices,
             ray_o,
@@ -48,10 +48,10 @@ def _backward(ctx, grad_t, _grad_tape_prim_id):
 
 
 def register() -> None:
-    torch.library.register_fake("raydn::intersect_forward_tape_h")(_fake_intersect_forward_tape_h)
-    torch.library.register_fake("raydn::intersect_backward_t_h")(_fake_intersect_backward_t_h)
+    torch.library.register_fake("rayd_torch::intersect_forward_tape_h")(_fake_intersect_forward_tape_h)
+    torch.library.register_fake("rayd_torch::intersect_backward_t_h")(_fake_intersect_backward_t_h)
     torch.library.register_autograd(
-        "raydn::intersect_forward_tape_h",
+        "rayd_torch::intersect_forward_tape_h",
         _backward,
         setup_context=_setup_context,
     )

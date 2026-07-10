@@ -222,7 +222,7 @@ def run_C_reflection_trace(args: argparse.Namespace, ray_count: int, max_bounces
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
     valid, t, _prim_ids = measured.pop("last_value")
-    counts, checksum = torch.ops.raydn.reflection_trace_stats(valid.contiguous(), t.contiguous())
+    counts, checksum = torch.ops.rayd_torch.reflection_trace_stats(valid.contiguous(), t.contiguous())
     slot_count = int(counts[0].item())
     full_depth_count = int(counts[1].item())
     result = _base_metric(
@@ -333,7 +333,7 @@ def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict
 
     measured = _measure(call_kernel, lambda _value: None, torch.cuda.synchronize, args.repeats, args.warmup)
     count, valid, _rx_id, _edge0, delay, _field_x_re, _field_x_im, _p0, _p1, _p2 = measured.pop("last_value")
-    valid_count_tensor, checksum = torch.ops.raydn.diffraction_path_stats(
+    valid_count_tensor, checksum = torch.ops.rayd_torch.diffraction_path_stats(
         count.contiguous(),
         valid.contiguous(),
         delay.contiguous(),

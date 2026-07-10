@@ -96,7 +96,7 @@ class IntersectGradientTests(unittest.TestCase):
         native_scene.build()
         active = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.bool)
         flags_none = getattr(rt.RayFlags, "None")
-        values = torch.ops.raydn.intersect_forward_ad_flags(
+        values = torch.ops.rayd_torch.intersect_forward_ad_flags(
             native_scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -104,7 +104,7 @@ class IntersectGradientTests(unittest.TestCase):
             active,
             int(flags_none),
         )
-        expected = torch.ops.raydn.intersect_backward_t(
+        expected = torch.ops.rayd_torch.intersect_backward_t(
             native_scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -144,7 +144,7 @@ class IntersectGradientTests(unittest.TestCase):
         )
         active = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.bool)
         flags_none = getattr(rt.RayFlags, "None")
-        values = torch.ops.raydn.intersect_forward_ad_flags(
+        values = torch.ops.rayd_torch.intersect_forward_ad_flags(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -158,7 +158,7 @@ class IntersectGradientTests(unittest.TestCase):
         contiguous_grad = torch.ones((ray.o.shape[0],), device="cuda", dtype=torch.float32)
         expanded_grad = torch.ones((), device="cuda", dtype=torch.float32).expand(ray.o.shape[0])
         self.assertFalse(expanded_grad.is_contiguous())
-        expected = torch.ops.raydn.intersect_backward_t(
+        expected = torch.ops.rayd_torch.intersect_backward_t(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -171,7 +171,7 @@ class IntersectGradientTests(unittest.TestCase):
             False,
             False,
         )[0]
-        actual = torch.ops.raydn.intersect_backward_t(
+        actual = torch.ops.rayd_torch.intersect_backward_t(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -407,7 +407,7 @@ class IntersectGradientTests(unittest.TestCase):
             scene.intersect(ray).p.backward(upstream_p)
 
         active = torch.empty((0,), device="cuda", dtype=torch.bool)
-        values = torch.ops.raydn.intersect_forward_ad_flags(
+        values = torch.ops.rayd_torch.intersect_forward_ad_flags(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -415,7 +415,7 @@ class IntersectGradientTests(unittest.TestCase):
             active,
             int(rt.RayFlags.All),
         )
-        expected_global = torch.ops.raydn.intersect_backward_optional(
+        expected_global = torch.ops.rayd_torch.intersect_backward_optional(
             scene._require_native_scene(),
             ray.o,
             ray.d,
@@ -434,7 +434,7 @@ class IntersectGradientTests(unittest.TestCase):
             False,
             False,
         )[0]
-        expected_mesh = torch.ops.raydn.split_scene_vertex_grad(scene._require_native_scene(), expected_global)
+        expected_mesh = torch.ops.rayd_torch.split_scene_vertex_grad(scene._require_native_scene(), expected_global)
         torch.testing.assert_close(verts0.grad, expected_mesh[0], atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(verts1.grad, expected_mesh[1], atol=1e-5, rtol=1e-5)
 

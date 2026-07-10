@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import unittest
 
 import torch
@@ -6,6 +8,27 @@ import rayd.torch as rt
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
 class DispatcherBindingTests(unittest.TestCase):
+    def test_old_dispatcher_and_custom_class_namespaces_are_absent(self):
+        script = """
+import torch
+import rayd.torch
+
+assert not hasattr(torch.ops.raydn, "intersect_forward_flags")
+try:
+    torch.classes.raydn.Scene
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("torch.classes.raydn.Scene is still registered")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def _scene(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
@@ -50,7 +73,7 @@ class DispatcherBindingTests(unittest.TestCase):
         ray_d = torch.tensor([[0.0, 0.0, 1.0]], device="cuda", dtype=torch.float32)
         ray_tmax = torch.empty((0,), device="cuda", dtype=torch.float32)
 
-        out = torch.ops.raydn.intersect_forward_flags(scene._native_scene, ray_o, ray_d, ray_tmax, None, 7)
+        out = torch.ops.rayd_torch.intersect_forward_flags(scene._native_scene, ray_o, ray_d, ray_tmax, None, 7)
 
         torch.testing.assert_close(out[0], torch.tensor([1.0], device="cuda"))
         self.assertEqual(int(out[6][0].item()), 0)
@@ -63,7 +86,7 @@ class DispatcherBindingTests(unittest.TestCase):
         active = torch.ones((1,), device="cuda", dtype=torch.bool)
         tx_pol = torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32)
 
-        out = torch.ops.raydn.reflection_accumulation_forward(
+        out = torch.ops.rayd_torch.reflection_accumulation_forward(
             scene._native_scene,
             ray_o,
             ray_d,
@@ -90,7 +113,7 @@ class DispatcherBindingTests(unittest.TestCase):
         scene = self._scene()
         x = self._dfr_inputs()
 
-        out = torch.ops.raydn.diffraction_accumulation_forward(
+        out = torch.ops.rayd_torch.diffraction_accumulation_forward(
             scene._native_scene,
             x["active"],
             x["state_edge_index"],

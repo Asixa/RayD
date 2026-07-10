@@ -73,7 +73,7 @@ class Camera:
 class _CameraSampleToWorldFunction(torch.autograd.Function):
     @staticmethod
     def forward(sample: torch.Tensor, tan_x: float, tan_y: float, depth: float) -> torch.Tensor:
-        return torch.ops.raydn.camera_sample_to_world(sample, float(tan_x), float(tan_y), float(depth))
+        return torch.ops.rayd_torch.camera_sample_to_world(sample, float(tan_x), float(tan_y), float(depth))
 
     @staticmethod
     def setup_context(ctx, inputs, output) -> None:
@@ -88,7 +88,7 @@ class _CameraSampleToWorldFunction(torch.autograd.Function):
     def backward(ctx, grad_world: torch.Tensor | None):
         if grad_world is None:
             return None, None, None, None
-        grad_sample = torch.ops.raydn.camera_sample_to_world_backward(
+        grad_sample = torch.ops.rayd_torch.camera_sample_to_world_backward(
             grad_world,
             ctx.sample_count,
             ctx.tan_x,
@@ -101,7 +101,7 @@ class _CameraSampleToWorldFunction(torch.autograd.Function):
 class _CameraWorldToSampleFunction(torch.autograd.Function):
     @staticmethod
     def forward(point: torch.Tensor, tan_x: float, tan_y: float) -> torch.Tensor:
-        return torch.ops.raydn.camera_world_to_sample(point, float(tan_x), float(tan_y))
+        return torch.ops.rayd_torch.camera_world_to_sample(point, float(tan_x), float(tan_y))
 
     @staticmethod
     def setup_context(ctx, inputs, output) -> None:
@@ -116,7 +116,7 @@ class _CameraWorldToSampleFunction(torch.autograd.Function):
         if grad_sample is None:
             return None, None, None
         (point,) = ctx.saved_tensors
-        grad_point = torch.ops.raydn.camera_world_to_sample_backward(
+        grad_point = torch.ops.rayd_torch.camera_world_to_sample_backward(
             point,
             grad_sample,
             ctx.tan_x,
@@ -128,7 +128,7 @@ class _CameraWorldToSampleFunction(torch.autograd.Function):
 class _CameraSampleRayFunction(torch.autograd.Function):
     @staticmethod
     def forward(sample: torch.Tensor, tan_x: float, tan_y: float):
-        return tuple(torch.ops.raydn.camera_sample_ray(sample, float(tan_x), float(tan_y)))
+        return tuple(torch.ops.rayd_torch.camera_sample_ray(sample, float(tan_x), float(tan_y)))
 
     @staticmethod
     def setup_context(ctx, inputs, output) -> None:
@@ -143,7 +143,7 @@ class _CameraSampleRayFunction(torch.autograd.Function):
         if grad_direction is None:
             return None, None, None
         (sample,) = ctx.saved_tensors
-        grad_sample = torch.ops.raydn.camera_sample_ray_backward(
+        grad_sample = torch.ops.rayd_torch.camera_sample_ray_backward(
             sample,
             grad_direction,
             ctx.tan_x,
