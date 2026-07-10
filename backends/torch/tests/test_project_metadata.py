@@ -52,3 +52,15 @@ class ProjectMetadataTests(unittest.TestCase):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
         expected = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
         self.assertIn(f'set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "{expected}")', cmake)
+
+    def test_multipath_pipeline_uses_current_optix_link_options(self):
+        source = Path("src/torch_ext/common/optix_pipeline.cpp").read_text(encoding="utf-8")
+        self.assertIn("link_options.maxTraceDepth = 1", source)
+        self.assertIn("optixPipelineSetStackSize", source)
+        for removed_field in (
+            "maxContinuationCallableDepth",
+            "maxDirectCallableDepthFromState",
+            "maxDirectCallableDepthFromTraversal",
+            "link_options.maxTraversableGraphDepth",
+        ):
+            self.assertNotIn(removed_field, source)

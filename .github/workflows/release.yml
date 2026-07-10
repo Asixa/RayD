@@ -256,7 +256,7 @@ jobs:
         working-directory: backends/torch
         run: >-
           python -m build --wheel --no-isolation --outdir ../../dist/torch
-          -Cbuild-dir=artifacts/skbuild-py${{ matrix.python-version }}
+          -Cbuild-dir=artifacts/skbuild
       - name: Verify Dr.Jit wheel
         if: matrix.backend == 'drjit'
         shell: pwsh

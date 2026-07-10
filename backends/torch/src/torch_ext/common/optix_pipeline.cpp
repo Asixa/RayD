@@ -216,10 +216,6 @@ void OptixLaunchPipeline::build(
 
     OptixPipelineLinkOptions link_options = {};
     link_options.maxTraceDepth = 1;
-    link_options.maxContinuationCallableDepth = 0;
-    link_options.maxDirectCallableDepthFromState = 0;
-    link_options.maxDirectCallableDepthFromTraversal = 0;
-    link_options.maxTraversableGraphDepth = 2;
 
     log_size = sizeof(log);
     result = optixPipelineCreate(
