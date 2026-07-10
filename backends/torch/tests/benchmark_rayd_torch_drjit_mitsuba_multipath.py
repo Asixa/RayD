@@ -226,7 +226,7 @@ def run_C_reflection_trace(args: argparse.Namespace, ray_count: int, max_bounces
     slot_count = int(counts[0].item())
     full_depth_count = int(counts[1].item())
     result = _base_metric(
-        backend="raydn",
+        backend="torch",
         workload="reflection_trace",
         scene="parallel_reflectors",
         input_count=ray_count,
@@ -340,7 +340,7 @@ def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict
     )
     valid_count = int(valid_count_tensor[0].item())
     result = _base_metric(
-        backend="raydn",
+        backend="torch",
         workload="diffraction_export",
         scene="synthetic_single_edge_state",
         input_count=state_count,
@@ -434,7 +434,7 @@ def run_rayd_reflection_trace(
 
 
 def _rayd_dfr_states(cuda: Any, dr: Any, state_count: int) -> Any:
-    import rayd as rd
+    import rayd.drjit as rd
 
     states = rd.DfrStates()
     states.count = state_count
@@ -750,7 +750,7 @@ def _run_backend_case(
     mitsuba_bundle: tuple[Any, Any] | None,
 ) -> dict[str, Any]:
     try:
-        if backend == "raydn":
+        if backend == "torch":
             if workload == "reflection_trace":
                 assert ray_count is not None and max_bounces is not None
                 return run_C_reflection_trace(args, ray_count, max_bounces)
@@ -866,10 +866,10 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
     if not rows:
         return []
     output_dir.mkdir(parents=True, exist_ok=True)
-    backend_order = ["raydn", "rayd_path", "mitsuba_path"]
-    colors = {"raydn": "#2563eb", "rayd_path": "#16a34a", "mitsuba_path": "#c2410c"}
+    backend_order = ["torch", "rayd_path", "mitsuba_path"]
+    colors = {"torch": "#2563eb", "rayd_path": "#16a34a", "mitsuba_path": "#c2410c"}
     backend_titles = {
-        "raydn": "RayDN",
+        "torch": "RayD Torch",
         "rayd_path": "RayD path",
         "mitsuba_path": "Mitsuba path",
     }
@@ -913,7 +913,7 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         ax.set_title(titles.get(workload, workload))
         ax.grid(True, axis="y", alpha=0.25)
         ax.legend()
-    fig.suptitle("RayDN / RayD / Mitsuba multipath benchmark")
+    fig.suptitle("RayD Torch / RayD / Mitsuba multipath benchmark")
     fig.tight_layout()
     path = output_dir / "time_ms_multipath.png"
     fig.savefig(path, dpi=180)
@@ -950,15 +950,15 @@ def _build_cases(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="RayD latest-style multipath benchmark with RayDN, RayD, and Mitsuba path backends."
+        description="RayD latest-style multipath benchmark with RayD Torch, RayD, and Mitsuba path backends."
     )
     parser.add_argument("--preset", choices=sorted(PRESETS), default="standard")
     parser.add_argument("--workloads", nargs="+", choices=WORKLOADS, default=list(WORKLOADS))
     parser.add_argument(
         "--backends",
         nargs="+",
-        choices=["raydn", "rayd_path", "mitsuba_path"],
-        default=["raydn", "rayd_path", "mitsuba_path"],
+        choices=["torch", "rayd_path", "mitsuba_path"],
+        default=["torch", "rayd_path", "mitsuba_path"],
     )
     parser.add_argument("--ray-count", action="append", default=None)
     parser.add_argument("--state-count", action="append", default=None)
@@ -989,8 +989,8 @@ def main() -> None:
     json_output = args.json_output or (output_dir / "multipath.json")
     csv_output = args.csv_output or (output_dir / "multipath.csv")
 
-    if "raydn" in args.backends and not torch.cuda.is_available():
-        raise SystemExit("RayDN backend requires CUDA torch.")
+    if "torch" in args.backends and not torch.cuda.is_available():
+        raise SystemExit("RayD Torch backend requires CUDA torch.")
 
     rayd_bundle: tuple[Any, Any, Any] | None = None
     if "rayd_path" in args.backends:
@@ -1033,7 +1033,7 @@ def main() -> None:
         _cleanup_drjit(mitsuba_bundle[1])
 
     results = {
-        "benchmark": "raydn_rayd_mitsuba_multipath",
+        "benchmark": "torch_rayd_mitsuba_multipath",
         "suite_config": {
             "preset": args.preset,
             "workloads": args.workloads,

@@ -10,11 +10,11 @@ import rayd.torch as rt
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", default="raydn-native")
+    parser.add_argument("--backend", default="rayd-torch")
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
-    if args.backend != "raydn-native":
-        raise SystemExit("only --backend raydn-native is supported")
+    if args.backend != "rayd-torch":
+        raise SystemExit("only --backend rayd-torch is supported")
     if not torch.cuda.is_available():
         raise SystemExit("CUDA torch is required")
 

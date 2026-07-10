@@ -34,7 +34,7 @@ if ($null -eq $BuiltExtension) {
     throw "Built extension not found under $(Join-Path $BuildPath $Config)"
 }
 
-$Destination = & $PythonExe -c "import importlib.util; spec = importlib.util.find_spec('rayd.torch._C'); print(spec.origin if spec else '')"
+$Destination = & $PythonExe -c "import pathlib, sysconfig; root = pathlib.Path(sysconfig.get_path('platlib')) / 'rayd' / 'torch'; matches = sorted(root.glob('_C*.pyd')); print(matches[0] if matches else '')"
 if (-not $Destination) {
     throw "Could not resolve currently installed rayd.torch._C destination."
 }

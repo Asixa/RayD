@@ -13,9 +13,9 @@ class PublicApiContractTests(unittest.TestCase):
         self.assertFalse(hasattr(rt.Scene, "intersect_t_sum"))
         self.assertFalse(hasattr(rt.Scene, "intersect_t_sum_vjp"))
 
-    def test_acceptance_benchmarks_use_public_C_api(self):
-        stress = (ROOT / "tests" / "benchmark_C_rayd_mitsuba_stress.py").read_text()
-        multipath = (ROOT / "tests" / "benchmark_C_rayd_mitsuba_multipath.py").read_text()
+    def test_acceptance_benchmarks_use_public_torch_api(self):
+        stress = (ROOT / "tests" / "benchmark_rayd_torch_drjit_mitsuba_stress.py").read_text()
+        multipath = (ROOT / "tests" / "benchmark_rayd_torch_drjit_mitsuba_multipath.py").read_text()
 
         forbidden = (
             "trace_reflections_minimal",

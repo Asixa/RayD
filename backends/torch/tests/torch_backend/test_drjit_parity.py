@@ -1,19 +1,22 @@
 import os
-import sys
 import unittest
 import importlib
+import json
 import math
 from pathlib import Path
 
 import torch
 
 
-RAYDI_ROOT = Path(r"E:\Code\RayDi")
+_CONTRACT = json.loads(
+    (Path(__file__).resolve().parents[4] / "shared" / "contracts" / "operations.json").read_text()
+)
+_DEFAULT_ABS = _CONTRACT["tolerances"]["default_abs"]
+_FIELD_ABS = _CONTRACT["tolerances"]["field_abs"]
 
 
 def _load_backends():
-    sys.path.insert(0, str(RAYDI_ROOT))
-    import rayd as dr_backend
+    import rayd.drjit as dr_backend
     import rayd.torch as rt
 
     cuda = importlib.import_module("dr" + "jit.cuda")
@@ -276,7 +279,7 @@ class DrJitParityTests(unittest.TestCase):
         scene_d = _rayd_scene(dr_backend, cuda)
         ray_d = dr_backend.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
         out_d = scene_d.intersect(ray_d)
-        self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), places=5)
+        self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), delta=_DEFAULT_ABS)
 
     def test_nearest_edge_point_forward_matches_external_baseline_case(self):
         dr_backend, rt, cuda = _load_backends()
@@ -285,8 +288,8 @@ class DrJitParityTests(unittest.TestCase):
 
         scene_d = _rayd_scene(dr_backend, cuda)
         out_d = scene_d.nearest_edge(cuda.Array3f([0.25], [-0.2], [0.0]))
-        self.assertAlmostEqual(float(out_t.distance[0].item()), float(out_d.distance[0]), places=5)
-        self.assertAlmostEqual(float(out_t.edge_t[0].item()), float(out_d.edge_t[0]), places=5)
+        self.assertAlmostEqual(float(out_t.distance[0].item()), float(out_d.distance[0]), delta=_DEFAULT_ABS)
+        self.assertAlmostEqual(float(out_t.edge_t[0].item()), float(out_d.edge_t[0]), delta=_DEFAULT_ABS)
         self.assertEqual(int(out_t.edge_id[0].item()), int(out_d.edge_id[0]))
 
     def test_visibility_forward_matches_external_baseline_case(self):
@@ -318,7 +321,7 @@ class DrJitParityTests(unittest.TestCase):
         scene_d.build()
         out_d = scene_d.intersect(dr_backend.Ray(cuda.Array3f([0.25], [0.25], [0.0]), cuda.Array3f([0.0], [0.0], [1.0])))
 
-        self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), places=5)
+        self.assertAlmostEqual(float(out_t.t[0].item()), float(out_d.t[0]), delta=_DEFAULT_ABS)
         self.assertEqual(int(out_t.shape_id[0].item()), int(out_d.shape_id[0]))
         self.assertEqual(int(out_t.local_prim_id[0].item()), int(out_d.local_prim_id[0]))
         self.assertEqual(int(out_t.global_prim_id[0].item()), int(out_d.global_prim_id[0]))
@@ -336,7 +339,7 @@ class DrJitParityTests(unittest.TestCase):
         ray_d = dr_backend.Ray(cuda.Array3f([0.25], [0.25], [-1.0]), cuda.Array3f([0.0], [0.0], [1.0]))
         out_d = scene_d.trace_reflections(ray_d, max_bounces=1, symbolic=False)
         self.assertEqual(bool(out_t.valid[0, 0].item()), bool(out_d.is_valid()[0]))
-        self.assertAlmostEqual(float(out_t.t[0, 0].item()), float(out_d.t[0]), places=5)
+        self.assertAlmostEqual(float(out_t.t[0, 0].item()), float(out_d.t[0]), delta=_DEFAULT_ABS)
         self.assertEqual(int(out_t.prim_ids[0, 0].item()), int(out_d.prim_ids[0]))
 
     def test_diffraction_paths_order1_matches_external_baseline_case(self):
@@ -385,9 +388,9 @@ class DrJitParityTests(unittest.TestCase):
         self.assertEqual(bool(out_t.valid[0].item()), bool(out_d.valid[0]))
         self.assertEqual(int(out_t.rx_id[0].item()), int(out_d.rx_id[0]))
         self.assertEqual(int(out_t.edge0[0].item()), int(out_d.edge0[0]))
-        self.assertAlmostEqual(float(out_t.delay[0].item()), float(out_d.delay[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_re[0].item()), float(out_d.field_x.real[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_im[0].item()), float(out_d.field_x.imag[0]), places=5)
+        self.assertAlmostEqual(float(out_t.delay[0].item()), float(out_d.delay[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_re[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_im[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS)
 
     def test_diffraction_accum_direct_matches_external_baseline_case(self):
         dr_backend, rt, cuda = _load_backends()
@@ -449,9 +452,9 @@ class DrJitParityTests(unittest.TestCase):
         dr.eval(out_d.power, out_d.field_x.real, out_d.field_x.imag, out_d.direct_count, out_d.keller_count)
 
         self.assertEqual(out_t.grid_cell_count, int(out_d.grid_cell_count))
-        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), places=5)
+        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
 
@@ -514,9 +517,9 @@ class DrJitParityTests(unittest.TestCase):
         dr.eval(out_d.power, out_d.field_x.real, out_d.field_x.imag, out_d.direct_count, out_d.keller_count)
 
         self.assertEqual(out_t.grid_cell_count, int(out_d.grid_cell_count))
-        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), places=5)
-        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), places=5)
+        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_re.flatten()[0].item()), float(out_d.field_x.real[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.field_x_im.flatten()[0].item()), float(out_d.field_x.imag[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
 
@@ -558,7 +561,7 @@ class DrJitParityTests(unittest.TestCase):
         )
         dr.eval(out_d.power, out_d.direct_count, out_d.keller_count, out_d.suffix_count)
 
-        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), places=5)
+        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
         self.assertEqual(int(out_t.suffix_count.flatten()[0].item()), int(out_d.suffix_count[0]))
@@ -603,7 +606,7 @@ class DrJitParityTests(unittest.TestCase):
         )
         dr.eval(out_d.power, out_d.direct_count, out_d.keller_count, out_d.edge_uses)
 
-        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), places=5)
+        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
         self.assertEqual(int(out_t.edge_uses.flatten()[0].item()), int(out_d.edge_uses[0]))
@@ -648,7 +651,7 @@ class DrJitParityTests(unittest.TestCase):
         )
         dr.eval(out_d.power, out_d.direct_count, out_d.keller_count, out_d.edge_uses)
 
-        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), places=5)
+        self.assertAlmostEqual(float(out_t.power.flatten()[0].item()), float(out_d.power[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))
         self.assertEqual(int(out_t.keller_count.flatten()[0].item()), int(out_d.keller_count[0]))
         self.assertEqual(int(out_t.edge_uses.flatten()[0].item()), int(out_d.edge_uses[0]))
@@ -684,6 +687,6 @@ class DrJitParityTests(unittest.TestCase):
         )
         dr.eval(out_d.direct_field_x.real, out_d.direct_field_x.imag, out_d.direct_count)
 
-        self.assertAlmostEqual(float(out_t.direct_field_x_re.flatten()[0].item()), float(out_d.direct_field_x.real[0]), delta=3.0e-5)
-        self.assertAlmostEqual(float(out_t.direct_field_x_im.flatten()[0].item()), float(out_d.direct_field_x.imag[0]), delta=3.0e-5)
+        self.assertAlmostEqual(float(out_t.direct_field_x_re.flatten()[0].item()), float(out_d.direct_field_x.real[0]), delta=_FIELD_ABS)
+        self.assertAlmostEqual(float(out_t.direct_field_x_im.flatten()[0].item()), float(out_d.direct_field_x.imag[0]), delta=_FIELD_ABS)
         self.assertEqual(int(out_t.direct_count.flatten()[0].item()), int(out_d.direct_count[0]))

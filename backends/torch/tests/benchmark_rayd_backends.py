@@ -44,7 +44,7 @@ def _time_dr(fn, dr, warmup: int, repeat: int) -> float:
 def _load_rayd(source: str, root: Path):
     if source == "local":
         sys.path.insert(0, str(root))
-    import rayd as rayd
+    import rayd.drjit as rayd
 
     cuda = importlib.import_module("dr" + "jit.cuda")
     dr = importlib.import_module("dr" + "jit")
@@ -227,7 +227,7 @@ def main() -> None:
 
     rayd, cuda, dr = _load_rayd(args.rayd_source, args.rayd_root)
     rayd_flags_none = getattr(rayd.RayFlags, "None")
-    raydn_flags_none = getattr(rt.RayFlags, "None")
+    torch_flags_none = getattr(rt.RayFlags, "None")
     torch.manual_seed(17)
     verts, faces = _grid_data(args.grid)
     scene_t, torch_build_ms = _torch_scene(verts, faces, args.dynamic)
@@ -257,7 +257,7 @@ def main() -> None:
     torch_result = {
         "build_ms": torch_build_ms,
         "intersect_flags_none_ms": _time_torch(
-            lambda: scene_t.intersect(ray_t, flags=raydn_flags_none).t,
+            lambda: scene_t.intersect(ray_t, flags=torch_flags_none).t,
             args.warmup,
             args.repeat,
         ),
@@ -349,7 +349,7 @@ def main() -> None:
                 "rayd_module": getattr(rayd, "__file__", None),
                 "warmup": args.warmup,
                 "repeat": args.repeat,
-                "raydn": torch_result,
+                "torch": torch_result,
                 "rayd": rayd_result,
             },
             indent=2,

@@ -80,7 +80,7 @@ class Scene:
 
     def build(self) -> None:
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
         mesh_flags = []
         for mesh, dynamic in self._meshes:

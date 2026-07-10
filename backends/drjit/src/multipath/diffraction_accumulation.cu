@@ -3,7 +3,7 @@
 
 #include <rayd/multipath/diffraction_accumulation.h>
 #include <rayd/multipath/diffraction_accumulation_params.h>
-#include <utd/utd_math.h>
+#include <rayd/shared/utd/utd_math.h>
 
 namespace rayd {
 

@@ -85,9 +85,11 @@ mark_as_advanced(CLEAR CUDA_64_BIT_DEVICE_CODE)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(RAYD_SHARED_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include")
 
 set(RAYD_CUDA_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${RAYD_SHARED_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}"
     ${CUDA_INCLUDE_DIRS}
@@ -658,8 +660,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_types.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             VERBATIM
         )
     else()
@@ -675,8 +677,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_types.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/include/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             VERBATIM
         )
     endif()
@@ -1059,6 +1061,7 @@ add_library(rayd_core STATIC ${RAYD_CORE_SOURCE_FILES})
 target_include_directories(rayd_core
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${RAYD_SHARED_INCLUDE_DIR}>
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}

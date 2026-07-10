@@ -174,7 +174,7 @@ def _sync_torch_drjit(dr: Any) -> None:
 def _load_rayd(source: str, root: Path):
     if source == "local":
         sys.path.insert(0, str(root))
-    import rayd as rayd
+    import rayd.drjit as rayd
 
     cuda = importlib.import_module("drjit.cuda")
     dr = importlib.import_module("drjit")
@@ -831,7 +831,7 @@ def _mitsuba_torch_loss_backward_performance(
 
 def _speedups(backends: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    torch_backend = backends.get("raydn")
+    torch_backend = backends.get("torch")
     if not torch_backend:
         return out
     phases = sorted(
@@ -846,7 +846,7 @@ def _speedups(backends: dict[str, Any]) -> dict[str, Any]:
         torch_phase = torch_backend.get(phase, {}).get("performance", {})
         phase_out: dict[str, Any] = {}
         for other_name, other_backend in backends.items():
-            if other_name == "raydn":
+            if other_name == "torch":
                 continue
             other_phase = other_backend.get(phase, {}).get("performance", {})
             mode_out: dict[str, float] = {}
@@ -870,8 +870,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
 
     backends: dict[str, Any] = {}
 
-    if "raydn" in args.backends:
-        backends["raydn"] = {
+    if "torch" in args.backends:
+        backends["torch"] = {
             "forward_static": _torch_forward_performance(
                 mesh_data,
                 updated_mesh_data,
@@ -894,7 +894,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
             ),
         }
         if args.include_backward:
-            backends["raydn"]["backward_static"] = _torch_backward_performance(
+            backends["torch"]["backward_static"] = _torch_backward_performance(
                 mesh_data,
                 updated_mesh_data,
                 ray_data,
@@ -906,7 +906,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
-            backends["raydn"]["backward_dynamic"] = _torch_backward_performance(
+            backends["torch"]["backward_dynamic"] = _torch_backward_performance(
                 mesh_data,
                 updated_mesh_data,
                 ray_data,
@@ -919,7 +919,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 warmup=args.warmup,
             )
             if args.torch_loss_backward:
-                backends["raydn"]["backward_static_torch_loss"] = _torch_backward_performance(
+                backends["torch"]["backward_static_torch_loss"] = _torch_backward_performance(
                     mesh_data,
                     updated_mesh_data,
                     ray_data,
@@ -931,7 +931,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                     repeats=args.repeats,
                     warmup=args.warmup,
                 )
-                backends["raydn"]["backward_dynamic_torch_loss"] = _torch_backward_performance(
+                backends["torch"]["backward_dynamic_torch_loss"] = _torch_backward_performance(
                     mesh_data,
                     updated_mesh_data,
                     ray_data,
@@ -1121,8 +1121,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
             "dynamic_x_offset": args.dynamic_x_offset,
             "edges_enabled_for_C": args.edges,
             "forward_modes": {
-                "full": "RayDN/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
-                "reduced": "RayDN/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
+                "full": "RayD Torch/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
+                "reduced": "RayD Torch/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
                 "preliminary": "Mitsuba-only ray_intersect_preliminary t-only when --mitsuba-preliminary is set.",
                 "vjp_full": "AD forward plus vector-Jacobian product for intersection.t, using full public intersection outputs.",
                 "vjp_reduced": "AD forward plus vector-Jacobian product for intersection.t, using RayFlags.None t-only public outputs where available.",
@@ -1137,13 +1137,13 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="RayD latest-style intersection stress benchmark with RayDN and Mitsuba backends."
+        description="RayD latest-style intersection stress benchmark with RayD Torch and Mitsuba backends."
     )
     parser.add_argument(
         "--backends",
         nargs="+",
-        default=["raydn", "rayd", "mitsuba"],
-        choices=["raydn", "rayd", "mitsuba"],
+        default=["torch", "rayd", "mitsuba"],
+        choices=["torch", "rayd", "mitsuba"],
     )
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--mesh-resolution", type=int, default=64)
@@ -1151,7 +1151,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--dynamic-x-offset", type=float, default=2.0)
-    parser.add_argument("--edges", action="store_true", help="Enable RayDN edge cache during scene build.")
+    parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
@@ -1171,16 +1171,16 @@ def main() -> None:
     parser.add_argument("--json-output", type=Path, default=None)
     args = parser.parse_args()
 
-    if "raydn" in args.backends and not torch.cuda.is_available():
-        raise SystemExit("RayDN backend requires CUDA torch.")
+    if "torch" in args.backends and not torch.cuda.is_available():
+        raise SystemExit("RayD Torch backend requires CUDA torch.")
 
     scenario_specs = args.scenario or [f"{args.mesh_resolution}:{args.ray_grid_side}"]
     scenarios = [_parse_scenario(spec) for spec in scenario_specs]
 
     results = {
-        "benchmark": "raydn_rayd_mitsuba_intersection_stress",
+        "benchmark": "torch_rayd_mitsuba_intersection_stress",
         "environment": {
-            "raydn": {"version": getattr(rt, "__version__", "unknown")},
+            "torch": {"version": getattr(rt, "__version__", "unknown")},
             "torch": {"version": torch.__version__, "cuda": torch.version.cuda},
             "rayd_source": args.rayd_source,
             "rayd_root": str(args.rayd_root) if args.rayd_source == "local" else None,

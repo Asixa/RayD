@@ -139,8 +139,8 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
 
     backends: dict[str, Any] = {}
 
-    if "raydn" in args.backends:
-        backends["raydn"] = {
+    if "torch" in args.backends:
+        backends["torch"] = {
             "forward_static": _torch_forward_performance(
                 mesh_data,
                 updated_mesh_data,
@@ -163,7 +163,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
             ),
         }
         if args.include_backward:
-            backends["raydn"]["backward_static"] = _torch_backward_performance(
+            backends["torch"]["backward_static"] = _torch_backward_performance(
                 mesh_data,
                 updated_mesh_data,
                 ray_data,
@@ -173,7 +173,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 repeats=repeats,
                 warmup=args.warmup,
             )
-            backends["raydn"]["backward_dynamic"] = _torch_backward_performance(
+            backends["torch"]["backward_dynamic"] = _torch_backward_performance(
                 mesh_data,
                 updated_mesh_data,
                 ray_data,
@@ -184,7 +184,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 warmup=args.warmup,
             )
         _augment_perf(
-            backends["raydn"],
+            backends["torch"],
             requested_total_rays=requested_total_rays,
             ray_batch_size=ray_batch_size,
             batch_count=batch_count,
@@ -399,10 +399,10 @@ def _plot_results(results: dict[str, Any], output_dir: Path) -> list[str]:
         return []
 
     written: list[str] = []
-    backend_order = ["raydn", "rayd", "mitsuba"]
+    backend_order = ["torch", "rayd", "mitsuba"]
     backends = [backend for backend in backend_order if any(row["backend"] == backend for row in rows)]
     phases = [phase for phase in PHASES if any(row["phase"] == phase for row in rows)]
-    colors = {"raydn": "#2563eb", "rayd": "#16a34a", "mitsuba": "#c2410c"}
+    colors = {"torch": "#2563eb", "rayd": "#16a34a", "mitsuba": "#c2410c"}
 
     def save(fig: Any, name: str) -> None:
         png = output_dir / f"{name}.png"
@@ -530,7 +530,7 @@ def _default_output_dir(preset: str) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sweep RayDN/RayD/Mitsuba intersection scaling and plot results.")
+    parser = argparse.ArgumentParser(description="Sweep RayD Torch/RayD/Mitsuba intersection scaling and plot results.")
     parser.add_argument("--preset", choices=sorted(PRESETS), default="standard")
     parser.add_argument("--mesh-resolution", action="append", default=None)
     parser.add_argument("--total-rays", action="append", default=None)
@@ -541,10 +541,10 @@ def main() -> None:
     parser.add_argument(
         "--backends",
         nargs="+",
-        default=["raydn", "rayd", "mitsuba"],
-        choices=["raydn", "rayd", "mitsuba"],
+        default=["torch", "rayd", "mitsuba"],
+        choices=["torch", "rayd", "mitsuba"],
     )
-    parser.add_argument("--edges", action="store_true", help="Enable RayDN edge cache during scene build.")
+    parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
@@ -568,8 +568,8 @@ def main() -> None:
     json_output = args.json_output or (output_dir / "sweep.json")
     csv_output = args.csv_output or (output_dir / "sweep.csv")
 
-    if "raydn" in args.backends and not torch.cuda.is_available():
-        raise SystemExit("RayDN backend requires CUDA torch.")
+    if "torch" in args.backends and not torch.cuda.is_available():
+        raise SystemExit("RayD Torch backend requires CUDA torch.")
 
     cases: list[dict[str, Any]] = []
     for mesh_resolution in args.mesh_resolutions:
@@ -577,7 +577,7 @@ def main() -> None:
             cases.append(_run_case(args, mesh_resolution, total_rays))
 
     results = {
-        "benchmark": "raydn_rayd_mitsuba_intersection_scaling_sweep",
+        "benchmark": "torch_rayd_mitsuba_intersection_scaling_sweep",
         "suite_config": {
             "preset": args.preset,
             "mesh_resolutions": args.mesh_resolutions,

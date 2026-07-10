@@ -34,6 +34,26 @@ from .types import (
     SceneGlobalGeometry,
 )
 
+
+def backend_capabilities():
+    return {
+        "backend": "torch",
+        "intersect": True,
+        "nearest_edge_point": True,
+        "nearest_edge_ray": True,
+        "nearest_edges_topk": False,
+        "visibility": True,
+        "visibility_pair": False,
+        "reflection_trace": True,
+        "reflection_accumulation": True,
+        "diffraction_direct": True,
+        "diffraction_chain": True,
+        "surfel": False,
+        "reverse_ad": True,
+        "forward_ad": True,
+        "torch_compile": True,
+    }
+
 __all__ = [
     "DfrAccum",
     "DfrGrid",
@@ -51,4 +71,5 @@ __all__ = [
     "ReflectionChain",
     "Scene",
     "SceneGlobalGeometry",
+    "backend_capabilities",
 ]

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rayd-torch"
-version = "0.0.0"
+version = "0.5.0"
 description = "Torch-native RayD geometry and multipath primitives."
 requires-python = ">=3.10"
 dependencies = ["torch"]

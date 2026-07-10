@@ -3,7 +3,7 @@
 
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/diffraction/accum_params.h>
-#include <utd/utd_math.h>
+#include <rayd/shared/utd/utd_math.h>
 
 namespace rayd::torch_backend {
 

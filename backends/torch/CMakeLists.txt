@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.26)
 project(rayd_torch LANGUAGES CXX CUDA)
+set(RAYD_SHARED_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -379,6 +380,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/accum_optix.cu"
             -o "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -387,8 +389,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/diffraction/common.h
             include/rayd/torch/diffraction/accum_params.h
-            include/utd/utd_math.h
-            include/utd/utd_types.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"
@@ -442,6 +444,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         _C
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${RAYD_SHARED_INCLUDE_DIR}
             ${CMAKE_CURRENT_BINARY_DIR}/generated
             ${CUDAToolkit_INCLUDE_DIRS}
             ${OPTIX_INCLUDE_DIR}

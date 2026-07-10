@@ -1,17 +1,18 @@
-# RayDN
+# RayD Torch
 
-RayDN is a Torch-native CUDA/OptiX package for RayD geometry primitives and
+RayD Torch is a Torch-native CUDA/OptiX package for RayD geometry primitives and
 RayD-style multipath/diffraction kernels.
 
 ```python
-import raydn as rt
+import rayd.torch as rt
 ```
 
-The public package name is `raydn`; it does not provide `rayd` compatibility aliases, so it can coexist with the original RayD package in the same environment.
+Install the `rayd-torch` distribution. It owns only `rayd/torch/**` and can
+coexist with the independently installed `rayd-drjit` backend.
 
 ## Tensor ABI
 
-RayDN APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.
+RayD Torch APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.
 
 ## Gradient Contract
 
@@ -23,7 +24,7 @@ The native operators support Torch reverse-mode VJP and forward-mode JVP for the
 
 ## Current Status
 
-RayDN now builds separate native scene, edge, reflection, and diffraction
+RayD Torch now builds separate native scene, edge, reflection, and diffraction
 Torch extension bindings. The native build includes OptiX PTX pipelines for
 scene intersection, edge queries, reflection tracing/EPC/visibility/
 accumulation, and diffraction path/accumulation/coherent direct execution.
@@ -36,13 +37,13 @@ coverage exists for geometry, edge, reflection trace, EPC, and diffraction
 accumulation under the fixed-winner contract.
 
 On the recorded same-script benchmark shape (grid 64, 4,096 queries, warm
-caches), RayDN currently measures faster than RayD for scene build,
+caches), RayD Torch currently measures faster than RayD for scene build,
 intersect, nearest edge, reflection trace, diffraction paths, and direct
 diffraction accumulation. Far-from-surface nearest-edge queries use a tiled
 exact fallback scan instead of the scene-diagonal OptiX tier. Release-size and
 Nsight-counter-backed runs remain the broader performance gate. See
-`docs/raydn_native_gap_analysis.md` and `docs/raydn_native_performance.md`.
+`docs/torch_gap_analysis.md` and `docs/torch_performance.md`.
 
 ## Dependencies
 
-RayDN depends on PyTorch, CUDA, and OptiX for native execution. The RayDN package path has no Dr.Jit dependency.
+RayD Torch depends on PyTorch, CUDA, and OptiX for native execution. The RayD Torch package path has no Dr.Jit dependency.

@@ -1,11 +1,11 @@
-# RayD
+# RayD Dr.Jit
 
-[![PyPI](https://img.shields.io/pypi/v/rayd)](https://pypi.org/project/rayd/) [![Downloads](https://img.shields.io/pypi/dm/rayd)](https://pypi.org/project/rayd/) ![Code Size](https://img.shields.io/github/languages/code-size/Asixa/RayD) ![Total Lines](https://tokei.tvj.one/b1/github/Asixa/RayD?style=flat) [![License](https://img.shields.io/github/license/Asixa/RayD)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/rayd-drjit)](https://pypi.org/project/rayd-drjit/) [![License](https://img.shields.io/github/license/Asixa/RayD)](../../LICENSE)
 
 RayD is a Dr.Jit-native GPU library for differentiable ray geometry and multipath simulation primitives built on OptiX.
 
 ```bash
-pip install rayd
+pip install rayd-drjit
 ```
 
 RayD is not a full renderer. It exposes low-level scene, ray, edge, visibility, and reflection-path queries for building custom renderers, RF simulators, acoustic tools, and inverse-design systems without adopting a material-light-integrator framework.
@@ -98,7 +98,7 @@ The example below traces one ray against one triangle and backpropagates the hit
 
 ```python
 import drjit as dr
-import rayd as rd
+import rayd.drjit as rd
 
 
 mesh = rd.Mesh(
@@ -184,7 +184,7 @@ Raw benchmark data is stored in [`docs/performance_benchmark.json`](docs/perform
 RayD follows Dr.Jit's current-thread CUDA device selection. Choose a GPU before constructing RayD resources:
 
 ```python
-import rayd as rd
+import rayd.drjit as rd
 
 rd.set_device(0)
 ```

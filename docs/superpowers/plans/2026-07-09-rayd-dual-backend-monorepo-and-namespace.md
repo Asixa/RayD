@@ -1,6 +1,6 @@
 # RayD Dual-Backend Monorepo and Hard-Cut Namespace Plan
 
-Status: Proposed
+Status: Implemented and locally accepted; package publication and coordinated downstream rollout remain release operations
 
 Last reviewed: 2026-07-09
 

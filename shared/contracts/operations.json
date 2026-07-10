@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "required_capability_keys": [
+    "backend", "intersect", "nearest_edge_point", "nearest_edge_ray",
+    "nearest_edges_topk", "visibility", "visibility_pair",
+    "reflection_trace", "reflection_accumulation", "diffraction_direct",
+    "diffraction_chain", "surfel", "reverse_ad", "forward_ad", "torch_compile"
+  ],
+  "tensor_contract": {
+    "vectors": {"shape": "(..., 3)", "dtype": "float32", "layout": "row-major"},
+    "indices": {"dtype": "int32", "id_space": "scene-global unless documented local"},
+    "active_mask": {"dtype": "bool", "broadcast": "operation-specific"},
+    "invalid": {"shape_id": -1, "prim_id": -1, "distance": "inf"},
+    "ad": "fixed-winner derivatives for discrete hit and edge selection"
+  },
+  "tolerances": {
+    "default_abs": 1e-5, "default_rel": 1e-5,
+    "field_abs": 5e-5, "field_rel": 5e-5,
+    "gradient_abs": 5e-4, "gradient_rel": 5e-4
+  }
+}

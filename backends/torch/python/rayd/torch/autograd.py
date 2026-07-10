@@ -92,7 +92,7 @@ class _IntersectFunction(torch.autograd.Function):
         flags: int,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         outputs = torch.ops.rayd_torch.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
         return tuple(outputs[:12]) + (outputs[13],)
 
@@ -237,7 +237,7 @@ class _IntersectMeshesFunction(torch.autograd.Function):
         *mesh_vertices: torch.Tensor,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         outputs = torch.ops.rayd_torch.intersect_forward_ad_flags(scene_handle, ray_o, ray_d, ray_tmax, active, int(flags))
         return tuple(outputs[:12]) + (outputs[13],)
 
@@ -412,7 +412,7 @@ class _NearestEdgeFunction(torch.autograd.Function):
     @staticmethod
     def forward(scene_handle: int, vertices: torch.Tensor, point: torch.Tensor):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         outputs = torch.ops.rayd_torch.nearest_edge_forward(scene_handle, point)
         return tuple(outputs)
 
@@ -474,7 +474,7 @@ class _NearestEdgeMeshesFunction(torch.autograd.Function):
     @staticmethod
     def forward(scene_handle: int, point: torch.Tensor, *mesh_vertices: torch.Tensor):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.nearest_edge_forward(scene_handle, point))
 
     @staticmethod
@@ -558,7 +558,7 @@ def nearest_edge(
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> NearestPointEdge:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_nearest_edge_ad(point, *tracked_vertices):
         values = torch.ops.rayd_torch.nearest_edge_forward_noad(scene_handle, point)
@@ -581,7 +581,7 @@ class _NearestEdgeRayFunction(torch.autograd.Function):
         active: torch.Tensor,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.nearest_edge_ray_forward(scene_handle, ray_o, ray_d, ray_tmax, active))
 
     @staticmethod
@@ -616,7 +616,7 @@ def nearest_edge_ray(
 
 def visible(scene_handle: int, start: torch.Tensor, end: torch.Tensor, active: torch.Tensor | None) -> torch.Tensor:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     values = torch.ops.rayd_torch.visibility_forward(scene_handle, start, end, active)
     return values[0]
 
@@ -642,7 +642,7 @@ class _TraceReflectionsFunction(torch.autograd.Function):
         max_bounces: int,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         outputs = torch.ops.rayd_torch.trace_reflections_forward(
             scene_handle,
             ray_o,
@@ -777,7 +777,7 @@ class _TraceReflectionsMeshesFunction(torch.autograd.Function):
         *mesh_vertices: torch.Tensor,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.trace_reflections_forward(
             scene_handle,
             ray_o,
@@ -929,7 +929,7 @@ def trace_reflections(
     mesh_vertices: tuple[torch.Tensor, ...] | None = None,
 ) -> ReflectionChain:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
     if not _needs_trace_reflection_ad(*tracked_vertices, ray_o, ray_d, ray_tmax):
         def load(full: bool):
@@ -988,7 +988,7 @@ class _TraceReflEpcFieldFunction(torch.autograd.Function):
         max_bounces: int,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.trace_refl_epc_field_forward(
             scene_handle,
             source,
@@ -1072,7 +1072,7 @@ class _TraceReflEpcFieldMeshesFunction(torch.autograd.Function):
         *mesh_vertices: torch.Tensor,
     ):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.trace_refl_epc_field_forward(
             scene_handle,
             source,
@@ -1197,7 +1197,7 @@ def trace_dfr_paths_order1_native(
     wavelength: float,
 ) -> DfrPaths:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     state_limit = min(states.state_count, int(max_paths))
     capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
     values = torch.ops.rayd_torch.diffraction_paths_order1_forward(
@@ -1230,7 +1230,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
     @staticmethod
     def forward(*args):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
             *args[:21],
             int(args[21]),
@@ -1598,7 +1598,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
     @staticmethod
     def forward(*args):
         if _C is None:
-            raise RuntimeError("RayDN extension is not built yet.")
+            raise RuntimeError("RayD Torch extension is not built yet.")
         return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
             *args[:21],
             int(args[21]),
@@ -1885,7 +1885,7 @@ def accum_dfr_chain_native(
     max_order: int = 2,
 ) -> DfrAccum:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     active_arg = active
     recursive_active_arg = recursive_active
     if not _needs_reverse_or_forward_ad(
@@ -2025,7 +2025,7 @@ def accum_dfr_coherent_direct_native(
     prefilter_visibility: bool = True,
 ) -> DfrCoherentAccum:
     if _C is None:
-        raise RuntimeError("RayDN extension is not built yet.")
+        raise RuntimeError("RayD Torch extension is not built yet.")
     active_arg = active
     state_limit = states.state_count
     values = torch.ops.rayd_torch.diffraction_coherent_accumulation_forward(
