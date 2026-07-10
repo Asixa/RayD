@@ -12,8 +12,12 @@ on:
 
 jobs:
   unit_tests:
-    name: unit tests
+    name: unit tests / py${{ matrix.python_version }}
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -22,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python_version }}
 
       - name: Run lightweight unit tests
         run: python -m unittest tests.test_project_metadata -v
@@ -44,7 +48,7 @@ jobs:
       - name: Build Linux wheels
         uses: pypa/cibuildwheel@v3.3.0
         env:
-          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64"
+          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
           CIBW_SKIP: "*-musllinux_*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
@@ -52,8 +56,8 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-5 &&
-            ln -sfn /usr/local/cuda-12.5 /usr/local/cuda &&
+            dnf install -y cuda-toolkit-12-8 &&
+            ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
             CUDA_HOME=/usr/local/cuda
@@ -61,6 +65,8 @@ jobs:
             CUDA_ROOT=/usr/local/cuda
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
+            RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,89,90,100,101,120
+            RAYD_CUDA_PTX_ARCH=120
             PIP_CONSTRAINT=/project/.github/constraints/drjit-build.txt
             CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
             CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
@@ -74,7 +80,9 @@ jobs:
             --exclude libdrjit-core.so
             --exclude libdrjit-extra.so
             --exclude libnanothread.so
-            -w {dest_dir} {wheel}
+            -w {dest_dir} {wheel} &&
+            python /project/scripts/verify_cuda_binary_arches.py
+            --stem rayd {dest_dir}/*.whl
         with:
           output-dir: dist
 
@@ -92,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python_version: ["3.10", "3.11", "3.12", "3.13"]
+        python_version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -104,9 +112,9 @@ jobs:
           python-version: ${{ matrix.python_version }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.29
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: "12.5.0"
+          cuda: "12.8.1"
           method: local
           log-file-suffix: "windows-py${{ matrix.python_version }}.log"
 
@@ -124,7 +132,15 @@ jobs:
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
           PIP_CONSTRAINT: ${{ github.workspace }}\.github\constraints\drjit-build.txt
+          RAYD_CUDA_GENCODE_ARCHES: "70,75,80,86,89,90,100,101,120"
+          RAYD_CUDA_PTX_ARCH: "120"
         run: python -m build --wheel
+
+      - name: Verify compiled CUDA architectures
+        shell: bash
+        run: >-
+          python scripts/verify_cuda_binary_arches.py
+          --stem rayd dist/*.whl
 
       - name: Upload Windows wheel artifacts
         uses: actions/upload-artifact@v4

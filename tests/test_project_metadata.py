@@ -67,6 +67,29 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn('nanobind==2.9.2', readme)
         self.assertNotIn('nanobind==2.11.0', readme)
 
+    def test_release_ci_covers_supported_python_and_cuda_architectures(self):
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
+        self.assertIn('python_version: ["3.10", "3.11", "3.12", "3.13", "3.14"]', workflow)
+        self.assertIn("cp314-manylinux_x86_64", workflow)
+        self.assertIn('cuda: "12.8.1"', workflow)
+        self.assertIn("cuda-toolkit-12-8", workflow)
+        self.assertIn("RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,89,90,100,101,120", workflow)
+        self.assertIn("RAYD_CUDA_PTX_ARCH=120", workflow)
+        self.assertIn("scripts/verify_cuda_binary_arches.py", workflow)
+
+        self.assertEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
+        self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
+        self.assertIn(
+            "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}",
+            cmake,
+        )
+        self.assertTrue((ROOT / "CI_BUILD_MATRIX.md").is_file())
+        self.assertTrue((ROOT / "scripts" / "verify_cuda_binary_arches.py").is_file())
+
     def test_reflection_trace_ptx_header_is_committed(self):
         self.assertTrue(
             (

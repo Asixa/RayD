@@ -107,6 +107,41 @@ foreach(RAYD_CUDA_DEFINITION IN LISTS RAYD_DRJIT_COMPILE_DEFINITIONS)
 endforeach()
 string(JOIN " " RAYD_CUDA_DEFINITIONS ${RAYD_CUDA_DEFINITIONS_LIST})
 
+# Release wheels pass these through the environment because the CUDA sources
+# are compiled by explicit nvcc custom commands rather than CMake's CUDA
+# language. Local source builds may leave them empty and use nvcc's default.
+set(RAYD_CUDA_GENCODE_ARCHES "" CACHE STRING
+    "Comma-separated CUDA architectures that receive native SASS (for example 75,80,120).")
+set(RAYD_CUDA_PTX_ARCH "" CACHE STRING
+    "CUDA architecture that additionally receives forward-compatible PTX.")
+if(DEFINED ENV{RAYD_CUDA_GENCODE_ARCHES} AND NOT "$ENV{RAYD_CUDA_GENCODE_ARCHES}" STREQUAL "")
+    set(RAYD_CUDA_GENCODE_ARCHES "$ENV{RAYD_CUDA_GENCODE_ARCHES}")
+endif()
+if(DEFINED ENV{RAYD_CUDA_PTX_ARCH} AND NOT "$ENV{RAYD_CUDA_PTX_ARCH}" STREQUAL "")
+    set(RAYD_CUDA_PTX_ARCH "$ENV{RAYD_CUDA_PTX_ARCH}")
+endif()
+string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
+set(RAYD_CUDA_GENCODE_FLAGS_LIST "")
+foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
+    string(STRIP "${RAYD_CUDA_ARCH}" RAYD_CUDA_ARCH)
+    if(RAYD_CUDA_ARCH STREQUAL "")
+        continue()
+    endif()
+    if(NOT RAYD_CUDA_ARCH MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_ARCH}' in RAYD_CUDA_GENCODE_ARCHES.")
+    endif()
+    list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
+        "-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}")
+endforeach()
+if(NOT RAYD_CUDA_PTX_ARCH STREQUAL "")
+    if(NOT RAYD_CUDA_PTX_ARCH MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_PTX_ARCH}' in RAYD_CUDA_PTX_ARCH.")
+    endif()
+    list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
+        "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}")
+endif()
+string(JOIN " " RAYD_CUDA_GENCODE_FLAGS ${RAYD_CUDA_GENCODE_FLAGS_LIST})
+
 set(RAYD_INCLUDE_DIR include/rayd)
 set(RAYD_SOURCE_DIR src)
 set(RAYD_CORE_SOURCE_FILES
@@ -176,7 +211,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
@@ -193,6 +228,7 @@ else()
         OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
                 ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
                 ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_CUDA_OBJECT}"
@@ -213,7 +249,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_DEDUP_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_DEDUP_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
@@ -230,6 +266,7 @@ else()
         OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
                 "${RAYD_REFLECTION_DEDUP_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
                 ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
                 ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_REFLECTION_DEDUP_OBJECT}"
@@ -250,7 +287,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_EPC_FIELD_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_EPC_FIELD_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_EPC_FIELD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_EPC_FIELD_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
@@ -268,6 +305,7 @@ else()
         OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
                 "${RAYD_REFLECTION_EPC_FIELD_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
                 ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
                 ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
@@ -289,7 +327,7 @@ if(WIN32)
 "@echo off\r\n\
 call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
 if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}\"\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}\"\r\n\
 ")
     add_custom_command(
         OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
@@ -307,6 +345,7 @@ else()
         OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
                 "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
                 ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
                 ${RAYD_CUDA_DEFINITIONS_LIST}
                 -o "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"

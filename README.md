@@ -10,6 +10,12 @@ pip install rayd
 
 RayD is not a full renderer. It exposes low-level scene, ray, edge, visibility, and reflection-path queries for building custom renderers, RF simulators, acoustic tools, and inverse-design systems without adopting a material-light-integrator framework.
 
+## Release compatibility
+
+Release wheels cover Linux x86-64 and Windows x86-64 on CPython 3.10-3.14. They are built with CUDA 12.8 and contain native code for `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, and `sm_120`, plus `compute_120` PTX for forward compatibility. This spans RTX 2080-class Turing GPUs through current data-center and GeForce/RTX PRO Blackwell families.
+
+RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind extension uses the CPython ABI, CI builds one wheel per Python version rather than one Python-independent wheel. The complete build matrix and release configuration are documented in [`CI_BUILD_MATRIX.md`](CI_BUILD_MATRIX.md).
+
 ## Scope
 
 RayD focuses on geometry and wave-propagation primitives:

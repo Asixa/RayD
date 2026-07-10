@@ -6,7 +6,9 @@ __pycache__
 build/
 ext_win64/
 local/
-scripts/
+!scripts/
+scripts/*
+!scripts/verify_cuda_binary_arches.py
 AGENTS.md
 claude.md
 dev_notes.md
