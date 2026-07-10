@@ -1195,14 +1195,19 @@ def trace_dfr_paths_order1_native(
     active: torch.Tensor | None,
     max_paths: int,
     wavelength: float,
+    tx_polarization: torch.Tensor | None = None,
 ) -> DfrPaths:
     if _C is None:
         raise RuntimeError("RayD Torch extension is not built yet.")
     state_limit = min(states.state_count, int(max_paths))
     capacity = int(tx_positions.shape[0]) * int(rx_positions.shape[0]) * state_limit
+    if tx_polarization is None:
+        tx_polarization = torch.zeros_like(tx_positions)
+        tx_polarization[:, 0] = 1.0
     values = torch.ops.rayd_torch.diffraction_paths_order1_forward(
         scene_handle,
         tx_positions,
+        tx_polarization,
         rx_positions,
         active,
         states.edge_index,
@@ -1217,6 +1222,9 @@ def trace_dfr_paths_order1_native(
         states.exterior_angle,
         states.src,
         states.src_power,
+        material.eta_r,
+        material.sigma,
+        material.mu_r,
         material.gain,
         material.valid,
         state_limit,

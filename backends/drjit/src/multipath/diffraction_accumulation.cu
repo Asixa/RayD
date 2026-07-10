@@ -439,7 +439,12 @@ static __forceinline__ __device__ bool coherent_selected_visibility_point(utd::P
                                     edge_origin.z + parameter * edge_dir.z);
     selected.edgeLineMin = -parameter;
     selected.edgeLineMax = edge_length - parameter;
-    return parameter > 0.f && parameter < edge_length;
+    // A stationary point outside the finite segment is still a valid UTD
+    // query. compute_pair_contribution() applies the finite-wedge endpoint
+    // continuation/taper using the shifted line bounds below. Rejecting it
+    // here turns the finite edge into a hard cutoff and creates a zero-field
+    // discontinuity at either endpoint.
+    return true;
 }
 
 template <bool PrimaryOnly>
@@ -515,7 +520,8 @@ static __forceinline__ __device__ bool keller_grid_hit_from_incident(float3 inci
                                                                      float3 edge_point,
                                                                      float3 edge_dir,
                                                                      float3 &target,
-                                                                     int &cell) {
+                                                                     int &cell,
+                                                                     float &measure_scale) {
     const float3 incident = normalize3(incident_vec);
     const float axial = fminf(fmaxf(dot3(incident, edge_dir), -1.f), 1.f);
     const float radial = sqrtf(fmaxf(1.f - axial * axial, 0.f));
@@ -534,6 +540,14 @@ static __forceinline__ __device__ bool keller_grid_hit_from_incident(float3 inci
         return false;
     }
     target = edge_point + t * ko;
+    const float3 dko_dphi = radial * (-s * basis0 + c * basis1);
+    const float inv_denom = 1.f / denom;
+    const float3 u_t = edge_dir - (component(edge_dir, params.grid_axis) * inv_denom) * ko;
+    const float3 u_phi = t * (dko_dphi - (component(dko_dphi, params.grid_axis) * inv_denom) * ko);
+    const float jacobian = norm3(cross3(u_t, u_phi));
+    measure_scale = 2.f * kPi * jacobian / fmaxf(params.grid_cell_area, kSmallEps);
+    if (!isfinite(measure_scale))
+        return false;
     return grid_cell_from_point(target, cell);
 }
 
@@ -542,13 +556,16 @@ static __forceinline__ __device__ bool keller_grid_hit(int state_idx,
                                                        float3 edge_point,
                                                        float3 edge_dir,
                                                        float3 &target,
-                                                       int &cell) {
-    const float3 incident =
-        state_vec(params.state_wi_x,
-                  params.state_wi_y,
-                  params.state_wi_z,
+                                                       int &cell,
+                                                       float &measure_scale) {
+    const float3 source =
+        state_vec(params.state_src_x,
+                  params.state_src_y,
+                  params.state_src_z,
                   state_idx);
-    return keller_grid_hit_from_incident(incident, lane, 1u, edge_point, edge_dir, target, cell);
+    const float3 incident = edge_point - source;
+    return keller_grid_hit_from_incident(
+        incident, lane, 1u, edge_point, edge_dir, target, cell, measure_scale);
 }
 
 static __forceinline__ __device__ int material_index_for_faces(int face0_prim,
@@ -811,9 +828,15 @@ static __forceinline__ __device__ float diffraction_weight(int state_idx,
         fmaxf(params.state_exterior_angle[state_idx], 0.25f * kPi);
     const float wedge_scale = fminf(exterior_angle / (2.f * kPi), 2.f);
     const float material_gain = material_gain_for_state(state_idx);
-    const float sample_norm = 1.f / fmaxf(static_cast<float>(sample_count), 1.f);
+    const float sample_norm =
+        static_cast<float>(params.state_count) /
+        fmaxf(static_cast<float>(sample_count), 1.f);
+    const float wave_gain =
+        (params.wavelength * (1.f / (4.f * kPi))) *
+        (params.wavelength * (1.f / (4.f * kPi)));
     return params.state_src_power[state_idx] *
            material_gain *
+           wave_gain *
            edge_length *
            params.grid_cell_area *
            wedge_scale *
@@ -925,8 +948,10 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
     float3 target = grid_cell_center(cell);
+    float keller_measure_scale = 1.f;
     if constexpr (IncludeKeller) {
-        if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
+        if (is_keller && !keller_grid_hit(
+                state_idx, lane, edge_point, edge_dir, target, cell, keller_measure_scale)) {
             if (params.collect_debug_counts != 0) {
                 atomicAdd(params.out_utd_rejects, 1);
             }
@@ -985,6 +1010,10 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         is_direct ? direct_limit : (is_keller ? keller_limit : suffix_limit);
     float contribution =
         diffraction_weight(state_idx, edge_point, connection_target, strategy_sample_count);
+    if constexpr (IncludeKeller) {
+        if (is_keller)
+            contribution *= keller_measure_scale;
+    }
     if constexpr (IncludeSuffix) {
         if (is_suffix) {
             contribution *= suffix_reflection_gain *
@@ -1153,7 +1182,9 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
         normalize3(state_vec(params.state_edge_dir_x, params.state_edge_dir_y, params.state_edge_dir_z, state_idx));
     const float3 edge_point = edge_pos + edge_t * edge_dir;
     float3 target = grid_cell_center(cell);
-    if (is_keller && !keller_grid_hit(state_idx, lane, edge_point, edge_dir, target, cell)) {
+    float keller_measure_scale = 1.f;
+    if (is_keller && !keller_grid_hit(
+            state_idx, lane, edge_point, edge_dir, target, cell, keller_measure_scale)) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_rejects, 1);
         }
@@ -1169,7 +1200,8 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
 
     const int strategy_sample_count = is_direct ? direct_limit : keller_limit;
     const float contribution =
-        diffraction_weight(state_idx, edge_point, target, strategy_sample_count);
+        diffraction_weight(state_idx, edge_point, target, strategy_sample_count) *
+        (is_keller ? keller_measure_scale : 1.f);
     if (!(contribution > 0.f) || !isfinite(contribution)) {
         if (params.collect_debug_counts != 0) {
             atomicAdd(params.out_utd_rejects, 1);
@@ -1653,6 +1685,7 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     const float3 terminal_point = params.max_order == 3 ? third_point : second_point;
     const float3 terminal_edge_dir = params.max_order == 3 ? third_edge_dir : second_edge_dir;
     float3 final_target = target;
+    float keller_measure_scale = 1.f;
     if (is_keller) {
         const float3 terminal_incident =
             params.max_order == 3 ? (third_point - second_point) : (second_point - first_point);
@@ -1662,7 +1695,8 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
                                            terminal_point,
                                            terminal_edge_dir,
                                            final_target,
-                                           cell)) {
+                                           cell,
+                                           keller_measure_scale)) {
             if (params.collect_debug_counts != 0) {
                 atomicAdd(params.out_utd_rejects, 1);
             }
@@ -1766,6 +1800,8 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
     const float sample_norm = 1.f / fmaxf(static_cast<float>(strategy_sample_count), 1.f);
     float contribution =
         chain_weight * wave_gain * params.grid_cell_area * sample_norm;
+    if (is_keller)
+        contribution *= keller_measure_scale;
     if (is_suffix) {
         contribution *= suffix_reflection_gain *
                         suffix_fspl *

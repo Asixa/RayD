@@ -21,6 +21,7 @@
 #include <rayd/torch/reflection/visibility_params.h>
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
+#include <rayd/torch/integration.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -398,6 +399,7 @@ std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
 py::tuple diffraction_paths_order1_forward_op(
     int64_t scene_handle,
     at::Tensor tx_pos,
+    at::Tensor tx_pol,
     at::Tensor rx_pos,
     c10::optional<at::Tensor> active,
     at::Tensor state_edge_index,
@@ -412,12 +414,16 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor state_exterior_angle,
     at::Tensor state_src,
     at::Tensor state_src_power,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
     at::Tensor material_gain,
     at::Tensor material_valid,
     int64_t state_limit_arg,
     int64_t capacity,
     double wavelength) {
     require_vec3f_strided(tx_pos, "tx_pos");
+    require_vec3f_strided(tx_pol, "tx_pol");
     require_vec3f_strided(rx_pos, "rx_pos");
     require_optional_mask(active, "active");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
@@ -432,6 +438,9 @@ py::tuple diffraction_paths_order1_forward_op(
     require_flat_f32_strided(state_exterior_angle, "state_exterior_angle");
     require_vec3f_strided(state_src, "state_src");
     require_flat_f32_strided(state_src_power, "state_src_power");
+    require_flat_f32_strided(material_eta_r, "material_eta_r");
+    require_flat_f32_strided(material_sigma, "material_sigma");
+    require_flat_f32_strided(material_mu_r, "material_mu_r");
     require_flat_f32_strided(material_gain, "material_gain");
     require_mask_strided(material_valid, "material_valid");
     if (state_limit_arg < 0)
@@ -444,6 +453,8 @@ py::tuple diffraction_paths_order1_forward_op(
     SceneCache &scene = get_scene(scene_handle);
 
     const int64_t tx_count = tx_pos.size(0);
+    if (tx_pol.size(0) != 1 && tx_pol.size(0) != tx_count)
+        throw std::runtime_error("tx_pol width must be 1 or match tx_pos.");
     const int64_t rx_count = rx_pos.size(0);
     const int64_t state_physical_count = state_edge_index.size(0);
     if (state_limit_arg > state_physical_count)
@@ -463,8 +474,11 @@ py::tuple diffraction_paths_order1_forward_op(
     const int64_t material_count = material_gain.size(0);
     if (material_count <= 0)
         throw std::runtime_error("material payload must not be empty.");
-    if (material_valid.size(0) != material_count)
-        throw std::runtime_error("material_gain and material_valid must have matching widths.");
+    if (material_eta_r.size(0) != material_count ||
+        material_sigma.size(0) != material_count ||
+        material_mu_r.size(0) != material_count ||
+        material_valid.size(0) != material_count)
+        throw std::runtime_error("diffraction material tensors must have matching widths.");
 
     const int64_t n_rays64 = tx_count * rx_count * state_limit;
     if (n_rays64 > capacity)
@@ -555,6 +569,10 @@ py::tuple diffraction_paths_order1_forward_op(
     params.tx_pos_stride0 = stride_i32(tx_pos, 0, "tx_pos_stride0");
     params.tx_pos_stride1 = stride_i32(tx_pos, 1, "tx_pos_stride1");
     params.tx_count = checked_i32(tx_count, "tx_count");
+    params.tx_pol_aos = tx_pol.data_ptr<float>();
+    params.tx_pol_stride0 = stride_i32(tx_pol, 0, "tx_pol_stride0");
+    params.tx_pol_stride1 = stride_i32(tx_pol, 1, "tx_pol_stride1");
+    params.tx_pol_count = checked_i32(tx_pol.size(0), "tx_pol_count");
     params.rx_pos_x = nullptr;
     params.rx_pos_y = nullptr;
     params.rx_pos_z = nullptr;
@@ -612,6 +630,12 @@ py::tuple diffraction_paths_order1_forward_op(
     params.state_src_stride1 = stride_i32(state_src, 1, "state_src_stride1");
     params.state_src_power = state_src_power.data_ptr<float>();
     params.state_src_power_stride = stride_i32(state_src_power, 0, "state_src_power_stride");
+    params.material_eta_r = material_eta_r.data_ptr<float>();
+    params.material_eta_r_stride = stride_i32(material_eta_r, 0, "material_eta_r_stride");
+    params.material_sigma = material_sigma.data_ptr<float>();
+    params.material_sigma_stride = stride_i32(material_sigma, 0, "material_sigma_stride");
+    params.material_mu_r = material_mu_r.data_ptr<float>();
+    params.material_mu_r_stride = stride_i32(material_mu_r, 0, "material_mu_r_stride");
     params.material_gain = material_gain.data_ptr<float>();
     params.material_gain_stride = stride_i32(material_gain, 0, "material_gain_stride");
     params.material_valid = mask_ptr(material_valid);
@@ -619,6 +643,7 @@ py::tuple diffraction_paths_order1_forward_op(
     params.material_count = checked_i32(material_count, "material_count");
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
+    params.omega = static_cast<float>(2.0 * 3.14159265358979323846 * 299792458.0 / wavelength);
     params.seed = 0;
     params.max_order = 1;
     params.strategy_mask = RAYD_TORCH_DFR_DIRECT;
@@ -677,6 +702,77 @@ py::tuple diffraction_paths_order1_forward_op(
         out_p2);
 }
 
+extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
+    int64_t scene_handle,
+    const at::Tensor *tx_pos,
+    const at::Tensor *tx_pol,
+    const at::Tensor *rx_pos,
+    const at::Tensor *active,
+    const at::Tensor *state_edge_index,
+    const at::Tensor *state_edge_pos,
+    const at::Tensor *state_edge_dir,
+    const at::Tensor *state_edge_t_min,
+    const at::Tensor *state_edge_t_max,
+    const at::Tensor *state_n0,
+    const at::Tensor *state_n1,
+    const at::Tensor *state_prim0,
+    const at::Tensor *state_prim1,
+    const at::Tensor *state_exterior_angle,
+    const at::Tensor *state_src,
+    const at::Tensor *state_src_power,
+    const at::Tensor *material_eta_r,
+    const at::Tensor *material_sigma,
+    const at::Tensor *material_mu_r,
+    const at::Tensor *material_gain,
+    const at::Tensor *material_valid,
+    int64_t state_limit,
+    int64_t capacity,
+    double wavelength,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_diffraction_paths_order1_forward received null ") + name);
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 18;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_diffraction_paths_order1_forward output capacity is too small");
+    c10::optional<at::Tensor> active_opt =
+        active == nullptr || !active->defined() ? c10::nullopt : c10::optional<at::Tensor>(*active);
+    py::tuple result = diffraction_paths_order1_forward_op(
+        scene_handle,
+        required(tx_pos, "tx_pos"),
+        required(tx_pol, "tx_pol"),
+        required(rx_pos, "rx_pos"),
+        active_opt,
+        required(state_edge_index, "state_edge_index"),
+        required(state_edge_pos, "state_edge_pos"),
+        required(state_edge_dir, "state_edge_dir"),
+        required(state_edge_t_min, "state_edge_t_min"),
+        required(state_edge_t_max, "state_edge_t_max"),
+        required(state_n0, "state_n0"),
+        required(state_n1, "state_n1"),
+        required(state_prim0, "state_prim0"),
+        required(state_prim1, "state_prim1"),
+        required(state_exterior_angle, "state_exterior_angle"),
+        required(state_src, "state_src"),
+        required(state_src_power, "state_src_power"),
+        required(material_eta_r, "material_eta_r"),
+        required(material_sigma, "material_sigma"),
+        required(material_mu_r, "material_mu_r"),
+        required(material_gain, "material_gain"),
+        required(material_valid, "material_valid"),
+        state_limit,
+        capacity,
+        wavelength);
+    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_diffraction_paths_order1_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    return kOutputCount;
+}
+
 py::tuple diffraction_accumulation_forward_op(
     int64_t scene_handle,
     c10::optional<at::Tensor> active,
@@ -727,7 +823,9 @@ py::tuple diffraction_accumulation_forward_op(
     c10::optional<at::Tensor> recursive_state_prim0,
     c10::optional<at::Tensor> recursive_state_prim1,
     c10::optional<at::Tensor> recursive_state_exterior_angle,
-    int64_t export_tape) {
+    int64_t export_tape,
+    c10::optional<at::Tensor> sample_state_index,
+    c10::optional<at::Tensor> sample_edge_weight) {
     require_optional_mask(active, "active");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
     require_vec3f_strided(state_edge_pos, "state_edge_pos");
@@ -865,6 +963,18 @@ py::tuple diffraction_accumulation_forward_op(
     const int32_t keller_launch_count = checked_i32(keller_samples, "keller_samples");
     const int32_t suffix_launch_count = checked_i32(suffix_samples, "suffix_samples");
     const int32_t launch_count = checked_i32(direct_samples + keller_samples + suffix_samples, "launch_count");
+    const bool use_sample_state_index = has_defined_optional_tensor(sample_state_index);
+    const bool use_sample_edge_weight = has_defined_optional_tensor(sample_edge_weight);
+    if (use_sample_state_index) {
+        require_flat_i32_strided(*sample_state_index, "sample_state_index");
+        if (sample_state_index->size(0) < launch_count)
+            throw std::runtime_error("sample_state_index must cover launch_count.");
+    }
+    if (use_sample_edge_weight) {
+        require_flat_f32_strided(*sample_edge_weight, "sample_edge_weight");
+        if (sample_edge_weight->size(0) < launch_count)
+            throw std::runtime_error("sample_edge_weight must cover launch_count.");
+    }
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     auto bopts = state_edge_index.options().dtype(at::kBool);
@@ -1002,6 +1112,12 @@ py::tuple diffraction_accumulation_forward_op(
     params.active_mask = optional_mask_ptr(active_contig);
     params.active_width = active_width_for_states(active_contig, "active_width");
     params.active_stride = active_stride_for_states(active_contig, "active_stride");
+    params.sample_state_index = use_sample_state_index ? sample_state_index->data_ptr<int>() : nullptr;
+    params.sample_state_index_stride =
+        use_sample_state_index ? stride_i32(*sample_state_index, 0, "sample_state_index_stride") : 0;
+    params.sample_edge_weight = use_sample_edge_weight ? sample_edge_weight->data_ptr<float>() : nullptr;
+    params.sample_edge_weight_stride =
+        use_sample_edge_weight ? stride_i32(*sample_edge_weight, 0, "sample_edge_weight_stride") : 0;
     params.state_count = checked_i32(state_count, "state_count");
     params.state_edge_index = state_edge_index.data_ptr<int>();
     params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
@@ -1211,6 +1327,102 @@ py::tuple diffraction_accumulation_forward_op(
         tape_cell,
         tape_material_idx,
         tape_edge_u);
+}
+
+extern "C" int64_t rayd_torch_native_diffraction_accumulation_forward(
+    int64_t scene_handle,
+    const at::Tensor *active,
+    const at::Tensor *state_edge_index,
+    const at::Tensor *state_edge_pos,
+    const at::Tensor *state_edge_dir,
+    const at::Tensor *state_edge_t_min,
+    const at::Tensor *state_edge_t_max,
+    const at::Tensor *state_n0,
+    const at::Tensor *state_n1,
+    const at::Tensor *state_prim0,
+    const at::Tensor *state_prim1,
+    const at::Tensor *state_exterior_angle,
+    const at::Tensor *state_src,
+    const at::Tensor *state_src_power,
+    const at::Tensor *state_wi,
+    const at::Tensor *state_d0,
+    const at::Tensor *material_eta_r,
+    const at::Tensor *material_sigma,
+    const at::Tensor *material_mu_r,
+    const at::Tensor *material_gain,
+    const at::Tensor *material_valid,
+    int64_t state_limit,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double grid_cell_area,
+    double wavelength,
+    int64_t direct_samples,
+    int64_t keller_samples,
+    int64_t suffix_samples,
+    int64_t seed,
+    int64_t max_order,
+    int64_t recursive_state_limit,
+    const at::Tensor *recursive_active,
+    const at::Tensor *recursive_state_edge_index,
+    const at::Tensor *recursive_state_edge_pos,
+    const at::Tensor *recursive_state_edge_dir,
+    const at::Tensor *recursive_state_edge_t_min,
+    const at::Tensor *recursive_state_edge_t_max,
+    const at::Tensor *recursive_state_n0,
+    const at::Tensor *recursive_state_n1,
+    const at::Tensor *recursive_state_prim0,
+    const at::Tensor *recursive_state_prim1,
+    const at::Tensor *recursive_state_exterior_angle,
+    int64_t export_tape,
+    const at::Tensor *sample_state_index,
+    const at::Tensor *sample_edge_weight,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_diffraction_accumulation_forward received null ") + name);
+        return *tensor;
+    };
+    auto optional = [](const at::Tensor *tensor) -> c10::optional<at::Tensor> {
+        if (tensor == nullptr || !tensor->defined())
+            return c10::nullopt;
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 19;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_diffraction_accumulation_forward output capacity is too small");
+    py::tuple result = diffraction_accumulation_forward_op(
+        scene_handle, optional(active),
+        required(state_edge_index, "state_edge_index"), required(state_edge_pos, "state_edge_pos"),
+        required(state_edge_dir, "state_edge_dir"), required(state_edge_t_min, "state_edge_t_min"),
+        required(state_edge_t_max, "state_edge_t_max"), required(state_n0, "state_n0"),
+        required(state_n1, "state_n1"), required(state_prim0, "state_prim0"),
+        required(state_prim1, "state_prim1"), required(state_exterior_angle, "state_exterior_angle"),
+        required(state_src, "state_src"), required(state_src_power, "state_src_power"),
+        optional(state_wi), optional(state_d0), required(material_eta_r, "material_eta_r"),
+        required(material_sigma, "material_sigma"), required(material_mu_r, "material_mu_r"),
+        required(material_gain, "material_gain"), required(material_valid, "material_valid"),
+        state_limit, grid_axis, grid_position, grid_coord0_min, grid_coord0_max,
+        grid_coord1_min, grid_coord1_max, grid_resolution0, grid_resolution1,
+        grid_cell_area, wavelength, direct_samples, keller_samples, suffix_samples,
+        seed, max_order, recursive_state_limit, optional(recursive_active),
+        optional(recursive_state_edge_index), optional(recursive_state_edge_pos),
+        optional(recursive_state_edge_dir), optional(recursive_state_edge_t_min),
+        optional(recursive_state_edge_t_max), optional(recursive_state_n0),
+        optional(recursive_state_n1), optional(recursive_state_prim0),
+        optional(recursive_state_prim1), optional(recursive_state_exterior_angle),
+        export_tape, optional(sample_state_index), optional(sample_edge_weight));
+    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_diffraction_accumulation_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    return kOutputCount;
 }
 
 py::tuple diffraction_accumulation_direct_backward_op(

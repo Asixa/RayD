@@ -336,8 +336,23 @@ void OptixLaunchPipeline::launch_impl(
     if (raygen_index < 0 || raygen_index >= static_cast<int>(raygen_records_.size()))
         throw std::runtime_error("OptixLaunchPipeline::launch(): raygen index out of range.");
     const size_t launch_params_size = (std::max)(params_size_, actual_params_size);
-    if (params_buffer_.numel() < static_cast<int64_t>(launch_params_size))
-        throw std::runtime_error("OptixLaunchPipeline::launch(): params buffer is too small.");
+    if (params_buffer_.numel() < static_cast<int64_t>(launch_params_size)) {
+        // This only occurs when a caller supplies a source-compatible extended
+        // launch structure. Synchronize before replacing buffers that may still
+        // be referenced by an earlier OptiX launch on this stream.
+        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(resize params buffer)");
+        const int64_t capacity = static_cast<int64_t>(launch_params_size);
+        params_buffer_ = at::empty(
+            {capacity},
+            at::TensorOptions()
+                .device(at::Device(at::kCUDA, device_index_))
+                .dtype(at::kByte));
+        for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
+            params_staging_[slot] = at::empty(
+                {capacity},
+                at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
+        }
+    }
 
     const int slot = params_staging_cursor_;
     params_staging_cursor_ = (params_staging_cursor_ + 1) % kParamsStagingSlots;

@@ -20,6 +20,7 @@
 #include <rayd/torch/reflection/visibility_params.h>
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
+#include <rayd/torch/integration.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -30,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace rayd::torch_backend {
 
@@ -224,8 +226,27 @@ at::Tensor optional_active_from_py(py::object active_obj, int64_t count, const c
     return active.contiguous();
 }
 
+at::Tensor optional_active_from_tensor(const at::Tensor *active_ptr, int64_t count, const char *name) {
+    if (active_ptr == nullptr || !active_ptr->defined())
+        return at::Tensor();
+    const at::Tensor &active = *active_ptr;
+    require_mask(active, name);
+    if (active.numel() == 0)
+        return active.contiguous();
+    if (active.size(0) != count)
+        throw std::runtime_error(std::string(name) + " must match the batch size.");
+    return active.contiguous();
+}
+
 at::Tensor stack_vec3(const at::Tensor &x, const at::Tensor &y, const at::Tensor &z) {
     return at::stack({x, y, z}, 1).contiguous();
+}
+
+py::tuple tensor_vector_to_tuple(const std::vector<at::Tensor> &values) {
+    py::tuple result(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+        result[i] = values[i];
+    return result;
 }
 
 std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
@@ -239,17 +260,21 @@ std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
         config);
 }
 
-} // namespace
+struct SegmentVisibilityNativeOutputs {
+    at::Tensor visible;
+    at::Tensor blocker_prim;
+    at::Tensor tape_t;
+};
 
-py::tuple visibility_forward_op(
+SegmentVisibilityNativeOutputs visibility_forward_native_impl(
     int64_t scene_handle,
     at::Tensor start,
     at::Tensor end,
-    py::object active_obj) {
+    const at::Tensor *active_ptr) {
     require_vec3f(start, "start");
     require_vec3f(end, "end");
     require_same_batch(start, end, "visibility");
-    at::Tensor active = optional_active_from_py(active_obj, start.size(0), "active");
+    at::Tensor active = optional_active_from_tensor(active_ptr, start.size(0), "active");
 
     SceneCache &scene = get_scene(scene_handle);
     const int64_t ray_count = start.size(0);
@@ -257,9 +282,7 @@ py::tuple visibility_forward_op(
     at::Tensor blocker_prim = at::empty({ray_count}, scene.global_faces.options());
     at::Tensor tape_t = at::empty({ray_count}, start.options());
     if (ray_count == 0)
-        return py::make_tuple(visible, blocker_prim, tape_t);
-
-    at::Tensor active_contig = active;
+        return {visible, blocker_prim, tape_t};
 
     SegmentVisibilityParams params = {};
     params.handle = scene.triangle_ias.traversable;
@@ -267,7 +290,7 @@ py::tuple visibility_forward_op(
     params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
     params.start_aos = start.data_ptr<float>();
     params.end_aos = end.data_ptr<float>();
-    params.active_mask = optional_mask_ptr(active_contig);
+    params.active_mask = optional_mask_ptr(active);
     params.n_rays = static_cast<int32_t>(ray_count);
     params.out_visible = mutable_mask_ptr(visible);
     params.out_first_blocked_prim = blocker_prim.data_ptr<int>();
@@ -276,15 +299,44 @@ py::tuple visibility_forward_op(
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
-    return py::make_tuple(visible, blocker_prim, tape_t);
+    return {visible, blocker_prim, tape_t};
 }
 
-py::tuple trace_reflections_forward_impl(
+} // namespace
+
+py::tuple visibility_forward_op(
+    int64_t scene_handle,
+    at::Tensor start,
+    at::Tensor end,
+    py::object active_obj) {
+    at::Tensor active_storage;
+    const at::Tensor *active = optional_tensor(active_obj, active_storage);
+    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(scene_handle, start, end, active);
+    return py::make_tuple(out.visible, out.blocker_prim, out.tape_t);
+}
+
+extern "C" void rayd_torch_native_visibility_forward(
+    int64_t scene_handle,
+    const at::Tensor *start,
+    const at::Tensor *end,
+    const at::Tensor *active,
+    at::Tensor *visible,
+    at::Tensor *blocker_prim,
+    at::Tensor *tape_t) {
+    if (start == nullptr || end == nullptr || visible == nullptr || blocker_prim == nullptr || tape_t == nullptr)
+        throw std::runtime_error("rayd_torch_native_visibility_forward received a null tensor pointer");
+    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(scene_handle, *start, *end, active);
+    *visible = out.visible;
+    *blocker_prim = out.blocker_prim;
+    *tape_t = out.tape_t;
+}
+
+std::vector<at::Tensor> trace_reflections_forward_native_impl(
     int64_t scene_handle,
     at::Tensor ray_o,
     at::Tensor ray_d,
     at::Tensor ray_tmax,
-    py::object active_obj,
+    const at::Tensor *active_ptr,
     int64_t max_bounces,
     bool export_tape,
     bool export_image_sources) {
@@ -292,7 +344,13 @@ py::tuple trace_reflections_forward_impl(
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0), "trace_reflections");
     require_same_batch(ray_o, ray_d, "trace_reflections");
-    at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
+    at::Tensor active;
+    if (active_ptr != nullptr && active_ptr->defined()) {
+        require_mask(*active_ptr, "active");
+        if (active_ptr->numel() != 0 && active_ptr->size(0) != ray_o.size(0))
+            throw std::runtime_error("active must be empty or match the reflection ray batch size.");
+        active = active_ptr->contiguous();
+    }
     at::Tensor active_ctx = active.defined() ? active : at::empty({0}, ray_o.options().dtype(at::kBool));
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
@@ -320,10 +378,10 @@ py::tuple trace_reflections_forward_impl(
 
     if (ray_count == 0) {
         if (!export_tape && !export_image_sources)
-            return py::make_tuple(valid, t, prim_ids);
+            return {valid, t, prim_ids};
         if (!export_tape)
-            return py::make_tuple(valid, t, image_sources, prim_ids);
-        return py::make_tuple(
+            return {valid, t, image_sources, prim_ids};
+        return {
             valid,
             t,
             image_sources,
@@ -332,7 +390,7 @@ py::tuple trace_reflections_forward_impl(
             tape_barycentric,
             tape_hit_points,
             tape_normals,
-            active_ctx);
+            active_ctx};
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
@@ -399,11 +457,11 @@ py::tuple trace_reflections_forward_impl(
         ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
 
     if (!export_tape && !export_image_sources)
-        return py::make_tuple(valid, t, prim_ids);
+        return {valid, t, prim_ids};
     if (!export_tape)
-        return py::make_tuple(valid, t, image_sources, prim_ids);
+        return {valid, t, image_sources, prim_ids};
 
-    return py::make_tuple(
+    return {
         valid,
         t,
         image_sources,
@@ -412,7 +470,7 @@ py::tuple trace_reflections_forward_impl(
         tape_barycentric,
         tape_hit_points,
         tape_normals,
-        active_ctx);
+        active_ctx};
 }
 
 py::tuple trace_reflections_forward_op(
@@ -422,15 +480,17 @@ py::tuple trace_reflections_forward_op(
     at::Tensor ray_tmax,
     py::object active,
     int64_t max_bounces) {
-    return trace_reflections_forward_impl(
+    at::Tensor active_storage;
+    const at::Tensor *active_ptr = optional_tensor(active, active_storage);
+    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
         scene_handle,
         ray_o,
         ray_d,
         ray_tmax,
-        active,
+        active_ptr,
         max_bounces,
         true,
-        true);
+        true));
 }
 
 py::tuple trace_reflections_forward_noad_op(
@@ -440,15 +500,17 @@ py::tuple trace_reflections_forward_noad_op(
     at::Tensor ray_tmax,
     py::object active,
     int64_t max_bounces) {
-    return trace_reflections_forward_impl(
+    at::Tensor active_storage;
+    const at::Tensor *active_ptr = optional_tensor(active, active_storage);
+    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
         scene_handle,
         ray_o,
         ray_d,
         ray_tmax,
-        active,
+        active_ptr,
         max_bounces,
         false,
-        true);
+        true));
 }
 
 py::tuple trace_reflections_forward_reduced_op(
@@ -458,15 +520,53 @@ py::tuple trace_reflections_forward_reduced_op(
     at::Tensor ray_tmax,
     py::object active,
     int64_t max_bounces) {
-    return trace_reflections_forward_impl(
+    at::Tensor active_storage;
+    const at::Tensor *active_ptr = optional_tensor(active, active_storage);
+    return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
         scene_handle,
         ray_o,
         ray_d,
         ray_tmax,
+        active_ptr,
+        max_bounces,
+        false,
+        false));
+}
+
+extern "C" int64_t rayd_torch_native_trace_reflections_forward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_forward received null ") + name);
+        return *tensor;
+    };
+    if (outputs == nullptr)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_forward received null outputs");
+    constexpr int64_t kOutputCount = 3;
+    if (output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_forward output capacity is too small");
+
+    std::vector<at::Tensor> result = trace_reflections_forward_native_impl(
+        scene_handle,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        required(ray_tmax, "ray_tmax"),
         active,
         max_bounces,
         false,
         false);
+    if (static_cast<int64_t>(result.size()) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = result[static_cast<size_t>(i)];
+    return kOutputCount;
 }
 
 py::tuple trace_reflections_backward_op(
@@ -738,6 +838,7 @@ py::tuple trace_refl_epc_field_forward_op(
     epc_params.active_mask = optional_mask_ptr(active_contig);
     epc_params.n_rays = static_cast<int32_t>(ray_count);
     epc_params.max_bounces = static_cast<int32_t>(max_bounces);
+    epc_params.plane_tolerance = 1e-5f;
     epc_params.out_valid = mutable_mask_ptr(epc_valid);
     epc_params.out_bounce_count = epc_bounce_count.data_ptr<int>();
     epc_params.out_path_length = epc_path_length.data_ptr<float>();
@@ -803,6 +904,246 @@ py::tuple trace_refl_epc_field_forward_op(
         tape_prim_id,
         tape_barycentric,
         active_ctx);
+}
+
+std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
+    int64_t scene_handle,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor *active_ptr,
+    const at::Tensor &expected_prim_ids,
+    const at::Tensor &direct_plane_points,
+    const at::Tensor &direct_plane_normals,
+    const at::Tensor &surface_group_id,
+    const at::Tensor &surface_group_size,
+    const at::Tensor &surface_group_members,
+    int64_t max_bounces,
+    int64_t visibility_ignore_mode,
+    double plane_tolerance) {
+    require_vec3f(source, "source");
+    require_vec3f(receiver, "receiver");
+    require_same_batch(source, receiver, "reflection_epc_paths");
+    require_cuda(expected_prim_ids, "expected_prim_ids");
+    require_contiguous(expected_prim_ids, "expected_prim_ids");
+    require_dtype(expected_prim_ids, at::kInt, "expected_prim_ids");
+    require_rank(expected_prim_ids, 2, "expected_prim_ids");
+    require_cuda(direct_plane_points, "direct_plane_points");
+    require_contiguous(direct_plane_points, "direct_plane_points");
+    require_dtype(direct_plane_points, at::kFloat, "direct_plane_points");
+    require_rank(direct_plane_points, 3, "direct_plane_points");
+    require_last_dim(direct_plane_points, 3, "direct_plane_points");
+    require_cuda(direct_plane_normals, "direct_plane_normals");
+    require_contiguous(direct_plane_normals, "direct_plane_normals");
+    require_dtype(direct_plane_normals, at::kFloat, "direct_plane_normals");
+    require_rank(direct_plane_normals, 3, "direct_plane_normals");
+    require_last_dim(direct_plane_normals, 3, "direct_plane_normals");
+    require_flat_i32(surface_group_id, "surface_group_id");
+    require_flat_i32(surface_group_size, "surface_group_size");
+    require_flat_i32(surface_group_members, "surface_group_members");
+    if (max_bounces < 1)
+        throw std::runtime_error("max_bounces must be at least 1.");
+    if (!(plane_tolerance >= 0.0) || !std::isfinite(plane_tolerance))
+        throw std::runtime_error("plane_tolerance must be finite and non-negative.");
+    if (expected_prim_ids.size(0) != source.size(0) || expected_prim_ids.size(1) != max_bounces)
+        throw std::runtime_error("expected_prim_ids must have shape (N, max_bounces).");
+    if (direct_plane_points.size(0) != source.size(0) || direct_plane_points.size(1) != max_bounces)
+        throw std::runtime_error("direct_plane_points must have shape (N, max_bounces, 3).");
+    if (!direct_plane_normals.sizes().equals(direct_plane_points.sizes()))
+        throw std::runtime_error("direct_plane_normals must match direct_plane_points.");
+    if (surface_group_size.size(0) <= 0)
+        throw std::runtime_error("surface_group_size must contain at least one group.");
+    if (surface_group_members.numel() % surface_group_size.size(0) != 0)
+        throw std::runtime_error("surface_group_members must be padded to group_count * max_group_size.");
+
+    at::Tensor active = optional_active_from_tensor(active_ptr, source.size(0), "active");
+    SceneCache &scene = get_scene(scene_handle);
+    const int64_t ray_count = source.size(0);
+    const int64_t slot_count = ray_count * max_bounces;
+    auto fopts = source.options();
+    auto iopts = scene.global_faces.options();
+    at::Tensor valid = at::empty({ray_count}, source.options().dtype(at::kBool));
+    at::Tensor path_length = at::empty({ray_count}, fopts);
+    at::Tensor resolved_prim_ids = at::empty({ray_count, max_bounces}, iopts);
+    at::Tensor surface_group_ids = at::empty({ray_count, max_bounces}, iopts);
+    at::Tensor point_x = at::empty({slot_count}, fopts);
+    at::Tensor point_y = at::empty({slot_count}, fopts);
+    at::Tensor point_z = at::empty({slot_count}, fopts);
+    at::Tensor plane_normal_x = at::empty({slot_count}, fopts);
+    at::Tensor plane_normal_y = at::empty({slot_count}, fopts);
+    at::Tensor plane_normal_z = at::empty({slot_count}, fopts);
+    at::Tensor trace_prim_ids = at::empty({slot_count}, iopts);
+    at::Tensor bounce_count = at::empty({ray_count}, iopts);
+    at::Tensor first_blocked_segment = at::empty({ray_count}, iopts);
+    at::Tensor first_blocked_prim = at::empty({ray_count}, iopts);
+    at::Tensor first_blocked_group = at::empty({ray_count}, iopts);
+    at::Tensor tape_barycentric = at::empty({ray_count, 3}, fopts);
+    at::Tensor source_x = at::empty({ray_count}, fopts);
+    at::Tensor source_y = at::empty({ray_count}, fopts);
+    at::Tensor source_z = at::empty({ray_count}, fopts);
+    at::Tensor receiver_x = at::empty({ray_count}, fopts);
+    at::Tensor receiver_y = at::empty({ray_count}, fopts);
+    at::Tensor receiver_z = at::empty({ray_count}, fopts);
+    at::Tensor ray_dx = at::empty({ray_count}, fopts);
+    at::Tensor ray_dy = at::empty({ray_count}, fopts);
+    at::Tensor ray_dz = at::empty({ray_count}, fopts);
+    at::Tensor ray_tmax = at::empty({ray_count}, fopts);
+
+    if (ray_count == 0) {
+        at::Tensor hit_positions = stack_vec3(point_x, point_y, point_z).reshape({ray_count, max_bounces, 3}).contiguous();
+        at::Tensor normals = stack_vec3(plane_normal_x, plane_normal_y, plane_normal_z).reshape({ray_count, max_bounces, 3}).contiguous();
+        return {valid, path_length, resolved_prim_ids, surface_group_ids, hit_positions, normals};
+    }
+
+    at::Tensor direct_plane_points_flat = direct_plane_points.reshape({slot_count, 3}).contiguous();
+    at::Tensor direct_plane_normals_flat = direct_plane_normals.reshape({slot_count, 3}).contiguous();
+    Vec3SoA plane_points = split_vec3(direct_plane_points_flat);
+    Vec3SoA plane_normals = split_vec3(direct_plane_normals_flat);
+    TriangleSoA tri = make_scene_triangle_soa(scene);
+    at::Tensor resolved_flat = resolved_prim_ids.reshape({slot_count}).contiguous();
+    at::Tensor group_flat = surface_group_ids.reshape({slot_count}).contiguous();
+
+    ReflEpcForwardSetupParams setup_params = {};
+    setup_params.n_rays = static_cast<int32_t>(ray_count);
+    setup_params.max_bounces = static_cast<int32_t>(max_bounces);
+    setup_params.source_aos = source.data_ptr<float>();
+    setup_params.receiver_aos = receiver.data_ptr<float>();
+    setup_params.source_x = source_x.data_ptr<float>();
+    setup_params.source_y = source_y.data_ptr<float>();
+    setup_params.source_z = source_z.data_ptr<float>();
+    setup_params.receiver_x = receiver_x.data_ptr<float>();
+    setup_params.receiver_y = receiver_y.data_ptr<float>();
+    setup_params.receiver_z = receiver_z.data_ptr<float>();
+    setup_params.ray_dx = ray_dx.data_ptr<float>();
+    setup_params.ray_dy = ray_dy.data_ptr<float>();
+    setup_params.ray_dz = ray_dz.data_ptr<float>();
+    setup_params.ray_tmax = ray_tmax.data_ptr<float>();
+    setup_params.epc_valid = mutable_mask_ptr(valid);
+    setup_params.epc_bounce_count = bounce_count.data_ptr<int>();
+    setup_params.epc_path_length = path_length.data_ptr<float>();
+    setup_params.point_x = point_x.data_ptr<float>();
+    setup_params.point_y = point_y.data_ptr<float>();
+    setup_params.point_z = point_z.data_ptr<float>();
+    setup_params.trace_prim_ids = trace_prim_ids.data_ptr<int>();
+    setup_params.resolved_prim_ids = resolved_flat.data_ptr<int>();
+    setup_params.surface_group_ids = group_flat.data_ptr<int>();
+    setup_params.plane_normal_x = plane_normal_x.data_ptr<float>();
+    setup_params.plane_normal_y = plane_normal_y.data_ptr<float>();
+    setup_params.plane_normal_z = plane_normal_z.data_ptr<float>();
+    setup_params.first_blocked_segment = first_blocked_segment.data_ptr<int>();
+    setup_params.first_blocked_prim = first_blocked_prim.data_ptr<int>();
+    setup_params.first_blocked_group = first_blocked_group.data_ptr<int>();
+    setup_params.tape_barycentric = tape_barycentric.data_ptr<float>();
+    reflection_epc_forward_setup_gpu(setup_params);
+
+    ReflEpcParams epc_params = {};
+    epc_params.primary_handle = scene.triangle_ias.traversable;
+    epc_params.tri_p0_x = tri.p0_x.data_ptr<float>();
+    epc_params.tri_p0_y = tri.p0_y.data_ptr<float>();
+    epc_params.tri_p0_z = tri.p0_z.data_ptr<float>();
+    epc_params.tri_e1_x = tri.e1_x.data_ptr<float>();
+    epc_params.tri_e1_y = tri.e1_y.data_ptr<float>();
+    epc_params.tri_e1_z = tri.e1_z.data_ptr<float>();
+    epc_params.tri_e2_x = tri.e2_x.data_ptr<float>();
+    epc_params.tri_e2_y = tri.e2_y.data_ptr<float>();
+    epc_params.tri_e2_z = tri.e2_z.data_ptr<float>();
+    epc_params.tri_fn_x = tri.fn_x.data_ptr<float>();
+    epc_params.tri_fn_y = tri.fn_y.data_ptr<float>();
+    epc_params.tri_fn_z = tri.fn_z.data_ptr<float>();
+    epc_params.face_offsets = tri.face_offsets.data_ptr<int>();
+    epc_params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    epc_params.n_triangles = tri.n_triangles;
+    epc_params.expected_prim_ids = expected_prim_ids.data_ptr<int>();
+    epc_params.expected_prim_count = static_cast<int32_t>(slot_count);
+    epc_params.surface_group_id = surface_group_id.data_ptr<int>();
+    epc_params.surface_group_id_count = static_cast<int32_t>(surface_group_id.size(0));
+    epc_params.surface_group_size = surface_group_size.data_ptr<int>();
+    epc_params.surface_group_count = static_cast<int32_t>(surface_group_size.size(0));
+    epc_params.surface_group_members = surface_group_members.data_ptr<int>();
+    epc_params.surface_max_group_size = static_cast<int32_t>(surface_group_members.numel() / surface_group_size.size(0));
+    epc_params.visibility_ignore_mode = static_cast<int32_t>(visibility_ignore_mode);
+    epc_params.ray_ox = source_x.data_ptr<float>();
+    epc_params.ray_oy = source_y.data_ptr<float>();
+    epc_params.ray_oz = source_z.data_ptr<float>();
+    epc_params.ray_dx = ray_dx.data_ptr<float>();
+    epc_params.ray_dy = ray_dy.data_ptr<float>();
+    epc_params.ray_dz = ray_dz.data_ptr<float>();
+    epc_params.ray_tmax = ray_tmax.data_ptr<float>();
+    epc_params.direct_plane_point_x = plane_points.x.data_ptr<float>();
+    epc_params.direct_plane_point_y = plane_points.y.data_ptr<float>();
+    epc_params.direct_plane_point_z = plane_points.z.data_ptr<float>();
+    epc_params.direct_plane_normal_x = plane_normals.x.data_ptr<float>();
+    epc_params.direct_plane_normal_y = plane_normals.y.data_ptr<float>();
+    epc_params.direct_plane_normal_z = plane_normals.z.data_ptr<float>();
+    epc_params.rx_x = receiver_x.data_ptr<float>();
+    epc_params.rx_y = receiver_y.data_ptr<float>();
+    epc_params.rx_z = receiver_z.data_ptr<float>();
+    epc_params.rx_count = static_cast<int32_t>(ray_count);
+    epc_params.active_mask = optional_mask_ptr(active);
+    epc_params.n_rays = static_cast<int32_t>(ray_count);
+    epc_params.max_bounces = static_cast<int32_t>(max_bounces);
+    epc_params.plane_tolerance = static_cast<float>(plane_tolerance);
+    epc_params.out_valid = mutable_mask_ptr(valid);
+    epc_params.out_bounce_count = bounce_count.data_ptr<int>();
+    epc_params.out_path_length = path_length.data_ptr<float>();
+    epc_params.out_point_x = point_x.data_ptr<float>();
+    epc_params.out_point_y = point_y.data_ptr<float>();
+    epc_params.out_point_z = point_z.data_ptr<float>();
+    epc_params.out_trace_prim_ids = trace_prim_ids.data_ptr<int>();
+    epc_params.out_resolved_prim_ids = resolved_flat.data_ptr<int>();
+    epc_params.out_surface_group_ids = group_flat.data_ptr<int>();
+    epc_params.out_plane_normal_x = plane_normal_x.data_ptr<float>();
+    epc_params.out_plane_normal_y = plane_normal_y.data_ptr<float>();
+    epc_params.out_plane_normal_z = plane_normal_z.data_ptr<float>();
+    epc_params.out_first_blocked_segment = first_blocked_segment.data_ptr<int>();
+    epc_params.out_first_blocked_prim = first_blocked_prim.data_ptr<int>();
+    epc_params.out_first_blocked_group = first_blocked_group.data_ptr<int>();
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
+        ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+
+    at::Tensor hit_positions = stack_vec3(point_x, point_y, point_z).reshape({ray_count, max_bounces, 3}).contiguous();
+    at::Tensor normals = stack_vec3(plane_normal_x, plane_normal_y, plane_normal_z).reshape({ray_count, max_bounces, 3}).contiguous();
+    return {
+        valid,
+        path_length,
+        resolved_flat.reshape({ray_count, max_bounces}).contiguous(),
+        group_flat.reshape({ray_count, max_bounces}).contiguous(),
+        hit_positions,
+        normals,
+    };
+}
+
+py::tuple reflection_epc_paths_forward_op(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor receiver,
+    py::object active_obj,
+    at::Tensor expected_prim_ids,
+    at::Tensor direct_plane_points,
+    at::Tensor direct_plane_normals,
+    at::Tensor surface_group_id,
+    at::Tensor surface_group_size,
+    at::Tensor surface_group_members,
+    int64_t max_bounces,
+    int64_t visibility_ignore_mode,
+    double plane_tolerance) {
+    at::Tensor active_storage;
+    const at::Tensor *active = optional_tensor(active_obj, active_storage);
+    return tensor_vector_to_tuple(reflection_epc_paths_forward_native_impl(
+        scene_handle,
+        source,
+        receiver,
+        active,
+        expected_prim_ids,
+        direct_plane_points,
+        direct_plane_normals,
+        surface_group_id,
+        surface_group_size,
+        surface_group_members,
+        max_bounces,
+        visibility_ignore_mode,
+        plane_tolerance));
 }
 
 py::tuple trace_refl_epc_field_backward_op(
@@ -1050,6 +1391,11 @@ py::tuple reflection_accumulation_forward_op(
     at::Tensor active,
     at::Tensor tx,
     at::Tensor tx_pol,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
+    at::Tensor material_gain,
+    at::Tensor material_valid,
     int64_t max_bounces,
     int64_t grid_axis,
     double grid_position,
@@ -1059,13 +1405,28 @@ py::tuple reflection_accumulation_forward_op(
     double grid_coord1_max,
     int64_t grid_resolution0,
     int64_t grid_resolution1,
-    double wavelength) {
+    double wavelength,
+    double solid_angle_per_ray,
+    bool collect_wedges,
+    bool collect_wedge_prefixes,
+    int64_t wedge_capacity,
+    int64_t wedge_sample_stride,
+    int64_t accumulation_strategy,
+    int64_t compact_min_samples,
+    int64_t staged_min_samples_per_cell,
+    int64_t procedural_sample_count,
+    bool include_los) {
     require_vec3f(ray_o, "ray_o");
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0), "reflection_accumulation");
     require_mask(active, "active");
     require_vec3f(tx, "tx");
     require_vec3f(tx_pol, "tx_pol");
+    require_flat_f32(material_eta_r, "material_eta_r");
+    require_flat_f32(material_sigma, "material_sigma");
+    require_flat_f32(material_mu_r, "material_mu_r");
+    require_flat_f32(material_gain, "material_gain");
+    require_mask(material_valid, "material_valid");
     require_same_batch(ray_o, ray_d, "reflection_accumulation");
     require_same_batch(ray_o, tx, "reflection_accumulation");
     require_same_batch(ray_o, tx_pol, "reflection_accumulation");
@@ -1079,6 +1440,16 @@ py::tuple reflection_accumulation_forward_op(
         throw std::runtime_error("grid resolutions must be positive.");
     if (!(wavelength > 0.0))
         throw std::runtime_error("wavelength must be positive.");
+    if (!(solid_angle_per_ray >= 0.0))
+        throw std::runtime_error("solid_angle_per_ray must be non-negative.");
+    if (wedge_capacity < 0)
+        throw std::runtime_error("wedge_capacity must be non-negative.");
+    if (wedge_sample_stride <= 0)
+        throw std::runtime_error("wedge_sample_stride must be positive.");
+    if (accumulation_strategy < 0 || accumulation_strategy > 4)
+        throw std::runtime_error("accumulation_strategy is not supported.");
+    if (compact_min_samples < 0 || staged_min_samples_per_cell < 0 || procedural_sample_count < 0)
+        throw std::runtime_error("accumulation thresholds and procedural_sample_count must be non-negative.");
 
     SceneCache &scene = get_scene(scene_handle);
     const int64_t ray_count = ray_o.size(0);
@@ -1090,10 +1461,19 @@ py::tuple reflection_accumulation_forward_op(
                          std::max<int64_t>(stage_depth_count, 1);
     const int64_t stage_sample_count =
         stage_sample_count_fits ? ray_count * stage_depth_count : 0;
+    const int64_t staged_min_samples = compact_min_samples > 0
+        ? compact_min_samples
+        : kStagedReflAccumMinSamples;
+    const int64_t staged_min_per_cell = staged_min_samples_per_cell > 0
+        ? staged_min_samples_per_cell
+        : kStagedReflAccumMinSamplesPerCell;
+    const bool force_staged = accumulation_strategy == 2;
+    const bool force_atomic = accumulation_strategy == 1 || accumulation_strategy == 3 || accumulation_strategy == 4;
     const bool staged_accum =
-        stage_sample_count_fits &&
-        stage_sample_count >= kStagedReflAccumMinSamples &&
-        stage_sample_count >= cell_count * kStagedReflAccumMinSamplesPerCell;
+        !force_atomic && stage_sample_count_fits &&
+        (force_staged ||
+         (stage_sample_count >= staged_min_samples &&
+          stage_sample_count >= cell_count * staged_min_per_cell));
     auto fopts = ray_o.options();
     auto iopts = scene.global_faces.options();
     at::Tensor power = at::zeros({cell_count}, fopts);
@@ -1104,6 +1484,29 @@ py::tuple reflection_accumulation_forward_op(
     at::Tensor field_z_re = at::zeros({cell_count}, fopts);
     at::Tensor field_z_im = at::zeros({cell_count}, fopts);
     at::Tensor reflection_count = at::zeros({1}, iopts);
+    const int64_t wedge_capacity64 = collect_wedges ? wedge_capacity : 0;
+    const int32_t wedge_capacity_i = checked_i32(wedge_capacity64, "wedge_capacity");
+    const int32_t wedge_sample_stride_i = checked_i32(wedge_sample_stride, "wedge_sample_stride");
+    at::Tensor wedge_count = at::zeros({1}, iopts);
+    at::Tensor wedge_ray_index = at::full({wedge_capacity64}, -1, iopts);
+    at::Tensor wedge_prim_id = at::full({wedge_capacity64}, -1, iopts);
+    at::Tensor wedge_bounce_depth = at::full({wedge_capacity64}, -1, iopts);
+    at::Tensor wedge_source_power = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_hit_x = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_hit_y = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_hit_z = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_normal_x = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_normal_y = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_normal_z = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_dir_x = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_dir_y = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_dir_z = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_source_x = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_source_y = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_source_z = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_initial_dir_x = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_initial_dir_y = at::zeros({wedge_capacity64}, fopts);
+    at::Tensor wedge_initial_dir_z = at::zeros({wedge_capacity64}, fopts);
     if (ray_count == 0) {
         return py::make_tuple(
             power.reshape({grid_resolution1, grid_resolution0}),
@@ -1113,7 +1516,17 @@ py::tuple reflection_accumulation_forward_op(
             field_y_im.reshape({grid_resolution1, grid_resolution0}),
             field_z_re.reshape({grid_resolution1, grid_resolution0}),
             field_z_im.reshape({grid_resolution1, grid_resolution0}),
-            reflection_count);
+            reflection_count,
+            wedge_count,
+            wedge_ray_index,
+            stack_vec3(wedge_hit_x, wedge_hit_y, wedge_hit_z),
+            stack_vec3(wedge_normal_x, wedge_normal_y, wedge_normal_z),
+            wedge_prim_id,
+            stack_vec3(wedge_dir_x, wedge_dir_y, wedge_dir_z),
+            stack_vec3(wedge_source_x, wedge_source_y, wedge_source_z),
+            wedge_source_power,
+            stack_vec3(wedge_initial_dir_x, wedge_initial_dir_y, wedge_initial_dir_z),
+            wedge_bounce_depth);
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
@@ -1123,11 +1536,14 @@ py::tuple reflection_accumulation_forward_op(
     Vec3SoA tx_pol_soa = split_vec3(tx_pol);
     at::Tensor ray_tmax_contig = ray_tmax.numel() == 0 ? ray_tmax : ray_tmax.contiguous();
     at::Tensor active_contig = active.contiguous();
-    at::Tensor material_eta_r = at::ones({tri.n_triangles}, fopts);
-    at::Tensor material_sigma = at::zeros({tri.n_triangles}, fopts);
-    at::Tensor material_gain = at::ones({tri.n_triangles}, fopts);
-    at::Tensor material_mu_r = at::ones({tri.n_triangles}, fopts);
-    at::Tensor material_valid = at::ones({tri.n_triangles}, active.options());
+    const int64_t material_count = material_eta_r.size(0);
+    if (material_count != tri.n_triangles ||
+        material_sigma.size(0) != material_count ||
+        material_mu_r.size(0) != material_count ||
+        material_gain.size(0) != material_count ||
+        material_valid.size(0) != material_count) {
+        throw std::runtime_error("reflection material payload must match the scene triangle count.");
+    }
     at::Tensor stage_cell = staged_accum
         ? at::full({stage_sample_count}, -1, iopts)
         : at::Tensor();
@@ -1163,6 +1579,7 @@ py::tuple reflection_accumulation_forward_op(
     params.ray_tmax = ray_tmax_contig.numel() == 0 ? nullptr : ray_tmax_contig.data_ptr<float>();
     params.active_mask = optional_mask_ptr(active_contig);
     params.n_rays = static_cast<int32_t>(ray_count);
+    params.include_los = include_los ? 1 : 0;
     params.tx_x = tx_soa.x.data_ptr<float>();
     params.tx_y = tx_soa.y.data_ptr<float>();
     params.tx_z = tx_soa.z.data_ptr<float>();
@@ -1172,7 +1589,7 @@ py::tuple reflection_accumulation_forward_op(
     params.max_bounces = max_bounces_i;
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
-    params.solid_angle_per_ray = 1.0f;
+    params.solid_angle_per_ray = static_cast<float>(solid_angle_per_ray);
     const double span0 = grid_coord0_max - grid_coord0_min;
     const double span1 = grid_coord1_max - grid_coord1_min;
     params.cell_area = static_cast<float>(
@@ -1195,11 +1612,11 @@ py::tuple reflection_accumulation_forward_op(
     params.material_gain = material_gain.data_ptr<float>();
     params.material_mu_r = material_mu_r.data_ptr<float>();
     params.material_valid = mask_ptr(material_valid);
-    params.material_count = tri.n_triangles;
-    params.collect_wedges = 0;
-    params.collect_wedge_prefixes = 0;
-    params.wedge_capacity = 0;
-    params.wedge_sample_stride = 1;
+    params.material_count = static_cast<int32_t>(material_count);
+    params.collect_wedges = collect_wedges ? 1 : 0;
+    params.collect_wedge_prefixes = collect_wedge_prefixes ? 1 : 0;
+    params.wedge_capacity = wedge_capacity_i;
+    params.wedge_sample_stride = wedge_sample_stride_i;
     params.out_reflection_power = power.data_ptr<float>();
     params.out_field_x_re = field_x_re.data_ptr<float>();
     params.out_field_x_im = field_x_im.data_ptr<float>();
@@ -1212,6 +1629,26 @@ py::tuple reflection_accumulation_forward_op(
     params.stage_value = staged_accum
         ? reinterpret_cast<ReflAccumStagedValue *>(stage_value.data_ptr<float>())
         : nullptr;
+    params.out_wedge_count = collect_wedges ? wedge_count.data_ptr<int>() : nullptr;
+    params.out_wedge_ray_index = collect_wedges ? wedge_ray_index.data_ptr<int>() : nullptr;
+    params.out_wedge_hit_x = collect_wedges ? wedge_hit_x.data_ptr<float>() : nullptr;
+    params.out_wedge_hit_y = collect_wedges ? wedge_hit_y.data_ptr<float>() : nullptr;
+    params.out_wedge_hit_z = collect_wedges ? wedge_hit_z.data_ptr<float>() : nullptr;
+    params.out_wedge_normal_x = collect_wedges ? wedge_normal_x.data_ptr<float>() : nullptr;
+    params.out_wedge_normal_y = collect_wedges ? wedge_normal_y.data_ptr<float>() : nullptr;
+    params.out_wedge_normal_z = collect_wedges ? wedge_normal_z.data_ptr<float>() : nullptr;
+    params.out_wedge_prim_id = collect_wedges ? wedge_prim_id.data_ptr<int>() : nullptr;
+    params.out_wedge_dir_x = collect_wedges ? wedge_dir_x.data_ptr<float>() : nullptr;
+    params.out_wedge_dir_y = collect_wedges ? wedge_dir_y.data_ptr<float>() : nullptr;
+    params.out_wedge_dir_z = collect_wedges ? wedge_dir_z.data_ptr<float>() : nullptr;
+    params.out_wedge_source_x = collect_wedges ? wedge_source_x.data_ptr<float>() : nullptr;
+    params.out_wedge_source_y = collect_wedges ? wedge_source_y.data_ptr<float>() : nullptr;
+    params.out_wedge_source_z = collect_wedges ? wedge_source_z.data_ptr<float>() : nullptr;
+    params.out_wedge_source_power = collect_wedges ? wedge_source_power.data_ptr<float>() : nullptr;
+    params.out_wedge_initial_dir_x = collect_wedges ? wedge_initial_dir_x.data_ptr<float>() : nullptr;
+    params.out_wedge_initial_dir_y = collect_wedges ? wedge_initial_dir_y.data_ptr<float>() : nullptr;
+    params.out_wedge_initial_dir_z = collect_wedges ? wedge_initial_dir_z.data_ptr<float>() : nullptr;
+    params.out_wedge_bounce_depth = collect_wedges ? wedge_bounce_depth.data_ptr<int>() : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     optix_pipeline_for_scene(scene, reflection_accumulation_pipeline_config())
@@ -1238,7 +1675,145 @@ py::tuple reflection_accumulation_forward_op(
         field_y_im.reshape({grid_resolution1, grid_resolution0}),
         field_z_re.reshape({grid_resolution1, grid_resolution0}),
         field_z_im.reshape({grid_resolution1, grid_resolution0}),
-        reflection_count);
+        reflection_count,
+        wedge_count,
+        wedge_ray_index,
+        stack_vec3(wedge_hit_x, wedge_hit_y, wedge_hit_z),
+        stack_vec3(wedge_normal_x, wedge_normal_y, wedge_normal_z),
+        wedge_prim_id,
+        stack_vec3(wedge_dir_x, wedge_dir_y, wedge_dir_z),
+        stack_vec3(wedge_source_x, wedge_source_y, wedge_source_z),
+        wedge_source_power,
+        stack_vec3(wedge_initial_dir_x, wedge_initial_dir_y, wedge_initial_dir_z),
+        wedge_bounce_depth);
+}
+
+extern "C" int64_t rayd_torch_native_reflection_accumulation_forward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor *tx,
+    const at::Tensor *tx_pol,
+    const at::Tensor *material_eta_r,
+    const at::Tensor *material_sigma,
+    const at::Tensor *material_mu_r,
+    const at::Tensor *material_gain,
+    const at::Tensor *material_valid,
+    int64_t max_bounces,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double wavelength,
+    double solid_angle_per_ray,
+    bool collect_wedges,
+    bool collect_wedge_prefixes,
+    int64_t wedge_capacity,
+    int64_t wedge_sample_stride,
+    int64_t accumulation_strategy,
+    int64_t compact_min_samples,
+    int64_t staged_min_samples_per_cell,
+    int64_t procedural_sample_count,
+    bool include_los,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_reflection_accumulation_forward received null ") + name);
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 18;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_accumulation_forward output capacity is too small");
+    py::tuple result = reflection_accumulation_forward_op(
+        scene_handle,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        required(ray_tmax, "ray_tmax"),
+        required(active, "active"),
+        required(tx, "tx"),
+        required(tx_pol, "tx_pol"),
+        required(material_eta_r, "material_eta_r"),
+        required(material_sigma, "material_sigma"),
+        required(material_mu_r, "material_mu_r"),
+        required(material_gain, "material_gain"),
+        required(material_valid, "material_valid"),
+        max_bounces,
+        grid_axis,
+        grid_position,
+        grid_coord0_min,
+        grid_coord0_max,
+        grid_coord1_min,
+        grid_coord1_max,
+        grid_resolution0,
+        grid_resolution1,
+        wavelength,
+        solid_angle_per_ray,
+        collect_wedges,
+        collect_wedge_prefixes,
+        wedge_capacity,
+        wedge_sample_stride,
+        accumulation_strategy,
+        compact_min_samples,
+        staged_min_samples_per_cell,
+        procedural_sample_count,
+        include_los);
+    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_accumulation_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    const at::Tensor *expected_prim_ids,
+    const at::Tensor *direct_plane_points,
+    const at::Tensor *direct_plane_normals,
+    const at::Tensor *surface_group_id,
+    const at::Tensor *surface_group_size,
+    const at::Tensor *surface_group_members,
+    int64_t max_bounces,
+    int64_t visibility_ignore_mode,
+    double plane_tolerance,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_reflection_epc_paths_forward received null ") + name);
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 6;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_epc_paths_forward output capacity is too small");
+    std::vector<at::Tensor> result = reflection_epc_paths_forward_native_impl(
+        scene_handle,
+        required(source, "source"),
+        required(receiver, "receiver"),
+        active,
+        required(expected_prim_ids, "expected_prim_ids"),
+        required(direct_plane_points, "direct_plane_points"),
+        required(direct_plane_normals, "direct_plane_normals"),
+        required(surface_group_id, "surface_group_id"),
+        required(surface_group_size, "surface_group_size"),
+        required(surface_group_members, "surface_group_members"),
+        max_bounces,
+        visibility_ignore_mode,
+        plane_tolerance);
+    if (static_cast<int64_t>(result.size()) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_epc_paths_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = std::move(result[static_cast<size_t>(i)]);
+    return kOutputCount;
 }
 
 } // namespace rayd::torch_backend

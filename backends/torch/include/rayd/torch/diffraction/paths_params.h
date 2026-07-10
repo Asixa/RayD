@@ -28,6 +28,10 @@ struct DfrPathParams {
     int tx_pos_stride0;
     int tx_pos_stride1;
     int tx_count;
+    const float *tx_pol_aos;
+    int tx_pol_stride0;
+    int tx_pol_stride1;
+    int tx_pol_count;
 
     const float *rx_pos_x;
     const float *rx_pos_y;
@@ -87,6 +91,12 @@ struct DfrPathParams {
     const float *state_src_power;
     int state_src_power_stride;
 
+    const float *material_eta_r;
+    int material_eta_r_stride;
+    const float *material_sigma;
+    int material_sigma_stride;
+    const float *material_mu_r;
+    int material_mu_r_stride;
     const float *material_gain;
     int material_gain_stride;
     const uint8_t *material_valid;
@@ -95,6 +105,7 @@ struct DfrPathParams {
 
     float wavelength;
     float k;
+    float omega;
     int seed;
     int max_order;
     int strategy_mask;

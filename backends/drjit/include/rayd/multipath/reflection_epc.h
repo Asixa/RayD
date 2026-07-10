@@ -17,6 +17,7 @@ struct ReflEpcOptions {
     Int surface_group_members;   ///< Flattened group membership table (surface_group_count * max_group_size).
     int surface_max_group_size = 0;      ///< Width of the group-members table.
     std::string visibility_ignore_mode = "primitive"; ///< "primitive" or "surface_group" ignore semantics.
+    float plane_tolerance = 1e-5f;       ///< Relative out-of-plane containment tolerance.
     Int final_ignore_group_ids;  ///< Groups ignored on the final receiver segment.
 };
 

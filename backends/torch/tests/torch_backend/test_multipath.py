@@ -657,6 +657,11 @@ class MultipathTests(unittest.TestCase):
             active,
             ray_o,
             tx_pol,
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.zeros((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.bool),
             1,
             2,
             -1.0,
@@ -666,6 +671,7 @@ class MultipathTests(unittest.TestCase):
             1.0,
             4,
             4,
+            1.0,
             1.0,
         )
         self.assertEqual(out[0].shape, (4, 4))
@@ -716,6 +722,9 @@ class MultipathTests(unittest.TestCase):
         state_src_power = torch.ones((1,), device="cuda", dtype=torch.float32)
         active = torch.ones((1,), device="cuda", dtype=torch.bool)
         material_gain = torch.ones((1,), device="cuda", dtype=torch.float32)
+        material_eta_r = torch.ones((1,), device="cuda", dtype=torch.float32)
+        material_sigma = torch.zeros((1,), device="cuda", dtype=torch.float32)
+        material_mu_r = torch.ones((1,), device="cuda", dtype=torch.float32)
         material_valid = torch.ones((1,), device="cuda", dtype=torch.bool)
         empty_i = torch.empty((0,), device="cuda", dtype=torch.int32)
         empty_f = torch.empty((0,), device="cuda", dtype=torch.float32)
@@ -725,6 +734,7 @@ class MultipathTests(unittest.TestCase):
         out = torch.ops.rayd_torch.diffraction_paths_order1_forward(
             scene._native_scene,
             tx_pos,
+            torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
             rx_pos,
             active,
             state_edge_index,
@@ -739,6 +749,9 @@ class MultipathTests(unittest.TestCase):
             state_exterior_angle,
             state_src,
             state_src_power,
+            material_eta_r,
+            material_sigma,
+            material_mu_r,
             material_gain,
             material_valid,
             1,
@@ -783,11 +796,15 @@ class MultipathTests(unittest.TestCase):
         state_src_power = torch.ones((1,), device="cuda", dtype=torch.float32)
         active = torch.ones((1,), device="cuda", dtype=torch.bool)
         material_gain = torch.ones((2,), device="cuda", dtype=torch.float32)
+        material_eta_r = torch.ones((2,), device="cuda", dtype=torch.float32)
+        material_sigma = torch.zeros((2,), device="cuda", dtype=torch.float32)
+        material_mu_r = torch.ones((2,), device="cuda", dtype=torch.float32)
         material_valid = torch.ones((2,), device="cuda", dtype=torch.bool)
 
         out = torch.ops.rayd_torch.diffraction_paths_order1_forward(
             scene._native_scene,
             tx_pos,
+            torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
             rx_pos,
             active,
             state_edge_index,
@@ -802,6 +819,9 @@ class MultipathTests(unittest.TestCase):
             state_exterior_angle,
             state_src,
             state_src_power,
+            material_eta_r,
+            material_sigma,
+            material_mu_r,
             material_gain,
             material_valid,
             1,

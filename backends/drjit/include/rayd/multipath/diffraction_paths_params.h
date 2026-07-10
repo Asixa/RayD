@@ -56,12 +56,16 @@ struct DfrPathParams {
     const float *state_src_z;
     const float *state_src_power;
 
+    const float *material_eta_r;
+    const float *material_sigma;
+    const float *material_mu_r;
     const float *material_gain;
     const uint8_t *material_valid;
     int material_count;
 
     float wavelength;
     float k;
+    float omega;
     int seed;
     int max_order;
     int strategy_mask;

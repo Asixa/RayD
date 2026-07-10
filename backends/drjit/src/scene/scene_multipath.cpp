@@ -2724,11 +2724,15 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
         params.state_src_y = states.src.y().data();
         params.state_src_z = states.src.z().data();
         params.state_src_power = states.src_power.data();
+        params.material_eta_r = material.eta_r.data();
+        params.material_sigma = material.sigma.data();
+        params.material_mu_r = material.mu_r.data();
         params.material_gain = material.gain.data();
         params.material_valid = reinterpret_cast<const uint8_t *>(material.valid.data());
         params.material_count = material_count;
         params.wavelength = options.wavelength;
         params.k = options.k;
+        params.omega = 2.0f * Pi * 299792458.0f / options.wavelength;
         params.seed = options.seed;
         params.max_order = options.max_order;
         params.strategy_mask = options.strategy_mask;
@@ -2972,6 +2976,7 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
         params.n_rays = ray_count;
         params.max_bounces = max_bounces;
+        params.plane_tolerance = options.plane_tolerance;
         params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
         params.out_bounce_count = raw.bounce_count.data();
         params.out_path_length = raw.path_length.data();
@@ -3719,6 +3724,7 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         epc_params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
         epc_params.n_rays = ray_count;
         epc_params.max_bounces = max_bounces;
+        epc_params.plane_tolerance = options.plane_tolerance;
         epc_params.out_valid = reinterpret_cast<uint8_t *>(raw.valid.data());
         epc_params.out_bounce_count = raw.bounce_count.data();
         epc_params.out_path_length = raw.path_length.data();

@@ -270,6 +270,13 @@ static __forceinline__ __device__ bool point_inside_triangle(int prim, float3 po
     if (fabsf(denom) <= 1e-12f) {
         return false;
     }
+    const float plane_deviation = dot3(vp, cross3(e1, e2));
+    const float scale_sq = fmaxf(fmaxf(d00, d11), 1.f);
+    const float plane_tolerance = fmaxf(params.plane_tolerance, 0.f);
+    if (plane_deviation * plane_deviation >
+        plane_tolerance * plane_tolerance * scale_sq * denom) {
+        return false;
+    }
     const float inv_denom = 1.f / denom;
     const float u = (d11 * d20 - d01 * d21) * inv_denom;
     const float v = (d00 * d21 - d01 * d20) * inv_denom;

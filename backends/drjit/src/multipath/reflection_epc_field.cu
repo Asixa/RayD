@@ -117,6 +117,14 @@ static __forceinline__ __device__ Complex c_exp_neg_i(float phase) {
     return c_make(c, -s);
 }
 
+static __forceinline__ __device__ Complex c_exp_neg_i_product(float lhs, float rhs) {
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    const double reduced = fmod(
+        static_cast<double>(lhs) * static_cast<double>(rhs),
+        kTwoPi);
+    return c_exp_neg_i(static_cast<float>(reduced));
+}
+
 static __forceinline__ __device__ Complex3 c3_zero() {
     Complex3 v;
     v.x = c_make(0.f, 0.f);
@@ -430,7 +438,7 @@ __global__ void reflection_epc_field_kernel(ReflEpcFieldParams params) {
     }
 
     const float wave_k = 2.f * kPi / fmaxf(params.wavelength, kSmallEps);
-    const Complex phase = c_exp_neg_i(wave_k * path_length);
+    const Complex phase = c_exp_neg_i_product(wave_k, path_length);
     const float amplitude =
         params.wavelength / (4.f * kPi * fmaxf(path_length, kSmallEps));
     field = c3_mul_complex(field, c_scale(phase, amplitude));

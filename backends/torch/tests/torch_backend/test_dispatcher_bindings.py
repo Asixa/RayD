@@ -94,6 +94,11 @@ else:
             active,
             ray_o,
             tx_pol,
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.zeros((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.float32),
+            torch.ones((1,), device="cuda", dtype=torch.bool),
             1,
             2,
             -1.0,
@@ -103,6 +108,7 @@ else:
             1.0,
             4,
             4,
+            1.0,
             1.0,
         )
 

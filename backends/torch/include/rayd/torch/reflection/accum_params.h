@@ -53,6 +53,7 @@ struct AccumParams {
     const float *ray_tmax;
     const uint8_t *active_mask;
     int n_rays;
+    int include_los; ///< Accumulate the depth-0 measurement-plane hit when nonzero.
 
     // Transmitter position and polarization (per ray or broadcast).
     const float *tx_x;

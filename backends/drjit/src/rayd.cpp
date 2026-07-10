@@ -109,6 +109,7 @@ ReflEpcFieldOptionsAD refl_epc_field_options_ad_from_detached(
     out.surface_group_members = options.surface_group_members;
     out.surface_max_group_size = options.surface_max_group_size;
     out.visibility_ignore_mode = options.visibility_ignore_mode;
+    out.plane_tolerance = options.plane_tolerance;
     out.final_ignore_group_ids = options.final_ignore_group_ids;
     out.slot_plane_point = Vector3fAD(options.slot_plane_point);
     out.slot_plane_normal = Vector3fAD(options.slot_plane_normal);
@@ -439,6 +440,7 @@ NB_MODULE(_C, m) {
             .def_rw("surface_group_members", &ReflEpcOptions::surface_group_members)
             .def_rw("surface_max_group_size", &ReflEpcOptions::surface_max_group_size)
             .def_rw("visibility_ignore_mode", &ReflEpcOptions::visibility_ignore_mode)
+            .def_rw("plane_tolerance", &ReflEpcOptions::plane_tolerance)
             .def_rw("final_ignore_group_ids", &ReflEpcOptions::final_ignore_group_ids);
 
         nb::class_<ReflEpcFieldOptions, ReflEpcOptions>(

@@ -26,6 +26,7 @@ endif()
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 option(RAYD_TORCH_BUILD_NATIVE "Build the RayD Torch extension." ON)
+option(RAYD_TORCH_BUILD_PYTHON_MODULE "Build the rayd.torch Python extension module." ON)
 option(RAYD_TORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
 
 set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)
@@ -350,6 +351,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/diffraction/paths_optix.cu"
             -o "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -358,6 +360,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/diffraction/common.h
             include/rayd/torch/diffraction/paths_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_PATHS_PTX_HEADER}"
@@ -406,10 +410,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
     )
     add_custom_target(rayd_torch_diffraction_accumulation_optix_ptx DEPENDS "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}")
 
-    pybind11_add_module(
-        _C
-        src/torch_ext/module.cpp
-        src/torch_ext/library.cpp
+    set(
+        RAYD_TORCH_NATIVE_CORE_SOURCES
         src/torch_ext/tensor_check.cpp
         src/torch_ext/scene/scene_cache.cpp
         src/torch_ext/common/optix_pipeline.cpp
@@ -440,17 +442,24 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/common/stats.cu
         src/torch_ext/common/camera.cu
     )
+
+    add_library(rayd_torch_native_core STATIC ${RAYD_TORCH_NATIVE_CORE_SOURCES})
+    set_target_properties(rayd_torch_native_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_include_directories(
-        _C
-        PRIVATE
+        rayd_torch_native_core
+        PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${RAYD_SHARED_INCLUDE_DIR}
+        PRIVATE
+            ${Python_INCLUDE_DIRS}
+            "${TORCH_INSTALL_PREFIX}/include"
+            "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
             ${CMAKE_CURRENT_BINARY_DIR}/generated
             ${CUDAToolkit_INCLUDE_DIRS}
             ${OPTIX_INCLUDE_DIR}
     )
     add_dependencies(
-        _C
+        rayd_torch_native_core
         rayd_torch_optix_ptx
         rayd_torch_edge_optix_ptx
         rayd_torch_reflection_trace_optix_ptx
@@ -459,7 +468,32 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_reflection_accumulation_optix_ptx
         rayd_torch_diffraction_paths_optix_ptx
         rayd_torch_diffraction_accumulation_optix_ptx)
-    target_link_libraries(_C PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
-    target_compile_features(_C PRIVATE cxx_std_17)
-    install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
+    target_link_libraries(
+        rayd_torch_native_core
+        PUBLIC
+            "${TORCH_LIBRARIES}"
+            "${TORCH_PYTHON_LIBRARY}"
+            CUDA::cudart
+            CUDA::cuda_driver)
+    target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
+
+    if(RAYD_TORCH_BUILD_PYTHON_MODULE)
+        pybind11_add_module(
+            _C
+            src/torch_ext/module.cpp
+            src/torch_ext/library.cpp
+        )
+        target_include_directories(
+            _C
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${RAYD_SHARED_INCLUDE_DIR}
+                ${CMAKE_CURRENT_BINARY_DIR}/generated
+                ${CUDAToolkit_INCLUDE_DIRS}
+                ${OPTIX_INCLUDE_DIR}
+        )
+        target_link_libraries(_C PRIVATE rayd_torch_native_core)
+        target_compile_features(_C PRIVATE cxx_std_17)
+        install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
+    endif()
 endif()

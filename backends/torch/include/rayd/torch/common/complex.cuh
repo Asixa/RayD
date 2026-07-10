@@ -72,6 +72,14 @@ __forceinline__ __device__ Complex c_exp_neg_i(float phase) {
     return c_make(c, -s);
 }
 
+__forceinline__ __device__ Complex c_exp_neg_i_product(float lhs, float rhs) {
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    const double reduced = fmod(
+        static_cast<double>(lhs) * static_cast<double>(rhs),
+        kTwoPi);
+    return c_exp_neg_i(static_cast<float>(reduced));
+}
+
 __forceinline__ __device__ Complex3 c3_zero() {
     Complex3 v;
     v.x = c_make(0.f, 0.f);

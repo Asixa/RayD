@@ -830,14 +830,19 @@ static __forceinline__ __device__ bool load_primal(
     p.source_dist2 = source_dist * source_dist;
     p.target_dist2 = target_dist * target_dist;
     const float sample_norm =
-        1.f / fmaxf(static_cast<float>(p.sample_count), 1.f);
+        static_cast<float>(params.state_count) /
+        fmaxf(static_cast<float>(p.sample_count), 1.f);
     const float suffix_scale =
         p.is_suffix
             ? p.suffix_reflection_gain *
                   p.suffix_fspl *
                   fmaxf(p.suffix_candidate_count, 1.f)
             : 1.f;
+    const float wave_gain =
+        (params.wavelength * (1.f / (4.f * kPi))) *
+        (params.wavelength * (1.f / (4.f * kPi)));
     p.common_no_src = p.material_gain *
+                      wave_gain *
                       p.edge_length *
                       params.grid_cell_area *
                       p.wedge_scale *

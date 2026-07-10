@@ -75,6 +75,7 @@ struct ReflEpcParams {
     const uint8_t *active_mask;
     int n_rays;
     int max_bounces;
+    float plane_tolerance; ///< Relative out-of-plane tolerance for triangle containment.
 
     // Outputs: per-ray validity/length/blocking plus ray-major (n_rays * max_bounces) per-slot arrays.
     uint8_t *out_valid;

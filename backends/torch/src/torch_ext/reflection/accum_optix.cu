@@ -44,6 +44,18 @@ static __forceinline__ __device__ float3 stable_perpendicular(float3 direction,
     return normalize3(projected);
 }
 
+static __forceinline__ __device__ float max_abs_component(float3 value) {
+    return fmaxf(fabsf(value.x), fmaxf(fabsf(value.y), fabsf(value.z)));
+}
+
+static __forceinline__ __device__ float3 offset_surface_point(float3 point,
+                                                             float3 direction,
+                                                             float3 normal) {
+    const float offset = kRayBias * (1.f + max_abs_component(point));
+    const float signed_offset = dot3(direction, normal) >= 0.f ? offset : -offset;
+    return point + signed_offset * normal;
+}
+
 static __forceinline__ __device__ void clear_payload(HitPayload &payload) {
     payload.hit = 0u;
     payload.t = __float_as_uint(kRayTMax);
@@ -305,7 +317,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
                                                         float blocker_t,
                                                         float3 image_source,
                                                         Complex3 field) {
-    if (depth <= 0 || c3_power(field) <= 0.f) {
+    if ((depth <= 0 && params.include_los == 0) || c3_power(field) <= 0.f) {
         return false;
     }
     const int axis = params.grid_axis;
@@ -359,7 +371,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
     const float wave_k = fabsf(params.k) > kReflEps
                              ? params.k
                              : (2.f * kPi / fmaxf(params.wavelength, kReflEps));
-    const Complex phase = c_exp_neg_i(wave_k * unfolded_distance);
+    const Complex phase = c_exp_neg_i_product(wave_k, unfolded_distance);
     const Complex coeff = c_scale(phase, amplitude_scale);
     Complex3 contribution_field = c3_mul_complex(field, coeff);
 
@@ -533,7 +545,7 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
 
         field = reflected_field;
         direction = reflected_dir;
-        origin = hit_point + kRayBias * direction;
+        origin = offset_surface_point(hit_point, direction, geo_normal);
 
         const int next_depth = depth + 1;
         if (params.rr_depth > 0 && params.rr_prob < 1.f && next_depth >= params.rr_depth) {

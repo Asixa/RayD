@@ -3,8 +3,11 @@
 
 #include <rayd/multipath/diffraction_paths.h>
 #include <rayd/multipath/diffraction_paths_params.h>
+#include <rayd/shared/utd/utd_math.h>
 
 namespace rayd {
+
+namespace utd = witwin::channel::native_ext;
 
 extern "C" {
 extern __constant__ DfrPathParams params;
@@ -166,6 +169,66 @@ static __forceinline__ __device__ bool state_active(int state_idx) {
     return params.active_mask[active_idx] != 0u;
 }
 
+static __forceinline__ __device__ utd::float3a to_utd(float3 value) {
+    return utd::make_f3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ utd::FaceMaterialParams face_material_params(int prim) {
+    utd::FaceMaterialParams m;
+    m.etaR = 1.f;
+    m.muR = 1.f;
+    m.sigma = 0.f;
+    m.gain = 1.f;
+    m.useFresnel = 1.f;
+    m.present = 0.f;
+    if (prim < 0 || prim >= params.material_count ||
+        (params.material_valid != nullptr && params.material_valid[prim] == 0u)) {
+        return m;
+    }
+    m.present = 1.f;
+    m.etaR = params.material_eta_r[prim];
+    m.sigma = params.material_sigma[prim];
+    m.muR = params.material_mu_r[prim];
+    m.gain = fmaxf(params.material_gain[prim], 0.f);
+    return m;
+}
+
+static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(
+    int state_idx,
+    float3 source,
+    float3 edge_pos,
+    float3 edge_dir,
+    float t_min,
+    float t_max) {
+    utd::PairInputs p = {};
+    p.edgePos = to_utd(edge_pos);
+    p.edgeDir = to_utd(edge_dir);
+    p.n0 = to_utd(state_vec(params.state_n0_x, params.state_n0_y, params.state_n0_z, state_idx));
+    p.nn = to_utd(state_vec(params.state_n1_x, params.state_n1_y, params.state_n1_z, state_idx));
+    p.wedgeN = params.state_exterior_angle[state_idx] / utd::UTD_PI;
+    p.edgeLineMin = t_min;
+    p.edgeLineMax = t_max;
+    p.sourcePos = to_utd(source);
+    p.selectStationaryPoint = 1.f;
+    p.face0Material = face_material_params(params.state_prim0[state_idx]);
+    p.face1Material = face_material_params(params.state_prim1[state_idx]);
+    return p;
+}
+
+static __forceinline__ __device__ utd::MaterialParams paths_material_params() {
+    utd::MaterialParams mat;
+    mat.useFresnel = 1;
+    mat.etaR = 1.f;
+    mat.muR = 1.f;
+    mat.sigma = 0.f;
+    mat.gain = 1.f;
+    mat.omega = params.omega;
+    mat.txPolX = 1.f;
+    mat.txPolY = 0.f;
+    mat.txPolZ = 0.f;
+    return mat;
+}
+
 static __forceinline__ __device__ float path_weight(int state_idx,
                                                     float3 edge_point,
                                                     float3 receiver) {
@@ -257,26 +320,42 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
                              params.state_edge_dir_y,
                              params.state_edge_dir_z,
                              state_idx));
-    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
-                               params.state_edge_t_max[state_idx]);
-    const float3 edge_point = edge_pos + mid_t * edge_dir;
+    const float t_min = params.state_edge_t_min[state_idx];
+    const float t_max = params.state_edge_t_max[state_idx];
+    const float edge_length = t_max - t_min;
     const float3 receiver =
         make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
 
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
-        !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z) ||
-        !isfinite(receiver.x) || !isfinite(receiver.y) || !isfinite(receiver.z)) {
+        !isfinite(edge_pos.x) || !isfinite(edge_pos.y) || !isfinite(edge_pos.z) ||
+        !isfinite(receiver.x) || !isfinite(receiver.y) || !isfinite(receiver.z) ||
+        !(edge_length > kSmallEps)) {
         return;
     }
+    const float3 edge_origin = edge_pos + t_min * edge_dir;
+    const float parameter = utd::first_order_diffraction_parameter(
+        to_utd(source), to_utd(receiver), to_utd(edge_origin), to_utd(edge_dir));
+    if (!isfinite(parameter)) {
+        return;
+    }
+    const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
+    const float3 edge_point = edge_origin + clamped_parameter * edge_dir;
     if (!visible_segment<SplitScene>(source, edge_point) ||
         !visible_segment<SplitScene>(edge_point, receiver)) {
         return;
     }
 
-    const float contribution = path_weight(state_idx, edge_point, receiver);
-    if (!(contribution > 0.f) || !isfinite(contribution)) {
+    const utd::PairInputs pair =
+        direct_pair_inputs(state_idx, source, edge_pos, edge_dir, t_min, t_max);
+    const utd::PairOutputs utd_out =
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params());
+    const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) +
+                             utd::cplx_abs_sqr(utd_out.vectorField.y) +
+                             utd::cplx_abs_sqr(utd_out.vectorField.z);
+    if (!(field_norm > 1.0e-30f) || !isfinite(field_norm)) {
         return;
     }
+    const float amplitude_scale = sqrtf(fmaxf(params.state_src_power[state_idx], 0.f));
 
     const int out_idx = atomicAdd(params.out_count, 1);
     if (out_idx < 0 || out_idx >= params.capacity) {
@@ -284,10 +363,6 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     }
 
     const float path_length = norm3(edge_point - source) + norm3(receiver - edge_point);
-    float phase_s;
-    float phase_c;
-    sincosf(-params.k * path_length, &phase_s, &phase_c);
-    const float amplitude = sqrtf(fmaxf(contribution, 0.f));
 
     params.out_valid[out_idx] = 1u;
     params.out_tx_id[out_idx] = tx_idx;
@@ -297,12 +372,12 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     params.out_edge1[out_idx] = -1;
     params.out_edge2[out_idx] = -1;
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
-    params.out_field_x_re[out_idx] = amplitude * phase_c;
-    params.out_field_x_im[out_idx] = amplitude * phase_s;
-    params.out_field_y_re[out_idx] = 0.f;
-    params.out_field_y_im[out_idx] = 0.f;
-    params.out_field_z_re[out_idx] = 0.f;
-    params.out_field_z_im[out_idx] = 0.f;
+    params.out_field_x_re[out_idx] = utd_out.vectorField.x.re * amplitude_scale;
+    params.out_field_x_im[out_idx] = utd_out.vectorField.x.im * amplitude_scale;
+    params.out_field_y_re[out_idx] = utd_out.vectorField.y.re * amplitude_scale;
+    params.out_field_y_im[out_idx] = utd_out.vectorField.y.im * amplitude_scale;
+    params.out_field_z_re[out_idx] = utd_out.vectorField.z.re * amplitude_scale;
+    params.out_field_z_im[out_idx] = utd_out.vectorField.z.im * amplitude_scale;
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
     write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
@@ -338,7 +413,7 @@ static __forceinline__ __device__ bool paths_order1_lane(unsigned int lane,
            state_active(state_idx);
 }
 
-static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
+static __forceinline__ __device__ float3 paths_edge_point(int state_idx, int rx_idx) {
     const float3 edge_pos =
         state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
     const float3 edge_dir =
@@ -346,9 +421,20 @@ static __forceinline__ __device__ float3 paths_edge_point(int state_idx) {
                              params.state_edge_dir_y,
                              params.state_edge_dir_z,
                              state_idx));
-    const float mid_t = 0.5f * (params.state_edge_t_min[state_idx] +
-                               params.state_edge_t_max[state_idx]);
-    return edge_pos + mid_t * edge_dir;
+    const float t_min = params.state_edge_t_min[state_idx];
+    const float t_max = params.state_edge_t_max[state_idx];
+    const float edge_length = t_max - t_min;
+    const float3 edge_origin = edge_pos + t_min * edge_dir;
+    const float3 source =
+        state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
+    const float3 receiver =
+        make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
+    const float parameter = utd::first_order_diffraction_parameter(
+        to_utd(source), to_utd(receiver), to_utd(edge_origin), to_utd(edge_dir));
+    if (!isfinite(parameter) || !(edge_length > kSmallEps)) {
+        return make_vec3(NAN, NAN, NAN);
+    }
+    return edge_origin + fminf(fmaxf(parameter, 0.f), edge_length) * edge_dir;
 }
 
 static __forceinline__ __device__ bool finite_paths_points(float3 source,
@@ -373,12 +459,11 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
     if (!paths_order1_lane(lane, state_idx, rx_idx, tx_idx)) {
         return;
     }
-    (void)rx_idx;
     (void)tx_idx;
 
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
-    const float3 edge_point = paths_edge_point(state_idx);
+    const float3 edge_point = paths_edge_point(state_idx, rx_idx);
     if (!isfinite(source.x) || !isfinite(source.y) || !isfinite(source.z) ||
         !isfinite(edge_point.x) || !isfinite(edge_point.y) || !isfinite(edge_point.z)) {
         return;
@@ -406,7 +491,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
 
     const float3 source =
         state_vec(params.state_src_x, params.state_src_y, params.state_src_z, state_idx);
-    const float3 edge_point = paths_edge_point(state_idx);
+    const float3 edge_point = paths_edge_point(state_idx, rx_idx);
     const float3 receiver =
         make_vec3(params.rx_pos_x[rx_idx], params.rx_pos_y[rx_idx], params.rx_pos_z[rx_idx]);
 
@@ -417,10 +502,29 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
         return;
     }
 
-    const float contribution = path_weight(state_idx, edge_point, receiver);
-    if (!(contribution > 0.f) || !isfinite(contribution)) {
+    const float3 edge_pos =
+        state_vec(params.state_edge_pos_x, params.state_edge_pos_y, params.state_edge_pos_z, state_idx);
+    const float3 edge_dir =
+        normalize3(state_vec(params.state_edge_dir_x,
+                             params.state_edge_dir_y,
+                             params.state_edge_dir_z,
+                             state_idx));
+    const utd::PairInputs pair = direct_pair_inputs(
+        state_idx,
+        source,
+        edge_pos,
+        edge_dir,
+        params.state_edge_t_min[state_idx],
+        params.state_edge_t_max[state_idx]);
+    const utd::PairOutputs utd_out =
+        utd::compute_pair_contribution(pair, to_utd(receiver), params.k, paths_material_params());
+    const float field_norm = utd::cplx_abs_sqr(utd_out.vectorField.x) +
+                             utd::cplx_abs_sqr(utd_out.vectorField.y) +
+                             utd::cplx_abs_sqr(utd_out.vectorField.z);
+    if (!(field_norm > 1.0e-30f) || !isfinite(field_norm)) {
         return;
     }
+    const float amplitude_scale = sqrtf(fmaxf(params.state_src_power[state_idx], 0.f));
 
     const int out_idx = atomicAdd(params.out_count, 1);
     if (out_idx < 0 || out_idx >= params.capacity) {
@@ -428,10 +532,6 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     }
 
     const float path_length = norm3(edge_point - source) + norm3(receiver - edge_point);
-    float phase_s;
-    float phase_c;
-    sincosf(-params.k * path_length, &phase_s, &phase_c);
-    const float amplitude = sqrtf(fmaxf(contribution, 0.f));
 
     params.out_valid[out_idx] = 1u;
     params.out_tx_id[out_idx] = tx_idx;
@@ -441,12 +541,12 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     params.out_edge1[out_idx] = -1;
     params.out_edge2[out_idx] = -1;
     params.out_delay[out_idx] = path_length / kSpeedOfLight;
-    params.out_field_x_re[out_idx] = amplitude * phase_c;
-    params.out_field_x_im[out_idx] = amplitude * phase_s;
-    params.out_field_y_re[out_idx] = 0.f;
-    params.out_field_y_im[out_idx] = 0.f;
-    params.out_field_z_re[out_idx] = 0.f;
-    params.out_field_z_im[out_idx] = 0.f;
+    params.out_field_x_re[out_idx] = utd_out.vectorField.x.re * amplitude_scale;
+    params.out_field_x_im[out_idx] = utd_out.vectorField.x.im * amplitude_scale;
+    params.out_field_y_re[out_idx] = utd_out.vectorField.y.re * amplitude_scale;
+    params.out_field_y_im[out_idx] = utd_out.vectorField.y.im * amplitude_scale;
+    params.out_field_z_re[out_idx] = utd_out.vectorField.z.re * amplitude_scale;
+    params.out_field_z_im[out_idx] = utd_out.vectorField.z.im * amplitude_scale;
     write_point(params.out_p0_x, params.out_p0_y, params.out_p0_z,
                 out_idx, edge_point);
     write_point(params.out_p1_x, params.out_p1_y, params.out_p1_z,
