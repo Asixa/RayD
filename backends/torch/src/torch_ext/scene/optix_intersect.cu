@@ -1,9 +1,9 @@
-#include <raydn/scene/optix_intersect_params.h>
+#include <rayd/torch/scene/optix_intersect_params.h>
 
 #include <optix_device.h>
 
 extern "C" {
-__constant__ raydn::OptixIntersectParams params;
+__constant__ rayd::torch_backend::OptixIntersectParams params;
 }
 
 extern "C" __global__ void __raygen__intersect() {

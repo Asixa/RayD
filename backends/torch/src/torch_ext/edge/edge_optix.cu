@@ -1,10 +1,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydn/common/math.cuh>
-#include <raydn/edge/optix_params.h>
+#include <rayd/torch/common/math.cuh>
+#include <rayd/torch/edge/optix_params.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 extern "C" {
 __constant__ EdgeOptixQueryParams params;
@@ -216,7 +216,7 @@ static __forceinline__ __device__ void write_final_point_output(unsigned int que
     }
 }
 
-#ifndef RAYDN_EDGE_POINT_RAY_ONLY
+#ifndef RAYD_TORCH_EDGE_POINT_RAY_ONLY
 static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
                                                              int edge_id,
                                                              float distance_sq,
@@ -345,7 +345,7 @@ static __forceinline__ __device__ void insert_topk_payload_candidate(int edge_id
 // distance, and the anyhit/closesthit programs keep the running nearest edge.
 
 /// IntersectionAD for point queries: report the point-to-edge distance if within the search radius.
-#ifndef RAYDN_EDGE_TOPK_ONLY
+#ifndef RAYD_TORCH_EDGE_TOPK_ONLY
 extern "C" __global__ void __intersection__edge_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -398,7 +398,7 @@ extern "C" __global__ void __intersection__edge_ray() {
 #endif
 
 /// IntersectionAD for top-k point queries: report every edge within the search radius for ranking.
-#ifndef RAYDN_EDGE_POINT_RAY_ONLY
+#ifndef RAYD_TORCH_EDGE_POINT_RAY_ONLY
 extern "C" __global__ void __intersection__edge_topk_point() {
     const unsigned int edge = optixGetPrimitiveIndex();
     if (edge >= static_cast<unsigned int>(params.edge_count) || !edge_visible(edge)) {
@@ -423,7 +423,7 @@ extern "C" __global__ void __intersection__edge_topk_point() {
 #endif
 
 /// Closest-hit for point queries: publish the winning edge id, distance, and edge parameter to payload.
-#ifndef RAYDN_EDGE_TOPK_ONLY
+#ifndef RAYD_TORCH_EDGE_TOPK_ONLY
 extern "C" __global__ void __closesthit__edge_point() {
     const float distance = optixGetRayTmax();
     optixSetPayload_0(optixGetPrimitiveIndex());
@@ -448,7 +448,7 @@ extern "C" __global__ void __anyhit__edge_ray() {
 
 /// Anyhit for top-k point queries: insert the candidate into the per-query top-k (payload for k<=8,
 /// global buffer otherwise), then ignore the hit to keep traversing.
-#ifndef RAYDN_EDGE_POINT_RAY_ONLY
+#ifndef RAYD_TORCH_EDGE_POINT_RAY_ONLY
 extern "C" __global__ void __anyhit__edge_topk_point() {
     if (params.k <= 8) {
         insert_topk_payload_candidate(static_cast<int>(optixGetPrimitiveIndex()),
@@ -468,7 +468,7 @@ extern "C" __global__ void __miss__edge_query() {
 }
 
 /// Raygen for point queries: trace a degenerate ray from each query point and write the nearest edge.
-#ifndef RAYDN_EDGE_TOPK_ONLY
+#ifndef RAYD_TORCH_EDGE_TOPK_ONLY
 extern "C" __global__ void __raygen__edge_point() {
     const unsigned int query = optixGetLaunchIndex().x;
     if (query >= static_cast<unsigned int>(params.query_count) || !is_active(query) ||
@@ -598,7 +598,7 @@ extern "C" __global__ void __raygen__edge_ray() {
 #endif
 
 /// Raygen for top-k point queries: initialize the per-query top-k slots, trace, and emit the sorted neighbors.
-#ifndef RAYDN_EDGE_POINT_RAY_ONLY
+#ifndef RAYD_TORCH_EDGE_POINT_RAY_ONLY
 extern "C" __global__ void __raygen__edge_topk_point() {
     const unsigned int query = optixGetLaunchIndex().x;
     const int k = params.k;
@@ -696,4 +696,4 @@ extern "C" __global__ void __raygen__edge_topk_point() {
 }
 #endif
 
-} // namespace raydn
+} // namespace rayd::torch_backend

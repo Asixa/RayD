@@ -1,4 +1,4 @@
-#include <raydn/diffraction/paths_init.h>
+#include <rayd/torch/diffraction/paths_init.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -121,4 +121,4 @@ void init_dfr_path_outputs_cuda(
     cuda_check(cudaGetLastError(), "init_dfr_path_outputs_kernel");
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

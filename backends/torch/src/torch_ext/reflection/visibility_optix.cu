@@ -1,10 +1,10 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydn/common/math.cuh>
-#include <raydn/reflection/visibility_params.h>
+#include <rayd/torch/common/math.cuh>
+#include <rayd/torch/reflection/visibility_params.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 extern "C" {
 __constant__ SegmentVisibilityParams params;
@@ -270,4 +270,4 @@ extern "C" __global__ void __raygen__segment_chain_visibility() {
     params.out_first_blocked_prim[chain] = first_blocked_prim;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

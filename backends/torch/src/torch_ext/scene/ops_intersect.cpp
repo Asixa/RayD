@@ -1,6 +1,6 @@
-#include <raydn/scene/geometry_kernels.h>
-#include <raydn/scene/cache.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/torch/scene/cache.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <torch/csrc/autograd/custom_function.h>
 #include <torch/extension.h>
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -991,7 +991,7 @@ py::tuple intersect_ad_flags_op(
 
 // Handle-based functional ops for the torch.compile path: plain int64 scene
 // handles avoid ScriptObject fakification, and autograd is registered from
-// Python via torch.library.register_autograd (see raydn/_compile.py).
+// Python via torch.library.register_autograd (see rayd/torch/_compile.py).
 std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_impl(
     int64_t scene_handle,
     at::Tensor vertices,
@@ -1239,4 +1239,4 @@ py::tuple intersect_jvp_optional_op(
         out.tangent_barycentric);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

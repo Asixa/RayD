@@ -1,4 +1,4 @@
-#include <raydn/reflection/dedup.h>
+#include <rayd/torch/reflection/dedup.h>
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -7,10 +7,10 @@
 #include <cstdint>
 #include <string>
 
-#include <raydn/common/native_compat.h>
+#include <rayd/torch/common/native_compat.h>
 
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -597,4 +597,4 @@ int reflection_dedup_gpu(
     return unique_count;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

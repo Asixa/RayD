@@ -1,11 +1,11 @@
-#include <raydn/common/optix_pipeline.h>
+#include <rayd/torch/common/optix_pipeline.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime_api.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
-#include <raydn/common/optix_context.h>
+#include <rayd/torch/common/optix_context.h>
 
 #include <algorithm>
 #include <cstring>
@@ -15,7 +15,7 @@
 #include <string>
 #include <tuple>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -81,7 +81,7 @@ void create_program_group(
     OptixProgramGroupOptions options = {};
     char log[4096] = {};
     size_t log_size = sizeof(log);
-    raydn_OPTIX_CHECK(
+    rayd_torch_OPTIX_CHECK(
         optixProgramGroupCreate(context, &desc, 1, &options, log, &log_size, out_group));
 }
 
@@ -90,7 +90,7 @@ at::Tensor make_sbt_record(
     OptixProgramGroup program_group,
     cudaStream_t stream) {
     EmptySbtRecord host_record = {};
-    raydn_OPTIX_CHECK(optixSbtRecordPackHeader(program_group, &host_record));
+    rayd_torch_OPTIX_CHECK(optixSbtRecordPackHeader(program_group, &host_record));
     at::Tensor record = at::empty(
         {static_cast<int64_t>(sizeof(EmptySbtRecord))},
         at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
@@ -238,11 +238,11 @@ void OptixLaunchPipeline::build(
     }
     OptixStackSizes stack_sizes = {};
     for (OptixProgramGroup group : program_groups)
-        raydn_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, pipeline_));
+        rayd_torch_OPTIX_CHECK(optixUtilAccumulateStackSizes(group, &stack_sizes, pipeline_));
     uint32_t direct_callable_stack_from_traversal = 0;
     uint32_t direct_callable_stack_from_state = 0;
     uint32_t continuation_stack = 0;
-    raydn_OPTIX_CHECK(optixUtilComputeStackSizes(
+    rayd_torch_OPTIX_CHECK(optixUtilComputeStackSizes(
         &stack_sizes,
         link_options.maxTraceDepth,
         0,
@@ -250,7 +250,7 @@ void OptixLaunchPipeline::build(
         &direct_callable_stack_from_traversal,
         &direct_callable_stack_from_state,
         &continuation_stack));
-    raydn_OPTIX_CHECK(optixPipelineSetStackSize(
+    rayd_torch_OPTIX_CHECK(optixPipelineSetStackSize(
         pipeline_,
         direct_callable_stack_from_traversal,
         direct_callable_stack_from_state,
@@ -264,7 +264,7 @@ void OptixLaunchPipeline::build(
 
     std::vector<EmptySbtRecord> hitgroup_host(static_cast<size_t>(hitgroup_record_count));
     for (EmptySbtRecord &record : hitgroup_host)
-        raydn_OPTIX_CHECK(optixSbtRecordPackHeader(hitgroup_, &record));
+        rayd_torch_OPTIX_CHECK(optixSbtRecordPackHeader(hitgroup_, &record));
     hitgroup_records_ = at::empty(
         {static_cast<int64_t>(sizeof(EmptySbtRecord) * hitgroup_host.size())},
         at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
@@ -369,7 +369,7 @@ void OptixLaunchPipeline::launch_impl(
     sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     sbt.hitgroupRecordCount = static_cast<unsigned int>(hitgroup_record_count_);
 
-    raydn_OPTIX_CHECK(optixLaunch(
+    rayd_torch_OPTIX_CHECK(optixLaunch(
         pipeline_,
         stream,
         reinterpret_cast<CUdeviceptr>(params_buffer_.data_ptr<uint8_t>()),
@@ -380,4 +380,4 @@ void OptixLaunchPipeline::launch_impl(
         1));
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

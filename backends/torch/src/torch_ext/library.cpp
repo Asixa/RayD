@@ -1,11 +1,11 @@
-#include <raydn/scene/cache.h>
+#include <rayd/torch/scene/cache.h>
 
 #include <torch/extension.h>
 #include <torch/library.h>
 
 #include <vector>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -469,4 +469,4 @@ TORCH_LIBRARY_IMPL(rayd_torch, Autograd, m) {
     m.impl("intersect_ad_flags", TORCH_FN(intersect_ad_flags_dispatch));
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

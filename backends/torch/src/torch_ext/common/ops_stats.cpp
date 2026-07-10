@@ -1,9 +1,9 @@
-#include <raydn/common/stats.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/common/stats.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <torch/extension.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 py::tuple reflection_trace_stats_op(at::Tensor valid, at::Tensor t) {
     require_cuda(valid, "valid");
@@ -72,4 +72,4 @@ at::Tensor intersection_valid_op(at::Tensor t, at::Tensor shape_id) {
     return intersection_valid_cuda(t, shape_id);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

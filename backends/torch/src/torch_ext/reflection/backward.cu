@@ -1,13 +1,13 @@
-#include <raydn/scene/geometry_kernels.h>
-#include <raydn/reflection/kernels.h>
-#include <raydn/common/math.cuh>
+#include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/torch/reflection/kernels.h>
+#include <rayd/torch/common/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
 #include <vector>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -936,4 +936,4 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
     return out;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

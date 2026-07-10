@@ -2,25 +2,25 @@
 #define NOMINMAX
 #endif
 
-#include <raydn/diffraction/accum_params.h>
-#include <raydn/diffraction/accum_ad.h>
-#include <raydn/diffraction/accum_reduce.h>
-#include <raydn/diffraction/paths_init.h>
-#include <raydn/diffraction/paths_params.h>
-#include <raydn/diffraction/pipeline.h>
-#include <raydn/scene/geometry_kernels.h>
-#include <raydn/common/optix_pipeline.h>
-#include <raydn/reflection/kernels.h>
-#include <raydn/reflection/pipeline.h>
-#include <raydn/common/optix_context.h>
-#include <raydn/reflection/accum_params.h>
-#include <raydn/reflection/dedup.h>
-#include <raydn/reflection/epc_field.h>
-#include <raydn/reflection/epc_params.h>
-#include <raydn/reflection/trace_params.h>
-#include <raydn/reflection/visibility_params.h>
-#include <raydn/scene/cache.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/diffraction/accum_params.h>
+#include <rayd/torch/diffraction/accum_ad.h>
+#include <rayd/torch/diffraction/accum_reduce.h>
+#include <rayd/torch/diffraction/paths_init.h>
+#include <rayd/torch/diffraction/paths_params.h>
+#include <rayd/torch/diffraction/pipeline.h>
+#include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/torch/common/optix_pipeline.h>
+#include <rayd/torch/reflection/kernels.h>
+#include <rayd/torch/reflection/pipeline.h>
+#include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/reflection/accum_params.h>
+#include <rayd/torch/reflection/dedup.h>
+#include <rayd/torch/reflection/epc_field.h>
+#include <rayd/torch/reflection/epc_params.h>
+#include <rayd/torch/reflection/trace_params.h>
+#include <rayd/torch/reflection/visibility_params.h>
+#include <rayd/torch/scene/cache.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -33,7 +33,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -621,10 +621,10 @@ py::tuple diffraction_paths_order1_forward_op(
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.seed = 0;
     params.max_order = 1;
-    params.strategy_mask = RAYDN_DFR_DIRECT;
+    params.strategy_mask = RAYD_TORCH_DFR_DIRECT;
     params.sample_count = 1;
     params.return_geom = 1;
-    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
+    params.receiver_model = RAYD_TORCH_DFR_MATCHED_ISO;
     params.temp_visibility = nullptr;
     params.out_count = out_count.data_ptr<int>();
     params.out_valid = mutable_mask_ptr(out_valid);
@@ -1129,11 +1129,11 @@ py::tuple diffraction_accumulation_forward_op(
     params.keller_samples = keller_launch_count;
     params.suffix_samples = suffix_launch_count;
     params.strategy_mask =
-        (direct_launch_count > 0 ? RAYDN_DFR_DIRECT : 0) |
-        (keller_launch_count > 0 ? RAYDN_DFR_KELLER : 0) |
-        (suffix_launch_count > 0 ? RAYDN_DFR_SUFFIX_REFL : 0);
-    params.sample_sequence = RAYDN_DFR_HASH;
-    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
+        (direct_launch_count > 0 ? RAYD_TORCH_DFR_DIRECT : 0) |
+        (keller_launch_count > 0 ? RAYD_TORCH_DFR_KELLER : 0) |
+        (suffix_launch_count > 0 ? RAYD_TORCH_DFR_SUFFIX_REFL : 0);
+    params.sample_sequence = RAYD_TORCH_DFR_HASH;
+    params.receiver_model = RAYD_TORCH_DFR_MATCHED_ISO;
     params.select_diffraction_point = 0;
     params.prefilter_visibility = 0;
     params.collect_edge_use = 1;
@@ -2507,7 +2507,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.max_order = 1;
-    params.receiver_model = RAYDN_DFR_MATCHED_ISO;
+    params.receiver_model = RAYD_TORCH_DFR_MATCHED_ISO;
     params.select_diffraction_point = select_diffraction_point ? 1 : 0;
     params.prefilter_visibility = prefilter_visibility ? 1 : 0;
     params.collect_debug_counts = 1;
@@ -2578,4 +2578,4 @@ py::tuple diffraction_coherent_accumulation_forward_op(
 }
 
 
-} // namespace raydn
+} // namespace rayd::torch_backend

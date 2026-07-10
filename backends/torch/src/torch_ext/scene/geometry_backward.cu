@@ -1,5 +1,5 @@
-#include <raydn/scene/geometry_kernels.h>
-#include <raydn/common/math.cuh>
+#include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/torch/common/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cooperative_groups.h>
@@ -9,7 +9,7 @@
 #include <mutex>
 #include <unordered_map>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -866,4 +866,4 @@ IntersectJvpOutputs intersect_jvp_optional_cuda(
     return out;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

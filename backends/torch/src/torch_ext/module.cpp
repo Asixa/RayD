@@ -1,6 +1,6 @@
 #include <torch/extension.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 py::dict build_info() {
     py::dict info;
@@ -14,4 +14,4 @@ PYBIND11_MODULE(_C, m) {
     m.def("build_info", &build_info);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

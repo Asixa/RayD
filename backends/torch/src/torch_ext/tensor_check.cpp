@@ -1,9 +1,9 @@
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 std::string message(std::string_view name, std::string_view detail) {
@@ -74,4 +74,4 @@ void require_mask(const at::Tensor &tensor, std::string_view name) {
     require_rank(tensor, 1, name);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

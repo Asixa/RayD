@@ -1,16 +1,16 @@
-#include <raydn/diffraction/pipeline.h>
+#include <rayd/torch/diffraction/pipeline.h>
 
-#include <raydn/diffraction/accum_params.h>
-#include <raydn/diffraction/paths_params.h>
-#include <raydn/diffraction_accumulation_optix_ptx.h>
-#include <raydn/diffraction_paths_optix_ptx.h>
+#include <rayd/torch/diffraction/accum_params.h>
+#include <rayd/torch/diffraction/paths_params.h>
+#include <rayd/torch/diffraction_accumulation_optix_ptx.h>
+#include <rayd/torch/diffraction_paths_optix_ptx.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 OptixPipelineConfig dfr_paths_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydn_diffraction_paths_optix_ptx;
-    config.ptx_size = sizeof(raydn_diffraction_paths_optix_ptx);
+    config.ptx = rayd_torch_diffraction_paths_optix_ptx;
+    config.ptx_size = sizeof(rayd_torch_diffraction_paths_optix_ptx);
     config.raygen_entries = {
         "__raygen__diffraction_paths_order1_primary",
         "__raygen__diffraction_paths_order1",
@@ -26,8 +26,8 @@ OptixPipelineConfig dfr_paths_pipeline_config() {
 
 OptixPipelineConfig dfr_accum_pipeline_config() {
     OptixPipelineConfig config;
-    config.ptx = raydn_diffraction_accumulation_optix_ptx;
-    config.ptx_size = sizeof(raydn_diffraction_accumulation_optix_ptx);
+    config.ptx = rayd_torch_diffraction_accumulation_optix_ptx;
+    config.ptx_size = sizeof(rayd_torch_diffraction_accumulation_optix_ptx);
     config.raygen_entries = {
         "__raygen__diffraction_order1_accumulation",
         "__raygen__diffraction_order1_accumulation_primary",
@@ -51,4 +51,4 @@ OptixPipelineConfig dfr_accum_pipeline_config() {
     return config;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

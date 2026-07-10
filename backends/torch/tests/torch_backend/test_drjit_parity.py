@@ -262,7 +262,7 @@ def _rayd_suffix_states(dr_backend, cuda):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")
-@unittest.skipUnless(os.environ.get("RAYDN_RUN_DR_JIT_PARITY") == "1", "external RayDi parity is opt-in")
+@unittest.skipUnless(os.environ.get("RAYD_TORCH_RUN_DR_JIT_PARITY") == "1", "external RayD parity is opt-in")
 class DrJitParityTests(unittest.TestCase):
     def test_intersect_forward_matches_external_baseline_case(self):
         dr_backend, rt, cuda = _load_backends()

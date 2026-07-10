@@ -1,9 +1,9 @@
-#include <raydn/common/stats.h>
+#include <rayd/torch/common/stats.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -197,4 +197,4 @@ at::Tensor intersection_valid_cuda(
     return valid;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

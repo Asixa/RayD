@@ -1,11 +1,11 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <raydn/common/math.cuh>
-#include <raydn/diffraction/accum_params.h>
+#include <rayd/torch/common/math.cuh>
+#include <rayd/torch/diffraction/accum_params.h>
 #include <utd/utd_math.h>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 extern "C" {
 extern __constant__ DfrAccumParams params;
@@ -1034,13 +1034,13 @@ static __forceinline__ __device__ void run_diffraction_order1_accumulation_rayge
         return;
     }
 
-    const int direct_limit = IncludeDirect && (params.strategy_mask & RAYDN_DFR_DIRECT) != 0
+    const int direct_limit = IncludeDirect && (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0
         ? params.direct_samples
         : 0;
-    const int keller_limit = IncludeKeller && (params.strategy_mask & RAYDN_DFR_KELLER) != 0
+    const int keller_limit = IncludeKeller && (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0
         ? params.keller_samples
         : 0;
-    const int suffix_limit = IncludeSuffix && (params.strategy_mask & RAYDN_DFR_SUFFIX_REFL) != 0
+    const int suffix_limit = IncludeSuffix && (params.strategy_mask & RAYD_TORCH_DFR_SUFFIX_REFL) != 0
         ? params.suffix_samples
         : 0;
     const int total_samples = direct_limit + keller_limit + suffix_limit;
@@ -1241,11 +1241,11 @@ static __forceinline__ __device__ void run_diffraction_order1_source_visibility_
     params.temp_visibility[lane] = 0u;
 
     const int direct_limit =
-        (params.strategy_mask & RAYDN_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
-        (params.strategy_mask & RAYDN_DFR_KELLER) != 0 ? params.keller_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0 ? params.keller_samples : 0;
     const int suffix_limit =
-        (params.strategy_mask & RAYDN_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
     const int total_samples = direct_limit + keller_limit + suffix_limit;
     if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
         return;
@@ -1283,9 +1283,9 @@ static __forceinline__ __device__ void run_diffraction_order1_no_suffix_target_a
     }
 
     const int direct_limit =
-        (params.strategy_mask & RAYDN_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
-        (params.strategy_mask & RAYDN_DFR_KELLER) != 0 ? params.keller_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0 ? params.keller_samples : 0;
     const int total_samples = direct_limit + keller_limit;
     if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
         return;
@@ -1395,11 +1395,11 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_first_visib
     }
 
     const int direct_limit =
-        (params.strategy_mask & RAYDN_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
-        (params.strategy_mask & RAYDN_DFR_KELLER) != 0 ? params.keller_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0 ? params.keller_samples : 0;
     const int suffix_limit =
-        (params.strategy_mask & RAYDN_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
     const int suffix_begin = direct_limit + keller_limit;
     const int total_samples = suffix_begin + suffix_limit;
     if (suffix_limit <= 0 ||
@@ -1481,11 +1481,11 @@ static __forceinline__ __device__ void run_diffraction_order1_suffix_target_accu
     }
 
     const int direct_limit =
-        (params.strategy_mask & RAYDN_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
-        (params.strategy_mask & RAYDN_DFR_KELLER) != 0 ? params.keller_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0 ? params.keller_samples : 0;
     const int suffix_limit =
-        (params.strategy_mask & RAYDN_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
     const int suffix_begin = direct_limit + keller_limit;
     const int total_samples = suffix_begin + suffix_limit;
     if (suffix_limit <= 0 ||
@@ -1718,16 +1718,16 @@ static __forceinline__ __device__ void run_diffraction_chain_accumulation_raygen
         params.grid_resolution1 <= 0 ||
         (params.max_order != 2 && params.max_order != 3) ||
         (params.strategy_mask &
-         (RAYDN_DFR_DIRECT | RAYDN_DFR_KELLER | RAYDN_DFR_SUFFIX_REFL)) == 0) {
+         (RAYD_TORCH_DFR_DIRECT | RAYD_TORCH_DFR_KELLER | RAYD_TORCH_DFR_SUFFIX_REFL)) == 0) {
         return;
     }
 
     const int direct_limit =
-        (params.strategy_mask & RAYDN_DFR_DIRECT) != 0 ? params.direct_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_DIRECT) != 0 ? params.direct_samples : 0;
     const int keller_limit =
-        (params.strategy_mask & RAYDN_DFR_KELLER) != 0 ? params.keller_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_KELLER) != 0 ? params.keller_samples : 0;
     const int suffix_limit =
-        (params.strategy_mask & RAYDN_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
+        (params.strategy_mask & RAYD_TORCH_DFR_SUFFIX_REFL) != 0 ? params.suffix_samples : 0;
     const int total_samples = direct_limit + keller_limit + suffix_limit;
     if (total_samples <= 0 || static_cast<int>(lane) >= total_samples) {
         return;
@@ -1986,5 +1986,5 @@ extern "C" __global__ void __raygen__diffraction_chain_accumulation_primary() {
     run_diffraction_chain_accumulation_raygen<true>();
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend
 

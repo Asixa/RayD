@@ -136,7 +136,7 @@ class PublicApiContractTests(unittest.TestCase):
         end = source.index("py::tuple diffraction_accumulation_direct_backward_op")
         forward_source = source[start:end]
         coherent_start = source.index("py::tuple diffraction_coherent_accumulation_forward_op")
-        coherent_end = source.index("} // namespace raydn", coherent_start)
+        coherent_end = source.index("} // namespace rayd::torch_backend", coherent_start)
         coherent_source = source[coherent_start:coherent_end]
         forbidden = (
             "split_vec3(",

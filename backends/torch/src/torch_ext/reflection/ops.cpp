@@ -2,24 +2,24 @@
 #define NOMINMAX
 #endif
 
-#include <raydn/diffraction/accum_params.h>
-#include <raydn/diffraction/accum_ad.h>
-#include <raydn/diffraction/paths_params.h>
-#include <raydn/diffraction/pipeline.h>
-#include <raydn/scene/geometry_kernels.h>
-#include <raydn/common/optix_pipeline.h>
-#include <raydn/reflection/kernels.h>
-#include <raydn/reflection/pipeline.h>
-#include <raydn/common/optix_context.h>
-#include <raydn/reflection/accum_reduce.h>
-#include <raydn/reflection/accum_params.h>
-#include <raydn/reflection/dedup.h>
-#include <raydn/reflection/epc_field.h>
-#include <raydn/reflection/epc_params.h>
-#include <raydn/reflection/trace_params.h>
-#include <raydn/reflection/visibility_params.h>
-#include <raydn/scene/cache.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/diffraction/accum_params.h>
+#include <rayd/torch/diffraction/accum_ad.h>
+#include <rayd/torch/diffraction/paths_params.h>
+#include <rayd/torch/diffraction/pipeline.h>
+#include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/torch/common/optix_pipeline.h>
+#include <rayd/torch/reflection/kernels.h>
+#include <rayd/torch/reflection/pipeline.h>
+#include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/reflection/accum_reduce.h>
+#include <rayd/torch/reflection/accum_params.h>
+#include <rayd/torch/reflection/dedup.h>
+#include <rayd/torch/reflection/epc_field.h>
+#include <rayd/torch/reflection/epc_params.h>
+#include <rayd/torch/reflection/trace_params.h>
+#include <rayd/torch/reflection/visibility_params.h>
+#include <rayd/torch/scene/cache.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
@@ -31,7 +31,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -1241,4 +1241,4 @@ py::tuple reflection_accumulation_forward_op(
         reflection_count);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

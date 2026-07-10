@@ -1,8 +1,8 @@
-#include <raydn/scene/cache.h>
-#include <raydn/common/optix_context.h>
-#include <raydn/common/tensor_check.h>
-#include <raydn/edge/bvh.h>
-#include <raydn/scene/cache_kernels.h>
+#include <rayd/torch/scene/cache.h>
+#include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/common/tensor_check.h>
+#include <rayd/torch/edge/bvh.h>
+#include <rayd/torch/scene/cache_kernels.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -19,7 +19,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 std::atomic<int64_t> next_handle{1};
@@ -71,7 +71,7 @@ void compact_accel_if_smaller(
     at::Tensor compacted_buffer =
         at::empty({static_cast<int64_t>(compacted_size)}, byte_options);
     OptixTraversableHandle compacted_traversable = 0;
-    raydn_OPTIX_CHECK(optixAccelCompact(
+    rayd_torch_OPTIX_CHECK(optixAccelCompact(
         optix_context,
         stream,
         traversable,
@@ -121,7 +121,7 @@ OptixTriangleAccel build_triangle_accel(
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    raydn_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
         optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
     at::TensorOptions byte_options =
@@ -143,7 +143,7 @@ OptixTriangleAccel build_triangle_accel(
         emit_desc_count = 1;
     }
 
-    raydn_OPTIX_CHECK(optixAccelBuild(
+    rayd_torch_OPTIX_CHECK(optixAccelBuild(
         optix_context,
         stream,
         &accel_options,
@@ -220,7 +220,7 @@ void build_triangle_ias(SceneCache &scene, OptixDeviceContext optix_context, cud
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    raydn_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
         optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
     scene.triangle_ias.ias_temp_buffer =
@@ -228,7 +228,7 @@ void build_triangle_ias(SceneCache &scene, OptixDeviceContext optix_context, cud
     scene.triangle_ias.ias_buffer =
         at::empty({static_cast<int64_t>(buffer_sizes.outputSizeInBytes)}, byte_options);
 
-    raydn_OPTIX_CHECK(optixAccelBuild(
+    rayd_torch_OPTIX_CHECK(optixAccelBuild(
         optix_context,
         stream,
         &accel_options,
@@ -370,7 +370,7 @@ void update_triangle_accel(
     accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
 
     OptixAccelBufferSizes buffer_sizes = {};
-    raydn_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+    rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
         optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
     at::TensorOptions byte_options =
@@ -385,7 +385,7 @@ void update_triangle_accel(
     if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
         accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
 
-    raydn_OPTIX_CHECK(optixAccelBuild(
+    rayd_torch_OPTIX_CHECK(optixAccelBuild(
         optix_context,
         stream,
         &accel_options,
@@ -574,7 +574,7 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
         OptixAccelBufferSizes buffer_sizes = {};
-        raydn_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
             optix_context, &accel_options, &build_input, 1, &buffer_sizes));
 
         accel.gas_temp_buffer =
@@ -593,7 +593,7 @@ void build_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cudaS
             emit_descs = &compacted_size_emit;
             emit_desc_count = 1;
         }
-        raydn_OPTIX_CHECK(optixAccelBuild(
+        rayd_torch_OPTIX_CHECK(optixAccelBuild(
             optix_context,
             stream,
             &accel_options,
@@ -681,7 +681,7 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
 
         OptixAccelBufferSizes buffer_sizes = {};
-        raydn_OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        rayd_torch_OPTIX_CHECK(optixAccelComputeMemoryUsage(
             optix_context, &accel_options, &build_input, 1, &buffer_sizes));
         const size_t temp_bytes = buffer_sizes.tempSizeInBytes;
         if (accel.gas_buffer.numel() < static_cast<int64_t>(buffer_sizes.outputSizeInBytes))
@@ -689,7 +689,7 @@ bool update_edge_accel(SceneCache &scene, OptixDeviceContext optix_context, cuda
         if (accel.gas_temp_buffer.numel() < static_cast<int64_t>(temp_bytes))
             accel.gas_temp_buffer = at::empty({static_cast<int64_t>(temp_bytes)}, byte_options);
 
-        raydn_OPTIX_CHECK(optixAccelBuild(
+        rayd_torch_OPTIX_CHECK(optixAccelBuild(
             optix_context,
             stream,
             &accel_options,
@@ -771,7 +771,7 @@ SceneCache &get_scene(int64_t handle) {
     std::lock_guard<std::mutex> lock(scenes_mutex);
     auto it = scenes.find(handle);
     if (it == scenes.end())
-        throw std::runtime_error("Invalid RayDN scene handle.");
+        throw std::runtime_error("Invalid RayD Torch scene handle.");
     return *it->second;
 }
 
@@ -854,4 +854,4 @@ void sync_scene(c10::intrusive_ptr<SceneHandle> scene) {
     sync_scene(scene->handle);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

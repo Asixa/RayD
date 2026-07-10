@@ -1,6 +1,6 @@
-#include <raydn/edge/kernels.h>
-#include <raydn/edge/optix_params.h>
-#include <raydn/common/optix_context.h>
+#include <rayd/torch/edge/kernels.h>
+#include <rayd/torch/edge/optix_params.h>
+#include <rayd/torch/common/optix_context.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -441,7 +441,7 @@ void launch_edge_query(
             cudaMemcpyHostToDevice,
             stream),
         "cudaMemcpyAsync(edge OptiX params)");
-    raydn_OPTIX_CHECK(optixLaunch(
+    rayd_torch_OPTIX_CHECK(optixLaunch(
         edge_pipeline(optix_entry, kind),
         stream,
         reinterpret_cast<CUdeviceptr>(optix_entry.edge_params_buffer.data_ptr<uint8_t>()),
@@ -801,4 +801,4 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
     return out;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

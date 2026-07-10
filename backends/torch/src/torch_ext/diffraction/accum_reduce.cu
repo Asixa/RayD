@@ -1,6 +1,6 @@
-#include <raydn/diffraction/accum_reduce.h>
-#include <raydn/common/optix_context.h>
-#include <raydn/diffraction/accum_params.h>
+#include <rayd/torch/diffraction/accum_reduce.h>
+#include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/diffraction/accum_params.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -433,4 +433,4 @@ void reduce_dfr_coherent_accum_staged_cuda(
     cuda_check(cudaGetLastError(), "scatter_dfr_coherent_accum_reduced_kernel");
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

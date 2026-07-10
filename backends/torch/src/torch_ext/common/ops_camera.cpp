@@ -1,12 +1,12 @@
-#include <raydn/common/camera.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/common/camera.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <torch/extension.h>
 
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -112,4 +112,4 @@ at::Tensor camera_sample_ray_backward_op(
         tan_y);
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

@@ -1,6 +1,6 @@
-#include <raydn/reflection/accum_reduce.h>
-#include <raydn/common/optix_context.h>
-#include <raydn/reflection/accum_params.h>
+#include <rayd/torch/reflection/accum_reduce.h>
+#include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/reflection/accum_params.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -212,4 +212,4 @@ void reduce_refl_accum_staged_cuda(
     cuda_check(cudaGetLastError(), "scatter_refl_accum_reduced_kernel");
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend

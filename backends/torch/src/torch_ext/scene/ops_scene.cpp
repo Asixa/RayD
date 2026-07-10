@@ -1,12 +1,12 @@
-#include <raydn/scene/cache.h>
-#include <raydn/scene/cache_kernels.h>
-#include <raydn/common/tensor_check.h>
+#include <rayd/torch/scene/cache.h>
+#include <rayd/torch/scene/cache_kernels.h>
+#include <rayd/torch/common/tensor_check.h>
 
 #include <torch/extension.h>
 
 #include <string>
 
-namespace raydn {
+namespace rayd::torch_backend {
 
 namespace {
 
@@ -164,4 +164,4 @@ at::Tensor pack_scene_vertex_tangents(
     return global_tangent;
 }
 
-} // namespace raydn
+} // namespace rayd::torch_backend
