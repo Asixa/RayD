@@ -52,6 +52,10 @@ class ProjectMetadataTests(unittest.TestCase):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
         expected = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
         self.assertIn(f'set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "{expected}")', cmake)
+        self.assertIn(
+            'set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")',
+            cmake,
+        )
 
     def test_multipath_pipeline_uses_current_optix_link_options(self):
         source = Path("src/torch_ext/common/optix_pipeline.cpp").read_text(encoding="utf-8")

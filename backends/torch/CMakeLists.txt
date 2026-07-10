@@ -82,6 +82,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
     # -gencode flags from every target created below and silently fall back to
     # nvcc's default architecture. Save the requested value and restore it.
     set(RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    if(NOT DEFINED TORCH_CUDA_ARCH_LIST OR TORCH_CUDA_ARCH_LIST STREQUAL "")
+        set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")
+    endif()
     find_package(Torch REQUIRED)
     if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
         set(CMAKE_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
@@ -90,6 +93,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayD Torch kernels would build without -gencode flags.")
     endif()
     message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    message(STATUS "RayD Torch/Caffe2 CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
 
     # This library is intentionally not a Python extension. It uses only the
     # LibTorch Stable ABI and is loaded from Python through torch.ops.load_library().
