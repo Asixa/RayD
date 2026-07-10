@@ -1,7 +1,7 @@
 import unittest
 
 import torch
-import raydn as rt
+import rayd.torch as rt
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA torch is required")

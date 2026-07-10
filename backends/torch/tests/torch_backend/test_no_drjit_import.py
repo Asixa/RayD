@@ -5,11 +5,11 @@ import unittest
 
 
 class TorchNativeImportTests(unittest.TestCase):
-    def test_raydn_import_does_not_import_dr_jit(self):
+    def test_C_import_does_not_import_dr_jit(self):
         code = textwrap.dedent(
             """
             import sys
-            import raydn as rt
+            import rayd.torch as rt
             print(("dr" + "jit") in sys.modules)
             print(hasattr(rt, "Scene"))
             """
@@ -30,7 +30,7 @@ class TorchNativeImportTests(unittest.TestCase):
             """
             import sys
             import torch
-            import raydn as rt
+            import rayd.torch as rt
             v = torch.tensor([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]], device='cuda', dtype=torch.float32)
             f = torch.tensor([[0,1,2]], device='cuda', dtype=torch.int32)
             s = rt.Scene(); s.add_mesh(rt.Mesh(v, f)); s.build()
@@ -50,11 +50,11 @@ class TorchNativeImportTests(unittest.TestCase):
         self.assertEqual(lines[-1], "False")
 
     def test_native_extension_loads(self):
-        import raydn as rt
+        import rayd.torch as rt
         self.assertTrue(hasattr(rt, "_C"))
         self.assertTrue(hasattr(rt._C, "build_info"))
         info = rt._C.build_info()
-        self.assertEqual(info["backend"], "rayd-native")
+        self.assertEqual(info["backend"], "torch")
 
 
 if __name__ == "__main__":

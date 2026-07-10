@@ -14,10 +14,10 @@ from typing import Any, Callable
 
 import torch
 
-import raydn as rt
+import rayd.torch as rt
 
 try:
-    from .benchmark_raydn_rayd_mitsuba_stress import (
+    from .benchmark_C_rayd_mitsuba_stress import (
         RAYDI_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
@@ -25,7 +25,7 @@ try:
         _try_import_mitsuba,
     )
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from benchmark_raydn_rayd_mitsuba_stress import (  # type: ignore
+    from benchmark_C_rayd_mitsuba_stress import (  # type: ignore
         RAYDI_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
@@ -212,7 +212,7 @@ def _torch_reflection_ray(ray_count: int) -> rt.Ray:
     return rt.Ray(origins, directions)
 
 
-def run_raydn_reflection_trace(args: argparse.Namespace, ray_count: int, max_bounces: int) -> dict[str, Any]:
+def run_C_reflection_trace(args: argparse.Namespace, ray_count: int, max_bounces: int) -> dict[str, Any]:
     scene, build_ms = _torch_parallel_reflector_scene()
     ray = _torch_reflection_ray(ray_count)
 
@@ -302,7 +302,7 @@ def _torch_dfr_material() -> rt.DfrMaterial:
     )
 
 
-def run_raydn_diffraction_export(args: argparse.Namespace, state_count: int) -> dict[str, Any]:
+def run_C_diffraction_export(args: argparse.Namespace, state_count: int) -> dict[str, Any]:
     scene, build_ms = _torch_dfr_scene()
     states = _torch_dfr_states(state_count)
     material = _torch_dfr_material()
@@ -753,9 +753,9 @@ def _run_backend_case(
         if backend == "raydn":
             if workload == "reflection_trace":
                 assert ray_count is not None and max_bounces is not None
-                return run_raydn_reflection_trace(args, ray_count, max_bounces)
+                return run_C_reflection_trace(args, ray_count, max_bounces)
             assert state_count is not None
-            return run_raydn_diffraction_export(args, state_count)
+            return run_C_diffraction_export(args, state_count)
         if backend == "rayd_path":
             if rayd_bundle is None:
                 raise RuntimeError("RayD backend is not loaded.")

@@ -4,13 +4,13 @@ namespace raydn {
 
 py::dict build_info() {
     py::dict info;
-    info["backend"] = "rayd-native";
+    info["backend"] = "torch";
     info["uses_dr_jit"] = false;
     return info;
 }
 
-PYBIND11_MODULE(_raydn, m) {
-    m.doc() = "RayDN CUDA/OptiX backend.";
+PYBIND11_MODULE(_C, m) {
+    m.doc() = "RayD Torch CUDA/OptiX backend.";
     m.def("build_info", &build_info);
 }
 

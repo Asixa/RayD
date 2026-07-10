@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 
-import raydn as rt
+import rayd.torch as rt
 
 
 RAYDI_ROOT = Path(r"E:\Code\RayDi")

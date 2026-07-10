@@ -14,7 +14,7 @@ RAYDI_ROOT = Path(r"E:\Code\RayDi")
 def _load_backends():
     sys.path.insert(0, str(RAYDI_ROOT))
     import rayd as dr_backend
-    import raydn as rt
+    import rayd.torch as rt
 
     cuda = importlib.import_module("dr" + "jit.cuda")
     return dr_backend, rt, cuda

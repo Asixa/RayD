@@ -6,7 +6,7 @@ from pathlib import Path
 class ProjectMetadataTests(unittest.TestCase):
     def test_project_name_is_rayd_native(self):
         data = tomllib.loads(Path("pyproject.toml").read_text())
-        self.assertEqual(data["project"]["name"], "rayd-native")
+        self.assertEqual(data["project"]["name"], "rayd-torch")
 
     def test_default_dependencies_require_torch_not_dr_jit(self):
         data = tomllib.loads(Path("pyproject.toml").read_text())

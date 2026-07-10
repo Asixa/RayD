@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import torch
 
-import raydn as rt
+import rayd.torch as rt
 
 
 RAYDI_ROOT = Path(r"E:\Code\RayDi")
@@ -856,7 +856,7 @@ def _speedups(backends: dict[str, Any]) -> dict[str, Any]:
                     continue
                 mode_out[mode] = other_stats["avg_ms"] / torch_stats["avg_ms"]
             if mode_out:
-                phase_out[other_name + "_over_raydn"] = mode_out
+                phase_out[other_name + "_over_C"] = mode_out
         if phase_out:
             out[phase] = phase_out
     return out
@@ -1119,7 +1119,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
             "repeats": args.repeats,
             "warmup": args.warmup,
             "dynamic_x_offset": args.dynamic_x_offset,
-            "edges_enabled_for_raydn": args.edges,
+            "edges_enabled_for_C": args.edges,
             "forward_modes": {
                 "full": "RayDN/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
                 "reduced": "RayDN/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",

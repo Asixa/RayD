@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-import raydn as rt
+import rayd.torch as rt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,9 +13,9 @@ class PublicApiContractTests(unittest.TestCase):
         self.assertFalse(hasattr(rt.Scene, "intersect_t_sum"))
         self.assertFalse(hasattr(rt.Scene, "intersect_t_sum_vjp"))
 
-    def test_acceptance_benchmarks_use_public_raydn_api(self):
-        stress = (ROOT / "tests" / "benchmark_raydn_rayd_mitsuba_stress.py").read_text()
-        multipath = (ROOT / "tests" / "benchmark_raydn_rayd_mitsuba_multipath.py").read_text()
+    def test_acceptance_benchmarks_use_public_C_api(self):
+        stress = (ROOT / "tests" / "benchmark_C_rayd_mitsuba_stress.py").read_text()
+        multipath = (ROOT / "tests" / "benchmark_C_rayd_mitsuba_multipath.py").read_text()
 
         forbidden = (
             "trace_reflections_minimal",
@@ -53,7 +53,7 @@ class PublicApiContractTests(unittest.TestCase):
         self.assertIn("ctx->set_materialize_grads(false);", intersect_t_source)
 
     def test_intersection_is_valid_uses_native_kernel(self):
-        source = (ROOT / "raydn" / "types.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "types.py").read_text()
         start = source.index("class Intersection")
         end = source.index("@dataclass(frozen=True)\nclass NearestPointEdge")
         intersection_source = source[start:end]
@@ -64,7 +64,7 @@ class PublicApiContractTests(unittest.TestCase):
         )
 
     def test_camera_public_path_does_not_stage_contiguous_copies(self):
-        source = (ROOT / "raydn" / "camera.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "camera.py").read_text()
         forbidden = (
             "sample.contiguous()",
             "point.contiguous()",
@@ -77,7 +77,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, source)
 
     def test_diffraction_active_masks_are_not_expanded_or_contiguous_staged(self):
-        python_source = (ROOT / "raydn" / "autograd.py").read_text()
+        python_source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         cpp_source = (ROOT / "src" / "torch_ext" / "diffraction" / "ops.cpp").read_text()
         forbidden = (
             "active.contiguous()",
@@ -90,7 +90,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, cpp_source)
 
     def test_trace_dfr_paths_public_wrapper_does_not_stage_contiguous_inputs(self):
-        source = (ROOT / "raydn" / "autograd.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         start = source.index("def trace_dfr_paths_order1_native")
         end = source.index("class _DfrDirectAccumFunction")
         path_source = source[start:end]
@@ -103,7 +103,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, path_source)
 
     def test_coherent_diffraction_public_wrapper_does_not_stage_contiguous_inputs(self):
-        source = (ROOT / "raydn" / "autograd.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         start = source.index("def accum_dfr_coherent_direct_native")
         end = source.index("class NativeOpUnavailable")
         coherent_source = source[start:end]
@@ -116,7 +116,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, coherent_source)
 
     def test_chain_diffraction_public_ad_path_does_not_stage_states_or_material(self):
-        source = (ROOT / "raydn" / "autograd.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         start = source.index("def accum_dfr_chain_native")
         end = source.index("def accum_dfr_coherent_direct_native")
         chain_source = source[start:end]
@@ -186,7 +186,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, jvp_source)
 
     def test_direct_diffraction_public_ad_path_does_not_stage_states_or_material(self):
-        source = (ROOT / "raydn" / "autograd.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         start = source.index("def accum_dfr_direct_native")
         end = source.index("class _DfrChainAccumFunction")
         direct_source = source[start:end]
@@ -199,7 +199,7 @@ class PublicApiContractTests(unittest.TestCase):
             self.assertNotIn(token, direct_source)
 
     def test_python_autograd_functions_do_not_materialize_unused_output_grads(self):
-        source = (ROOT / "raydn" / "autograd.py").read_text()
+        source = (ROOT / "python" / "rayd" / "torch" / "autograd.py").read_text()
         self.assertEqual(source.count("def setup_context"), source.count("ctx.set_materialize_grads(False)"))
 
     def test_nearest_edge_ad_does_not_contiguous_upstream_grads_or_tangents(self):

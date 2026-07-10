@@ -57,7 +57,7 @@ class Scene:
 
     def add_mesh(self, mesh: Mesh, dynamic: bool = False) -> int:
         if not isinstance(mesh, Mesh):
-            raise TypeError("Scene.add_mesh() expects raydn.Mesh.")
+            raise TypeError("Scene.add_mesh() expects rayd.torch.Mesh.")
         if self._native_scene is not None:
             self._native_scene = None
         self._meshes.append((mesh, bool(dynamic)))

@@ -405,7 +405,7 @@ if(RAYDN_BUILD_NATIVE)
     add_custom_target(raydn_diffraction_accumulation_optix_ptx DEPENDS "${RAYDN_DIFFRACTION_ACCUMULATION_PTX_HEADER}")
 
     pybind11_add_module(
-        _raydn
+        _C
         src/torch_ext/module.cpp
         src/torch_ext/library.cpp
         src/torch_ext/tensor_check.cpp
@@ -439,7 +439,7 @@ if(RAYDN_BUILD_NATIVE)
         src/torch_ext/common/camera.cu
     )
     target_include_directories(
-        _raydn
+        _C
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -447,7 +447,7 @@ if(RAYDN_BUILD_NATIVE)
             ${OPTIX_INCLUDE_DIR}
     )
     add_dependencies(
-        _raydn
+        _C
         raydn_optix_ptx
         raydn_edge_optix_ptx
         raydn_reflection_trace_optix_ptx
@@ -456,7 +456,7 @@ if(RAYDN_BUILD_NATIVE)
         raydn_reflection_accumulation_optix_ptx
         raydn_diffraction_paths_optix_ptx
         raydn_diffraction_accumulation_optix_ptx)
-    target_link_libraries(_raydn PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
-    target_compile_features(_raydn PRIVATE cxx_std_17)
-    install(TARGETS _raydn LIBRARY DESTINATION raydn RUNTIME DESTINATION raydn)
+    target_link_libraries(_C PRIVATE "${TORCH_LIBRARIES}" "${TORCH_PYTHON_LIBRARY}" CUDA::cudart CUDA::cuda_driver)
+    target_compile_features(_C PRIVATE cxx_std_17)
+    install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
 endif()

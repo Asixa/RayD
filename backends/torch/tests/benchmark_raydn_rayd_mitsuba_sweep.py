@@ -10,7 +10,7 @@ from typing import Any
 
 import torch
 
-from .benchmark_raydn_rayd_mitsuba_stress import (
+from .benchmark_C_rayd_mitsuba_stress import (
     RAYDI_ROOT,
     _cleanup_drjit,
     _cleanup_torch,
@@ -337,7 +337,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
             "warmup": args.warmup,
             "execute_total_rays": args.execute_total_rays,
             "dynamic_x_offset": args.dynamic_x_offset,
-            "edges_enabled_for_raydn": args.edges,
+            "edges_enabled_for_C": args.edges,
         },
         "backends": backends,
         "speedups": _speedups(backends),

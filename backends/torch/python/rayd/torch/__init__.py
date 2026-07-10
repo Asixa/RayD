@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch as _torch  # noqa: F401
 
 try:
-    from . import _raydn as _C
+    from . import _C
 except ImportError as exc:
     _C = None
     _EXTENSION_IMPORT_ERROR = exc

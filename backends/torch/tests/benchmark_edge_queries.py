@@ -5,7 +5,7 @@ import time
 
 import torch
 
-import raydn as rt
+import rayd.torch as rt
 
 
 def main() -> None:

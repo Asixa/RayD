@@ -5,7 +5,7 @@ import json
 import time
 
 import torch
-import raydn as rt
+import rayd.torch as rt
 
 from .benchmark_support import synchronize, time_ms
 
