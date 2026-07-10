@@ -7,9 +7,22 @@ import rayd.drjit as rd
 import rayd.torch as rt
 ```
 
-Install either backend independently with `rayd-drjit` or `rayd-torch`.
-The parent `rayd` package is a PEP 420 namespace and does not select a default
-backend.
+Install both backends through the file-free meta-distribution:
+
+```bash
+pip install rayd
+```
+
+Install only one backend when the other runtime is not needed:
+
+```bash
+pip install rayd-drjit
+pip install rayd-torch
+```
+
+All three distributions share version `0.6.0`. The meta-distribution pins both
+backend distributions to that same version. The parent `rayd` package remains
+a PEP 420 namespace and does not select or re-export a default backend.
 
 Backend sources, builds, and tests live in `backends/drjit` and
 `backends/torch`. Cross-backend contracts, packaging checks, and coexistence

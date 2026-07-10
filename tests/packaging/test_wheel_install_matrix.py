@@ -40,10 +40,12 @@ for backend in absent:
 class WheelInstallMatrixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        meta = os.environ.get("RAYD_META_WHEEL")
         drjit = os.environ.get("RAYD_DRJIT_WHEEL")
         torch = os.environ.get("RAYD_TORCH_WHEEL")
-        if not drjit or not torch:
+        if not meta or not drjit or not torch:
             raise unittest.SkipTest("wheel paths are provided by the packaging job")
+        cls.meta_wheel = Path(meta).resolve()
         cls.wheels = {"drjit": Path(drjit).resolve(), "torch": Path(torch).resolve()}
         cls.base_site = sysconfig.get_path("purelib")
 
@@ -78,8 +80,12 @@ class WheelInstallMatrixTests(unittest.TestCase):
         if completed.returncode:
             self.fail(f"wheel probe failed\n{completed.stdout}\n{completed.stderr}")
 
-    def make_venv(self, root):
-        self.command(sys.executable, "-m", "venv", root)
+    def make_venv(self, root, system_site_packages=False):
+        args = [sys.executable, "-m", "venv"]
+        if system_site_packages:
+            args.append("--system-site-packages")
+        args.append(root)
+        self.command(*args)
         return self.venv_python(root)
 
     def install(self, python, backend):
@@ -100,6 +106,23 @@ class WheelInstallMatrixTests(unittest.TestCase):
                 for backend in order:
                     self.install(python, backend)
                 self.probe(python, order)
+
+    def test_meta_distribution_installs_both_backends_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            python = self.make_venv(Path(tmp) / "meta", system_site_packages=True)
+            self.command(
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                self.meta_wheel.parent,
+                self.meta_wheel,
+            )
+            self.probe(python, ("drjit", "torch"))
+            self.command(python, "-m", "pip", "uninstall", "-y", "rayd")
+            self.probe(python, ("drjit", "torch"))
 
     def test_uninstalling_one_backend_preserves_the_other(self):
         with tempfile.TemporaryDirectory() as tmp:

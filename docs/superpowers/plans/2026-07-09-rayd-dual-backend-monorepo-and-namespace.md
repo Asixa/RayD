@@ -41,11 +41,14 @@ import rayd.torch as rt
 
 ### Python distributions
 
+- `rayd` (file-free meta-distribution; installs both backends)
 - `rayd-drjit`
 - `rayd-torch`
 
-An optional file-free `rayd` meta-distribution may depend on both, but it is not
-required. Installing a single backend must not install the other runtime.
+The file-free `rayd` meta-distribution pins and installs both backend
+distributions at the same version. Installing `rayd-drjit` or `rayd-torch`
+directly remains the supported single-backend path and must not install the
+other runtime.
 
 ### Native extension names
 
@@ -162,7 +165,7 @@ result = scene.intersect(ray)
 ### Both backends
 
 ```bash
-pip install rayd-drjit rayd-torch
+pip install rayd
 ```
 
 ```python
@@ -195,6 +198,7 @@ Each backend wheel owns a disjoint subtree:
 
 | Distribution | Installed files | Dependencies |
 | --- | --- | --- |
+| `rayd` | none outside distribution metadata | `rayd-drjit`, `rayd-torch` at the identical version |
 | `rayd-drjit` | `rayd/drjit/**` | Dr.Jit, nanobind |
 | `rayd-torch` | `rayd/torch/**` | Torch |
 
@@ -207,8 +211,9 @@ Required properties:
 - uninstalling one backend leaves the other fully functional;
 - import order does not change device, stream, or module state.
 
-The optional `rayd` meta-distribution, if published, owns no Python package
-files. It only declares dependencies on both backend distributions.
+The required `rayd` meta-distribution owns no Python package files. It declares
+exact-version dependencies on both backend distributions and is published only
+after both backend artifacts are available.
 
 ## Target Repository Layout
 
@@ -428,8 +433,8 @@ Acceptance:
 - [ ] Inspect wheel RECORD files and fail on overlapping installed paths.
 - [ ] Verify each backend installs without the other runtime present.
 - [ ] Verify uninstalling either wheel leaves the other usable.
-- [ ] Decide whether a file-free `rayd` meta-distribution is useful; do not make
-      either backend depend on it.
+- [x] Add a file-free `rayd` meta-distribution that depends on both backends at
+      the identical version; neither backend depends on it.
 
 Required packaging scenarios:
 
@@ -439,7 +444,8 @@ Required packaging scenarios:
 4. both backends, Torch installed first;
 5. uninstall Dr.Jit while Torch remains;
 6. uninstall Torch while Dr.Jit remains;
-7. upgrade one backend without modifying the other backend's files.
+7. upgrade one backend without modifying the other backend's files;
+8. install `rayd` and resolve both exact-version backend wheels.
 
 ### Task 7: Add namespace and import isolation tests
 
@@ -481,7 +487,8 @@ Required packaging scenarios:
 - [ ] Give each backend an independent dependency environment and build cache.
 - [ ] Use path filters only for PR latency; scheduled and release runs execute
       the full matrix.
-- [ ] Publish `rayd-drjit` and `rayd-torch` independently.
+- [ ] Publish `rayd-drjit` and `rayd-torch` independently, then publish the
+      file-free `rayd` meta-distribution.
 - [ ] Require both backend test jobs and packaging isolation before tagging the
       combined project release.
 - [ ] Retire the old `rayd` and `rayd-native` distributions according to the
@@ -585,13 +592,15 @@ release rather than staged aliases.
 
 - merge histories;
 - complete hard renames;
-- publish pre-release wheels for `rayd-drjit` and `rayd-torch`;
+- publish pre-release wheels for `rayd-drjit`, `rayd-torch`, and the `rayd`
+  meta-distribution;
 - migrate controlled downstream projects;
 - run packaging and coexistence tests from clean environments.
 
 ### Release
 
-- publish both backend wheels with the same project version;
+- publish both backend wheels with the same project version, then publish the
+  exact-version `rayd` meta-distribution;
 - publish new documentation and capability matrix;
 - tag the monorepo once both backend artifacts are verified;
 - stop publishing old `rayd-native` artifacts;

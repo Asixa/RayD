@@ -58,18 +58,20 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
-      - run: python -m pip install build "scikit-build-core>=0.10" "cmake>=3.22" ninja "nanobind==2.9.2" "drjit==1.3.1" torch
+      - run: python -m pip install build "setuptools>=77" "scikit-build-core>=0.10" "cmake>=3.22" ninja "nanobind==2.9.2" "drjit==1.3.1" torch
+      - run: python -m build --wheel --no-isolation --outdir dist
       - run: python -m build --wheel --no-isolation --outdir ../../dist
         working-directory: backends/drjit
       - run: python -m build --wheel --no-isolation --outdir ../../dist -Cbuild-dir=artifacts/skbuild
         working-directory: backends/torch
       - shell: pwsh
         run: |
+          $env:RAYD_META_WHEEL = (Get-ChildItem dist/rayd-*.whl | Where-Object { $_.Name -notmatch '^rayd_(drjit|torch)-' }).FullName
           $env:RAYD_DRJIT_WHEEL = (Get-ChildItem dist/rayd_drjit-*.whl).FullName
           $env:RAYD_TORCH_WHEEL = (Get-ChildItem dist/rayd_torch-*.whl).FullName
-          python -m unittest tests.packaging.test_wheel_layout tests.packaging.test_wheel_install_matrix -v
+          python -m unittest tests.packaging.test_project_metadata tests.packaging.test_wheel_layout tests.packaging.test_wheel_install_matrix -v
       - uses: actions/upload-artifact@v4
-        with: {name: backend-wheels, path: dist/*.whl}
+        with: {name: rayd-wheels, path: dist/*.whl}
 
   coexistence:
     needs: [drjit, torch]

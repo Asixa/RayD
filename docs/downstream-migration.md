@@ -12,6 +12,7 @@ or generated copies and are not authoritative downstream sources.
 
 The coordinated cut for active consumers is:
 
+- projects needing both backends: dependency `rayd`;
 - Dr.Jit code: `import rayd.drjit as rd` and dependency `rayd-drjit`;
 - Torch code: `import rayd.torch as rt`, dependency `rayd-torch`, dispatcher
   `torch.ops.rayd_torch`, and custom classes `torch.classes.rayd_torch`;

@@ -1,4 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rayd"
+version = "0.6.0"
+description = "RayD meta-distribution installing the Dr.Jit and Torch backends."
+readme = "README.md"
+authors = [{ name = "Xingyu Chen", email = "xic063@ucsd.edu" }]
+license = "BSD-3-Clause"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "rayd-drjit==0.6.0",
+    "rayd-torch==0.6.0",
+]
+
+[tool.setuptools]
+packages = []
+
 [tool.rayd.workspace]
 members = ["backends/drjit", "backends/torch"]
-distributions = ["rayd-drjit", "rayd-torch"]
-
+distributions = ["rayd", "rayd-drjit", "rayd-torch"]

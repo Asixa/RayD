@@ -1,4 +1,4 @@
-name: Publish Backend Wheels
+name: Publish RayD Distributions
 
 on:
   release:
@@ -40,6 +40,20 @@ jobs:
           name: release-${{ matrix.backend }}
           path: dist/*
 
+  build-meta:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: python -m pip install build "setuptools>=77"
+      - run: python -m build --wheel --sdist --no-isolation --outdir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: dist/*
+
   publish-drjit:
     if: github.event_name == 'release'
     needs: build
@@ -61,5 +75,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: {name: release-torch, path: dist}
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: {packages-dir: dist}
+
+  publish-rayd:
+    if: github.event_name == 'release'
+    needs: [build-meta, publish-drjit, publish-torch]
+    runs-on: ubuntu-latest
+    environment: pypi-rayd
+    permissions: {id-token: write}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: release-meta, path: dist}
       - uses: pypa/gh-action-pypi-publish@release/v1
         with: {packages-dir: dist}

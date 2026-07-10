@@ -3,6 +3,7 @@
 *.log
 *.exe
 __pycache__
+*.egg-info/
 build/
 ext_win64/
 local/
