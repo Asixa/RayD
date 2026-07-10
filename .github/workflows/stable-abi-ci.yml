@@ -1,0 +1,125 @@
+name: Stable ABI Build
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: stable-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  torch-stable-abi:
+    name: Torch Stable ABI / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
+      CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+      OPTIX_INCLUDE_DIR: ${{ github.workspace }}/.optix/include
+
+    steps:
+      - name: Check out RayD
+        uses: actions/checkout@v4
+
+      - name: Check out OptiX 8.1 headers
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA/optix-dev
+          ref: v8.1.0
+          path: .optix
+          persist-credentials: false
+
+      - name: Set up Python 3.10 build environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Free disk space on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift || true
+          sudo docker image prune --all --force || true
+
+      - name: Install CUDA Toolkit 12.8
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "12.8.1"
+          method: local
+          log-file-suffix: "stable-abi-${{ runner.os }}"
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Export Windows CUDA paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cudaRoot = $env:CUDA_PATH
+          if (-not $cudaRoot) {
+            $nvcc = (Get-Command nvcc -ErrorAction Stop).Source
+            $cudaRoot = Split-Path (Split-Path $nvcc -Parent) -Parent
+          }
+          "CUDA_HOME=$cudaRoot" >> $env:GITHUB_ENV
+          "CUDA_PATH=$cudaRoot" >> $env:GITHUB_ENV
+
+      - name: Install Torch Stable ABI build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip cmake ninja
+          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+
+      - name: Configure Stable ABI target
+        shell: bash
+        run: |
+          cmake -S backends/torch -B artifacts/stable-abi -GNinja \
+            -DRAYD_TORCH_BUILD_PYTHON_MODULE=OFF \
+            -DOPTIX_INCLUDE_DIR="$OPTIX_INCLUDE_DIR"
+
+      - name: Build Stable ABI library
+        shell: bash
+        run: cmake --build artifacts/stable-abi --target rayd_torch_stable_ops
+
+      - name: Resolve Stable ABI library
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "RAYD_STABLE_LIBRARY=$GITHUB_WORKSPACE/artifacts/stable-abi/_stable_ops.dll" >> "$GITHUB_ENV"
+          else
+            echo "RAYD_STABLE_LIBRARY=$GITHUB_WORKSPACE/artifacts/stable-abi/_stable_ops.so" >> "$GITHUB_ENV"
+          fi
+
+      - name: Audit Stable ABI dependencies
+        shell: bash
+        run: |
+          python backends/torch/scripts/verify_stable_abi.py \
+            --source-root backends/torch/src/stable \
+            "$RAYD_STABLE_LIBRARY"
+
+      - name: Verify CUDA fat binary architectures
+        shell: bash
+        run: |
+          python backends/drjit/scripts/verify_cuda_binary_arches.py \
+            --stem _stable_ops \
+            "$RAYD_STABLE_LIBRARY"
+
+      - name: Upload Stable ABI library
+        uses: actions/upload-artifact@v4
+        with:
+          name: rayd-torch-stable-${{ matrix.os }}
+          path: artifacts/stable-abi/_stable_ops.*
+          if-no-files-found: error

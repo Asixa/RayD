@@ -12,7 +12,7 @@ EXPECTED_PTX_TARGET = "sm_120"
 
 
 def _matches(path: Path, stems: tuple[str, ...]) -> bool:
-    return path.suffix in {".pyd", ".so"} and any(path.name.startswith(stem) for stem in stems)
+    return path.suffix in {".dll", ".pyd", ".so"} and any(path.name.startswith(stem) for stem in stems)
 
 
 def _collect_binaries(inputs: list[Path], stems: tuple[str, ...], extract_root: Path) -> list[Path]:
