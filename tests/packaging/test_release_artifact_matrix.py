@@ -1,7 +1,11 @@
 import os
-import tomllib
 import unittest
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 
 PYTHON_TAGS = ("cp310-cp310", "cp311-cp311", "cp312-cp312", "cp313-cp313", "cp314-cp314")
