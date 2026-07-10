@@ -20,3 +20,25 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("ray" + "dn", source.lower())
         self.assertNotIn("rayd-native", source.lower())
         self.assertNotIn("_ray" + "dn", source.lower())
+
+    def test_stable_abi_slice_avoids_unstable_torch_and_python_apis(self):
+        stable_source = Path("src/stable/camera.cu").read_text(encoding="utf-8")
+        cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        for forbidden in ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h"):
+            self.assertNotIn(forbidden, stable_source)
+        self.assertIn("STABLE_TORCH_LIBRARY(rayd_torch_stable", stable_source)
+        self.assertIn("TORCH_TARGET_VERSION=0x020a000000000000", cmake)
+        stable_target = cmake[cmake.index("add_library(rayd_torch_stable_ops"):cmake.index("execute_process(")]
+        self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
+
+    def test_stable_abi_audit_script_is_packaged_with_the_backend(self):
+        script = Path("scripts/verify_stable_abi.py")
+        self.assertTrue(script.is_file())
+        source = script.read_text(encoding="utf-8")
+        for dependency in ("torch_python", "c10.dll", "libc10.so", "python3"):
+            self.assertIn(dependency, source)
+
+    def test_cuda_fat_binary_covers_witwin_platform_matrix(self):
+        cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        expected = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        self.assertIn(f'set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "{expected}")', cmake)

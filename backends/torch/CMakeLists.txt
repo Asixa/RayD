@@ -11,7 +11,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayD Torch native targets." FORCE)
 endif()
 
-set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "75-real;80-real;86-real;89-real;120-real;120-virtual")
+set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual")
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
@@ -90,6 +90,39 @@ if(RAYD_TORCH_BUILD_NATIVE)
         message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayD Torch kernels would build without -gencode flags.")
     endif()
     message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+
+    # This library is intentionally not a Python extension. It uses only the
+    # LibTorch Stable ABI and is loaded from Python through torch.ops.load_library().
+    add_library(rayd_torch_stable_ops SHARED src/stable/camera.cu)
+    set_target_properties(
+        rayd_torch_stable_ops
+        PROPERTIES
+            PREFIX ""
+            OUTPUT_NAME "_stable_ops"
+            POSITION_INDEPENDENT_CODE ON)
+    target_compile_definitions(
+        rayd_torch_stable_ops
+        PRIVATE
+            TORCH_TARGET_VERSION=0x020a000000000000
+            USE_CUDA)
+    target_include_directories(
+        rayd_torch_stable_ops
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            "${TORCH_INSTALL_PREFIX}/include"
+            ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(
+        rayd_torch_stable_ops
+        PRIVATE
+            "${TORCH_LIBRARIES}"
+            CUDA::cudart
+            CUDA::cuda_driver)
+    target_compile_features(rayd_torch_stable_ops PRIVATE cxx_std_17)
+    install(
+        TARGETS rayd_torch_stable_ops
+        LIBRARY DESTINATION rayd/torch
+        RUNTIME DESTINATION rayd/torch)
+
     execute_process(
         COMMAND "${Python_EXECUTABLE}" -c "import pathlib, torch; print(pathlib.Path(torch.__file__).resolve().parent)"
         RESULT_VARIABLE TORCH_PYTHON_PACKAGE_RESULT

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import torch as _torch  # noqa: F401
 
+from . import _stable
+
 try:
     from . import _C
 except ImportError as exc:

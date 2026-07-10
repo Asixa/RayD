@@ -41,6 +41,17 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertTrue(all(name.startswith("rayd/drjit/") for name in drjit))
         self.assertTrue(all(name.startswith("rayd/torch/") for name in torch))
 
+    def test_torch_wheel_contains_untagged_stable_abi_library(self):
+        names = self.names(self.torch_wheel)
+        stable = [
+            name
+            for name in names
+            if name.startswith("rayd/torch/_stable_ops")
+            and name.endswith((".dll", ".so", ".dylib"))
+        ]
+        self.assertEqual(len(stable), 1, stable)
+        self.assertNotRegex(stable[0], r"cp3(?:10|11|12|13|14)")
+
     def test_meta_wheel_is_file_free_and_pins_both_backends(self):
         self.assertFalse(any(name.startswith("rayd/") for name in self.names(self.meta_wheel)))
         meta = self.metadata(self.meta_wheel)
