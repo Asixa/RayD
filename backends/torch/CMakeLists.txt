@@ -65,6 +65,16 @@ if(RAYDN_BUILD_NATIVE)
         message(FATAL_ERROR "Could not locate PyTorch CMake prefix. Install torch in the build environment.")
     endif()
     list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX}")
+    if(WIN32 AND NOT EXISTS "${TORCH_CMAKE_PREFIX}/Torch/TorchConfig.cmake")
+        get_filename_component(PYTHON_ENV_ROOT "${Python_EXECUTABLE}" DIRECTORY)
+        list(PREPEND CMAKE_PREFIX_PATH
+            "${PYTHON_ENV_ROOT}/Library"
+            "${PYTHON_ENV_ROOT}/Lib/site-packages")
+        set(CONDA_TORCH_DIR "${PYTHON_ENV_ROOT}/Library/share/cmake/Torch")
+        if(EXISTS "${CONDA_TORCH_DIR}/TorchConfig.cmake")
+            set(Torch_DIR "${CONDA_TORCH_DIR}")
+        endif()
+    endif()
     # PyTorch's consumed Caffe2 config (Caffe2/public/cuda.cmake) sets the
     # normal variable CMAKE_CUDA_ARCHITECTURES to OFF, which would strip all
     # -gencode flags from every target created below and silently fall back to
@@ -78,7 +88,22 @@ if(RAYDN_BUILD_NATIVE)
         message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayDN kernels would build without -gencode flags.")
     endif()
     message(STATUS "RayDN CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-    find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" REQUIRED)
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -c "import pathlib, torch; print(pathlib.Path(torch.__file__).resolve().parent)"
+        RESULT_VARIABLE TORCH_PYTHON_PACKAGE_RESULT
+        OUTPUT_VARIABLE TORCH_PYTHON_PACKAGE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT TORCH_PYTHON_PACKAGE_RESULT EQUAL 0)
+        message(FATAL_ERROR "Could not locate the PyTorch Python package directory.")
+    endif()
+    find_library(
+        TORCH_PYTHON_LIBRARY
+        torch_python
+        PATHS
+            "${TORCH_INSTALL_PREFIX}/lib"
+            "${TORCH_PYTHON_PACKAGE_DIR}/lib"
+        REQUIRED)
 
     function(pybind11_add_module target)
         Python_add_library(${target} MODULE WITH_SOABI ${ARGN})
