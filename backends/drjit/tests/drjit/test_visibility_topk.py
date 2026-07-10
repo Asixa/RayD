@@ -1,0 +1,610 @@
+import json
+import os
+import subprocess
+import sys
+import textwrap
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+RAYD_LOAD_PREAMBLE = "import rayd.drjit"
+
+
+def run_script(script: str, timeout: int = 180, check: bool = True):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, "-c", RAYD_LOAD_PREAMBLE + "\n" + textwrap.dedent(script)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            "Subprocess failed.\n"
+            f"Return code: {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+    return result
+
+
+def run_json_case(script: str, timeout: int = 180):
+    result = run_script(script, timeout=timeout, check=True)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise AssertionError(f"Subprocess produced no JSON output.\nSTDERR:\n{result.stderr}")
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"Failed to parse JSON from subprocess.\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        ) from exc
+
+
+class VisibilityAndTopKTests(unittest.TestCase):
+    def test_segment_visibility_ignore_pair_and_axial(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, 0.1])
+            end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.1])
+            ignore = cuda.Int([-1, 0, -1])
+            active = cuda.Bool([True, True, False])
+
+            vis = scene.visible(start, end, ignore, active)
+            pair = scene.visible_pair(
+                start,
+                end,
+                cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0]),
+                ignore,
+                active,
+            )
+            axial = scene.visible_edge(
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                cuda.Array3f([-2.0], [0.0], [1.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Float([0.0]),
+                cuda.Float([4.0]),
+                [0.0, 0.5, 1.0],
+                cuda.Bool([True]),
+            )
+
+            rd.native_launch_audit_clear()
+            with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
+                lazy = scene.visible(start, end, ignore, active)
+                lazy_hist = dr.kernel_history()
+                values = [bool(v) for v in list(lazy.visible)]
+                consume_hist = dr.kernel_history()
+            native_audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": [bool(v) for v in list(vis.visible)],
+                "pair_a": [bool(v) for v in list(pair.visible_a)],
+                "pair_b": [bool(v) for v in list(pair.visible_b)],
+                "axial_any": [bool(v) for v in list(axial.any_visible)],
+                "lazy_optix_before_consume": sum(1 for h in lazy_hist if bool(h.get("uses_optix", False))),
+                "consume_values": values,
+                "consume_optix": sum(1 for h in consume_hist if bool(h.get("uses_optix", False))),
+                "native_optix_launches": int(native_audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["visible"], [False, True, False])
+        self.assertEqual(data["pair_a"], [False, True, False])
+        self.assertEqual(data["pair_b"], [True, True, False])
+        self.assertEqual(data["axial_any"], [True])
+        self.assertEqual(data["lazy_optix_before_consume"], 0)
+        self.assertEqual(data["consume_values"], [False, True, False])
+        self.assertEqual(data["consume_optix"], 0)
+        self.assertGreaterEqual(data["native_optix_launches"], 1)
+
+    def test_visibility_ignore_tables_accept_more_than_eight_entries(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0], [0.0], [-1.0])
+            end = cuda.Array3f([0.0], [0.0], [1.0])
+            end_b = cuda.Array3f([0.5], [0.5], [1.0])
+            ignore9 = cuda.Int([-1, -1, -1, -1, -1, -1, -1, -1, 0])
+
+            pair = scene.visible_pair(start, end, end_b, ignore9)
+            seg = scene.visible(start, end, ignore9)
+
+            chain_points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
+            chain_length = cuda.Int([1])
+            chain = scene.visible_chain(chain_points, chain_length, ignore9)
+
+            print(json.dumps({
+                "segment_visible": bool(seg.visible[0]),
+                "pair_a": bool(pair.visible_a[0]),
+                "pair_b": bool(pair.visible_b[0]),
+                "chain_visible": bool(chain.all_visible[0]),
+                "chain_blocker": int(chain.first_blocked_prim[0]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["segment_visible"])
+        self.assertTrue(data["pair_a"])
+        self.assertTrue(data["pair_b"])
+        self.assertTrue(data["chain_visible"])
+        self.assertEqual(data["chain_blocker"], -1)
+
+    def test_no_ignore_segment_visibility_variants_are_lazy_jit_optix_queries(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit as dr
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, 0.1])
+            end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.1])
+            end_b = cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0])
+            active = cuda.Bool([True, True, False])
+
+            chain_points = cuda.Array3f(
+                [0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 2.0, 2.0],
+                [-1.0, 1.0, -1.0, 1.0],
+            )
+            chain_length = cuda.Int([1, 1])
+
+            rd.native_launch_audit_clear()
+            with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
+                vis = scene.visible(start, end, active=active)
+                pair = scene.visible_pair(start, end, end_b, active=active)
+                axial = scene.visible_edge(
+                    cuda.Array3f([0.0], [0.0], [-1.0]),
+                    cuda.Array3f([-2.0], [0.0], [1.0]),
+                    cuda.Array3f([1.0], [0.0], [0.0]),
+                    cuda.Float([0.0]),
+                    cuda.Float([4.0]),
+                    [0.0, 0.5, 1.0],
+                    cuda.Bool([True]),
+                )
+                chain = scene.visible_chain(chain_points, chain_length)
+                call_hist = dr.kernel_history()
+
+                values = {
+                    "visible": [bool(v) for v in list(vis.visible)],
+                    "pair_a": [bool(v) for v in list(pair.visible_a)],
+                    "pair_b": [bool(v) for v in list(pair.visible_b)],
+                    "axial_any": [bool(v) for v in list(axial.any_visible)],
+                    "chain_all": [bool(v) for v in list(chain.all_visible)],
+                    "chain_blocked_segment": [int(v) for v in list(chain.first_blocked_segment)],
+                    "chain_blocked_prim": [int(v) for v in list(chain.first_blocked_prim)],
+                }
+                consume_hist = dr.kernel_history()
+            native_audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                **values,
+                "call_jit": sum(1 for h in call_hist if str(h.get("type")) == "KernelType.JIT"),
+                "call_optix": sum(1 for h in call_hist if bool(h.get("uses_optix", False))),
+                "consume_jit": sum(1 for h in consume_hist if str(h.get("type")) == "KernelType.JIT"),
+                "consume_optix": sum(1 for h in consume_hist if bool(h.get("uses_optix", False))),
+                "native_optix_launches": int(native_audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["visible"], [False, True, False])
+        self.assertEqual(data["pair_a"], [False, True, False])
+        self.assertEqual(data["pair_b"], [True, True, False])
+        self.assertEqual(data["axial_any"], [True])
+        self.assertEqual(data["chain_all"], [False, True])
+        self.assertEqual(data["chain_blocked_segment"], [0, -1])
+        self.assertGreaterEqual(data["chain_blocked_prim"][0], 0)
+        self.assertEqual(data["chain_blocked_prim"][1], -1)
+        self.assertEqual(data["call_jit"], 0)
+        self.assertEqual(data["call_optix"], 0)
+        self.assertGreaterEqual(data["consume_jit"], 1)
+        self.assertGreaterEqual(data["consume_optix"], 1)
+        self.assertEqual(data["native_optix_launches"], 0)
+
+    def test_trace_visibility_native_backend_keeps_optixlaunch_path_available(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [-1.0, -1.0, 0.1])
+            end = cuda.Array3f([0.0, 0.0, 2.0], [0.0, 2.0, 0.0], [1.0, 1.0, 0.1])
+            end_b = cuda.Array3f([2.0, 2.0, 2.0], [2.0, 2.0, 2.0], [1.0, 1.0, 1.0])
+            active = cuda.Bool([True, True, False])
+
+            chain_points = cuda.Array3f(
+                [0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 2.0, 2.0],
+                [-1.0, 1.0, -1.0, 1.0],
+            )
+            chain_length = cuda.Int([1, 1])
+
+            rd.native_launch_audit_clear()
+            vis = scene.visible(start, end, active=active)
+            pair = scene.visible_pair(start, end, end_b, active=active)
+            axial = scene.visible_edge(
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                cuda.Array3f([-2.0], [0.0], [1.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Float([0.0]),
+                cuda.Float([4.0]),
+                [0.0, 0.5, 1.0],
+                cuda.Bool([True]),
+            )
+            chain = scene.visible_chain(chain_points, chain_length)
+            native_audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": [bool(v) for v in list(vis.visible)],
+                "pair_a": [bool(v) for v in list(pair.visible_a)],
+                "pair_b": [bool(v) for v in list(pair.visible_b)],
+                "axial_any": [bool(v) for v in list(axial.any_visible)],
+                "chain_all": [bool(v) for v in list(chain.all_visible)],
+                "native_optix_launches": int(native_audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["visible"], [False, True, False])
+        self.assertEqual(data["pair_a"], [False, True, False])
+        self.assertEqual(data["pair_b"], [True, True, False])
+        self.assertEqual(data["axial_any"], [True])
+        self.assertEqual(data["chain_all"], [False, True])
+        self.assertGreaterEqual(data["native_optix_launches"], 4)
+
+    def test_visible_native_backend_cold_create_no_ignore(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0], [0.0], [-1.0])
+            end = cuda.Array3f([0.0], [0.0], [1.0])
+
+            rd.native_launch_audit_clear()
+            vis = scene.visible(start, end)
+            audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": bool(vis.visible[0]),
+                "native_optix_launches": int(audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertFalse(data["visible"])
+        self.assertEqual(data["native_optix_launches"], 1)
+
+    def test_visible_ignore_uses_one_native_segment_launch(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0], [0.0], [-1.0])
+            end = cuda.Array3f([0.0], [0.0], [1.0])
+            ignore = cuda.Int([-1])
+
+            rd.native_launch_audit_clear()
+            vis = scene.visible(start, end, ignore)
+            audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": bool(vis.visible[0]),
+                "native_optix_launches": int(audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertFalse(data["visible"])
+        self.assertEqual(data["native_optix_launches"], 1)
+
+    def test_visible_pair_native_backend_cold_create_no_ignore(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            start = cuda.Array3f([0.0], [0.0], [-1.0])
+            end_a = cuda.Array3f([0.0], [0.0], [1.0])
+            end_b = cuda.Array3f([2.0], [2.0], [1.0])
+
+            rd.native_launch_audit_clear()
+            pair = scene.visible_pair(start, end_a, end_b)
+            audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "a": bool(pair.visible_a[0]),
+                "b": bool(pair.visible_b[0]),
+                "native_optix_launches": int(audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertFalse(data["a"])
+        self.assertTrue(data["b"])
+        self.assertEqual(data["native_optix_launches"], 1)
+
+    def test_visible_edge_native_backend_cold_create(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            rd.native_launch_audit_clear()
+            axial = scene.visible_edge(
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                cuda.Array3f([-2.0], [0.0], [1.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+                cuda.Float([0.0]),
+                cuda.Float([4.0]),
+                [0.0, 0.5, 1.0],
+                cuda.Bool([True]),
+            )
+            audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "any_visible": bool(axial.any_visible[0]),
+                "native_optix_launches": int(audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertTrue(data["any_visible"])
+        self.assertEqual(data["native_optix_launches"], 1)
+
+    def test_visible_chain_native_backend_cold_create_no_ignore(self):
+        data = run_json_case(
+            """
+            import os
+            os.environ["RAYD_TRACE_VISIBILITY_BACKEND"] = "native"
+
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
+            chain_length = cuda.Int([1])
+
+            rd.native_launch_audit_clear()
+            chain = scene.visible_chain(points, chain_length)
+            audit = rd.native_launch_audit()
+
+            print(json.dumps({
+                "visible": bool(chain.all_visible[0]),
+                "first_segment": int(chain.first_blocked_segment[0]),
+                "first_prim": int(chain.first_blocked_prim[0]),
+                "native_optix_launches": int(audit["unknown"]["optix_launch"]),
+            }))
+            """
+        )
+
+        self.assertFalse(data["visible"])
+        self.assertEqual(data["first_segment"], 0)
+        self.assertEqual(data["first_prim"], 0)
+        self.assertEqual(data["native_optix_launches"], 1)
+
+    def test_segment_chain_visibility_reports_first_blocker_and_uses_segment_ignores(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            points = cuda.Array3f(
+                [0.0, 0.0, 2.0, -2.0, -1.0, 0.0],
+                [0.0, 0.0, 0.0,  0.0,  0.0, 0.0],
+                [-1.0, 1.0, 1.0, 1.0,  1.0, 1.0],
+            )
+            chain_length = cuda.Int([2, 2])
+
+            blocked = scene.visible_chain(points, chain_length)
+            ignore = cuda.Int([0, -1, -1, -1])
+            ignored = scene.visible_chain(points, chain_length, ignore)
+
+            print(json.dumps({
+                "chain_count": int(blocked.chain_count),
+                "max_segments": int(blocked.max_segments),
+                "visible": [bool(v) for v in list(blocked.all_visible)],
+                "first_segment": [int(v) for v in list(blocked.first_blocked_segment)],
+                "first_prim": [int(v) for v in list(blocked.first_blocked_prim)],
+                "ignored_visible": [bool(v) for v in list(ignored.all_visible)],
+                "ignored_first_segment": [int(v) for v in list(ignored.first_blocked_segment)],
+                "ignored_first_prim": [int(v) for v in list(ignored.first_blocked_prim)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["chain_count"], 2)
+        self.assertEqual(data["max_segments"], 2)
+        self.assertEqual(data["visible"], [False, True])
+        self.assertEqual(data["first_segment"], [0, -1])
+        self.assertEqual(data["first_prim"], [0, -1])
+        self.assertEqual(data["ignored_visible"], [True, True])
+        self.assertEqual(data["ignored_first_segment"], [-1, -1])
+        self.assertEqual(data["ignored_first_prim"], [-1, -1])
+
+    def test_segment_chain_visibility_with_ignore_reports_native_blocker(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([-1.0, 1.0, 0.0], [-1.0, -1.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            points = cuda.Array3f([0.0, 0.0], [0.0, 0.0], [-1.0, 1.0])
+            chain_length = cuda.Int([1])
+            ignore = cuda.Int([-1])
+            chain = scene.visible_chain(points, chain_length, ignore)
+
+            print(json.dumps({
+                "visible": bool(chain.all_visible[0]),
+                "first_segment": int(chain.first_blocked_segment[0]),
+                "first_prim": int(chain.first_blocked_prim[0]),
+            }))
+            """
+        )
+
+        self.assertFalse(data["visible"])
+        self.assertEqual(data["first_segment"], 0)
+        self.assertEqual(data["first_prim"], 0)
+
+    def test_nearest_edges_point_k2(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as rd
+            import drjit.cuda as cuda
+
+            mesh = rd.Mesh(
+                cuda.Array3f([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
+                cuda.Array3i([0, 0], [1, 2], [2, 3]),
+            )
+            scene = rd.Scene()
+            scene.add_mesh(mesh)
+            scene.build()
+
+            query = cuda.Array3f([0.5, 0.5], [-0.2, 0.5], [0.0, 0.0])
+            active = cuda.Bool([True, False])
+            result = scene.nearest_edges(query, 2, active)
+
+            print(json.dumps({
+                "query_count": int(result.query_count),
+                "k": int(result.k),
+                "valid": [bool(v) for v in list(result.is_valid)],
+                "global_edge_ids": [int(v) for v in list(result.global_edge_ids)],
+                "distances": [float(v) for v in list(result.distances)],
+            }))
+            """
+        )
+
+        self.assertEqual(data["query_count"], 2)
+        self.assertEqual(data["k"], 2)
+        self.assertEqual(data["valid"][2:], [False, False])
+        self.assertTrue(all(edge_id >= 0 for edge_id in data["global_edge_ids"][:2]))
+        self.assertLessEqual(data["distances"][0], data["distances"][1])
+
+
+if __name__ == "__main__":
+    unittest.main()

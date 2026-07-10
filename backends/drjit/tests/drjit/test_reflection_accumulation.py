@@ -1,0 +1,550 @@
+import json
+import os
+import subprocess
+import sys
+import textwrap
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def run_script(script: str, *, check: bool = True):
+    env = os.environ.copy()
+    env["PYTHONSAFEPATH"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            "Subprocess failed.\n"
+            f"Return code: {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+    return result
+
+
+def run_json(script: str):
+    result = run_script(script)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise AssertionError(f"Subprocess produced no JSON.\nSTDERR:\n{result.stderr}")
+    return json.loads(lines[-1])
+
+
+class ReflectionAccumulationTests(unittest.TestCase):
+    def test_accumulate_reflections_writes_grid_and_wedge_events(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            faces = cuda.Array3i([0], [1], [2])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, faces))
+            scene.build()
+
+            ray = pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
+                                 cuda.Array3f([0.0], [0.0], [1.0]))
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0
+            options.cell_area = 1.0
+            options.seed = 17
+            options.rr_depth = 0
+            options.rr_prob = 1.0
+            options.stop_threshold = 0.0
+            options.collect_wedges = True
+            options.collect_wedge_prefixes = True
+            options.wedge_capacity = 4
+
+            pj.native_launch_audit_clear()
+            result = scene.accumulate_reflections(
+                ray, tx, grid, material, 1, options
+            )
+            dr.eval(result.reflection_power,
+                    result.reflection_field_x.real,
+                    result.reflection_field_x.imag,
+                    result.reflection_field_y.real,
+                    result.reflection_field_y.imag,
+                    result.reflection_field_z.real,
+                    result.reflection_field_z.imag,
+                    result.reflection_count,
+                    result.wedge_events.count,
+                    result.wedge_events.prim_id,
+                    result.wedge_events.directions.z,
+                    result.wedge_events.source_points.z,
+                    result.wedge_events.src_power,
+                    result.wedge_events.initial_directions.z,
+                    result.wedge_events.bounce_depth)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "ray_count": result.ray_count,
+                "max_bounces": result.max_bounces,
+                "grid_cell_count": result.grid_cell_count,
+                "power": float(result.reflection_power[0]),
+                "field_x_re": float(result.reflection_field_x.real[0]),
+                "field_x_im": float(result.reflection_field_x.imag[0]),
+                "field_y_re": float(result.reflection_field_y.real[0]),
+                "field_y_im": float(result.reflection_field_y.imag[0]),
+                "field_z_re": float(result.reflection_field_z.real[0]),
+                "field_z_im": float(result.reflection_field_z.imag[0]),
+                "reflection_count": int(result.reflection_count[0]),
+                "wedge_capacity": result.wedge_events.capacity,
+                "wedge_count": int(result.wedge_events.count[0]),
+                "wedge_prim0": int(result.wedge_events.prim_id[0]),
+                "wedge_depth0": int(result.wedge_events.bounce_depth[0]),
+                "wedge_dir_z0": float(result.wedge_events.directions.z[0]),
+                "wedge_source_z0": float(result.wedge_events.source_points.z[0]),
+                "wedge_src_power0": float(result.wedge_events.src_power[0]),
+                "wedge_initial_dir_z0": float(result.wedge_events.initial_directions.z[0]),
+                "trace_reflections_launches": audit["trace_reflections"]["optix_launch"],
+                "accumulate_reflections_launches": (
+                    audit["accumulate_reflections"]["optix_launch"]
+                ),
+            }))
+            """
+        )
+
+        self.assertEqual(data["ray_count"], 1)
+        self.assertEqual(data["max_bounces"], 1)
+        self.assertEqual(data["grid_cell_count"], 1)
+        self.assertGreater(data["power"], 0.0)
+        self.assertGreater(data["field_x_re"] ** 2 + data["field_x_im"] ** 2, 0.0)
+        self.assertLess(data["field_y_re"] ** 2 + data["field_y_im"] ** 2, 1e-8)
+        self.assertLess(data["field_z_re"] ** 2 + data["field_z_im"] ** 2, 1e-8)
+        self.assertEqual(data["reflection_count"], 1)
+        self.assertEqual(data["wedge_capacity"], 4)
+        self.assertEqual(data["wedge_count"], 1)
+        self.assertEqual(data["wedge_prim0"], 0)
+        self.assertEqual(data["wedge_depth0"], 0)
+        self.assertGreater(data["wedge_dir_z0"], 0.0)
+        self.assertAlmostEqual(data["wedge_source_z0"], -1.0)
+        self.assertGreater(data["wedge_src_power0"], 0.0)
+        self.assertGreater(data["wedge_initial_dir_z0"], 0.0)
+        self.assertEqual(data["trace_reflections_launches"], 0)
+        self.assertEqual(data["accumulate_reflections_launches"], 1)
+
+    def test_accumulate_reflections_large_cold_launch(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            n = 1_000_000
+            zero = dr.full(cuda.Float, 0.0, n)
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, -1.0, n)),
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, 1.0, n)),
+            )
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0 / n
+            options.cell_area = 1.0
+            options.seed = 17
+            options.rr_depth = 0
+            options.rr_prob = 1.0
+            options.stop_threshold = 0.0
+            options.collect_wedges = True
+            options.collect_wedge_prefixes = True
+            options.wedge_capacity = n
+
+            pj.native_launch_audit_clear()
+            result = scene.accumulate_reflections(
+                ray, tx, grid, material, 1, options
+            )
+            dr.eval(result.reflection_count,
+                    result.wedge_events.count,
+                    result.reflection_power)
+            audit = pj.native_launch_audit()
+
+            print(json.dumps({
+                "ray_count": result.ray_count,
+                "reflection_count": int(result.reflection_count[0]),
+                "wedge_capacity": result.wedge_events.capacity,
+                "wedge_count": int(result.wedge_events.count[0]),
+                "power": float(result.reflection_power[0]),
+                "accumulate_reflections_launches": (
+                    audit["accumulate_reflections"]["optix_launch"]
+                ),
+            }))
+            """
+        )
+
+        self.assertEqual(data["ray_count"], 1_000_000)
+        self.assertEqual(data["reflection_count"], 1_000_000)
+        self.assertEqual(data["wedge_capacity"], 1_000_000)
+        self.assertEqual(data["wedge_count"], 1_000_000)
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["accumulate_reflections_launches"], 1)
+
+    def test_accumulate_reflections_samples_prefix_wedges_with_power_scale(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            n = 8
+            zero = dr.full(cuda.Float, 0.0, n)
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.Ray(
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, -1.0, n)),
+                cuda.Array3f(zero, zero, dr.full(cuda.Float, 1.0, n)),
+            )
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0 / n
+            options.cell_area = 1.0
+            options.seed = 17
+            options.collect_wedges = True
+            options.collect_wedge_prefixes = True
+            options.wedge_capacity = 4
+            options.wedge_sample_stride = 2
+
+            result = scene.accumulate_reflections(
+                ray, tx, grid, material, 1, options
+            )
+            dr.eval(result.wedge_events.count,
+                    result.wedge_events.src_power,
+                    result.wedge_events.ray_index)
+
+            print(json.dumps({
+                "wedge_capacity": result.wedge_events.capacity,
+                "wedge_count": int(result.wedge_events.count[0]),
+                "src_power": [
+                    float(result.wedge_events.src_power[i])
+                    for i in range(result.wedge_events.capacity)
+                ],
+                "ray_index": [
+                    int(result.wedge_events.ray_index[i])
+                    for i in range(result.wedge_events.capacity)
+                ],
+            }))
+            """
+        )
+
+        self.assertEqual(data["wedge_capacity"], 4)
+        self.assertEqual(data["wedge_count"], 4)
+        self.assertTrue(all(ray >= 0 for ray in data["ray_index"]))
+        for value in data["src_power"]:
+            self.assertAlmostEqual(value, 0.25, places=6)
+
+    def test_accumulate_reflections_supports_ad_inputs(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd.drjit as pj
+
+            def run_case(z_shift, enable_grad=False):
+                vertices = ad.Array3f([-1.0, 1.0, -1.0],
+                                      [-1.0, -1.0, 1.0],
+                                      [z_shift, z_shift, z_shift])
+                if enable_grad:
+                    dr.enable_grad(vertices)
+                scene = pj.Scene()
+                scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+                scene.build()
+
+                ray = pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
+                              ad.Array3f([0.0], [0.0], [1.0]))
+
+                grid = pj.AccumGrid()
+                grid.axis = 2
+                grid.position = -2.0
+                grid.coord0_min = -1.0
+                grid.coord0_max = 1.0
+                grid.coord1_min = -1.0
+                grid.coord1_max = 1.0
+                grid.resolution0 = 1
+                grid.resolution1 = 1
+
+                material = pj.MaterialAD()
+                material.eta_r = ad.Float([4.0])
+                material.sigma = ad.Float([0.0])
+                material.gain = ad.Float([1.0])
+                material.mu_r = ad.Float([1.0])
+                material.valid = ad.Bool([True])
+
+                options = pj.AccumOptions()
+                options.wavelength = 12.566370614359172
+                options.k = 0.5
+                options.solid_angle_per_ray = 1.0
+                options.cell_area = 1.0
+
+                result = scene.accumulate_reflections(
+                    ray, ad.Array3f([0.0], [0.0], [-1.0]), grid, material, 1, options
+                )
+                loss = dr.sum(result.reflection_power)
+                if enable_grad:
+                    dr.backward(loss, flags=dr.ADFlag.Default | dr.ADFlag.AllowNoGrad)
+                    grad = dr.grad(vertices)
+                    dr.eval(result.reflection_power, result.reflection_count, grad)
+                    return {
+                        "result_type": type(result).__name__,
+                        "power": float(result.reflection_power[0]),
+                        "reflection_count": int(result.reflection_count[0]),
+                        "grad_z_sum": float(grad[2][0] + grad[2][1] + grad[2][2]),
+                    }
+                dr.eval(loss)
+                return {"loss": float(loss[0])}
+
+            step = 1.0e-3
+            ad_result = run_case(0.0, enable_grad=True)
+            fd = (run_case(step)["loss"] - run_case(-step)["loss"]) / (2.0 * step)
+
+            print(json.dumps({
+                **ad_result,
+                "fd_z_shift": fd,
+            }))
+            """
+        )
+
+        self.assertEqual(data["result_type"], "AccumResultAD")
+        self.assertGreater(data["power"], 0.0)
+        self.assertEqual(data["reflection_count"], 1)
+        self.assertAlmostEqual(data["grad_z_sum"], data["fd_z_shift"], delta=1.0e-3)
+
+    def test_accumulate_reflections_ad_matches_detached_native_primal(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+            import rayd.drjit as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.solid_angle_per_ray = 1.0
+            options.cell_area = 1.0
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            material_ad = pj.MaterialAD()
+            material_ad.eta_r = ad.Float([4.0])
+            material_ad.sigma = ad.Float([0.0])
+            material_ad.gain = ad.Float([1.0])
+            material_ad.mu_r = ad.Float([1.0])
+            material_ad.valid = ad.Bool([True])
+
+            detached = scene.accumulate_reflections(
+                pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
+                       cuda.Array3f([0.0], [0.0], [1.0])),
+                cuda.Array3f([0.0], [0.0], [-1.0]),
+                grid,
+                material,
+                1,
+                options,
+                True,
+            )
+            differentiable = scene.accumulate_reflections(
+                pj.RayAD(ad.Array3f([0.0], [0.0], [-1.0]),
+                         ad.Array3f([0.0], [0.0], [1.0])),
+                ad.Array3f([0.0], [0.0], [-1.0]),
+                grid,
+                material_ad,
+                1,
+                options,
+                True,
+            )
+            dr.eval(
+                detached.reflection_power,
+                differentiable.reflection_power,
+                detached.reflection_count,
+                differentiable.reflection_count,
+            )
+            print(json.dumps({
+                "detached_power": float(detached.reflection_power[0]),
+                "ad_power": float(differentiable.reflection_power[0]),
+                "detached_count": int(detached.reflection_count[0]),
+                "ad_count": int(differentiable.reflection_count[0]),
+            }))
+            """
+        )
+
+        self.assertEqual(data["detached_count"], 1)
+        self.assertEqual(data["ad_count"], 1)
+        self.assertAlmostEqual(data["ad_power"], data["detached_power"], delta=1.0e-6)
+
+    def test_accumulate_reflections_accepts_tx_polarization(self):
+        data = run_json(
+            """
+            import json
+            import drjit as dr
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            vertices = cuda.Array3f([-1.0, 1.0, -1.0],
+                                    [-1.0, -1.0, 1.0],
+                                    [0.0, 0.0, 0.0])
+            scene = pj.Scene()
+            scene.add_mesh(pj.Mesh(vertices, cuda.Array3i([0], [1], [2])))
+            scene.build()
+
+            ray = pj.Ray(cuda.Array3f([0.0], [0.0], [-1.0]),
+                                 cuda.Array3f([0.0], [0.0], [1.0]))
+            tx = cuda.Array3f([0.0], [0.0], [-1.0])
+            tx_pol = cuda.Array3f([0.0], [1.0], [0.0])
+
+            grid = pj.AccumGrid()
+            grid.axis = 2
+            grid.position = -2.0
+            grid.coord0_min = -1.0
+            grid.coord0_max = 1.0
+            grid.coord1_min = -1.0
+            grid.coord1_max = 1.0
+            grid.resolution0 = 1
+            grid.resolution1 = 1
+
+            material = pj.Material()
+            material.eta_r = cuda.Float([4.0])
+            material.sigma = cuda.Float([0.0])
+            material.gain = cuda.Float([1.0])
+            material.mu_r = cuda.Float([1.0])
+            material.valid = cuda.Bool([True])
+
+            options = pj.AccumOptions()
+            options.wavelength = 12.566370614359172
+            options.k = 0.5
+            options.cell_area = 1.0
+
+            result = scene.accumulate_reflections(
+                ray, tx, grid, material, 1, options, True, tx_pol
+            )
+            dr.eval(result.reflection_field_x.real,
+                    result.reflection_field_x.imag,
+                    result.reflection_field_y.real,
+                    result.reflection_field_y.imag)
+
+            print(json.dumps({
+                "x2": float(result.reflection_field_x.real[0]) ** 2
+                      + float(result.reflection_field_x.imag[0]) ** 2,
+                "y2": float(result.reflection_field_y.real[0]) ** 2
+                      + float(result.reflection_field_y.imag[0]) ** 2,
+            }))
+            """
+        )
+
+        self.assertLess(data["x2"], 1e-8)
+        self.assertGreater(data["y2"], 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
