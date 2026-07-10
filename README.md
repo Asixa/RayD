@@ -38,6 +38,13 @@ pip install rayd-torch
 All three distributions share version `0.6.0`. The `rayd` meta-distribution
 pins `rayd-drjit` and `rayd-torch` to exactly the same version.
 
+Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
+`manylinux_2_28_x86_64`. The native backend wheels are CPython-specific while
+the Torch backend still contains the transitional `_C` extension. The
+`_stable_ops` library inside `rayd-torch` is untagged and uses the LibTorch 2.10
+Stable ABI boundary. The `rayd` meta-distribution is a universal pure-Python
+wheel and is the only distribution that also publishes an sdist.
+
 > [!IMPORTANT]
 > RayD 0.6 uses explicit backend namespaces. The parent `rayd` namespace does
 > not select or re-export a default backend. Replace legacy `import rayd as rd`
@@ -336,7 +343,7 @@ the same device.
 
 ## Building from Source
 
-RayD requires Python 3.10+, CMake 3.22+, a C++17 compiler, CUDA, and the OptiX
+RayD requires Python 3.10-3.14, CMake 3.22+, a C++17 compiler, CUDA, and the OptiX
 SDK. On Windows, use Visual Studio 2022 with Desktop C++ tools.
 
 Create an environment and install common build tools:
@@ -358,7 +365,7 @@ python -m pip install --no-build-isolation -ve backends/drjit
 Build the Torch backend:
 
 ```powershell
-python -m pip install torch
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install --no-build-isolation -ve backends/torch
 ```
 

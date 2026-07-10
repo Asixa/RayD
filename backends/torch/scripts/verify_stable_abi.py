@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
+import zipfile
 
 
 FORBIDDEN_SOURCE_MARKERS = (
@@ -79,14 +81,34 @@ def verify_binary(binary: Path) -> None:
     print(f"Verified Stable ABI dependencies for {binary}")
 
 
+def verify_input(path: Path) -> None:
+    if path.suffix != ".whl":
+        verify_binary(path)
+        return
+
+    with tempfile.TemporaryDirectory(prefix="rayd_stable_abi_verify_") as temp_dir:
+        extract_root = Path(temp_dir)
+        with zipfile.ZipFile(path) as wheel:
+            members = [
+                name
+                for name in wheel.namelist()
+                if Path(name).name.startswith("_stable_ops")
+                and Path(name).suffix in {".dll", ".so", ".dylib"}
+            ]
+            if len(members) != 1:
+                raise SystemExit(f"{path} must contain exactly one Stable ABI library; found {members}")
+            wheel.extract(members[0], extract_root)
+        verify_binary(extract_root / members[0])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Audit RayD's LibTorch Stable ABI boundary")
     parser.add_argument("--source-root", type=Path, default=Path("src/stable"))
-    parser.add_argument("binary", nargs="?", type=Path)
+    parser.add_argument("binary", nargs="*", type=Path)
     args = parser.parse_args()
     verify_sources(args.source_root)
-    if args.binary is not None:
-        verify_binary(args.binary)
+    for binary in args.binary:
+        verify_input(binary)
 
 
 if __name__ == "__main__":

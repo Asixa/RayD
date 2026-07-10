@@ -42,6 +42,29 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertIn("publish-rayd:", workflow)
         self.assertIn("needs: [build-meta, publish-drjit, publish-torch]", workflow)
 
+    def test_release_builds_complete_native_wheel_matrix(self):
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        for version in ("3.10", "3.11", "3.12", "3.13", "3.14"):
+            self.assertIn(f'"{version}"', workflow)
+        for marker in (
+            "build-drjit-linux:",
+            "build-torch-linux:",
+            "build-windows-wheels:",
+            "validate-wheel-set:",
+            "manylinux_2_28_x86_64",
+            "pypa/cibuildwheel@",
+            "auditwheel repair",
+            "verify_cuda_binary_arches.py",
+            "verify_stable_abi.py",
+        ):
+            self.assertIn(marker, workflow)
+
+    def test_pypi_publish_is_release_only(self):
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        guard = "github.event_name == 'release' && github.event.action == 'published'"
+        self.assertEqual(workflow.count(guard), 3)
+        self.assertIn("id-token: write", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

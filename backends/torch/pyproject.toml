@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core"]
+requires = ["scikit-build-core>=0.10", "cmake>=3.26", "ninja", "torch==2.10.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -9,8 +9,8 @@ description = "Torch-native RayD geometry and multipath primitives."
 readme = "README.md"
 authors = [{ name = "Xingyu Chen", email = "xic063@ucsd.edu" }]
 license = "BSD-3-Clause"
-requires-python = ">=3.10"
-dependencies = ["torch"]
+requires-python = ">=3.10,<3.15"
+dependencies = ["torch>=2.10,<2.11"]
 
 [tool.scikit-build]
 wheel.packages = ["python/rayd"]
