@@ -15,6 +15,7 @@ CMakeFiles/
 *.obj
 *.so
 *.pyd
+*.pyd.old
 *.dll
 *.lib
 *.exp
