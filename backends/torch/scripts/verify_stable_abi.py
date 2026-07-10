@@ -59,7 +59,12 @@ def dependency_listing(binary: Path) -> str:
         if tool is None:
             raise SystemExit("readelf is required for Stable ABI dependency auditing")
         command = [tool, "-d", str(binary)]
-    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    output = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    if os.name != "nt":
+        # RUNPATH commonly contains the Python installation directory used by
+        # the build. Only DT_NEEDED entries are direct binary dependencies.
+        output = "\n".join(line for line in output.splitlines() if "(NEEDED)" in line)
+    return output
 
 
 def verify_binary(binary: Path) -> None:
