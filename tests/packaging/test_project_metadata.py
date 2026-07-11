@@ -39,14 +39,14 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertEqual(self.meta["tool"]["setuptools"]["packages"], [])
 
     def test_release_publishes_meta_after_backend_distributions(self):
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         self.assertIn("publish-drjit:", workflow)
         self.assertIn("publish-torch:", workflow)
         self.assertIn("publish-rayd:", workflow)
         self.assertIn("needs: [build-meta, publish-drjit, publish-torch]", workflow)
 
     def test_release_builds_complete_native_wheel_matrix(self):
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         for version in ("3.10", "3.11", "3.12", "3.13", "3.14"):
             self.assertIn(f'"{version}"', workflow)
         for marker in (
@@ -63,7 +63,7 @@ class DistributionMetadataTests(unittest.TestCase):
             self.assertIn(marker, workflow)
 
     def test_pypi_publish_is_release_only(self):
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         guard = "github.event_name == 'release' && github.event.action == 'published'"
         self.assertEqual(workflow.count(guard), 3)
         self.assertIn("id-token: write", workflow)

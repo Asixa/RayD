@@ -330,7 +330,7 @@ jobs:
     needs: validate-wheel-set
     runs-on: ubuntu-latest
     environment:
-      name: pypi-rayd-drjit
+      name: pypi
       url: https://pypi.org/p/rayd-drjit
     permissions:
       contents: read
@@ -352,7 +352,7 @@ jobs:
     needs: validate-wheel-set
     runs-on: ubuntu-latest
     environment:
-      name: pypi-rayd-torch
+      name: pypi
       url: https://pypi.org/p/rayd-torch
     permissions:
       contents: read
@@ -374,7 +374,7 @@ jobs:
     needs: [build-meta, publish-drjit, publish-torch]
     runs-on: ubuntu-latest
     environment:
-      name: pypi-rayd
+      name: pypi
       url: https://pypi.org/p/rayd
     permissions:
       contents: read

@@ -70,15 +70,14 @@ class ProjectMetadataTests(unittest.TestCase):
 
     def test_release_ci_covers_supported_python_and_cuda_architectures(self):
         workflow = (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        release = (WORKSPACE_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        release = (WORKSPACE_ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
         for job in ("drjit:", "torch:", "parity:", "packaging:", "coexistence:"):
             self.assertIn(job, workflow)
-        self.assertIn("pypi-rayd-drjit", release)
-        self.assertIn("pypi-rayd-torch", release)
+        self.assertEqual(release.count("name: pypi"), 3)
 
         self.assertEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
