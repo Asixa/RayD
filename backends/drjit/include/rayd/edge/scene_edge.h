@@ -110,7 +110,6 @@ private:
     ClosestEdgeCandidate nearest_edge_infinite_ray_detached(const Vector3f &origin,
                                                             const Vector3f &direction,
                                                             const Mask &active) const;
-    void rebuild_packed_node_layout();
     void scatter_node_bounds(const Int &node_indices,
                              const Vector3f &bbox_min,
                              const Vector3f &bbox_max);
@@ -129,7 +128,6 @@ private:
     int node_count_ = 0;
     bool ready_ = false;
     bool all_active_ = true;
-    bool packed_node_layout_enabled_ = false;
 
     Vector3f edge_p0_;
     Vector3f edge_e1_;
@@ -137,11 +135,8 @@ private:
     Vector3f primitive_bbox_max_;
     Vector3f node_bbox_min_;
     Vector3f node_bbox_max_;
-    Float packed_node_bounds_;
-
     Int left_child_;
     Int right_child_;
-    Int packed_node_children_;
     Int leaf_primitives_;
     Int primitive_leaf_node_;
     Int leaf_nodes_;

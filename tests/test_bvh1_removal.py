@@ -60,11 +60,6 @@ class BVH1RemovalTests(unittest.TestCase):
                 r".*?__threadfence\(\);"
                 r"\s*if \(atomicAdd\(merge_counters \+ current, 1\) == 0\)"
             ),
-            "finalize_raw_subtree_leaf_counts_kernel": (
-                r"atomicAdd\(subtree_leaf_count \+ current, contribution\);"
-                r".*?__threadfence\(\);"
-                r"\s*if \(atomicAdd\(arrival_counter \+ current, 1\) == 0\)"
-            ),
         }
         for kernel, pattern in kernels.items():
             with self.subTest(kernel=kernel):

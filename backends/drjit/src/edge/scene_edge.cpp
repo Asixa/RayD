@@ -343,79 +343,6 @@ struct CompactedEdgeBVH {
     std::vector<ScalarVector3f> node_bbox_max;
 };
 
-/// Compaction plan (topology + old->new node remap and leaf ranges) built before emitting bounds.
-struct CompactedEdgeBVHPlan {
-    std::vector<int> left_child;
-    std::vector<int> right_child;
-    std::vector<int> is_leaf;
-    std::vector<int> primitive_leaf_nodes;
-    std::vector<int> leaf_primitives;
-    std::vector<int> new_to_old;
-    std::vector<int> leaf_begin;
-    std::vector<int> leaf_count;
-};
-
-int emit_compacted_bvh_plan_preorder(int old_node_index,
-                                     const std::vector<int> &left_child,
-                                     const std::vector<int> &right_child,
-                                     const std::vector<int> &leaf_primitive,
-                                     const std::vector<int> &is_leaf,
-                                     const std::vector<int> &subtree_leaf_counts,
-                                     CompactedEdgeBVHPlan &plan) {
-    const int new_node_index = static_cast<int>(plan.is_leaf.size());
-    plan.left_child.push_back(-1);
-    plan.right_child.push_back(-1);
-    plan.is_leaf.push_back(0);
-    plan.new_to_old.push_back(old_node_index);
-    plan.leaf_begin.push_back(-1);
-    plan.leaf_count.push_back(0);
-
-    const bool collapse_to_leaf =
-        is_leaf[static_cast<size_t>(old_node_index)] > 0 ||
-        subtree_leaf_counts[static_cast<size_t>(old_node_index)] <= EdgeBVHLeafSize;
-    if (collapse_to_leaf) {
-        plan.is_leaf[static_cast<size_t>(new_node_index)] = 1;
-
-        std::vector<int> primitives;
-        primitives.reserve(static_cast<size_t>(subtree_leaf_counts[static_cast<size_t>(old_node_index)]));
-        collect_subtree_primitives(old_node_index,
-                                   left_child,
-                                   right_child,
-                                   leaf_primitive,
-                                   is_leaf,
-                                   primitives);
-
-        const int leaf_begin = static_cast<int>(plan.leaf_primitives.size());
-        plan.leaf_begin[static_cast<size_t>(new_node_index)] = leaf_begin;
-        plan.leaf_count[static_cast<size_t>(new_node_index)] = static_cast<int>(primitives.size());
-        plan.left_child[static_cast<size_t>(new_node_index)] = -leaf_begin - 1;
-        plan.right_child[static_cast<size_t>(new_node_index)] = static_cast<int>(primitives.size());
-        for (int primitive : primitives) {
-            plan.primitive_leaf_nodes[static_cast<size_t>(primitive)] = new_node_index;
-            plan.leaf_primitives.push_back(primitive);
-        }
-        return new_node_index;
-    }
-
-    const int new_left_child = emit_compacted_bvh_plan_preorder(left_child[static_cast<size_t>(old_node_index)],
-                                                                left_child,
-                                                                right_child,
-                                                                leaf_primitive,
-                                                                is_leaf,
-                                                                subtree_leaf_counts,
-                                                                plan);
-    const int new_right_child = emit_compacted_bvh_plan_preorder(right_child[static_cast<size_t>(old_node_index)],
-                                                                 left_child,
-                                                                 right_child,
-                                                                 leaf_primitive,
-                                                                 is_leaf,
-                                                                 subtree_leaf_counts,
-                                                                 plan);
-    plan.left_child[static_cast<size_t>(new_node_index)] = new_left_child;
-    plan.right_child[static_cast<size_t>(new_node_index)] = new_right_child;
-    return new_node_index;
-}
-
 int emit_compacted_bvh_preorder(int old_node_index,
                                 const std::vector<int> &left_child,
                                 const std::vector<int> &right_child,
@@ -477,83 +404,6 @@ int emit_compacted_bvh_preorder(int old_node_index,
                                                             compacted);
     compacted.left_child[static_cast<size_t>(new_node_index)] = new_left_child;
     compacted.right_child[static_cast<size_t>(new_node_index)] = new_right_child;
-    return new_node_index;
-}
-
-int emit_compacted_bvh_preorder_exact(int old_node_index,
-                                      const std::vector<int> &left_child,
-                                      const std::vector<int> &right_child,
-                                      const std::vector<int> &leaf_primitive,
-                                      const std::vector<int> &is_leaf,
-                                      const std::vector<int> &subtree_leaf_counts,
-                                      const std::vector<ScalarVector3f> &primitive_bbox_min,
-                                      const std::vector<ScalarVector3f> &primitive_bbox_max,
-                                      CompactedEdgeBVH &compacted) {
-    const int new_node_index = static_cast<int>(compacted.is_leaf.size());
-    compacted.left_child.push_back(-1);
-    compacted.right_child.push_back(-1);
-    compacted.is_leaf.push_back(0);
-    compacted.node_bbox_min.push_back(empty_bbox_min());
-    compacted.node_bbox_max.push_back(empty_bbox_max());
-
-    const bool collapse_to_leaf =
-        is_leaf[static_cast<size_t>(old_node_index)] > 0 ||
-        subtree_leaf_counts[static_cast<size_t>(old_node_index)] <= EdgeBVHLeafSize;
-    if (collapse_to_leaf) {
-        compacted.is_leaf[static_cast<size_t>(new_node_index)] = 1;
-
-        std::vector<int> primitives;
-        primitives.reserve(static_cast<size_t>(subtree_leaf_counts[static_cast<size_t>(old_node_index)]));
-        collect_subtree_primitives(old_node_index,
-                                   left_child,
-                                   right_child,
-                                   leaf_primitive,
-                                   is_leaf,
-                                   primitives);
-
-        const int leaf_begin = static_cast<int>(compacted.leaf_primitives.size());
-        compacted.left_child[static_cast<size_t>(new_node_index)] = -leaf_begin - 1;
-        compacted.right_child[static_cast<size_t>(new_node_index)] = static_cast<int>(primitives.size());
-
-        ScalarVector3f bbox_min = empty_bbox_min();
-        ScalarVector3f bbox_max = empty_bbox_max();
-        for (int primitive : primitives) {
-            bbox_min = scalar_min(bbox_min, primitive_bbox_min[static_cast<size_t>(primitive)]);
-            bbox_max = scalar_max(bbox_max, primitive_bbox_max[static_cast<size_t>(primitive)]);
-            compacted.primitive_leaf_nodes[static_cast<size_t>(primitive)] = new_node_index;
-            compacted.leaf_primitives.push_back(primitive);
-        }
-        compacted.node_bbox_min[static_cast<size_t>(new_node_index)] = bbox_min;
-        compacted.node_bbox_max[static_cast<size_t>(new_node_index)] = bbox_max;
-        return new_node_index;
-    }
-
-    const int new_left_child = emit_compacted_bvh_preorder_exact(left_child[static_cast<size_t>(old_node_index)],
-                                                                 left_child,
-                                                                 right_child,
-                                                                 leaf_primitive,
-                                                                 is_leaf,
-                                                                 subtree_leaf_counts,
-                                                                 primitive_bbox_min,
-                                                                 primitive_bbox_max,
-                                                                 compacted);
-    const int new_right_child = emit_compacted_bvh_preorder_exact(right_child[static_cast<size_t>(old_node_index)],
-                                                                  left_child,
-                                                                  right_child,
-                                                                  leaf_primitive,
-                                                                  is_leaf,
-                                                                  subtree_leaf_counts,
-                                                                  primitive_bbox_min,
-                                                                  primitive_bbox_max,
-                                                                  compacted);
-    compacted.left_child[static_cast<size_t>(new_node_index)] = new_left_child;
-    compacted.right_child[static_cast<size_t>(new_node_index)] = new_right_child;
-    compacted.node_bbox_min[static_cast<size_t>(new_node_index)] =
-        scalar_min(compacted.node_bbox_min[static_cast<size_t>(new_left_child)],
-                   compacted.node_bbox_min[static_cast<size_t>(new_right_child)]);
-    compacted.node_bbox_max[static_cast<size_t>(new_node_index)] =
-        scalar_max(compacted.node_bbox_max[static_cast<size_t>(new_left_child)],
-                   compacted.node_bbox_max[static_cast<size_t>(new_right_child)]);
     return new_node_index;
 }
 
@@ -1052,115 +902,22 @@ DRJIT_INLINE Int node_leaf_begin(const Int &encoded_left_child) {
     return -encoded_left_child - full<Int>(1, slices(encoded_left_child));
 }
 
-DRJIT_INLINE Int packed_node_float_index(const Int &node_indices, int component) {
-    const int count = static_cast<int>(slices(node_indices));
-    return node_indices * full<Int>(EdgeBVHPackedBoundsStride, count) +
-           full<Int>(component, count);
-}
-
-DRJIT_INLINE Int packed_node_int_index(const Int &node_indices, int component) {
-    const int count = static_cast<int>(slices(node_indices));
-    return node_indices * full<Int>(EdgeBVHPackedChildrenStride, count) +
-           full<Int>(component, count);
-}
-
-Vector3f gather_packed_node_bbox_min(const Float &packed_node_bounds,
-                                             const Int &node_indices,
-                                             const Mask &active) {
-    return Vector3f(gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 0),
-                                active),
-                            gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 1),
-                                active),
-                            gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 2),
-                                active));
-}
-
-Vector3f gather_packed_node_bbox_max(const Float &packed_node_bounds,
-                                             const Int &node_indices,
-                                             const Mask &active) {
-    return Vector3f(gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 3),
-                                active),
-                            gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 4),
-                                active),
-                            gather<Float>(
-                                packed_node_bounds,
-                                packed_node_float_index(node_indices, 5),
-                                active));
-}
-
-void scatter_packed_node_bounds(Float &packed_node_bounds,
-                                const Int &node_indices,
-                                const Vector3f &bbox_min,
-                                const Vector3f &bbox_max) {
-    scatter(packed_node_bounds, bbox_min.x(), packed_node_float_index(node_indices, 0));
-    scatter(packed_node_bounds, bbox_min.y(), packed_node_float_index(node_indices, 1));
-    scatter(packed_node_bounds, bbox_min.z(), packed_node_float_index(node_indices, 2));
-    scatter(packed_node_bounds, bbox_max.x(), packed_node_float_index(node_indices, 3));
-    scatter(packed_node_bounds, bbox_max.y(), packed_node_float_index(node_indices, 4));
-    scatter(packed_node_bounds, bbox_max.z(), packed_node_float_index(node_indices, 5));
-}
-
-void scatter_packed_node_children(Int &packed_node_children,
-                                  const Int &node_indices,
-                                  const Int &left_child,
-                                  const Int &right_child) {
-    scatter(packed_node_children, left_child, packed_node_int_index(node_indices, 0));
-    scatter(packed_node_children, right_child, packed_node_int_index(node_indices, 1));
-}
-
 } // namespace
-
-void SceneEdge::rebuild_packed_node_layout() {
-    if (!packed_node_layout_enabled_ || node_count_ <= 0) {
-        packed_node_bounds_ = Float();
-        packed_node_children_ = Int();
-        return;
-    }
-
-    packed_node_bounds_ =
-        full<Float>(0.f, node_count_ * EdgeBVHPackedBoundsStride);
-    packed_node_children_ =
-        full<Int>(-1, node_count_ * EdgeBVHPackedChildrenStride);
-    const Int node_indices = arange<Int>(node_count_);
-    scatter_packed_node_bounds(packed_node_bounds_, node_indices, node_bbox_min_, node_bbox_max_);
-    scatter_packed_node_children(packed_node_children_, node_indices, left_child_, right_child_);
-}
 
 void SceneEdge::scatter_node_bounds(const Int &node_indices,
                                     const Vector3f &bbox_min,
                                     const Vector3f &bbox_max) {
     scatter(node_bbox_min_, bbox_min, node_indices);
     scatter(node_bbox_max_, bbox_max, node_indices);
-    if (packed_node_layout_enabled_) {
-        scatter_packed_node_bounds(packed_node_bounds_, node_indices, bbox_min, bbox_max);
-    }
 }
 
 Int SceneEdge::gather_node_left_child(const Int &node_indices,
-                                              const Mask &active) const {
-    if (packed_node_layout_enabled_) {
-        return gather<Int>(
-            packed_node_children_, packed_node_int_index(node_indices, 0), active);
-    }
+                                               const Mask &active) const {
     return gather<Int>(left_child_, node_indices, active);
 }
 
 Int SceneEdge::gather_node_right_child(const Int &node_indices,
-                                               const Mask &active) const {
-    if (packed_node_layout_enabled_) {
-        return gather<Int>(
-            packed_node_children_, packed_node_int_index(node_indices, 1), active);
-    }
+                                                const Mask &active) const {
     return gather<Int>(right_child_, node_indices, active);
 }
 
@@ -1170,18 +927,12 @@ Int SceneEdge::gather_node_active_count(const Int &node_indices,
 }
 
 Vector3f SceneEdge::gather_node_bbox_min(const Int &node_indices,
-                                                 const Mask &active) const {
-    if (packed_node_layout_enabled_) {
-        return gather_packed_node_bbox_min(packed_node_bounds_, node_indices, active);
-    }
+                                                  const Mask &active) const {
     return gather<Vector3f>(node_bbox_min_, node_indices, active);
 }
 
 Vector3f SceneEdge::gather_node_bbox_max(const Int &node_indices,
-                                                 const Mask &active) const {
-    if (packed_node_layout_enabled_) {
-        return gather_packed_node_bbox_max(packed_node_bounds_, node_indices, active);
-    }
+                                                  const Mask &active) const {
     return gather<Vector3f>(node_bbox_max_, node_indices, active);
 }
 
@@ -1224,7 +975,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     refit_levels_.clear();
     active_primitive_count_ = 0;
     full_refit_node_count_ = 0;
-    packed_node_layout_enabled_ = false;
 
     if (primitive_count_ == 0) {
         edge_p0_ = Vector3f();
@@ -1233,10 +983,8 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
         primitive_bbox_max_ = Vector3f();
         node_bbox_min_ = Vector3f();
         node_bbox_max_ = Vector3f();
-        packed_node_bounds_ = Float();
         left_child_ = Int();
         right_child_ = Int();
-        packed_node_children_ = Int();
         leaf_primitives_ = Int();
         primitive_leaf_node_ = Int();
         leaf_nodes_ = Int();
@@ -1250,16 +998,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
         ready_ = true;
         return;
     }
-
-    const EdgeBVHNodeLayoutMode node_layout_mode = active_edge_bvh_node_layout_mode();
-    const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
-    const EdgeBVHCompactionMode compaction_mode = active_edge_bvh_compaction_mode();
-    const bool use_gpu_compaction =
-        compaction_mode == EdgeBVHCompactionMode::GpuEmit;
-    const bool use_exact_host_compaction =
-        !use_gpu_compaction &&
-        compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
-    packed_node_layout_enabled_ = node_layout_mode == EdgeBVHNodeLayoutMode::Packed;
 
     edge_p0_ = detach<false>(edge_info.start);
     edge_e1_ = detach<false>(edge_info.edge);
@@ -1292,8 +1030,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     std::vector<int> optimized_right_child;
     std::vector<int> optimized_is_leaf;
     std::vector<int> optimized_leaf_primitive;
-    std::vector<ScalarVector3f> primitive_bbox_min_host;
-    std::vector<ScalarVector3f> primitive_bbox_max_host;
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
 
@@ -1331,130 +1067,43 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     optimized_right_child = right_child;
     optimized_is_leaf = is_leaf;
     optimized_leaf_primitive = leaf_primitive;
-    const bool needs_host_primitive_bbox = use_exact_host_compaction;
-    const bool needs_host_bbox = !use_gpu_compaction && !use_exact_host_compaction;
-    if (needs_host_primitive_bbox && primitive_bbox_min_host.empty()) {
-        primitive_bbox_min_host = copy_vector3_to_host(primitive_bbox_min_);
-        primitive_bbox_max_host = copy_vector3_to_host(primitive_bbox_max_);
-    }
-    if (needs_host_bbox && node_bbox_min.empty()) {
+    if (node_bbox_min.empty()) {
         node_bbox_min = copy_vector3_to_host(node_bbox_min_);
         node_bbox_max = copy_vector3_to_host(node_bbox_max_);
     }
-
-    const Vector3f raw_node_bbox_min = node_bbox_min_;
-    const Vector3f raw_node_bbox_max = node_bbox_max_;
-    const Int raw_left_child = left_child_;
-    const Int raw_right_child = right_child_;
 
     std::vector<int> final_left_child;
     std::vector<int> final_right_child;
     std::vector<int> final_is_leaf;
 
-    if (use_gpu_compaction) {
-        std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
-        compute_subtree_leaf_count(
-            0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
-        CompactedEdgeBVHPlan plan;
-        plan.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
-        emit_compacted_bvh_plan_preorder(0,
-                                         optimized_left_child,
-                                         optimized_right_child,
-                                         optimized_leaf_primitive,
-                                         optimized_is_leaf,
-                                         final_subtree_leaf_counts,
-                                         plan);
+    std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
+    compute_subtree_leaf_count(
+        0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
+    CompactedEdgeBVH compacted;
+    compacted.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
+    emit_compacted_bvh_preorder(0,
+                                optimized_left_child,
+                                optimized_right_child,
+                                optimized_leaf_primitive,
+                                optimized_is_leaf,
+                                final_subtree_leaf_counts,
+                                node_bbox_min,
+                                node_bbox_max,
+                                compacted);
 
-        require(plan.leaf_primitives.size() == static_cast<size_t>(primitive_count_),
-                "SceneEdge::build(): compacted BVH lost edge primitives.");
+    require(compacted.leaf_primitives.size() == static_cast<size_t>(primitive_count_),
+            "SceneEdge::build(): compacted BVH lost edge primitives.");
 
-        node_count_ = static_cast<int>(plan.left_child.size());
-        node_bbox_min_ = zero_vector3(node_count_);
-        node_bbox_max_ = zero_vector3(node_count_);
-        left_child_ = full<Int>(-1, node_count_);
-        right_child_ = full<Int>(-1, node_count_);
-        leaf_primitives_ = full<Int>(-1, primitive_count_);
-        primitive_leaf_node_ = full<Int>(-1, primitive_count_);
-
-        compact_edge_bvh_gpu(
-            primitive_count_,
-            build_node_count,
-            raw_left_child.data(),
-            raw_right_child.data(),
-            build_leaf_primitive.data(),
-            raw_node_bbox_min[0].data(),
-            raw_node_bbox_min[1].data(),
-            raw_node_bbox_min[2].data(),
-            raw_node_bbox_max[0].data(),
-            raw_node_bbox_max[1].data(),
-            raw_node_bbox_max[2].data(),
-            node_count_,
-            plan.left_child.data(),
-            plan.right_child.data(),
-            plan.new_to_old.data(),
-            plan.leaf_begin.data(),
-            plan.leaf_count.data(),
-            node_bbox_min_[0].data(),
-            node_bbox_min_[1].data(),
-            node_bbox_min_[2].data(),
-            node_bbox_max_[0].data(),
-            node_bbox_max_[1].data(),
-            node_bbox_max_[2].data(),
-            left_child_.data(),
-            right_child_.data(),
-            leaf_primitives_.data(),
-            primitive_leaf_node_.data());
-
-        left_child_ = load_ints(plan.left_child);
-        right_child_ = load_ints(plan.right_child);
-        leaf_primitives_ = load_ints(plan.leaf_primitives);
-        primitive_leaf_node_ = load_ints(plan.primitive_leaf_nodes);
-
-        final_left_child = plan.left_child;
-        final_right_child = plan.right_child;
-        final_is_leaf = plan.is_leaf;
-    } else {
-        std::vector<int> final_subtree_leaf_counts(static_cast<size_t>(build_node_count), -1);
-        compute_subtree_leaf_count(
-            0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
-        CompactedEdgeBVH compacted;
-        compacted.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
-        if (use_exact_host_compaction) {
-            emit_compacted_bvh_preorder_exact(0,
-                                              optimized_left_child,
-                                              optimized_right_child,
-                                              optimized_leaf_primitive,
-                                              optimized_is_leaf,
-                                              final_subtree_leaf_counts,
-                                              primitive_bbox_min_host,
-                                              primitive_bbox_max_host,
-                                              compacted);
-        } else {
-            emit_compacted_bvh_preorder(0,
-                                        optimized_left_child,
-                                        optimized_right_child,
-                                        optimized_leaf_primitive,
-                                        optimized_is_leaf,
-                                        final_subtree_leaf_counts,
-                                        node_bbox_min,
-                                        node_bbox_max,
-                                        compacted);
-        }
-
-        require(compacted.leaf_primitives.size() == static_cast<size_t>(primitive_count_),
-                "SceneEdge::build(): compacted BVH lost edge primitives.");
-
-        node_count_ = static_cast<int>(compacted.left_child.size());
-        node_bbox_min_ = load_vector3(compacted.node_bbox_min);
-        node_bbox_max_ = load_vector3(compacted.node_bbox_max);
-        left_child_ = load_ints(compacted.left_child);
-        right_child_ = load_ints(compacted.right_child);
-        leaf_primitives_ = load_ints(compacted.leaf_primitives);
-        primitive_leaf_node_ = load_ints(compacted.primitive_leaf_nodes);
-        final_left_child = compacted.left_child;
-        final_right_child = compacted.right_child;
-        final_is_leaf = compacted.is_leaf;
-    }
+    node_count_ = static_cast<int>(compacted.left_child.size());
+    node_bbox_min_ = load_vector3(compacted.node_bbox_min);
+    node_bbox_max_ = load_vector3(compacted.node_bbox_max);
+    left_child_ = load_ints(compacted.left_child);
+    right_child_ = load_ints(compacted.right_child);
+    leaf_primitives_ = load_ints(compacted.leaf_primitives);
+    primitive_leaf_node_ = load_ints(compacted.primitive_leaf_nodes);
+    final_left_child = compacted.left_child;
+    final_right_child = compacted.right_child;
+    final_is_leaf = compacted.is_leaf;
 
     std::vector<int> heights(static_cast<size_t>(node_count_), -1);
     const int max_height = compute_node_height(
@@ -1520,7 +1169,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     dirty_level_nodes_ = full<Int>(-1, node_count_);
     dirty_level_count_ = zeros<Int>(1);
 
-    rebuild_packed_node_layout();
     ready_ = true;
 }
 
@@ -1587,10 +1235,8 @@ void SceneEdge::materialize() const {
                 primitive_bbox_max_,
                 node_bbox_min_,
                 node_bbox_max_,
-                packed_node_bounds_,
                 left_child_,
                 right_child_,
-                packed_node_children_,
                 leaf_primitives_,
                 primitive_leaf_node_,
                 leaf_nodes_,
@@ -1811,8 +1457,7 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_ch
             node_bbox_min_.z().data(),
             node_bbox_max_.x().data(),
             node_bbox_max_.y().data(),
-            node_bbox_max_.z().data(),
-            packed_node_layout_enabled_ ? packed_node_bounds_.data() : nullptr);
+            node_bbox_max_.z().data());
     }
 }
 

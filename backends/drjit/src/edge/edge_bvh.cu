@@ -823,71 +823,6 @@ __global__ void build_radix_tree_kernel(
     parent[right_index] = node_index;
 }
 
-/// One sorted leaf per thread; writes leaf bounds, the leaf primitive, and the primitive->leaf map.
-__global__ void finalize_leaf_nodes_kernel(
-    int primitive_count,
-    const int *sorted_primitives,
-    const float *primitive_bbox_min_x,
-    const float *primitive_bbox_min_y,
-    const float *primitive_bbox_min_z,
-    const float *primitive_bbox_max_x,
-    const float *primitive_bbox_max_y,
-    const float *primitive_bbox_max_z,
-    float *node_bbox_min_x,
-    float *node_bbox_min_y,
-    float *node_bbox_min_z,
-    float *node_bbox_max_x,
-    float *node_bbox_max_y,
-    float *node_bbox_max_z,
-    int *leaf_primitive,
-    int *is_leaf,
-    int *primitive_leaf_node) {
-    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (leaf_index >= primitive_count) {
-        return;
-    }
-
-    const int primitive = sorted_primitives[leaf_index];
-    const int node_index = primitive_count - 1 + leaf_index;
-
-    node_bbox_min_x[node_index] = primitive_bbox_min_x[primitive];
-    node_bbox_min_y[node_index] = primitive_bbox_min_y[primitive];
-    node_bbox_min_z[node_index] = primitive_bbox_min_z[primitive];
-    node_bbox_max_x[node_index] = primitive_bbox_max_x[primitive];
-    node_bbox_max_y[node_index] = primitive_bbox_max_y[primitive];
-    node_bbox_max_z[node_index] = primitive_bbox_max_z[primitive];
-    leaf_primitive[node_index] = primitive;
-    is_leaf[node_index] = 1;
-    primitive_leaf_node[primitive] = node_index;
-}
-
-/// One node per thread; sets each internal node's bounds to the union of its children's.
-__global__ void merge_internal_bounds_kernel(int node_count,
-                                             const int *node_indices,
-                                             const int *left_child,
-                                             const int *right_child,
-                                             float *node_bbox_min_x,
-                                             float *node_bbox_min_y,
-                                             float *node_bbox_min_z,
-                                             float *node_bbox_max_x,
-                                             float *node_bbox_max_y,
-                                             float *node_bbox_max_z) {
-    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (item_index >= node_count) {
-        return;
-    }
-
-    const int node_index = node_indices[item_index];
-    const int left = left_child[node_index];
-    const int right = right_child[node_index];
-    node_bbox_min_x[node_index] = fminf(node_bbox_min_x[left], node_bbox_min_x[right]);
-    node_bbox_min_y[node_index] = fminf(node_bbox_min_y[left], node_bbox_min_y[right]);
-    node_bbox_min_z[node_index] = fminf(node_bbox_min_z[left], node_bbox_min_z[right]);
-    node_bbox_max_x[node_index] = fmaxf(node_bbox_max_x[left], node_bbox_max_x[right]);
-    node_bbox_max_y[node_index] = fmaxf(node_bbox_max_y[left], node_bbox_max_y[right]);
-    node_bbox_max_z[node_index] = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
-}
-
 /// One sorted leaf per thread; writes its leaf, then walks to the root merging bounds
 /// (the last child to arrive at each node continues upward).
 __global__ void finalize_leaves_and_bounds_kernel(
@@ -998,7 +933,7 @@ __global__ void compact_dirty_level_kernel(int level_count,
     selected_nodes[output_index] = node_index;
 }
 
-/// One selected node per thread; refits its bounds from children and writes the packed node bounds.
+/// One selected node per thread; refits its bounds from children.
 __global__ void refit_selected_internal_nodes_kernel(
     int max_selected_count,
     const int *selected_count,
@@ -1010,8 +945,7 @@ __global__ void refit_selected_internal_nodes_kernel(
     float *node_bbox_min_z,
     float *node_bbox_max_x,
     float *node_bbox_max_y,
-    float *node_bbox_max_z,
-    float *packed_node_bounds) {
+    float *node_bbox_max_z) {
     const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     const int selected = *selected_count;
     if (item_index >= max_selected_count || item_index >= selected) {
@@ -1033,16 +967,6 @@ __global__ void refit_selected_internal_nodes_kernel(
     node_bbox_max_x[node_index] = bbox_max_x;
     node_bbox_max_y[node_index] = bbox_max_y;
     node_bbox_max_z[node_index] = bbox_max_z;
-
-    if (packed_node_bounds != nullptr) {
-        const int packed_base = node_index * 6;
-        packed_node_bounds[packed_base + 0] = bbox_min_x;
-        packed_node_bounds[packed_base + 1] = bbox_min_y;
-        packed_node_bounds[packed_base + 2] = bbox_min_z;
-        packed_node_bounds[packed_base + 3] = bbox_max_x;
-        packed_node_bounds[packed_base + 4] = bbox_max_y;
-        packed_node_bounds[packed_base + 5] = bbox_max_z;
-    }
 }
 
 void check_cuda_call(cudaError_t error, const char *message) {
@@ -1301,9 +1225,6 @@ void build_edge_bvh_gpu(
         const int internal_blocks = (internal_count + block_size - 1) / block_size;
         const EdgeBVHBuildStreamMode build_stream_mode = active_edge_bvh_build_stream_mode();
         const EdgeBVHPostBuildStrategy post_build_strategy = active_edge_bvh_post_build_strategy();
-        const EdgeBVHFinalizeMode finalize_mode = active_edge_bvh_finalize_mode();
-        const EdgeBVHTreeletScheduleMode treelet_schedule_mode =
-            active_edge_bvh_treelet_schedule_mode();
         const bool overlap_build_streams =
             build_stream_mode == EdgeBVHBuildStreamMode::Overlap;
         const bool treelet_enabled =
@@ -1332,7 +1253,6 @@ void build_edge_bvh_gpu(
         std::vector<int> subtree_leaf_counts;
         std::vector<int> node_heights;
         std::vector<std::vector<int>> host_level_groups;
-        FlatNodeLevels internal_level_schedule;
         int max_height = 0;
 
         compute_primitive_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
@@ -1487,13 +1407,11 @@ void build_edge_bvh_gpu(
                          static_cast<size_t>(node_count),
                          bounds_stream,
                          "build_edge_lbvh_gpu(): failed to init parent");
-        if (finalize_mode == EdgeBVHFinalizeMode::Atomic) {
-            memset_int_async(merge_counters.get(),
-                             0,
-                             static_cast<size_t>(std::max(internal_count, 1)),
-                             bounds_stream,
-                             "build_edge_lbvh_gpu(): failed to init merge counters");
-        }
+        memset_int_async(merge_counters.get(),
+                         0,
+                         static_cast<size_t>(std::max(internal_count, 1)),
+                         bounds_stream,
+                         "build_edge_lbvh_gpu(): failed to init merge counters");
 
         if (internal_count > 0) {
             build_radix_tree_kernel<<<internal_blocks, block_size, 0, bounds_stream>>>(
@@ -1510,9 +1428,7 @@ void build_edge_bvh_gpu(
             check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch radix-tree kernel");
         }
 
-        if (internal_count > 0 &&
-            (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel ||
-             treelet_enabled)) {
+        if (internal_count > 0 && treelet_enabled) {
             audit_cuda_stream_synchronize();
             check_cuda_call(cudaStreamSynchronize(bounds_stream),
                             "build_edge_lbvh_gpu(): failed to prepare host topology");
@@ -1538,134 +1454,43 @@ void build_edge_bvh_gpu(
             }
             require_local(static_cast<int>(scheduled_internal_count) == internal_count,
                           "build_edge_lbvh_gpu(): failed to levelize every internal node.");
-            if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel) {
-                internal_level_schedule = flatten_node_levels(host_level_groups);
-            }
-            if (treelet_enabled) {
-                subtree_leaf_counts.assign(static_cast<size_t>(node_count), 1);
-                for (int height = 1; height <= max_height; ++height) {
-                    for (int node_index : host_level_groups[static_cast<size_t>(height)]) {
-                        subtree_leaf_counts[static_cast<size_t>(node_index)] =
-                            subtree_leaf_counts[static_cast<size_t>(host_left_child[static_cast<size_t>(node_index)])] +
-                            subtree_leaf_counts[static_cast<size_t>(host_right_child[static_cast<size_t>(node_index)])];
-                    }
+            subtree_leaf_counts.assign(static_cast<size_t>(node_count), 1);
+            for (int height = 1; height <= max_height; ++height) {
+                for (int node_index : host_level_groups[static_cast<size_t>(height)]) {
+                    subtree_leaf_counts[static_cast<size_t>(node_index)] =
+                        subtree_leaf_counts[static_cast<size_t>(host_left_child[static_cast<size_t>(node_index)])] +
+                        subtree_leaf_counts[static_cast<size_t>(host_right_child[static_cast<size_t>(node_index)])];
                 }
             }
         }
 
-        if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel && internal_count > 0) {
-            finalize_leaf_nodes_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-                primitive_count,
-                primitive_indices_out.get(),
-                primitive_bbox_min_x,
-                primitive_bbox_min_y,
-                primitive_bbox_min_z,
-                primitive_bbox_max_x,
-                primitive_bbox_max_y,
-                primitive_bbox_max_z,
-                node_bbox_min_x,
-                node_bbox_min_y,
-                node_bbox_min_z,
-                node_bbox_max_x,
-                node_bbox_max_y,
-                node_bbox_max_z,
-                leaf_primitive,
-                is_leaf,
-                primitive_leaf_node);
-            audit_cuda_kernel_launch("finalize_leaf_nodes_kernel",
-                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
-                                     block_size, 1, 1,
-                                     static_cast<uint64_t>(primitive_count));
-            check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-finalization kernel");
-            CudaBuffer<int> internal_nodes_device(internal_level_schedule.nodes.size());
-            if (!internal_level_schedule.nodes.empty()) {
-                audit_cuda_memcpy();
-                check_cuda_call(cudaMemcpy(internal_nodes_device.get(),
-                                           internal_level_schedule.nodes.data(),
-                                           internal_level_schedule.nodes.size() * sizeof(int),
-                                           cudaMemcpyHostToDevice),
-                                "build_edge_lbvh_gpu(): failed to upload internal-node levels");
-            }
-            for (int height = 1; height <= max_height; ++height) {
-                const int level_start =
-                    internal_level_schedule.level_offsets[static_cast<size_t>(height)];
-                const int level_end =
-                    internal_level_schedule.level_offsets[static_cast<size_t>(height + 1)];
-                const int level_count = level_end - level_start;
-                if (level_count == 0) {
-                    continue;
-                }
-                const int level_blocks = (level_count + block_size - 1) / block_size;
-                merge_internal_bounds_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                    level_count,
-                    internal_nodes_device.get() + level_start,
-                    left_child,
-                    right_child,
-                    node_bbox_min_x,
-                    node_bbox_min_y,
-                    node_bbox_min_z,
-                    node_bbox_max_x,
-                    node_bbox_max_y,
-                    node_bbox_max_z);
-                audit_cuda_kernel_launch("merge_internal_bounds_kernel",
-                                         static_cast<uint32_t>(level_blocks), 1, 1,
-                                         block_size, 1, 1,
-                                         static_cast<uint64_t>(level_count));
-                check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch internal-node merge");
-            }
-        } else if (finalize_mode == EdgeBVHFinalizeMode::LevelByLevel) {
-            finalize_leaf_nodes_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-                primitive_count,
-                primitive_indices_out.get(),
-                primitive_bbox_min_x,
-                primitive_bbox_min_y,
-                primitive_bbox_min_z,
-                primitive_bbox_max_x,
-                primitive_bbox_max_y,
-                primitive_bbox_max_z,
-                node_bbox_min_x,
-                node_bbox_min_y,
-                node_bbox_min_z,
-                node_bbox_max_x,
-                node_bbox_max_y,
-                node_bbox_max_z,
-                leaf_primitive,
-                is_leaf,
-                primitive_leaf_node);
-            audit_cuda_kernel_launch("finalize_leaf_nodes_kernel",
-                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
-                                     block_size, 1, 1,
-                                     static_cast<uint64_t>(primitive_count));
-            check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch leaf-finalization kernel");
-        } else if (finalize_mode == EdgeBVHFinalizeMode::Atomic) {
-            finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-                primitive_count,
-                primitive_indices_out.get(),
-                parent.get(),
-                primitive_bbox_min_x,
-                primitive_bbox_min_y,
-                primitive_bbox_min_z,
-                primitive_bbox_max_x,
-                primitive_bbox_max_y,
-                primitive_bbox_max_z,
-                left_child,
-                right_child,
-                node_bbox_min_x,
-                node_bbox_min_y,
-                node_bbox_min_z,
-                node_bbox_max_x,
-                node_bbox_max_y,
-                node_bbox_max_z,
-                leaf_primitive,
-                is_leaf,
-                primitive_leaf_node,
-                merge_counters.get());
-            audit_cuda_kernel_launch("finalize_leaves_and_bounds_kernel",
-                                     static_cast<uint32_t>(primitive_blocks), 1, 1,
-                                     block_size, 1, 1,
-                                     static_cast<uint64_t>(primitive_count));
-            check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch bounds-finalization kernel");
-        }
+        finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
+            primitive_count,
+            primitive_indices_out.get(),
+            parent.get(),
+            primitive_bbox_min_x,
+            primitive_bbox_min_y,
+            primitive_bbox_min_z,
+            primitive_bbox_max_x,
+            primitive_bbox_max_y,
+            primitive_bbox_max_z,
+            left_child,
+            right_child,
+            node_bbox_min_x,
+            node_bbox_min_y,
+            node_bbox_min_z,
+            node_bbox_max_x,
+            node_bbox_max_y,
+            node_bbox_max_z,
+            leaf_primitive,
+            is_leaf,
+            primitive_leaf_node,
+            merge_counters.get());
+        audit_cuda_kernel_launch("finalize_leaves_and_bounds_kernel",
+                                 static_cast<uint32_t>(primitive_blocks), 1, 1,
+                                 block_size, 1, 1,
+                                 static_cast<uint64_t>(primitive_count));
+        check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch bounds-finalization kernel");
 
         if (treelet_enabled) {
             const float scene_scale =
@@ -1732,15 +1557,13 @@ void build_edge_bvh_gpu(
                 }
                 const FlatNodeLevels optimize_schedule = flatten_node_levels(optimize_levels);
                 CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
-                if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
-                    if (!optimize_schedule.nodes.empty()) {
-                        audit_cuda_memcpy();
-                        check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
-                                                   optimize_schedule.nodes.data(),
-                                                   optimize_schedule.nodes.size() * sizeof(int),
-                                                   cudaMemcpyHostToDevice),
-                                        "build_edge_lbvh_gpu(): failed to upload treelet schedule");
-                    }
+                if (!optimize_schedule.nodes.empty()) {
+                    audit_cuda_memcpy();
+                    check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
+                                               optimize_schedule.nodes.data(),
+                                               optimize_schedule.nodes.size() * sizeof(int),
+                                               cudaMemcpyHostToDevice),
+                                    "build_edge_lbvh_gpu(): failed to upload treelet schedule");
                 }
 
                 for (int height = 1; height <= max_height; ++height) {
@@ -1751,58 +1574,26 @@ void build_edge_bvh_gpu(
                     const int optimize_count = optimize_end - optimize_start;
                     if (optimize_count > 0) {
                         const int level_blocks = (optimize_count + block_size - 1) / block_size;
-                        if (treelet_schedule_mode == EdgeBVHTreeletScheduleMode::FlatLevels) {
-                            optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                                optimize_count,
-                                optimize_nodes_device.get() + optimize_start,
-                                is_leaf,
-                                left_child,
-                                right_child,
-                                parent.get(),
-                                node_bbox_min_x,
-                                node_bbox_min_y,
-                                node_bbox_min_z,
-                                node_bbox_max_x,
-                                node_bbox_max_y,
-                                node_bbox_max_z,
-                                leaf_primitive,
-                                node_costs.get(),
-                                inflation);
-                            audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
-                                                     static_cast<uint32_t>(level_blocks), 1, 1,
-                                                     block_size, 1, 1,
-                                                     static_cast<uint64_t>(optimize_count));
-                        } else {
-                            const std::vector<int> &optimize_nodes =
-                                optimize_levels[static_cast<size_t>(height)];
-                            CudaBuffer<int> device_nodes(optimize_nodes.size());
-                            audit_cuda_memcpy();
-                            check_cuda_call(cudaMemcpy(device_nodes.get(),
-                                                       optimize_nodes.data(),
-                                                       optimize_nodes.size() * sizeof(int),
-                                                       cudaMemcpyHostToDevice),
-                                            "build_edge_lbvh_gpu(): failed to upload treelet roots");
-                            optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                                optimize_count,
-                                device_nodes.get(),
-                                is_leaf,
-                                left_child,
-                                right_child,
-                                parent.get(),
-                                node_bbox_min_x,
-                                node_bbox_min_y,
-                                node_bbox_min_z,
-                                node_bbox_max_x,
-                                node_bbox_max_y,
-                                node_bbox_max_z,
-                                leaf_primitive,
-                                node_costs.get(),
-                                inflation);
-                            audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
-                                                     static_cast<uint32_t>(level_blocks), 1, 1,
-                                                     block_size, 1, 1,
-                                                     static_cast<uint64_t>(optimize_count));
-                        }
+                        optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
+                            optimize_count,
+                            optimize_nodes_device.get() + optimize_start,
+                            is_leaf,
+                            left_child,
+                            right_child,
+                            parent.get(),
+                            node_bbox_min_x,
+                            node_bbox_min_y,
+                            node_bbox_min_z,
+                            node_bbox_max_x,
+                            node_bbox_max_y,
+                            node_bbox_max_z,
+                            leaf_primitive,
+                            node_costs.get(),
+                            inflation);
+                        audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
+                                                 static_cast<uint32_t>(level_blocks), 1, 1,
+                                                 block_size, 1, 1,
+                                                 static_cast<uint64_t>(optimize_count));
                         check_cuda_last_error(
                             "build_edge_lbvh_gpu(): failed to launch GPU treelet optimization");
                     }
@@ -1815,539 +1606,6 @@ void build_edge_bvh_gpu(
                         "build_edge_lbvh_gpu(): failed to complete build");
     } catch (const std::exception &e) {
         throw_runtime_error_local(std::string("build_edge_lbvh_gpu(): ") + e.what());
-    }
-}
-
-/// One raw node per thread; writes parent links for each of its children.
-__global__ void build_raw_parent_links_kernel(int node_count,
-                                              const int *raw_left_child,
-                                              const int *raw_right_child,
-                                              int *parent) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    const int left = raw_left_child[node_index];
-    const int right = raw_right_child[node_index];
-    if (left >= 0) {
-        parent[left] = node_index;
-    }
-    if (right >= 0) {
-        parent[right] = node_index;
-    }
-}
-
-/// One raw leaf per thread; bottom-up accumulates each node's subtree leaf count.
-__global__ void finalize_raw_subtree_leaf_counts_kernel(int node_count,
-                                                        const int *raw_leaf_primitive,
-                                                        const int *parent,
-                                                        int *subtree_leaf_count,
-                                                        int *arrival_counter) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count || raw_leaf_primitive[node_index] < 0) {
-        return;
-    }
-
-    subtree_leaf_count[node_index] = 1;
-    __threadfence();
-    int current = parent[node_index];
-    int contribution = 1;
-    while (current >= 0) {
-        atomicAdd(subtree_leaf_count + current, contribution);
-        // Publish the contribution before announcing this child at the parent.
-        __threadfence();
-        if (atomicAdd(arrival_counter + current, 1) == 0) {
-            return;
-        }
-        contribution = subtree_leaf_count[current];
-        current = parent[current];
-    }
-}
-
-/// One raw node per thread; flags nodes whose subtree fits within a single leaf (<= EdgeBVHLeafSize).
-__global__ void mark_collapsible_raw_nodes_kernel(int node_count,
-                                                  const int *subtree_leaf_count,
-                                                  const int *raw_leaf_primitive,
-                                                  int *collapse_flag) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    collapse_flag[node_index] =
-        (raw_leaf_primitive[node_index] >= 0 || subtree_leaf_count[node_index] <= EdgeBVHLeafSize) ? 1 : 0;
-}
-
-/// One raw node per thread; marks nodes that survive collapsing (no collapsed ancestor)
-/// and the leaf count each collapsed node will emit.
-__global__ void mark_live_collapsed_raw_nodes_kernel(int node_count,
-                                                     const int *parent,
-                                                     const int *collapse_flag,
-                                                     const int *subtree_leaf_count,
-                                                     int *live_flag,
-                                                     int *live_leaf_count) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    bool live = true;
-    int current = node_index;
-    while (current > 0) {
-        const int parent_index = parent[current];
-        if (parent_index < 0) {
-            live = false;
-            break;
-        }
-        if (collapse_flag[parent_index] != 0) {
-            live = false;
-            break;
-        }
-        current = parent_index;
-    }
-
-    live_flag[node_index] = live ? 1 : 0;
-    live_leaf_count[node_index] =
-        (live && collapse_flag[node_index] != 0) ? subtree_leaf_count[node_index] : 0;
-}
-
-/// One raw node per thread; emits collapsed child links, encoding a leaf range for collapsed nodes.
-__global__ void emit_collapsed_raw_nodes_kernel(int node_count,
-                                                const int *raw_left_child,
-                                                const int *raw_right_child,
-                                                const int *subtree_leaf_count,
-                                                const int *collapse_flag,
-                                                const int *live_flag,
-                                                const int *leaf_begin,
-                                                int *out_left_child,
-                                                int *out_right_child) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    if (live_flag[node_index] == 0) {
-        out_left_child[node_index] = -1;
-        out_right_child[node_index] = 0;
-        return;
-    }
-
-    if (collapse_flag[node_index] != 0) {
-        out_left_child[node_index] = -leaf_begin[node_index] - 1;
-        out_right_child[node_index] = subtree_leaf_count[node_index];
-        return;
-    }
-
-    out_left_child[node_index] = raw_left_child[node_index];
-    out_right_child[node_index] = raw_right_child[node_index];
-}
-
-/// One collapsed node per thread; gathers its subtree's primitives into the leaf primitive array.
-__global__ void emit_collapsed_raw_leaf_primitives_kernel(int node_count,
-                                                          const int *collapse_flag,
-                                                          const int *live_flag,
-                                                          const int *leaf_begin,
-                                                          const int *subtree_leaf_count,
-                                                          const int *raw_left_child,
-                                                          const int *raw_right_child,
-                                                          const int *raw_leaf_primitive,
-                                                          int *out_leaf_primitives,
-                                                          int *out_primitive_leaf_node) {
-    constexpr int max_stack_size = 2 * EdgeBVHLeafSize;
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count || live_flag[node_index] == 0 || collapse_flag[node_index] == 0) {
-        return;
-    }
-
-    const int leaf_count = subtree_leaf_count[node_index];
-    if (leaf_count <= 0) {
-        return;
-    }
-
-    int stack[max_stack_size];
-    int stack_size = 0;
-    stack[stack_size++] = node_index;
-    int write_offset = leaf_begin[node_index];
-
-    while (stack_size > 0) {
-        const int raw_node_index = stack[--stack_size];
-        const int primitive = raw_leaf_primitive[raw_node_index];
-        if (primitive >= 0) {
-            out_leaf_primitives[write_offset++] = primitive;
-            out_primitive_leaf_node[primitive] = node_index;
-            continue;
-        }
-
-        const int right = raw_right_child[raw_node_index];
-        const int left = raw_left_child[raw_node_index];
-        if (right >= 0 && stack_size < max_stack_size) {
-            stack[stack_size++] = right;
-        }
-        if (left >= 0 && stack_size < max_stack_size) {
-            stack[stack_size++] = left;
-        }
-    }
-}
-
-void collapse_edge_bvh_gpu(
-    int primitive_count,
-    int raw_node_count,
-    const int *raw_left_child,
-    const int *raw_right_child,
-    const int *raw_leaf_primitive,
-    int *out_left_child,
-    int *out_right_child,
-    int *out_leaf_primitives,
-    int *out_primitive_leaf_node) {
-    require_local(primitive_count >= 0, "collapse_edge_bvh_gpu(): primitive_count must be non-negative.");
-    require_local(raw_node_count >= 0, "collapse_edge_bvh_gpu(): raw_node_count must be non-negative.");
-
-    try {
-        const int block_size = 256;
-        const int node_blocks = (raw_node_count + block_size - 1) / block_size;
-        CudaStreamHandle stream_handle;
-        const cudaStream_t stream = stream_handle.get();
-        CudaBuffer<int> parent(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> subtree_leaf_count(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> arrival_counter(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> collapse_flag(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> live_flag(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> live_leaf_count(static_cast<size_t>(raw_node_count));
-        CudaBuffer<int> leaf_begin(static_cast<size_t>(raw_node_count));
-
-        memset_int_async(parent.get(),
-                         -1,
-                         static_cast<size_t>(raw_node_count),
-                         stream,
-                         "collapse_edge_bvh_gpu(): failed to initialize parent links");
-        memset_int_async(subtree_leaf_count.get(),
-                         0,
-                         static_cast<size_t>(raw_node_count),
-                         stream,
-                         "collapse_edge_bvh_gpu(): failed to initialize subtree leaf counts");
-        memset_int_async(arrival_counter.get(),
-                         0,
-                         static_cast<size_t>(raw_node_count),
-                         stream,
-                         "collapse_edge_bvh_gpu(): failed to initialize subtree merge counters");
-
-        build_raw_parent_links_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            raw_left_child,
-            raw_right_child,
-            parent.get());
-        audit_cuda_kernel_launch("build_raw_parent_links_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to build raw parent links");
-
-        finalize_raw_subtree_leaf_counts_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            raw_leaf_primitive,
-            parent.get(),
-            subtree_leaf_count.get(),
-            arrival_counter.get());
-        audit_cuda_kernel_launch("finalize_raw_subtree_leaf_counts_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to accumulate subtree leaf counts");
-
-        mark_collapsible_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            subtree_leaf_count.get(),
-            raw_leaf_primitive,
-            collapse_flag.get());
-        audit_cuda_kernel_launch("mark_collapsible_raw_nodes_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark collapsible nodes");
-
-        mark_live_collapsed_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            parent.get(),
-            collapse_flag.get(),
-            subtree_leaf_count.get(),
-            live_flag.get(),
-            live_leaf_count.get());
-        audit_cuda_kernel_launch("mark_live_collapsed_raw_nodes_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to mark live nodes");
-
-        size_t scan_temp_size = 0;
-        audit_cub_scan();
-        check_cuda_call(cub::DeviceScan::ExclusiveSum(nullptr,
-                                                      scan_temp_size,
-                                                      live_leaf_count.get(),
-                                                      leaf_begin.get(),
-                                                      raw_node_count,
-                                                      stream),
-                        "collapse_edge_bvh_gpu(): failed to size leaf packing scan");
-        CudaBuffer<char> scan_temp(scan_temp_size);
-        audit_cub_scan();
-        check_cuda_call(cub::DeviceScan::ExclusiveSum(scan_temp.get(),
-                                                      scan_temp_size,
-                                                      live_leaf_count.get(),
-                                                      leaf_begin.get(),
-                                                      raw_node_count,
-                                                      stream),
-                        "collapse_edge_bvh_gpu(): failed to scan leaf packing offsets");
-
-        memset_int_async(out_leaf_primitives,
-                         -1,
-                         static_cast<size_t>(primitive_count),
-                         stream,
-                         "collapse_edge_bvh_gpu(): failed to initialize leaf primitive output");
-        memset_int_async(out_primitive_leaf_node,
-                         -1,
-                         static_cast<size_t>(primitive_count),
-                         stream,
-                         "collapse_edge_bvh_gpu(): failed to initialize primitive leaf-node output");
-
-        emit_collapsed_raw_nodes_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            raw_left_child,
-            raw_right_child,
-            subtree_leaf_count.get(),
-            collapse_flag.get(),
-            live_flag.get(),
-            leaf_begin.get(),
-            out_left_child,
-            out_right_child);
-        audit_cuda_kernel_launch("emit_collapsed_raw_nodes_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed node topology");
-
-        emit_collapsed_raw_leaf_primitives_kernel<<<node_blocks, block_size, 0, stream>>>(
-            raw_node_count,
-            collapse_flag.get(),
-            live_flag.get(),
-            leaf_begin.get(),
-            subtree_leaf_count.get(),
-            raw_left_child,
-            raw_right_child,
-            raw_leaf_primitive,
-            out_leaf_primitives,
-            out_primitive_leaf_node);
-        audit_cuda_kernel_launch("emit_collapsed_raw_leaf_primitives_kernel",
-                                 static_cast<uint32_t>(node_blocks), 1, 1,
-                                 block_size, 1, 1,
-                                 static_cast<uint64_t>(raw_node_count));
-        check_cuda_last_error("collapse_edge_bvh_gpu(): failed to emit collapsed leaf primitives");
-
-        audit_cuda_stream_synchronize();
-        check_cuda_call(cudaStreamSynchronize(stream),
-                        "collapse_edge_bvh_gpu(): failed to finish subtree collapse");
-    } catch (const std::exception &e) {
-        throw_runtime_error_local(std::string("collapse_edge_bvh_gpu(): ") + e.what());
-    }
-}
-
-/// One compacted node per thread; copies remapped bounds and child links into the dense node arrays.
-__global__ void emit_compacted_nodes_kernel(int node_count,
-                                            const int *new_to_old,
-                                            const int *compacted_left_child,
-                                            const int *compacted_right_child,
-                                            const float *raw_node_bbox_min_x,
-                                            const float *raw_node_bbox_min_y,
-                                            const float *raw_node_bbox_min_z,
-                                            const float *raw_node_bbox_max_x,
-                                            const float *raw_node_bbox_max_y,
-                                            const float *raw_node_bbox_max_z,
-                                            float *out_node_bbox_min_x,
-                                            float *out_node_bbox_min_y,
-                                            float *out_node_bbox_min_z,
-                                            float *out_node_bbox_max_x,
-                                            float *out_node_bbox_max_y,
-                                            float *out_node_bbox_max_z,
-                                            int *out_left_child,
-                                            int *out_right_child) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    const int raw_node_index = new_to_old[node_index];
-    out_node_bbox_min_x[node_index] = raw_node_bbox_min_x[raw_node_index];
-    out_node_bbox_min_y[node_index] = raw_node_bbox_min_y[raw_node_index];
-    out_node_bbox_min_z[node_index] = raw_node_bbox_min_z[raw_node_index];
-    out_node_bbox_max_x[node_index] = raw_node_bbox_max_x[raw_node_index];
-    out_node_bbox_max_y[node_index] = raw_node_bbox_max_y[raw_node_index];
-    out_node_bbox_max_z[node_index] = raw_node_bbox_max_z[raw_node_index];
-    out_left_child[node_index] = compacted_left_child[node_index];
-    out_right_child[node_index] = compacted_right_child[node_index];
-}
-
-/// One compacted node per thread; gathers its subtree primitives into the compacted leaf array.
-__global__ void emit_compacted_leaf_primitives_kernel(int node_count,
-                                                      const int *new_to_old,
-                                                      const int *compacted_leaf_count,
-                                                      const int *compacted_leaf_begin,
-                                                      const int *raw_left_child,
-                                                      const int *raw_right_child,
-                                                      const int *raw_leaf_primitive,
-                                                      int *out_leaf_primitives,
-                                                      int *out_primitive_leaf_node) {
-    constexpr int max_stack_size = 8;
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= node_count) {
-        return;
-    }
-
-    const int leaf_count = compacted_leaf_count[node_index];
-    if (leaf_count <= 0) {
-        return;
-    }
-
-    int stack[max_stack_size];
-    int stack_size = 0;
-    stack[stack_size++] = new_to_old[node_index];
-    int write_offset = compacted_leaf_begin[node_index];
-
-    while (stack_size > 0) {
-        const int raw_node_index = stack[--stack_size];
-        const int primitive = raw_leaf_primitive[raw_node_index];
-        if (primitive >= 0) {
-            out_leaf_primitives[write_offset++] = primitive;
-            out_primitive_leaf_node[primitive] = node_index;
-            continue;
-        }
-
-        const int right = raw_right_child[raw_node_index];
-        const int left = raw_left_child[raw_node_index];
-        if (right >= 0 && stack_size < max_stack_size) {
-            stack[stack_size++] = right;
-        }
-        if (left >= 0 && stack_size < max_stack_size) {
-            stack[stack_size++] = left;
-        }
-    }
-}
-
-void compact_edge_bvh_gpu(
-    int primitive_count,
-    int raw_node_count,
-    const int *raw_left_child,
-    const int *raw_right_child,
-    const int *raw_leaf_primitive,
-    const float *raw_node_bbox_min_x,
-    const float *raw_node_bbox_min_y,
-    const float *raw_node_bbox_min_z,
-    const float *raw_node_bbox_max_x,
-    const float *raw_node_bbox_max_y,
-    const float *raw_node_bbox_max_z,
-    int compacted_node_count,
-    const int *compacted_left_child,
-    const int *compacted_right_child,
-    const int *compacted_new_to_old,
-    const int *compacted_leaf_begin,
-    const int *compacted_leaf_count,
-    float *out_node_bbox_min_x,
-    float *out_node_bbox_min_y,
-    float *out_node_bbox_min_z,
-    float *out_node_bbox_max_x,
-    float *out_node_bbox_max_y,
-    float *out_node_bbox_max_z,
-    int *out_left_child,
-    int *out_right_child,
-    int *out_leaf_primitives,
-    int *out_primitive_leaf_node) {
-    require_local(primitive_count >= 0, "compact_edge_bvh_gpu(): primitive_count must be non-negative.");
-    require_local(raw_node_count >= 0, "compact_edge_bvh_gpu(): raw_node_count must be non-negative.");
-    require_local(compacted_node_count >= 0,
-                  "compact_edge_bvh_gpu(): compacted_node_count must be non-negative.");
-
-    try {
-        const int block_size = 256;
-        const int node_blocks = (compacted_node_count + block_size - 1) / block_size;
-        CudaBuffer<int> device_compacted_left(static_cast<size_t>(compacted_node_count));
-        CudaBuffer<int> device_compacted_right(static_cast<size_t>(compacted_node_count));
-        CudaBuffer<int> device_new_to_old(static_cast<size_t>(compacted_node_count));
-        CudaBuffer<int> device_leaf_begin(static_cast<size_t>(compacted_node_count));
-        CudaBuffer<int> device_leaf_count(static_cast<size_t>(compacted_node_count));
-
-        if (compacted_node_count > 0) {
-            audit_cuda_memcpy();
-            check_cuda_call(cudaMemcpy(device_compacted_left.get(),
-                                       compacted_left_child,
-                                       sizeof(int) * static_cast<size_t>(compacted_node_count),
-                                       cudaMemcpyHostToDevice),
-                            "compact_edge_bvh_gpu(): failed to upload left-child plan");
-            audit_cuda_memcpy();
-            check_cuda_call(cudaMemcpy(device_compacted_right.get(),
-                                       compacted_right_child,
-                                       sizeof(int) * static_cast<size_t>(compacted_node_count),
-                                       cudaMemcpyHostToDevice),
-                            "compact_edge_bvh_gpu(): failed to upload right-child plan");
-            audit_cuda_memcpy();
-            check_cuda_call(cudaMemcpy(device_new_to_old.get(),
-                                       compacted_new_to_old,
-                                       sizeof(int) * static_cast<size_t>(compacted_node_count),
-                                       cudaMemcpyHostToDevice),
-                            "compact_edge_bvh_gpu(): failed to upload preorder map");
-            audit_cuda_memcpy();
-            check_cuda_call(cudaMemcpy(device_leaf_begin.get(),
-                                       compacted_leaf_begin,
-                                       sizeof(int) * static_cast<size_t>(compacted_node_count),
-                                       cudaMemcpyHostToDevice),
-                            "compact_edge_bvh_gpu(): failed to upload leaf-begin plan");
-            audit_cuda_memcpy();
-            check_cuda_call(cudaMemcpy(device_leaf_count.get(),
-                                       compacted_leaf_count,
-                                       sizeof(int) * static_cast<size_t>(compacted_node_count),
-                                       cudaMemcpyHostToDevice),
-                            "compact_edge_bvh_gpu(): failed to upload leaf-count plan");
-            emit_compacted_nodes_kernel<<<node_blocks, block_size>>>(
-                compacted_node_count,
-                device_new_to_old.get(),
-                device_compacted_left.get(),
-                device_compacted_right.get(),
-                raw_node_bbox_min_x,
-                raw_node_bbox_min_y,
-                raw_node_bbox_min_z,
-                raw_node_bbox_max_x,
-                raw_node_bbox_max_y,
-                raw_node_bbox_max_z,
-                out_node_bbox_min_x,
-                out_node_bbox_min_y,
-                out_node_bbox_min_z,
-                out_node_bbox_max_x,
-                out_node_bbox_max_y,
-                out_node_bbox_max_z,
-                out_left_child,
-                out_right_child);
-            audit_cuda_kernel_launch("emit_compacted_nodes_kernel",
-                                     static_cast<uint32_t>(node_blocks), 1, 1,
-                                     block_size, 1, 1,
-                                     static_cast<uint64_t>(compacted_node_count));
-            check_cuda_last_error("compact_edge_bvh_gpu(): failed to emit compacted nodes");
-            emit_compacted_leaf_primitives_kernel<<<node_blocks, block_size>>>(
-                compacted_node_count,
-                device_new_to_old.get(),
-                device_leaf_count.get(),
-                device_leaf_begin.get(),
-                raw_left_child,
-                raw_right_child,
-                raw_leaf_primitive,
-                out_leaf_primitives,
-                out_primitive_leaf_node);
-            audit_cuda_kernel_launch("emit_compacted_leaf_primitives_kernel",
-                                     static_cast<uint32_t>(node_blocks), 1, 1,
-                                     block_size, 1, 1,
-                                     static_cast<uint64_t>(compacted_node_count));
-            check_cuda_last_error("compact_edge_bvh_gpu(): failed to emit compacted leaves");
-        }
-
-        synchronize_cuda("compact_edge_bvh_gpu(): failed to finish GPU compaction");
-    } catch (const std::exception &e) {
-        throw_runtime_error_local(std::string("compact_edge_bvh_gpu(): ") + e.what());
     }
 }
 
@@ -2413,8 +1671,7 @@ void compact_and_refit_edge_bvh_level_gpu(
     float *node_bbox_min_z,
     float *node_bbox_max_x,
     float *node_bbox_max_y,
-    float *node_bbox_max_z,
-    float *packed_node_bounds) {
+    float *node_bbox_max_z) {
     require_local(level_count >= 0,
                   "compact_and_refit_edge_bvh_level_gpu(): level_count must be non-negative.");
     require_local(level_nodes != nullptr || level_count == 0,
@@ -2477,8 +1734,7 @@ void compact_and_refit_edge_bvh_level_gpu(
             node_bbox_min_z,
             node_bbox_max_x,
             node_bbox_max_y,
-            node_bbox_max_z,
-            packed_node_bounds);
+            node_bbox_max_z);
         audit_cuda_kernel_launch("refit_selected_internal_nodes_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,

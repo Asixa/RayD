@@ -62,19 +62,11 @@ PRESSURE_ARGS = (
 MODE_ENV_VARS = {
     "post_build_strategy": "RAYD_EDGE_BVH_POST_BUILD_STRATEGY",
     "build_stream_mode": "RAYD_EDGE_BVH_BUILD_STREAM_MODE",
-    "finalize_mode": "RAYD_EDGE_BVH_FINALIZE_MODE",
-    "treelet_schedule_mode": "RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE",
-    "compaction_mode": "RAYD_EDGE_BVH_COMPACTION_MODE",
-    "node_layout_mode": "RAYD_EDGE_BVH_NODE_LAYOUT_MODE",
 }
 
 DEFAULT_EDGE_BVH_MODES = {
     "post_build_strategy": "gpu_treelet",
     "build_stream_mode": "overlap",
-    "finalize_mode": "atomic",
-    "treelet_schedule_mode": "flat_levels",
-    "compaction_mode": "host_upload_raw",
-    "node_layout_mode": "scalar_arrays",
 }
 
 
@@ -481,26 +473,6 @@ def main() -> int:
         "--build-stream-mode",
         choices=("serial", "overlap"),
         help="Explicit Edge BVH build stream mode for this stage run.",
-    )
-    parser.add_argument(
-        "--finalize-mode",
-        choices=("atomic", "level_by_level"),
-        help="Explicit Edge BVH finalize mode for this stage run.",
-    )
-    parser.add_argument(
-        "--treelet-schedule-mode",
-        choices=("per_level_uploads", "flat_levels"),
-        help="Explicit Edge BVH treelet schedule mode for this stage run.",
-    )
-    parser.add_argument(
-        "--compaction-mode",
-        choices=("host_upload_raw", "host_upload_exact", "gpu_emit"),
-        help="Explicit Edge BVH compaction mode for this stage run.",
-    )
-    parser.add_argument(
-        "--node-layout-mode",
-        choices=("scalar_arrays", "packed"),
-        help="Explicit Edge BVH node layout mode for this stage run.",
     )
     args = parser.parse_args()
 

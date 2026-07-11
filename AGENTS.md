@@ -60,6 +60,15 @@ Current status notes:
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 
+Supported custom-BVH configuration after BVH-3 convergence:
+
+- the product build pipeline is `LBVH + gpu_treelet + overlap + atomic + flat host-prepared levels + host_upload_raw + scalar_arrays`
+- `post_build_strategy=none` is retained only as a benchmark/reference pure-LBVH baseline, not as a public product strategy
+- serial build remains a deterministic debug mode only; it has no public performance commitment
+- refit keeps `Auto`, `Full`, and `DirtyAncestors`; `Auto` is the product default while the explicit modes remain calibration and debug controls
+- `PerLevelUploads`, `LevelByLevel`, `HostUploadExact`, `GpuEmit`, and `Packed` were removed from the supported configuration surface after their measured benefits failed the BVH-3 Pareto thresholds
+- the quantified one-factor comparisons, including the legacy sparse-mask caveat for exact compaction, are preserved in `shared/benchmarks/baselines/bvh3_configuration_convergence_20260711.json`
+
 Performance snapshot used for the current decision, measured on the verified Windows machine in this repository (`RTX 5080`, `Ryzen 7 9800X3D`) with a `192x192` grid mesh, `110,976` edges, and `65,536` batched queries:
 
 | Path | `build()` | point query | finite ray query | infinite ray query | `sync()` |

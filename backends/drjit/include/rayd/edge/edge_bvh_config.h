@@ -8,59 +8,26 @@
 
 namespace rayd {
 
-// Compile/runtime tuning knobs for the edge BVH builder. Each mode has a default
-// below and an environment-variable override (see the active_* readers); most are
-// experimental calibration switches rather than supported configuration.
+// Retained edge-BVH build controls after configuration convergence. GpuTreelet
+// plus Overlap is the product path. None is a benchmark-only pure-LBVH baseline,
+// while Serial is a deterministic debug mode without a performance commitment.
 
 /// Optional optimization pass applied after the initial BVH build.
 enum class EdgeBVHPostBuildStrategy {
-    None,
+    None,               ///< Benchmark/reference pure-LBVH baseline only.
     GpuTreelet          ///< GPU treelet reoptimization (default).
 };
 
 /// Whether build stages run serially or overlap across CUDA streams.
 enum class EdgeBVHBuildStreamMode {
-    Serial,
-    Overlap
-};
-
-/// How node bounds are finalized during the build.
-enum class EdgeBVHFinalizeMode {
-    Atomic,
-    LevelByLevel
-};
-
-/// Upload scheduling for treelet optimization.
-enum class EdgeBVHTreeletScheduleMode {
-    PerLevelUploads,
-    FlatLevels
-};
-
-/// How the compacted BVH is produced and uploaded.
-enum class EdgeBVHCompactionMode {
-    HostUploadRaw,
-    HostUploadExact,
-    GpuEmit
-};
-
-/// Device memory layout for BVH nodes.
-enum class EdgeBVHNodeLayoutMode {
-    ScalarArrays,  ///< Separate arrays per field.
-    Packed         ///< Interleaved/packed node records.
+    Serial,             ///< Deterministic debug mode.
+    Overlap             ///< Product default.
 };
 
 constexpr EdgeBVHPostBuildStrategy EdgeBVHDefaultPostBuildStrategy =
     EdgeBVHPostBuildStrategy::GpuTreelet;
 constexpr EdgeBVHBuildStreamMode EdgeBVHDefaultBuildStreamMode =
     EdgeBVHBuildStreamMode::Overlap;
-constexpr EdgeBVHFinalizeMode EdgeBVHDefaultFinalizeMode =
-    EdgeBVHFinalizeMode::Atomic;
-constexpr EdgeBVHTreeletScheduleMode EdgeBVHDefaultTreeletScheduleMode =
-    EdgeBVHTreeletScheduleMode::FlatLevels;
-constexpr EdgeBVHCompactionMode EdgeBVHDefaultCompactionMode =
-    EdgeBVHCompactionMode::HostUploadRaw;
-constexpr EdgeBVHNodeLayoutMode EdgeBVHDefaultNodeLayoutMode =
-    EdgeBVHNodeLayoutMode::ScalarArrays;
 constexpr int EdgeBVHLeafSize = 4; ///< Target primitives per BVH leaf.
 
 /// Lower-case an env-var value and map '-' to '_' so mode names compare uniformly.
@@ -117,91 +84,6 @@ inline EdgeBVHBuildStreamMode active_edge_bvh_build_stream_mode() {
         }
         throw std::runtime_error(
             "Invalid RAYD_EDGE_BVH_BUILD_STREAM_MODE. Expected one of: serial, overlap.");
-    }();
-    return value;
-}
-
-/// Finalize mode from RAYD_EDGE_BVH_FINALIZE_MODE.
-inline EdgeBVHFinalizeMode active_edge_bvh_finalize_mode() {
-    static const EdgeBVHFinalizeMode value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_FINALIZE_MODE");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        if (normalized.empty()) {
-            return EdgeBVHDefaultFinalizeMode;
-        }
-        if (normalized == "atomic") {
-            return EdgeBVHFinalizeMode::Atomic;
-        }
-        if (normalized == "level_by_level") {
-            return EdgeBVHFinalizeMode::LevelByLevel;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_FINALIZE_MODE. Expected one of: atomic, level_by_level.");
-    }();
-    return value;
-}
-
-/// Treelet schedule mode from RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE.
-inline EdgeBVHTreeletScheduleMode active_edge_bvh_treelet_schedule_mode() {
-    static const EdgeBVHTreeletScheduleMode value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        if (normalized.empty()) {
-            return EdgeBVHDefaultTreeletScheduleMode;
-        }
-        if (normalized == "per_level_uploads") {
-            return EdgeBVHTreeletScheduleMode::PerLevelUploads;
-        }
-        if (normalized == "flat_levels") {
-            return EdgeBVHTreeletScheduleMode::FlatLevels;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE. Expected one of: per_level_uploads, "
-            "flat_levels.");
-    }();
-    return value;
-}
-
-/// Compaction mode from RAYD_EDGE_BVH_COMPACTION_MODE.
-inline EdgeBVHCompactionMode active_edge_bvh_compaction_mode() {
-    static const EdgeBVHCompactionMode value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_COMPACTION_MODE");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        if (normalized.empty()) {
-            return EdgeBVHDefaultCompactionMode;
-        }
-        if (normalized == "host_upload_raw") {
-            return EdgeBVHCompactionMode::HostUploadRaw;
-        }
-        if (normalized == "host_upload_exact") {
-            return EdgeBVHCompactionMode::HostUploadExact;
-        }
-        if (normalized == "gpu_emit") {
-            return EdgeBVHCompactionMode::GpuEmit;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_COMPACTION_MODE. Expected one of: host_upload_raw, "
-            "host_upload_exact, gpu_emit.");
-    }();
-    return value;
-}
-
-/// Node layout mode from RAYD_EDGE_BVH_NODE_LAYOUT_MODE.
-inline EdgeBVHNodeLayoutMode active_edge_bvh_node_layout_mode() {
-    static const EdgeBVHNodeLayoutMode value = []() {
-        const char *raw = std::getenv("RAYD_EDGE_BVH_NODE_LAYOUT_MODE");
-        const std::string normalized = normalize_edge_bvh_mode_value(raw);
-        if (normalized.empty()) {
-            return EdgeBVHDefaultNodeLayoutMode;
-        }
-        if (normalized == "scalar_arrays") {
-            return EdgeBVHNodeLayoutMode::ScalarArrays;
-        }
-        if (normalized == "packed") {
-            return EdgeBVHNodeLayoutMode::Packed;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_NODE_LAYOUT_MODE. Expected one of: scalar_arrays, packed.");
     }();
     return value;
 }

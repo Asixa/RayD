@@ -50,48 +50,6 @@ void compute_edge_optix_aabbs_gpu(
     float inflation,
     float *out_aabbs);
 
-/// Collapse the raw LBVH into wider leaves, producing a compacted node topology.
-void collapse_edge_bvh_gpu(
-    int primitive_count,
-    int raw_node_count,
-    const int *raw_left_child,
-    const int *raw_right_child,
-    const int *raw_leaf_primitive,
-    int *out_left_child,
-    int *out_right_child,
-    int *out_leaf_primitives,
-    int *out_primitive_leaf_node);
-
-/// Re-emit the collapsed BVH into a dense, compacted node array with remapped indices and bounds.
-void compact_edge_bvh_gpu(
-    int primitive_count,
-    int raw_node_count,
-    const int *raw_left_child,
-    const int *raw_right_child,
-    const int *raw_leaf_primitive,
-    const float *raw_node_bbox_min_x,
-    const float *raw_node_bbox_min_y,
-    const float *raw_node_bbox_min_z,
-    const float *raw_node_bbox_max_x,
-    const float *raw_node_bbox_max_y,
-    const float *raw_node_bbox_max_z,
-    int compacted_node_count,
-    const int *compacted_left_child,
-    const int *compacted_right_child,
-    const int *compacted_new_to_old,
-    const int *compacted_leaf_begin,
-    const int *compacted_leaf_count,
-    float *out_node_bbox_min_x,
-    float *out_node_bbox_min_y,
-    float *out_node_bbox_min_z,
-    float *out_node_bbox_max_x,
-    float *out_node_bbox_max_y,
-    float *out_node_bbox_max_z,
-    int *out_left_child,
-    int *out_right_child,
-    int *out_leaf_primitives,
-    int *out_primitive_leaf_node);
-
 /// Mark every ancestor of the given dirty leaf nodes for refit; \p clear_marks resets first.
 void mark_edge_bvh_dirty_ancestors_gpu(
     int node_count,
@@ -101,7 +59,7 @@ void mark_edge_bvh_dirty_ancestors_gpu(
     int *out_dirty_marks,
     bool clear_marks);
 
-/// Refit one BVH level: gather the dirty nodes, recompute their bounds from children, and repack.
+/// Refit one BVH level by gathering dirty nodes and recomputing bounds from children.
 void compact_and_refit_edge_bvh_level_gpu(
     int level_count,
     const int *level_nodes,
@@ -115,7 +73,6 @@ void compact_and_refit_edge_bvh_level_gpu(
     float *node_bbox_min_z,
     float *node_bbox_max_x,
     float *node_bbox_max_y,
-    float *node_bbox_max_z,
-    float *packed_node_bounds);
+    float *node_bbox_max_z);
 
 } // namespace rayd

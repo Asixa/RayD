@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "benchmark": "rayd_edge_bvh_configuration_convergence",
+  "recorded_at": "2026-07-11T00:00:00Z",
+  "decision": {
+    "default_product_pipeline": {
+      "build_algorithm": "lbvh",
+      "post_build_strategy": "gpu_treelet",
+      "build_stream_mode": "overlap",
+      "finalize_mode": "atomic",
+      "treelet_schedule_mode": "flat_levels_host_prepared",
+      "compaction_mode": "host_upload_raw",
+      "node_layout_mode": "scalar_arrays"
+    },
+    "retained_non_default_modes": {
+      "post_build_strategy_none": "benchmark/reference pure-LBVH baseline only",
+      "build_stream_serial": "deterministic debug mode only; no public performance commitment",
+      "refit_strategies": [
+        "auto",
+        "full",
+        "dirty_ancestors"
+      ]
+    },
+    "removed_modes": [
+      "per_level_uploads",
+      "level_by_level",
+      "host_upload_exact",
+      "gpu_emit",
+      "packed"
+    ],
+    "pareto_thresholds": {
+      "time_improvement_required_pct": 10.0,
+      "maximum_other_critical_time_regression_pct": 5.0,
+      "memory_reduction_required_pct": 20.0,
+      "dynamic_refit_improvement_required_pct": 15.0
+    }
+  },
+  "measurement_scope": {
+    "hardware": "NVIDIA GeForce RTX 5080",
+    "legacy_stage_revision": "78469ea7f2b877d5f75d67a47620427af454386d",
+    "single_mesh": {
+      "edge_count": 110976,
+      "query_count": 65536
+    },
+    "pressure_scene": {
+      "edge_count": 200704,
+      "query_count": 16384
+    },
+    "timing_statistic": "average synchronized wall time from the serial stage artifacts"
+  },
+  "comparisons": [
+    {
+      "removed": "per_level_uploads",
+      "retained": "flat_levels_host_prepared",
+      "sources": {
+        "removed": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_stream_overlap/summary.json",
+        "retained": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_treelet_schedule/summary.json"
+      },
+      "milliseconds": {
+        "single_build": [44.30716, 41.84438],
+        "single_point": [4.64822, 4.20764],
+        "single_finite_ray": [11.74452, 11.45776],
+        "single_infinite_ray": [9.65740, 9.61078],
+        "single_sync": [1.67084, 1.68690],
+        "pressure_build": [145.97826, 144.58484],
+        "pressure_full_point": [6.26622, 5.63464],
+        "pressure_full_finite_ray": [16.41750, 15.62422],
+        "pressure_stride_sparse_finite_ray": [82.70714, 73.00844]
+      },
+      "decision_evidence": "Flat levels reduced single build by 5.6%, single point query by 9.5%, pressure full point query by 10.1%, and pressure sparse finite-ray query by 11.7%. The only single-mesh regression was 0.016 ms (+1.0%) sync noise; the legacy sparse mask-refit increase was 0.280 ms and belongs to the superseded rebuild-based mask path. Per-level host uploads add product complexity without a threshold-sized surviving benefit."
+    },
+    {
+      "removed": "level_by_level",
+      "retained": "atomic",
+      "sources": {
+        "removed": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_finalize_levels/summary.json",
+        "retained": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_treelet_schedule/summary.json"
+      },
+      "milliseconds": {
+        "single_build": [43.71900, 41.84438],
+        "single_point": [4.44036, 4.20764],
+        "single_finite_ray": [11.80566, 11.45776],
+        "single_infinite_ray": [9.93420, 9.61078],
+        "single_sync": [2.14356, 1.68690],
+        "pressure_build": [144.30588, 144.58484],
+        "pressure_stride_sparse_finite_ray": [2795.92758, 73.00844]
+      },
+      "decision_evidence": "Atomic reduced single build by 4.3%, all three single query modes by 2.9-5.2%, and sync by 21.3%. Level-by-level was only 0.2% faster on pressure build but made the pressure sparse finite-ray case 38.3x slower, so it is outside the Pareto frontier."
+    },
+    {
+      "removed": "gpu_emit",
+      "retained": "host_upload_raw",
+      "sources": {
+        "removed": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_gpu_compaction/summary.json",
+        "retained": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_treelet_schedule/summary.json"
+      },
+      "milliseconds": {
+        "single_build": [43.68248, 41.84438],
+        "single_point": [4.44712, 4.20764],
+        "single_finite_ray": [13.41230, 11.45776],
+        "single_infinite_ray": [10.54364, 9.61078],
+        "single_sync": [1.88188, 1.68690],
+        "pressure_build": [154.58492, 144.58484],
+        "pressure_full_finite_ray": [16.65716, 15.62422],
+        "pressure_stride_sparse_finite_ray": [85.55134, 73.00844],
+        "pressure_restore_refit": [22.66854, 26.41288]
+      },
+      "decision_evidence": "Raw host upload reduced single build by 4.2%, single finite-ray query by 14.6%, sync by 10.4%, pressure build by 6.5%, and pressure sparse finite-ray query by 14.7%. GpuEmit's only material win was a 3.74 ms legacy full-mask restore, a niche removed by the later mask-only update path; it provided no surviving function or memory advantage."
+    },
+    {
+      "removed": "host_upload_exact",
+      "retained": "host_upload_raw",
+      "sources": {
+        "removed": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_host_exact/summary.json",
+        "retained_legacy_one_factor": "artifacts/benchmarks/edge_bvh_stages/stage2_clean_treelet_schedule/summary.json",
+        "retained_current_repeat_1": "artifacts/benchmarks/edge_bvh_stages/bvh2_dead_gpu_treelet_removed/summary.json",
+        "retained_current_repeat_2": "artifacts/benchmarks/edge_bvh_stages/bvh2_dead_gpu_treelet_removed_repeat/summary.json"
+      },
+      "milliseconds": {
+        "legacy_single_build": [44.12090, 41.84438],
+        "legacy_single_point": [4.48328, 4.20764],
+        "legacy_single_finite_ray": [11.85090, 11.45776],
+        "legacy_pressure_build": [150.79092, 144.58484],
+        "legacy_pressure_full_point": [6.16498, 5.63464],
+        "legacy_pressure_full_finite_ray": [16.31604, 15.62422],
+        "legacy_pressure_stride_sparse_finite_ray_exact": 15.14484,
+        "current_raw_pressure_stride_sparse_finite_ray_repeats": [8.46292, 7.19820],
+        "current_raw_mask_update_repeats": [0.00014, 0.00010]
+      },
+      "decision_evidence": "In the controlled legacy comparison, raw was 5.2% faster to build and 3.3-8.6% faster across the listed full-scene queries. Exact formerly won the rebuild-based sparse-mask case (15.14 ms versus 73.01 ms), but the current raw mask-only path measures 7.20-8.46 ms with sub-0.0002 ms mask updates, eliminating Exact's sole product niche. The cross-revision current numbers establish removal of that niche, not a direct same-commit speedup claim."
+    },
+    {
+      "removed": "packed",
+      "retained": "scalar_arrays",
+      "sources": {
+        "removed": "artifacts/benchmarks/edge_bvh_stages/stage3_node_packing/summary.json",
+        "retained": "artifacts/benchmarks/edge_bvh_stages/stage3_baseline/summary.json"
+      },
+      "milliseconds": {
+        "single_build": [41.47688, 40.17922],
+        "single_point": [4.47704, 4.47332],
+        "single_finite_ray": [11.52084, 11.16468],
+        "single_infinite_ray": [9.78616, 9.77006],
+        "single_sync": [2.73380, 1.61180],
+        "pressure_build": [138.69090, 137.37472],
+        "pressure_full_point": [6.16612, 5.61930],
+        "pressure_full_finite_ray": [15.48064, 15.22800],
+        "pressure_stride_sparse_finite_ray": [14.67076, 14.75706]
+      },
+      "memory_evidence": {
+        "single_mesh_node_count": 221951,
+        "extra_mirror_bytes_per_node": 32,
+        "extra_payload_bytes": 7102432,
+        "extra_payload_mib": 6.7734,
+        "note": "Packed retained the scalar source arrays and added six float bounds plus two int children per node; the figure excludes allocator overhead."
+      },
+      "decision_evidence": "Packed had no threshold-sized query win: its only improvement was 0.6% on pressure sparse finite rays. It was 3.1% slower on build and single finite rays, 8.9% slower on pressure full point queries, 69.6% slower on sync, and added at least 6.77 MiB on the single-mesh case."
+    }
+  ],
+  "post_convergence_validation": {
+    "artifacts": [
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_treelet_overlap/summary.json",
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_treelet_serial/summary.json",
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_lbvh_overlap/summary.json",
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_lbvh_serial/summary.json",
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_treelet_overlap_repeat/summary.json",
+      "artifacts/benchmarks/edge_bvh_stages/bvh3_treelet_serial_repeat/summary.json"
+    ],
+    "correctness": {
+      "all_six_summaries_match": true,
+      "single_mesh_point_valid_count": 65536,
+      "single_mesh_point_distance_sum": 16384.046875,
+      "single_mesh_finite_ray_distance_sum": 34.20990753173828
+    },
+    "average_ms": {
+      "treelet_overlap": {"single_build": 42.61498, "pressure_build": 172.02706},
+      "treelet_serial": {"single_build": 42.30452, "pressure_build": 141.41800},
+      "lbvh_overlap": {"single_build": 45.90182, "pressure_build": 166.02578},
+      "lbvh_serial": {"single_build": 42.69054, "pressure_build": 166.08970},
+      "treelet_overlap_repeat": {"micro_build": 6.61930, "single_build": 43.66252, "pressure_build": 160.47562},
+      "treelet_serial_repeat": {"micro_build": 13.01556, "single_build": 43.63486, "pressure_build": 161.03534}
+    },
+    "decision_evidence": "The paired treelet repeat differs by 0.06% on single build and 0.35% on pressure build, showing that the earlier 18% pressure gap was host scheduling noise. Overlap retains the production default because it preserves the asynchronous product path and materially wins the repeated micro build; Serial remains a deterministic debug control. Pure LBVH remains benchmark-only because it is not consistently superior across build and query workloads."
+  },
+  "source_notes": [
+    "The March Stage 2/3 comparisons were collected serially, one benchmark process at a time.",
+    "The July BVH-2 raw-compaction repeats are preserved as tracked summaries and are used only to show that the former exact-compaction mask niche no longer exists.",
+    "The pure-LBVH benchmark baseline and historical strategy decision remain in shared/benchmarks/baselines/bvh0_strategy_stage_20260711.json."
+  ]
+}

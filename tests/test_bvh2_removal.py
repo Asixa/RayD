@@ -29,7 +29,6 @@ class BVH2RemovalTests(unittest.TestCase):
     def test_supported_host_prepared_treelet_schedule_remains(self):
         source = SOURCE.read_text(encoding="utf-8")
         required = (
-            "EdgeBVHTreeletScheduleMode::FlatLevels",
             "flatten_node_levels(optimize_levels)",
             "optimize_selected_treelets_kernel",
             "failed to upload treelet schedule",
