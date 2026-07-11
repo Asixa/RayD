@@ -2,6 +2,7 @@
 #include <optix_device.h>
 
 #include <rayd/edge/edge_optix_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd {
 
@@ -12,8 +13,8 @@ __constant__ EdgeOptixQueryParams params;
 namespace {
 
 constexpr float kInfiniteRayTMax = 1.0e8f;
-constexpr float kPointProbeTMax = 1.0e-5f;
-constexpr uint32_t kInvalidEdgeId = 0xffffffffu;
+constexpr float kPointProbeTMax = shared::EdgeEpsilon;
+constexpr uint32_t kInvalidEdgeId = shared::InvalidUnsignedId;
 
 static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
     return make_float3(x, y, z);

@@ -2,19 +2,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntFlag
+import math
 import torch
 
 from . import _C
 
 
+_CONTRACT_VALUES = {
+    "invalid_signed_id": -1,
+    "invalid_unsigned_id": 0xFFFFFFFF,
+    "general_epsilon": 1.0e-5,
+    "ray_epsilon": 1.0e-3,
+    "shadow_epsilon": 1.0e-3,
+    "edge_epsilon": 1.0e-5,
+    "small_epsilon": 1.0e-6,
+    "vacuum_permittivity": 8.854187817e-12,
+    "speed_of_light": 299792458.0,
+    "ray_flags_none": 0x00,
+    "ray_flags_geometric": 0x01,
+    "ray_flags_shading_n": 0x02,
+    "ray_flags_uv": 0x04,
+    "ray_flags_all": 0x07,
+    "intersection_field_count": 10,
+    "nearest_point_edge_field_count": 8,
+    "nearest_ray_edge_field_count": 9,
+}
+
+
+def _validate_native_contract_values() -> None:
+    if _C is None or not hasattr(_C, "contract_values"):
+        return
+    native = _C.contract_values()
+    for key, expected in _CONTRACT_VALUES.items():
+        actual = native[key]
+        if isinstance(expected, float):
+            if not math.isclose(actual, expected, rel_tol=1.0e-7, abs_tol=0.0):
+                raise RuntimeError(f"RayD Torch native contract mismatch for {key}.")
+        elif actual != expected:
+            raise RuntimeError(f"RayD Torch native contract mismatch for {key}.")
+
+
+_validate_native_contract_values()
+
+
 RayFlags = IntFlag(
     "RayFlags",
     {
-        "None": 0x00,
-        "Geometric": 0x01,
-        "ShadingN": 0x02,
-        "UV": 0x04,
-        "All": 0x01 | 0x02 | 0x04,
+        "None": _CONTRACT_VALUES["ray_flags_none"],
+        "Geometric": _CONTRACT_VALUES["ray_flags_geometric"],
+        "ShadingN": _CONTRACT_VALUES["ray_flags_shading_n"],
+        "UV": _CONTRACT_VALUES["ray_flags_uv"],
+        "All": _CONTRACT_VALUES["ray_flags_all"],
     },
 )
 

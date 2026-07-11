@@ -1,4 +1,5 @@
 #include <rayd/torch/scene/geometry_kernels.h>
+#include <rayd/shared/contracts.h>
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/common/optix_context.h>
 #include <rayd/torch/scene/optix_intersect_params.h>
@@ -19,10 +20,13 @@ namespace rayd::torch_backend {
 
 namespace {
 
-constexpr int64_t kRayFlagsGeometric = 0x01;
-constexpr int64_t kRayFlagsShadingN = 0x02;
-constexpr int64_t kRayFlagsUV = 0x04;
-constexpr int64_t kRayFlagsAll = kRayFlagsGeometric | kRayFlagsShadingN | kRayFlagsUV;
+constexpr int64_t kRayFlagsGeometric =
+    static_cast<int64_t>(shared::RayFlagBits::Geometric);
+constexpr int64_t kRayFlagsShadingN =
+    static_cast<int64_t>(shared::RayFlagBits::ShadingN);
+constexpr int64_t kRayFlagsUV = static_cast<int64_t>(shared::RayFlagBits::UV);
+constexpr int64_t kRayFlagsAll = static_cast<int64_t>(shared::RayFlagBits::All);
+static_assert(static_cast<std::uint8_t>(shared::IntersectionField::GlobalPrimId) == 9u);
 
 const bool *optional_mask_ptr(const at::Tensor &active) {
     if (!active.defined() || active.numel() == 0)
@@ -66,9 +70,11 @@ __global__ void intersect_recompute_kernel(
     const bool lane_active = active == nullptr || active[ray_idx];
     const float3 o = make_f3(ray_o + ray_idx * 3);
     const float3 d = make_f3(ray_d + ray_idx * 3);
-    const int shape_id = lane_active ? optix_shape_id[ray_idx] : -1;
-    const int local_prim_id = lane_active ? optix_local_prim_id[ray_idx] : -1;
-    const int global_prim_id = lane_active ? optix_global_prim_id[ray_idx] : -1;
+    const int shape_id = lane_active ? optix_shape_id[ray_idx] : shared::InvalidSignedId;
+    const int local_prim_id =
+        lane_active ? optix_local_prim_id[ray_idx] : shared::InvalidSignedId;
+    const int global_prim_id =
+        lane_active ? optix_global_prim_id[ray_idx] : shared::InvalidSignedId;
     const float hit_t = optix_t[ray_idx];
     const float u = optix_bary_uv[ray_idx * 2 + 0];
     const float v = optix_bary_uv[ray_idx * 2 + 1];
@@ -78,10 +84,10 @@ __global__ void intersect_recompute_kernel(
     const bool want_uv = (flags & kRayFlagsUV) != 0;
 
     if (want_geometric) {
-        out_shape_id[ray_idx] = hit ? shape_id : -1;
-        out_prim_id[ray_idx] = hit ? global_prim_id : -1;
-        out_local_prim_id[ray_idx] = hit ? local_prim_id : -1;
-        out_global_prim_id[ray_idx] = hit ? global_prim_id : -1;
+        out_shape_id[ray_idx] = hit ? shape_id : shared::InvalidSignedId;
+        out_prim_id[ray_idx] = hit ? global_prim_id : shared::InvalidSignedId;
+        out_local_prim_id[ray_idx] = hit ? local_prim_id : shared::InvalidSignedId;
+        out_global_prim_id[ray_idx] = hit ? global_prim_id : shared::InvalidSignedId;
         out_bary[ray_idx * 3 + 0] = hit ? 1.f - u - v : 0.f;
         out_bary[ray_idx * 3 + 1] = hit ? u : 0.f;
         out_bary[ray_idx * 3 + 2] = hit ? v : 0.f;

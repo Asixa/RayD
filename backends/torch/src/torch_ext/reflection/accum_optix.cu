@@ -4,6 +4,7 @@
 #include <rayd/torch/common/complex.cuh>
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/reflection/accum_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd::torch_backend {
 
@@ -14,7 +15,7 @@ extern __constant__ AccumParams params;
 namespace {
 
 constexpr float kReflEps = 1e-6f;
-constexpr float kEpsilon0 = 8.854187817e-12f;
+constexpr float kEpsilon0 = shared::VacuumPermittivity;
 constexpr float kSpeedOfLight = 299792458.0f;
 
 struct HitPayload {

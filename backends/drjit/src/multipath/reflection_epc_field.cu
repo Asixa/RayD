@@ -1,4 +1,5 @@
 #include <rayd/multipath/reflection_epc_field.h>
+#include <rayd/shared/contracts.h>
 
 #include <cuda_runtime.h>
 
@@ -13,8 +14,8 @@ namespace rayd {
 
 namespace {
 
-constexpr float kSmallEps = 1e-6f;
-constexpr float kEpsilon0 = 8.854187817e-12f;
+constexpr float kSmallEps = shared::SmallEpsilon;
+constexpr float kEpsilon0 = shared::VacuumPermittivity;
 constexpr float kPi = 3.14159265358979323846f;
 
 struct Complex {

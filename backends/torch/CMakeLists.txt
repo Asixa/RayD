@@ -208,12 +208,14 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/scene/optix_intersect.cu"
             -o "${RAYD_TORCH_OPTIX_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/scene/optix_intersect.cu
             include/rayd/torch/scene/optix_intersect_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_OPTIX_PTX_HEADER}"
@@ -237,6 +239,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -o "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}"
             -DRAYD_TORCH_EDGE_POINT_RAY_ONLY=1
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -244,6 +247,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/edge/edge_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
@@ -266,6 +270,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -o "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}"
             -DRAYD_TORCH_EDGE_TOPK_ONLY=1
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -273,6 +278,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/edge/edge_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
@@ -357,6 +363,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/epc_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_EPC_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -364,6 +371,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/epc_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/epc_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX_HEADER}"
@@ -386,6 +394,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/accum_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -394,6 +403,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/complex.cuh
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/accum_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"

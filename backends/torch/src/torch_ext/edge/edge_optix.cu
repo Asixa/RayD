@@ -3,6 +3,7 @@
 
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/edge/optix_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd::torch_backend {
 
@@ -13,8 +14,8 @@ __constant__ EdgeOptixQueryParams params;
 namespace {
 
 constexpr float kInfiniteRayTMax = 1.0e8f;
-constexpr float kPointProbeTMax = 1.0e-5f;
-constexpr uint32_t kInvalidEdgeId = 0xffffffffu;
+constexpr float kPointProbeTMax = shared::EdgeEpsilon;
+constexpr uint32_t kInvalidEdgeId = shared::InvalidUnsignedId;
 
 static __forceinline__ __device__ float clamp01(float value) {
     return fminf(fmaxf(value, 0.0f), 1.0f);

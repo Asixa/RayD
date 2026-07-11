@@ -2,6 +2,7 @@
 #include <optix_device.h>
 
 #include <rayd/multipath/reflection_accumulation_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd {
 
@@ -15,7 +16,7 @@ constexpr float kTraceTMin = 1e-5f;
 constexpr float kTraceTMax = 1e8f;
 constexpr float kRayBias = 1e-5f;
 constexpr float kSmallEps = 1e-6f;
-constexpr float kEpsilon0 = 8.854187817e-12f;
+constexpr float kEpsilon0 = shared::VacuumPermittivity;
 constexpr float kSpeedOfLight = 299792458.0f;
 constexpr float kPi = 3.14159265358979323846f;
 

@@ -3,6 +3,7 @@
 
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/reflection/epc_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd::torch_backend {
 
@@ -14,7 +15,7 @@ namespace {
 
 constexpr float kMinSegmentLength = 2e-5f;
 constexpr float kEpcTolerance = 1e-4f;
-constexpr unsigned int kInvalidPrim = 0xFFFFFFFFu;
+constexpr unsigned int kInvalidPrim = shared::InvalidUnsignedId;
 constexpr unsigned int kTraceModeReflection = 0u;
 constexpr unsigned int kTraceModeVisibility = 1u;
 

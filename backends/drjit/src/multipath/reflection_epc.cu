@@ -2,6 +2,7 @@
 #include <optix_device.h>
 
 #include <rayd/multipath/reflection_epc_params.h>
+#include <rayd/shared/contracts.h>
 
 namespace rayd {
 
@@ -11,12 +12,12 @@ extern __constant__ ReflEpcParams params;
 
 namespace {
 
-constexpr float kTraceTMin = 1e-5f;
+constexpr float kTraceTMin = shared::GeneralEpsilon;
 constexpr float kTraceTMax = 1e8f;
-constexpr float kRayBias = 1e-5f;
+constexpr float kRayBias = shared::GeneralEpsilon;
 constexpr float kMinSegmentLength = 2e-5f;
 constexpr float kEpcTolerance = 1e-4f;
-constexpr unsigned int kInvalidPrim = 0xFFFFFFFFu;
+constexpr unsigned int kInvalidPrim = shared::InvalidUnsignedId;
 constexpr unsigned int kTraceModeReflection = 0u;
 constexpr unsigned int kTraceModeVisibility = 1u;
 

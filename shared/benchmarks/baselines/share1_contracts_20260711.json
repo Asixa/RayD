@@ -1,0 +1,25 @@
+{
+  "phase": "Share-1",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": "backend-neutral constants, operation schema v2, result-field and Python/native parity guards",
+  "behavior_change": false,
+  "builds": {
+    "drjit": {"status": "passed", "build_dir": "backends/drjit/build/witwin3-dev"},
+    "torch": {
+      "status": "passed",
+      "build_dir": "backends/torch/build/witwin3-dev",
+      "native_architectures": ["sm_120", "compute_120"],
+      "multi_architecture": false
+    }
+  },
+  "tests": {
+    "shared_contract_and_namespace": {"passed": 19, "failed": 0},
+    "torch_public_edge_scene_cache": {"passed": 34, "failed": 0},
+    "drjit_geometry": {"passed": 63, "failed": 0, "elapsed_seconds": 263.353}
+  },
+  "preserved_backend_overrides": {
+    "drjit_intersection_ray_tmin": 0.001,
+    "torch_intersection_ray_tmin": 0.000001
+  }
+}

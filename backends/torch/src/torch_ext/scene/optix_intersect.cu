@@ -1,4 +1,5 @@
 #include <rayd/torch/scene/optix_intersect_params.h>
+#include <rayd/shared/contracts.h>
 
 #include <optix_device.h>
 
@@ -12,9 +13,9 @@ extern "C" __global__ void __raygen__intersect() {
         return;
 
     float t = __uint_as_float(0x7f800000u);
-    int shape_id = -1;
-    int local_prim_id = -1;
-    int global_prim_id = -1;
+    int shape_id = rayd::shared::InvalidSignedId;
+    int local_prim_id = rayd::shared::InvalidSignedId;
+    int global_prim_id = rayd::shared::InvalidSignedId;
     float u = 0.f;
     float v = 0.f;
 
@@ -38,7 +39,7 @@ extern "C" __global__ void __raygen__intersect() {
             params.traversable,
             origin,
             direction,
-            1e-6f,
+            rayd::shared::SmallEpsilon,
             trace_tmax,
             0.0f,
             OptixVisibilityMask(255),

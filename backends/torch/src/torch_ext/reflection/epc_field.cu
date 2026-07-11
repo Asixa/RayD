@@ -1,4 +1,5 @@
 #include <rayd/torch/reflection/epc_field.h>
+#include <rayd/shared/contracts.h>
 
 #include <cuda_runtime.h>
 
@@ -15,8 +16,8 @@ namespace rayd::torch_backend {
 
 namespace {
 
-constexpr float kReflEps = 1e-6f;
-constexpr float kEpsilon0 = 8.854187817e-12f;
+constexpr float kReflEps = shared::SmallEpsilon;
+constexpr float kEpsilon0 = shared::VacuumPermittivity;
 
 static __forceinline__ __device__ float3 fallback_axis(float3 direction) {
     return fabsf(direction.z) < 0.9f
