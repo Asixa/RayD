@@ -21,7 +21,7 @@ class ProjectMetadataTests(unittest.TestCase):
     def test_transitional_wheels_cover_supported_python_and_torch_baseline(self):
         data = tomllib.loads(Path("pyproject.toml").read_text())
         self.assertEqual(data["project"]["requires-python"], ">=3.10,<3.15")
-        self.assertIn("torch>=2.10,<2.11", data["project"]["dependencies"])
+        self.assertIn("torch>=2.10,<2.12", data["project"]["dependencies"])
         self.assertIn("torch==2.10.0", data["build-system"]["requires"])
 
     def test_public_python_source_has_no_obsolete_product_name(self):
