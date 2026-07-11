@@ -55,11 +55,6 @@ class BVH1RemovalTests(unittest.TestCase):
             ROOT / "backends" / "drjit" / "src" / "edge" / "edge_bvh.cu"
         ).read_text(encoding="utf-8")
         kernels = {
-            "finalize_treelet_metrics_kernel": (
-                r"atomicAdd\(subtree_leaf_count \+ current, contribution\);"
-                r".*?__threadfence\(\);"
-                r"\s*if \(atomicAdd\(arrival_counter \+ current, 1\) == 0\)"
-            ),
             "finalize_leaves_and_bounds_kernel": (
                 r"while \(current >= 0\) \{"
                 r".*?__threadfence\(\);"

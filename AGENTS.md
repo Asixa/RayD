@@ -58,7 +58,7 @@ Current status notes:
 - the treelet path is the best current tradeoff for actual nearest-edge query throughput
 - the combined public backend is named `optix_drjit`; `hybrid` is a deprecated compatibility alias and is unrelated to the removed HLBVH experiment
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
-- a GPU treelet optimization prototype also exists, but it is disabled by default because it increased `build()` cost without improving end-to-end results enough
+- the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 
 Performance snapshot used for the current decision, measured on the verified Windows machine in this repository (`RTX 5080`, `Ryzen 7 9800X3D`) with a `192x192` grid mesh, `110,976` edges, and `65,536` batched queries:
 
