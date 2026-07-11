@@ -2789,5 +2789,100 @@ py::tuple diffraction_coherent_accumulation_forward_op(
         utd_reject_count.reshape({grid_resolution1, grid_resolution0}));
 }
 
+extern "C" int64_t rayd_torch_native_diffraction_coherent_accumulation_forward(
+    int64_t scene_handle,
+    const at::Tensor *active,
+    const at::Tensor *state_edge_index,
+    const at::Tensor *state_edge_pos,
+    const at::Tensor *state_edge_dir,
+    const at::Tensor *state_edge_t_min,
+    const at::Tensor *state_edge_t_max,
+    const at::Tensor *state_n0,
+    const at::Tensor *state_n1,
+    const at::Tensor *state_prim0,
+    const at::Tensor *state_prim1,
+    const at::Tensor *state_exterior_angle,
+    const at::Tensor *state_src,
+    const at::Tensor *state_src_power,
+    const at::Tensor *state_wi,
+    const at::Tensor *state_d0,
+    const at::Tensor *material_eta_r,
+    const at::Tensor *material_sigma,
+    const at::Tensor *material_mu_r,
+    const at::Tensor *material_gain,
+    const at::Tensor *material_valid,
+    int64_t state_limit,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double grid_cell_area,
+    double wavelength,
+    bool select_diffraction_point,
+    bool prefilter_visibility,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(
+                std::string("rayd_torch_native_diffraction_coherent_accumulation_forward received null ") + name);
+        return *tensor;
+    };
+    auto optional = [](const at::Tensor *tensor) -> c10::optional<at::Tensor> {
+        if (tensor == nullptr || !tensor->defined())
+            return c10::nullopt;
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 16;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error(
+            "rayd_torch_native_diffraction_coherent_accumulation_forward output capacity is too small");
+    py::tuple result = diffraction_coherent_accumulation_forward_op(
+        scene_handle,
+        optional(active),
+        required(state_edge_index, "state_edge_index"),
+        required(state_edge_pos, "state_edge_pos"),
+        required(state_edge_dir, "state_edge_dir"),
+        required(state_edge_t_min, "state_edge_t_min"),
+        required(state_edge_t_max, "state_edge_t_max"),
+        required(state_n0, "state_n0"),
+        required(state_n1, "state_n1"),
+        required(state_prim0, "state_prim0"),
+        required(state_prim1, "state_prim1"),
+        required(state_exterior_angle, "state_exterior_angle"),
+        required(state_src, "state_src"),
+        required(state_src_power, "state_src_power"),
+        optional(state_wi),
+        optional(state_d0),
+        required(material_eta_r, "material_eta_r"),
+        required(material_sigma, "material_sigma"),
+        required(material_mu_r, "material_mu_r"),
+        required(material_gain, "material_gain"),
+        required(material_valid, "material_valid"),
+        state_limit,
+        grid_axis,
+        grid_position,
+        grid_coord0_min,
+        grid_coord0_max,
+        grid_coord1_min,
+        grid_coord1_max,
+        grid_resolution0,
+        grid_resolution1,
+        grid_cell_area,
+        wavelength,
+        select_diffraction_point,
+        prefilter_visibility);
+    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
+        throw std::runtime_error(
+            "rayd_torch_native_diffraction_coherent_accumulation_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    return kOutputCount;
+}
+
 
 } // namespace rayd::torch_backend

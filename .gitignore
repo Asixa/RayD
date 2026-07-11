@@ -5,6 +5,7 @@
 __pycache__
 *.egg-info/
 build/
+build-*/
 ext_win64/
 local/
 !scripts/
@@ -15,6 +16,7 @@ claude.md
 dev_notes.md
 dist/
 tmp/
+/.tmp/
 **/*.log
 unit_test/*.exr
 unit_test/inv_test/
