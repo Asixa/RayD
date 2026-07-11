@@ -31,7 +31,7 @@ The Dr.Jit backend must not add PyTorch merely to make the matrix look identical
 
 ## RayD GitHub Actions matrix
 
-The distribution workflow is `.github/workflows/pypi.yml`. Pushes, pull requests, and manual runs build and audit artifacts but never publish them. Only a published GitHub Release enables the trusted-publishing jobs. All three distributions use the existing `pypi` GitHub Environment.
+The distribution workflow is `.github/workflows/pypi.yml`. Pushes, pull requests, and manual runs build and audit artifacts but never publish them. Only a published GitHub Release enables the trusted-publishing jobs. The existing `rayd` project uses the `pypi` GitHub Environment; the two pending backend projects use the unique `pypi-rayd-drjit` and `pypi-rayd-torch` environments required by PyPI.
 
 | Job | Matrix | Purpose |
 | --- | --- | --- |

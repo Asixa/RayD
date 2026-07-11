@@ -77,7 +77,9 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
         for job in ("drjit:", "torch:", "parity:", "packaging:", "coexistence:"):
             self.assertIn(job, workflow)
-        self.assertEqual(release.count("name: pypi"), 3)
+        self.assertIn("name: pypi-rayd-drjit", release)
+        self.assertIn("name: pypi-rayd-torch", release)
+        self.assertEqual(release.count("name: pypi\n"), 1)
 
         self.assertEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
