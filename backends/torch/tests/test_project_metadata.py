@@ -54,14 +54,34 @@ class ProjectMetadataTests(unittest.TestCase):
         for symbol in ('"at::"', '"c10::"', '"@at@@"', '"@c10@@"'):
             self.assertIn(symbol, source)
 
-    def test_cuda_fat_binary_covers_witwin_platform_matrix(self):
+    def test_local_cuda_build_targets_native_gpu(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-        expected = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
-        self.assertIn(f'set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "{expected}")', cmake)
-        self.assertIn(
-            'set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")',
-            cmake,
-        )
+        self.assertIn('set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")', cmake)
+        self.assertIn("torch.cuda.get_device_capability()", cmake)
+        self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
+
+    def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
+        root = Path(__file__).resolve().parents[3]
+        expected_cmake = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        expected_torch = "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX"
+        pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
+        stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
+        for workflow in (pypi, stable):
+            self.assertIn(expected_cmake, workflow)
+            self.assertIn(expected_torch, workflow)
+        torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
+            "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
+        )[0]
+        self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
+        self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+
+    def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
+        cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        explicit = cmake.index("if(DEFINED TORCH_CUDA_ARCH_LIST")
+        environment = cmake.index("elseif(DEFINED ENV{TORCH_CUDA_ARCH_LIST}")
+        detection = cmake.index("torch.cuda.get_device_capability()")
+        self.assertLess(explicit, environment)
+        self.assertLess(environment, detection)
 
     def test_multipath_pipeline_uses_current_optix_link_options(self):
         source = Path("src/torch_ext/common/optix_pipeline.cpp").read_text(encoding="utf-8")

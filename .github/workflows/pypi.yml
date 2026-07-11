@@ -21,6 +21,7 @@ env:
   CMAKE_BUILD_PARALLEL_LEVEL: "2"
   RAYD_CUDA_GENCODE_ARCHES: "70,75,80,86,89,90,100,101,120"
   RAYD_CUDA_PTX_ARCH: "120"
+  TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX"
 
 jobs:
   metadata:
@@ -156,6 +157,7 @@ jobs:
             CUDACXX=/usr/local/cuda/bin/nvcc
             OPTIX_INCLUDE_DIR=/project/.optix/include
             CMAKE_CUDA_ARCHITECTURES="70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+            TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX"
             CMAKE_BUILD_PARALLEL_LEVEL=2
             PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128
             CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc

@@ -21,6 +21,7 @@ import rayd
 
 # Only inspect packages installed in this clean venv.  The base site path is
 # present solely to supply heavyweight runtime dependencies such as Torch.
+assert rayd.__file__ is None, rayd.__file__
 rayd.__path__ = [str(Path(sysconfig.get_path("purelib")) / "rayd")]
 expected = json.loads(os.environ["RAYD_ACCEPTANCE_EXPECTED"])
 absent = json.loads(os.environ["RAYD_ACCEPTANCE_ABSENT"])
@@ -95,7 +96,63 @@ class WheelInstallMatrixTests(unittest.TestCase):
             "pip",
             "install",
             "--no-deps",
+            "--ignore-installed",
             self.wheels[backend],
+        )
+
+    def install_legacy_editable(self, python, root):
+        package = root / "rayd"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("LEGACY = True\n", encoding="utf-8")
+        finder = f"""\
+import importlib.abc
+import importlib.util
+import sys
+
+class LegacyRayDFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "rayd":
+            return importlib.util.spec_from_file_location(
+                fullname,
+                {str(package / '__init__.py')!r},
+                submodule_search_locations=[{str(package)!r}],
+            )
+        return None
+
+sys.meta_path.insert(0, LegacyRayDFinder())
+"""
+        seed = f"""\
+from pathlib import Path
+import sysconfig
+
+site = Path(sysconfig.get_path("purelib"))
+(site / "_rayd_editable.py").write_text({finder!r}, encoding="utf-8")
+(site / "_rayd_editable.pth").write_text("import _rayd_editable\\n", encoding="utf-8")
+info = site / "rayd-0.4.1.dist-info"
+info.mkdir()
+(info / "METADATA").write_text(
+    "Metadata-Version: 2.1\\nName: rayd\\nVersion: 0.4.1\\n",
+    encoding="utf-8",
+)
+(info / "WHEEL").write_text(
+    "Wheel-Version: 1.0\\nGenerator: legacy-fixture\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+    encoding="utf-8",
+)
+(info / "INSTALLER").write_text("pip\\n", encoding="utf-8")
+(info / "RECORD").write_text(
+    "_rayd_editable.pth,,\\n"
+    "_rayd_editable.py,,\\n"
+    "rayd-0.4.1.dist-info/INSTALLER,,\\n"
+    "rayd-0.4.1.dist-info/METADATA,,\\n"
+    "rayd-0.4.1.dist-info/RECORD,,\\n"
+    "rayd-0.4.1.dist-info/WHEEL,,\\n",
+    encoding="utf-8",
+)
+"""
+        self.command(
+            python,
+            "-c",
+            seed,
         )
 
     def test_both_install_orders(self):
@@ -107,9 +164,11 @@ class WheelInstallMatrixTests(unittest.TestCase):
                     self.install(python, backend)
                 self.probe(python, order)
 
-    def test_meta_distribution_installs_both_backends_by_default(self):
+    def test_meta_distribution_coexists_with_both_backends(self):
         with tempfile.TemporaryDirectory() as tmp:
             python = self.make_venv(Path(tmp) / "meta", system_site_packages=True)
+            self.install(python, "drjit")
+            self.install(python, "torch")
             self.command(
                 python,
                 "-m",
@@ -118,10 +177,37 @@ class WheelInstallMatrixTests(unittest.TestCase):
                 "--no-index",
                 "--find-links",
                 self.meta_wheel.parent,
+                "--no-deps",
                 self.meta_wheel,
             )
             self.probe(python, ("drjit", "torch"))
             self.command(python, "-m", "pip", "uninstall", "-y", "rayd")
+            self.probe(python, ("drjit", "torch"))
+
+    def test_meta_upgrade_removes_legacy_editable_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            python = self.make_venv(root / "upgrade", system_site_packages=True)
+            self.install(python, "drjit")
+            self.install(python, "torch")
+            self.install_legacy_editable(python, root / "legacy")
+            self.command(
+                python,
+                "-c",
+                "import rayd; assert rayd.__file__ is not None; assert rayd.LEGACY",
+            )
+            self.command(
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                self.meta_wheel.parent,
+                "--no-deps",
+                "--upgrade",
+                self.meta_wheel,
+            )
             self.probe(python, ("drjit", "torch"))
 
     def test_uninstalling_one_backend_preserves_the_other(self):

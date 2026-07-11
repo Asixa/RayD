@@ -11,7 +11,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayD Torch native targets." FORCE)
 endif()
 
-set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual")
+set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
@@ -82,8 +82,19 @@ if(RAYD_TORCH_BUILD_NATIVE)
     # -gencode flags from every target created below and silently fall back to
     # nvcc's default architecture. Save the requested value and restore it.
     set(RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-    if(NOT DEFINED TORCH_CUDA_ARCH_LIST OR TORCH_CUDA_ARCH_LIST STREQUAL "")
-        set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")
+    if(DEFINED TORCH_CUDA_ARCH_LIST AND NOT TORCH_CUDA_ARCH_LIST STREQUAL "")
+        # Explicit CMake configuration wins for cross-compilation.
+    elseif(DEFINED ENV{TORCH_CUDA_ARCH_LIST} AND NOT "$ENV{TORCH_CUDA_ARCH_LIST}" STREQUAL "")
+        set(TORCH_CUDA_ARCH_LIST "$ENV{TORCH_CUDA_ARCH_LIST}")
+    else()
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -c "import torch; major, minor = torch.cuda.get_device_capability(); print(f'{major}.{minor}+PTX')"
+            RESULT_VARIABLE TORCH_CUDA_ARCH_RESULT
+            OUTPUT_VARIABLE TORCH_CUDA_ARCH_LIST
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT TORCH_CUDA_ARCH_RESULT EQUAL 0 OR TORCH_CUDA_ARCH_LIST STREQUAL "")
+            message(FATAL_ERROR "Could not detect the local Torch CUDA architecture. Set CMAKE_CUDA_ARCHITECTURES and TORCH_CUDA_ARCH_LIST explicitly for cross-compilation.")
+        endif()
     endif()
     find_package(Torch REQUIRED)
     if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
