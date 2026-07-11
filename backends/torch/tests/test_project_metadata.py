@@ -38,8 +38,12 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertNotIn(forbidden, stable_source)
         self.assertIn("STABLE_TORCH_LIBRARY(rayd_torch_stable", stable_source)
         self.assertIn("TORCH_TARGET_VERSION=0x020a000000000000", cmake)
-        stable_target = cmake[cmake.index("add_library(rayd_torch_stable_ops"):cmake.index("execute_process(")]
+        stable_start = cmake.index("add_library(rayd_torch_stable_ops")
+        stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
+        self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
+        self.assertIn('"${RAYD_TORCH_STABLE_CPU_LIBRARY}"', stable_target)
+        self.assertIn('"${RAYD_TORCH_STABLE_CUDA_LIBRARY}"', stable_target)
 
     def test_stable_abi_audit_script_is_packaged_with_the_backend(self):
         script = Path("scripts/verify_stable_abi.py")
@@ -47,6 +51,8 @@ class ProjectMetadataTests(unittest.TestCase):
         source = script.read_text(encoding="utf-8")
         for dependency in ("torch_python", "c10.dll", "libc10.so", "python3"):
             self.assertIn(dependency, source)
+        for symbol in ('"at::"', '"c10::"', '"@at@@"', '"@c10@@"'):
+            self.assertIn(symbol, source)
 
     def test_cuda_fat_binary_covers_witwin_platform_matrix(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")

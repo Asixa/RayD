@@ -95,6 +95,22 @@ if(RAYD_TORCH_BUILD_NATIVE)
     message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     message(STATUS "RayD Torch/Caffe2 CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
 
+    # Stable ABI shims are exported by torch_cpu and torch_cuda. Link those
+    # provider libraries directly: ${TORCH_LIBRARIES} also pulls in the
+    # unstable c10 ABI and, on Windows, forces an at::cuda::warp_size import.
+    find_library(
+        RAYD_TORCH_STABLE_CPU_LIBRARY
+        NAMES torch_cpu
+        PATHS "${TORCH_INSTALL_PREFIX}/lib"
+        NO_DEFAULT_PATH
+        REQUIRED)
+    find_library(
+        RAYD_TORCH_STABLE_CUDA_LIBRARY
+        NAMES torch_cuda
+        PATHS "${TORCH_INSTALL_PREFIX}/lib"
+        NO_DEFAULT_PATH
+        REQUIRED)
+
     # This library is intentionally not a Python extension. It uses only the
     # LibTorch Stable ABI and is loaded from Python through torch.ops.load_library().
     add_library(rayd_torch_stable_ops SHARED src/stable/camera.cu)
@@ -118,7 +134,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
     target_link_libraries(
         rayd_torch_stable_ops
         PRIVATE
-            "${TORCH_LIBRARIES}"
+            "${RAYD_TORCH_STABLE_CPU_LIBRARY}"
+            "${RAYD_TORCH_STABLE_CUDA_LIBRARY}"
             CUDA::cudart
             CUDA::cuda_driver)
     target_compile_features(rayd_torch_stable_ops PRIVATE cxx_std_17)

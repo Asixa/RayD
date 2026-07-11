@@ -24,6 +24,12 @@ FORBIDDEN_DEPENDENCIES = (
     "libc10_cuda.so",
     "python3",
 )
+FORBIDDEN_DYNAMIC_SYMBOLS = (
+    "at::",
+    "c10::",
+    "@at@@",
+    "@c10@@",
+)
 
 
 def verify_sources(source_root: Path) -> None:
@@ -69,6 +75,31 @@ def dependency_listing(binary: Path) -> str:
     return output
 
 
+def dynamic_symbol_listing(binary: Path) -> str:
+    if os.name == "nt":
+        tool = shutil.which("dumpbin")
+        if tool is None:
+            program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+            candidates = sorted(
+                program_files.glob(
+                    "Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe"
+                ),
+                reverse=True,
+            )
+            tool = str(candidates[0]) if candidates else None
+        if tool is None:
+            raise SystemExit("dumpbin is required for Stable ABI symbol auditing")
+        command = [tool, "/imports", str(binary)]
+        return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+
+    tool = shutil.which("readelf")
+    if tool is None:
+        raise SystemExit("readelf is required for Stable ABI symbol auditing")
+    command = [tool, "--dyn-syms", "--wide", "--demangle", str(binary)]
+    output = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    return "\n".join(line for line in output.splitlines() if " UND " in line)
+
+
 def verify_binary(binary: Path) -> None:
     if not binary.is_file():
         raise SystemExit(f"Stable ABI library does not exist: {binary}")
@@ -76,6 +107,10 @@ def verify_binary(binary: Path) -> None:
     violations = [name for name in FORBIDDEN_DEPENDENCIES if name in listing]
     if violations:
         raise SystemExit(f"{binary} has forbidden direct dependencies: {', '.join(violations)}")
+    symbols = dynamic_symbol_listing(binary).lower()
+    symbol_violations = [name for name in FORBIDDEN_DYNAMIC_SYMBOLS if name in symbols]
+    if symbol_violations:
+        raise SystemExit(f"{binary} imports unstable LibTorch symbols: {', '.join(symbol_violations)}")
     if any(tag in binary.name.lower() for tag in ("cp310", "cp311", "cp312", "cp313", "cp314")):
         raise SystemExit(f"Stable ABI library must not carry a CPython ABI tag: {binary.name}")
     print(f"Verified Stable ABI dependencies for {binary}")
