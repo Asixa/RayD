@@ -59,6 +59,8 @@ Current status notes:
 - the combined public backend is named `optix_drjit`; `hybrid` is a deprecated compatibility alias and is unrelated to the removed HLBVH experiment
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
+- the shared edge core now owns the backend-neutral OptiX AABB kernel and dirty-ancestor/dirty-level/refit CUDA launchers; both APIs take raw pointers and an explicit caller-owned stream
+- Dr.Jit still owns LBVH/treelet host orchestration and its JIT traversal; `bvh_query.h` freezes only the POD layout until Share-5/F1 adds the Torch buffer owner and shared CUDA traversal
 
 Supported custom-BVH configuration after BVH-3 convergence:
 

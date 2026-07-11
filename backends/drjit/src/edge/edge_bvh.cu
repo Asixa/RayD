@@ -1,6 +1,8 @@
 #include <rayd/edge/edge_bvh.h>
 #include <rayd/edge/edge_bvh_config.h>
 #include <rayd/native_launch_audit.h>
+#include <rayd/shared/edge/bvh_build.h>
+#include <rayd/shared/edge/edge_aabb.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -653,38 +655,6 @@ __global__ void compute_primitive_bounds_kernel(
     primitive_bounds[primitive] = Bounds3{ bbox_min, bbox_max };
 }
 
-/// One edge per thread; writes its AABB inflated by `inflation` into the packed OptiX buffer (6 floats/edge).
-__global__ void compute_edge_optix_aabbs_kernel(
-    int primitive_count,
-    const float *edge_p0_x,
-    const float *edge_p0_y,
-    const float *edge_p0_z,
-    const float *edge_e1_x,
-    const float *edge_e1_y,
-    const float *edge_e1_z,
-    float inflation,
-    float *out_aabbs) {
-    const int primitive = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (primitive >= primitive_count) {
-        return;
-    }
-
-    const Float3 p0(edge_p0_x[primitive], edge_p0_y[primitive], edge_p0_z[primitive]);
-    const Float3 p1(p0.x + edge_e1_x[primitive],
-                    p0.y + edge_e1_y[primitive],
-                    p0.z + edge_e1_z[primitive]);
-    const Float3 bbox_min = min3(p0, p1);
-    const Float3 bbox_max = max3(p0, p1);
-    const float radius = fmaxf(inflation, 0.0f);
-    const int base = primitive * 6;
-    out_aabbs[base + 0] = bbox_min.x - radius;
-    out_aabbs[base + 1] = bbox_min.y - radius;
-    out_aabbs[base + 2] = bbox_min.z - radius;
-    out_aabbs[base + 3] = bbox_max.x + radius;
-    out_aabbs[base + 4] = bbox_max.y + radius;
-    out_aabbs[base + 5] = bbox_max.z + radius;
-}
-
 /// One element per thread; fills values[i] = i (identity permutation).
 __global__ void init_sequence_kernel(int count, int *values) {
     const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
@@ -883,90 +853,6 @@ __global__ void finalize_leaves_and_bounds_kernel(
         node_bbox_max_z[current] = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
         current = parent[current];
     }
-}
-
-/// One dirty leaf per thread; marks it and all ancestors dirty, stopping where already marked.
-__global__ void mark_dirty_ancestors_kernel(int leaf_count,
-                                            const int *leaf_nodes,
-                                            const int *node_parent,
-                                            int *dirty_marks) {
-    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (leaf_index >= leaf_count) {
-        return;
-    }
-
-    const int leaf_node = leaf_nodes[leaf_index];
-    if (leaf_node < 0) {
-        return;
-    }
-
-    if (atomicExch(&dirty_marks[leaf_node], 1) != 0) {
-        return;
-    }
-
-    int current = node_parent[leaf_node];
-    while (current >= 0) {
-        if (atomicExch(&dirty_marks[current], 1) != 0) {
-            break;
-        }
-        current = node_parent[current];
-    }
-}
-
-/// One level node per thread; appends the dirty nodes of this level to the selected list.
-__global__ void compact_dirty_level_kernel(int level_count,
-                                           const int *level_nodes,
-                                           const int *dirty_marks,
-                                           int *selected_nodes,
-                                           int *selected_count) {
-    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (item_index >= level_count) {
-        return;
-    }
-
-    const int node_index = level_nodes[item_index];
-    if (node_index < 0 || dirty_marks[node_index] == 0) {
-        return;
-    }
-
-    const int output_index = atomicAdd(selected_count, 1);
-    selected_nodes[output_index] = node_index;
-}
-
-/// One selected node per thread; refits its bounds from children.
-__global__ void refit_selected_internal_nodes_kernel(
-    int max_selected_count,
-    const int *selected_count,
-    const int *selected_nodes,
-    const int *left_child,
-    const int *right_child,
-    float *node_bbox_min_x,
-    float *node_bbox_min_y,
-    float *node_bbox_min_z,
-    float *node_bbox_max_x,
-    float *node_bbox_max_y,
-    float *node_bbox_max_z) {
-    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    const int selected = *selected_count;
-    if (item_index >= max_selected_count || item_index >= selected) {
-        return;
-    }
-
-    const int node_index = selected_nodes[item_index];
-    const int left = left_child[node_index];
-    const int right = right_child[node_index];
-    const float bbox_min_x = fminf(node_bbox_min_x[left], node_bbox_min_x[right]);
-    const float bbox_min_y = fminf(node_bbox_min_y[left], node_bbox_min_y[right]);
-    const float bbox_min_z = fminf(node_bbox_min_z[left], node_bbox_min_z[right]);
-    const float bbox_max_x = fmaxf(node_bbox_max_x[left], node_bbox_max_x[right]);
-    const float bbox_max_y = fmaxf(node_bbox_max_y[left], node_bbox_max_y[right]);
-    const float bbox_max_z = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
-    node_bbox_min_x[node_index] = bbox_min_x;
-    node_bbox_min_y[node_index] = bbox_min_y;
-    node_bbox_min_z[node_index] = bbox_min_z;
-    node_bbox_max_x[node_index] = bbox_max_x;
-    node_bbox_max_y[node_index] = bbox_max_y;
-    node_bbox_max_z[node_index] = bbox_max_z;
 }
 
 void check_cuda_call(cudaError_t error, const char *message) {
@@ -1169,7 +1055,7 @@ void compute_edge_optix_aabbs_gpu(
     try {
         constexpr int block_size = 256;
         const int block_count = (primitive_count + block_size - 1) / block_size;
-        compute_edge_optix_aabbs_kernel<<<block_count, block_size>>>(
+        shared::edge::launch_edge_aabb(
             primitive_count,
             edge_p0_x,
             edge_p0_y,
@@ -1178,7 +1064,8 @@ void compute_edge_optix_aabbs_gpu(
             edge_e1_y,
             edge_e1_z,
             inflation,
-            out_aabbs);
+            out_aabbs,
+            nullptr);
         audit_cuda_kernel_launch("compute_edge_optix_aabbs_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,
@@ -1645,8 +1532,13 @@ void mark_edge_bvh_dirty_ancestors_gpu(
 
         constexpr int block_size = 256;
         const int block_count = (leaf_count + block_size - 1) / block_size;
-        mark_dirty_ancestors_kernel<<<block_count, block_size>>>(
-            leaf_count, leaf_nodes, node_parent, out_dirty_marks);
+        shared::edge::launch_mark_dirty_ancestors_async({
+            leaf_nodes,
+            node_parent,
+            out_dirty_marks,
+            leaf_count,
+            nullptr
+        });
         audit_cuda_kernel_launch("mark_dirty_ancestors_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,
@@ -1710,12 +1602,14 @@ void compact_and_refit_edge_bvh_level_gpu(
 
         constexpr int block_size = 256;
         const int block_count = (level_count + block_size - 1) / block_size;
-        compact_dirty_level_kernel<<<block_count, block_size>>>(
-            level_count,
+        shared::edge::launch_compact_dirty_level_async({
             level_nodes,
             dirty_marks,
             scratch_selected_nodes,
-            scratch_selected_count);
+            scratch_selected_count,
+            level_count,
+            nullptr
+        });
         audit_cuda_kernel_launch("compact_dirty_level_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,
@@ -1723,18 +1617,23 @@ void compact_and_refit_edge_bvh_level_gpu(
         check_cuda_last_error(
             "compact_and_refit_edge_bvh_level_gpu(): failed to launch dirty-level compaction");
 
-        refit_selected_internal_nodes_kernel<<<block_count, block_size>>>(
-            level_count,
+        shared::edge::launch_refit_selected_internal_nodes_async({
             scratch_selected_count,
             scratch_selected_nodes,
             left_child,
             right_child,
-            node_bbox_min_x,
-            node_bbox_min_y,
-            node_bbox_min_z,
-            node_bbox_max_x,
-            node_bbox_max_y,
-            node_bbox_max_z);
+            {
+                node_bbox_min_x,
+                node_bbox_min_y,
+                node_bbox_min_z,
+                node_bbox_max_x,
+                node_bbox_max_y,
+                node_bbox_max_z,
+                0
+            },
+            level_count,
+            nullptr
+        });
         audit_cuda_kernel_launch("refit_selected_internal_nodes_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,
