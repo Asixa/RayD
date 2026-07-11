@@ -474,7 +474,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--post-build-strategy",
-        choices=("none", "hybrid_top_level_sah", "gpu_treelet"),
+        choices=("none", "gpu_treelet"),
         help="Explicit Edge BVH post-build strategy for this stage run.",
     )
     parser.add_argument(

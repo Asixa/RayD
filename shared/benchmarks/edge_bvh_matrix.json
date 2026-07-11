@@ -83,6 +83,7 @@
     "build_max_regression": 0.05,
     "refit_max_regression": 0.05,
     "memory_max_regression": 0.05,
-    "cold_create_max_regression": 0.10
+    "cold_create_max_regression": 0.10,
+    "absolute_noise_floor_ms": 0.01
   }
 }

@@ -15,7 +15,6 @@ namespace rayd {
 /// Optional optimization pass applied after the initial BVH build.
 enum class EdgeBVHPostBuildStrategy {
     None,
-    HybridTopLevelSAH,  ///< Rebuild the top levels with SAH (experiment).
     GpuTreelet          ///< GPU treelet reoptimization (default).
 };
 
@@ -93,15 +92,11 @@ inline EdgeBVHPostBuildStrategy active_edge_bvh_post_build_strategy() {
         if (normalized == "none") {
             return EdgeBVHPostBuildStrategy::None;
         }
-        if (normalized == "hybrid_top_level_sah") {
-            return EdgeBVHPostBuildStrategy::HybridTopLevelSAH;
-        }
         if (normalized == "gpu_treelet") {
             return EdgeBVHPostBuildStrategy::GpuTreelet;
         }
         throw std::runtime_error(
-            "Invalid RAYD_EDGE_BVH_POST_BUILD_STRATEGY. Expected one of: none, "
-            "hybrid_top_level_sah, gpu_treelet.");
+            "Invalid RAYD_EDGE_BVH_POST_BUILD_STRATEGY. Expected one of: none, gpu_treelet.");
     }();
     return value;
 }

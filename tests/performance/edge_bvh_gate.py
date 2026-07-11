@@ -112,6 +112,7 @@ def validate_matrix(matrix: dict[str, Any], schema_dir: Path | None = None) -> N
         "refit_max_regression": 0.05,
         "memory_max_regression": 0.05,
         "cold_create_max_regression": 0.10,
+        "absolute_noise_floor_ms": 0.01,
     }
     _require(gate == expected_gate, "performance gate thresholds do not match BVH-0 defaults")
 
@@ -282,11 +283,17 @@ def evaluate_gate(
         base_case = baseline_cases[case_id]
         candidate_case = candidate_cases[case_id]
         _require(base_case["dimensions"] == candidate_case["dimensions"], f"dimensions differ: {case_id}")
-        for metric, (_, threshold_key) in PERFORMANCE_METRICS.items():
+        for metric, (unit, threshold_key) in PERFORMANCE_METRICS.items():
             baseline_value = base_case["performance"][metric][gate_statistic]
             candidate_value = candidate_case["performance"][metric][gate_statistic]
             regression = _regression(baseline_value, candidate_value)
             limit = matrix["performance_gate"][threshold_key]
+            absolute_regression = candidate_value - baseline_value
+            absolute_noise_floor = (
+                matrix["performance_gate"]["absolute_noise_floor_ms"]
+                if unit == "ms"
+                else 0.0
+            )
             comparison = {
                 "case_id": case_id,
                 "metric": metric,
@@ -295,11 +302,23 @@ def evaluate_gate(
                 "candidate": candidate_value,
                 "regression": regression,
                 "limit": limit,
+                "absolute_regression": absolute_regression,
+                "absolute_noise_floor": absolute_noise_floor,
             }
             comparisons.append(comparison)
-            exceeds_limit = regression is None or (
+            exceeds_relative_limit = regression is None or (
                 regression > limit
                 and not math.isclose(regression, limit, rel_tol=1e-12, abs_tol=1e-12)
+            )
+            exceeds_limit = (
+                exceeds_relative_limit
+                and absolute_regression > absolute_noise_floor
+                and not math.isclose(
+                    absolute_regression,
+                    absolute_noise_floor,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
             )
             if exceeds_limit:
                 failures.append({**comparison, "reason": "performance regression"})

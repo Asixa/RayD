@@ -43,16 +43,17 @@ struct SceneSyncProfile {
 
 /// Acceleration backend used for nearest-edge queries.
 enum class EdgeBVHBackend {
-    DrJit,   ///< Custom Dr.Jit/CUDA BVH.
-    Optix,   ///< OptiX custom-AABB backend (default).
-    Hybrid   ///< Dr.Jit point queries with OptiX ray queries.
+    DrJit,       ///< Custom Dr.Jit/CUDA BVH.
+    Optix,       ///< OptiX custom-AABB backend (default).
+    OptixDrJit,  ///< Dr.Jit point/top-k queries with OptiX ray queries.
+    Hybrid [[deprecated("use EdgeBVHBackend::OptixDrJit")]] = OptixDrJit
 };
 
 /// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
 public:
     /// Construct an empty scene; \p edge_bvh_backend selects the nearest-edge backend
-    /// ("drjit", "optix", or "hybrid"). See EdgeBVHBackend.
+    /// ("drjit", "optix", or "optix_drjit"). See EdgeBVHBackend.
     explicit Scene(const std::string &edge_bvh_backend = "optix");
     ~Scene();
 
@@ -82,7 +83,7 @@ public:
     const SceneSyncProfile &last_sync_profile() const { return last_sync_profile_; }
     /// Summary of the scene-global edge set (counts and buffer handles).
     SceneEdgeInfo edge_info() const;
-    /// Name of the active edge backend ("drjit", "optix", or "hybrid").
+    /// Canonical name of the active edge backend ("drjit", "optix", or "optix_drjit").
     std::string edge_bvh_backend() const;
     /// Build/traversal statistics for the edge BVH.
     SceneEdgeBVHStats edge_bvh_stats() const;

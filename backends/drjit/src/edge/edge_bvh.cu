@@ -670,6 +670,8 @@ __global__ void finalize_treelet_metrics_kernel(int node_count,
     int contribution = 1;
     while (current >= 0) {
         atomicAdd(subtree_leaf_count + current, contribution);
+        // Publish the contribution before announcing this child at the parent.
+        __threadfence();
         if (atomicAdd(arrival_counter + current, 1) == 0) {
             return;
         }
@@ -1132,6 +1134,8 @@ __global__ void finalize_leaves_and_bounds_kernel(
 
     int current = parent[node_index];
     while (current >= 0) {
+        // Publish this leaf/internal AABB before announcing it to the parent.
+        __threadfence();
         if (atomicAdd(merge_counters + current, 1) == 0) {
             return;
         }
@@ -2273,10 +2277,13 @@ __global__ void finalize_raw_subtree_leaf_counts_kernel(int node_count,
     }
 
     subtree_leaf_count[node_index] = 1;
+    __threadfence();
     int current = parent[node_index];
     int contribution = 1;
     while (current >= 0) {
         atomicAdd(subtree_leaf_count + current, contribution);
+        // Publish the contribution before announcing this child at the parent.
+        __threadfence();
         if (atomicAdd(arrival_counter + current, 1) == 0) {
             return;
         }

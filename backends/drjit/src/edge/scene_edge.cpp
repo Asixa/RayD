@@ -19,11 +19,7 @@ namespace {
 constexpr size_t EdgeBVHTraversalStackSize = 64;
 constexpr int EdgeBVHPackedBoundsStride = 6;
 constexpr int EdgeBVHPackedChildrenStride = 2;
-constexpr int EdgeBVHHybridClusterLeafCount = 32;
-constexpr int EdgeBVHHybridClusterMaxHeight = 12;
-constexpr int EdgeBVHHybridTopLevelMinPrimitives = 65536;
 constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
-constexpr int EdgeBVHSAHBins = 12;
 using TraversalStack = Int;
 
 /// Per-query running top-k during BVH traversal, kept as 16 unrolled (distance, primitive)
@@ -91,21 +87,6 @@ bool should_use_dirty_ancestor_refit(EdgeBVHRefitStrategy strategy,
            dirty_primitive_count * 64u <= primitive_count;
 }
 
-/// One LBVH cluster fed into the experimental top-level SAH rebuild.
-struct TopLevelBuildRecord {
-    int node_index = -1;
-    ScalarVector3f bbox_min;
-    ScalarVector3f bbox_max;
-    ScalarVector3f centroid;
-};
-
-/// One SAH binning bucket: accumulated bounds and primitive count.
-struct SAHBin {
-    ScalarVector3f bbox_min;
-    ScalarVector3f bbox_max;
-    int count = 0;
-};
-
 ScalarVector3f scalar_min(const ScalarVector3f &a, const ScalarVector3f &b) {
     return ScalarVector3f(std::min(a.x(), b.x()),
                           std::min(a.y(), b.y()),
@@ -133,61 +114,6 @@ float bbox_surface_area(const ScalarVector3f &bbox_min, const ScalarVector3f &bb
     return 2.f * (extent.x() * extent.y() +
                   extent.x() * extent.z() +
                   extent.y() * extent.z());
-}
-
-int dominant_axis(const ScalarVector3f &extent) {
-    if (extent.x() >= extent.y() && extent.x() >= extent.z()) {
-        return 0;
-    }
-    if (extent.y() >= extent.z()) {
-        return 1;
-    }
-    return 2;
-}
-
-float axis_value(const ScalarVector3f &v, int axis) {
-    if (axis == 0) {
-        return v.x();
-    }
-    if (axis == 1) {
-        return v.y();
-    }
-    return v.z();
-}
-
-uint32_t expand_bits_10_host(uint32_t value) {
-    value &= 0x000003ffu;
-    value = (value | (value << 16)) & 0x030000FFu;
-    value = (value | (value << 8)) & 0x0300F00Fu;
-    value = (value | (value << 4)) & 0x030C30C3u;
-    value = (value | (value << 2)) & 0x09249249u;
-    return value;
-}
-
-uint32_t morton_code_3d_host(const ScalarVector3f &point,
-                             const ScalarVector3f &scene_bbox_min,
-                             const ScalarVector3f &scene_bbox_max) {
-    ScalarVector3f normalized(0.5f, 0.5f, 0.5f);
-    const ScalarVector3f extent = scene_bbox_max - scene_bbox_min;
-    if (extent.x() > 0.f) {
-        normalized.x() = (point.x() - scene_bbox_min.x()) / extent.x();
-    }
-    if (extent.y() > 0.f) {
-        normalized.y() = (point.y() - scene_bbox_min.y()) / extent.y();
-    }
-    if (extent.z() > 0.f) {
-        normalized.z() = (point.z() - scene_bbox_min.z()) / extent.z();
-    }
-
-    normalized = scalar_max(ScalarVector3f(0.f, 0.f, 0.f),
-                            scalar_min(normalized, ScalarVector3f(1.f, 1.f, 1.f)));
-    constexpr uint32_t scale = (1u << 10) - 1u;
-    const uint32_t x = static_cast<uint32_t>(normalized.x() * static_cast<float>(scale));
-    const uint32_t y = static_cast<uint32_t>(normalized.y() * static_cast<float>(scale));
-    const uint32_t z = static_cast<uint32_t>(normalized.z() * static_cast<float>(scale));
-    return (expand_bits_10_host(x) << 2u) |
-           (expand_bits_10_host(y) << 1u) |
-           (expand_bits_10_host(z) << 0u);
 }
 
 Vector3f zero_vector3(int size) {
@@ -338,279 +264,6 @@ int compute_subtree_primitive_count(int node_index,
                                             is_leaf,
                                             subtree_primitive_counts);
     return count;
-}
-
-int compute_subtree_height(int node_index,
-                           const std::vector<int> &left_child,
-                           const std::vector<int> &right_child,
-                           const std::vector<int> &is_leaf,
-                           std::vector<int> &subtree_heights) {
-    int &height = subtree_heights[static_cast<size_t>(node_index)];
-    if (height >= 0) {
-        return height;
-    }
-
-    if (is_leaf[static_cast<size_t>(node_index)] > 0) {
-        height = 0;
-        return height;
-    }
-
-    height = 1 + std::max(compute_subtree_height(left_child[static_cast<size_t>(node_index)],
-                                                 left_child,
-                                                 right_child,
-                                                 is_leaf,
-                                                 subtree_heights),
-                          compute_subtree_height(right_child[static_cast<size_t>(node_index)],
-                                                 left_child,
-                                                 right_child,
-                                                 is_leaf,
-                                                 subtree_heights));
-    return height;
-}
-
-void select_lbvh_clusters(int node_index,
-                          const std::vector<int> &left_child,
-                          const std::vector<int> &right_child,
-                          const std::vector<int> &is_leaf,
-                          const std::vector<int> &subtree_leaf_counts,
-                          const std::vector<int> &subtree_heights,
-                          std::vector<uint8_t> &is_cluster_root,
-                          std::vector<int> &cluster_roots) {
-    if (is_leaf[static_cast<size_t>(node_index)] > 0 ||
-        subtree_leaf_counts[static_cast<size_t>(node_index)] <= EdgeBVHHybridClusterLeafCount ||
-        subtree_heights[static_cast<size_t>(node_index)] <= EdgeBVHHybridClusterMaxHeight) {
-        is_cluster_root[static_cast<size_t>(node_index)] = 1;
-        cluster_roots.push_back(node_index);
-        return;
-    }
-
-    select_lbvh_clusters(left_child[static_cast<size_t>(node_index)],
-                         left_child,
-                         right_child,
-                         is_leaf,
-                         subtree_leaf_counts,
-                         subtree_heights,
-                         is_cluster_root,
-                         cluster_roots);
-    select_lbvh_clusters(right_child[static_cast<size_t>(node_index)],
-                         left_child,
-                         right_child,
-                         is_leaf,
-                         subtree_leaf_counts,
-                         subtree_heights,
-                         is_cluster_root,
-                         cluster_roots);
-}
-
-void collect_top_level_nodes(int node_index,
-                             const std::vector<int> &left_child,
-                             const std::vector<int> &right_child,
-                             const std::vector<uint8_t> &is_cluster_root,
-                             std::vector<int> &top_level_nodes) {
-    if (is_cluster_root[static_cast<size_t>(node_index)] > 0) {
-        return;
-    }
-
-    top_level_nodes.push_back(node_index);
-    collect_top_level_nodes(left_child[static_cast<size_t>(node_index)],
-                            left_child,
-                            right_child,
-                            is_cluster_root,
-                            top_level_nodes);
-    collect_top_level_nodes(right_child[static_cast<size_t>(node_index)],
-                            left_child,
-                            right_child,
-                            is_cluster_root,
-                            top_level_nodes);
-}
-
-bool choose_sah_split(std::vector<TopLevelBuildRecord> &records,
-                      int begin,
-                      int end,
-                      int &split_index) {
-    float best_cost = std::numeric_limits<float>::infinity();
-    int best_axis = -1;
-    int best_bin = -1;
-    float best_axis_min = 0.f;
-    float best_axis_max = 0.f;
-
-    for (int axis = 0; axis < 3; ++axis) {
-        float centroid_min = std::numeric_limits<float>::infinity();
-        float centroid_max = -std::numeric_limits<float>::infinity();
-        for (int index = begin; index < end; ++index) {
-            const float value = axis_value(records[static_cast<size_t>(index)].centroid, axis);
-            centroid_min = std::min(centroid_min, value);
-            centroid_max = std::max(centroid_max, value);
-        }
-
-        if (!(centroid_max > centroid_min)) {
-            continue;
-        }
-
-        std::array<SAHBin, EdgeBVHSAHBins> bins;
-        for (SAHBin &bin : bins) {
-            bin.bbox_min = empty_bbox_min();
-            bin.bbox_max = empty_bbox_max();
-            bin.count = 0;
-        }
-
-        const float scale = static_cast<float>(EdgeBVHSAHBins) / (centroid_max - centroid_min);
-        for (int index = begin; index < end; ++index) {
-            const float value = axis_value(records[static_cast<size_t>(index)].centroid, axis);
-            int bin_index = static_cast<int>((value - centroid_min) * scale);
-            bin_index = std::max(0, std::min(bin_index, EdgeBVHSAHBins - 1));
-
-            SAHBin &bin = bins[static_cast<size_t>(bin_index)];
-            bin.count += 1;
-            bin.bbox_min = scalar_min(bin.bbox_min, records[static_cast<size_t>(index)].bbox_min);
-            bin.bbox_max = scalar_max(bin.bbox_max, records[static_cast<size_t>(index)].bbox_max);
-        }
-
-        std::array<float, EdgeBVHSAHBins - 1> left_areas{};
-        std::array<float, EdgeBVHSAHBins - 1> right_areas{};
-        std::array<int, EdgeBVHSAHBins - 1> left_counts{};
-        std::array<int, EdgeBVHSAHBins - 1> right_counts{};
-        ScalarVector3f left_bbox_min = empty_bbox_min();
-        ScalarVector3f left_bbox_max = empty_bbox_max();
-        int left_count = 0;
-        for (int bin_index = 0; bin_index < EdgeBVHSAHBins - 1; ++bin_index) {
-            left_count += bins[static_cast<size_t>(bin_index)].count;
-            if (bins[static_cast<size_t>(bin_index)].count > 0) {
-                left_bbox_min = scalar_min(left_bbox_min, bins[static_cast<size_t>(bin_index)].bbox_min);
-                left_bbox_max = scalar_max(left_bbox_max, bins[static_cast<size_t>(bin_index)].bbox_max);
-            }
-            left_counts[static_cast<size_t>(bin_index)] = left_count;
-            left_areas[static_cast<size_t>(bin_index)] = bbox_surface_area(left_bbox_min, left_bbox_max);
-        }
-
-        ScalarVector3f right_bbox_min = empty_bbox_min();
-        ScalarVector3f right_bbox_max = empty_bbox_max();
-        int right_count = 0;
-        for (int bin_index = EdgeBVHSAHBins - 1; bin_index >= 1; --bin_index) {
-            right_count += bins[static_cast<size_t>(bin_index)].count;
-            if (bins[static_cast<size_t>(bin_index)].count > 0) {
-                right_bbox_min = scalar_min(right_bbox_min, bins[static_cast<size_t>(bin_index)].bbox_min);
-                right_bbox_max = scalar_max(right_bbox_max, bins[static_cast<size_t>(bin_index)].bbox_max);
-            }
-            right_counts[static_cast<size_t>(bin_index - 1)] = right_count;
-            right_areas[static_cast<size_t>(bin_index - 1)] = bbox_surface_area(right_bbox_min, right_bbox_max);
-        }
-
-        for (int bin_index = 0; bin_index < EdgeBVHSAHBins - 1; ++bin_index) {
-            if (left_counts[static_cast<size_t>(bin_index)] == 0 ||
-                right_counts[static_cast<size_t>(bin_index)] == 0) {
-                continue;
-            }
-
-            const float cost =
-                left_areas[static_cast<size_t>(bin_index)] *
-                    static_cast<float>(left_counts[static_cast<size_t>(bin_index)]) +
-                right_areas[static_cast<size_t>(bin_index)] *
-                    static_cast<float>(right_counts[static_cast<size_t>(bin_index)]);
-            if (cost < best_cost) {
-                best_cost = cost;
-                best_axis = axis;
-                best_bin = bin_index;
-                best_axis_min = centroid_min;
-                best_axis_max = centroid_max;
-            }
-        }
-    }
-
-    if (best_axis >= 0) {
-        const float split_value =
-            best_axis_min +
-            (best_axis_max - best_axis_min) *
-                (static_cast<float>(best_bin + 1) / static_cast<float>(EdgeBVHSAHBins));
-        auto middle = std::partition(
-            records.begin() + begin,
-            records.begin() + end,
-            [best_axis, split_value](const TopLevelBuildRecord &record) {
-                return axis_value(record.centroid, best_axis) < split_value;
-            });
-
-        split_index = static_cast<int>(middle - records.begin());
-        const int min_side_count = std::max(1, (end - begin) / 8);
-        if (split_index - begin >= min_side_count &&
-            end - split_index >= min_side_count) {
-            return true;
-        }
-    }
-
-    ScalarVector3f centroid_min = empty_bbox_min();
-    ScalarVector3f centroid_max = empty_bbox_max();
-    for (int index = begin; index < end; ++index) {
-        centroid_min = scalar_min(centroid_min, records[static_cast<size_t>(index)].centroid);
-        centroid_max = scalar_max(centroid_max, records[static_cast<size_t>(index)].centroid);
-    }
-
-    const int axis = dominant_axis(centroid_max - centroid_min);
-    split_index = begin + (end - begin) / 2;
-    std::nth_element(records.begin() + begin,
-                     records.begin() + split_index,
-                     records.begin() + end,
-                     [axis](const TopLevelBuildRecord &a, const TopLevelBuildRecord &b) {
-                         return axis_value(a.centroid, axis) < axis_value(b.centroid, axis);
-                     });
-    return split_index > begin && split_index < end;
-}
-
-int build_top_level_bvh_recursive(std::vector<TopLevelBuildRecord> &records,
-                                  int begin,
-                                  int end,
-                                  const std::vector<int> &top_level_nodes,
-                                  size_t &next_top_level_node,
-                                  std::vector<int> &left_child,
-                                  std::vector<int> &right_child,
-                                  std::vector<int> &leaf_primitive,
-                                  std::vector<int> &is_leaf,
-                                  std::vector<ScalarVector3f> &node_bbox_min,
-                                  std::vector<ScalarVector3f> &node_bbox_max) {
-    if (end - begin == 1) {
-        return records[static_cast<size_t>(begin)].node_index;
-    }
-
-    require(next_top_level_node < top_level_nodes.size(),
-            "SceneEdge::build(): not enough nodes for hybrid top-level rebuild.");
-
-    int split_index = begin + (end - begin) / 2;
-    choose_sah_split(records, begin, end, split_index);
-
-    const int node_index = top_level_nodes[next_top_level_node++];
-    const int left_index = build_top_level_bvh_recursive(records,
-                                                         begin,
-                                                         split_index,
-                                                         top_level_nodes,
-                                                         next_top_level_node,
-                                                         left_child,
-                                                         right_child,
-                                                         leaf_primitive,
-                                                         is_leaf,
-                                                         node_bbox_min,
-                                                         node_bbox_max);
-    const int right_index = build_top_level_bvh_recursive(records,
-                                                          split_index,
-                                                          end,
-                                                          top_level_nodes,
-                                                          next_top_level_node,
-                                                          left_child,
-                                                          right_child,
-                                                          leaf_primitive,
-                                                          is_leaf,
-                                                          node_bbox_min,
-                                                          node_bbox_max);
-
-    left_child[static_cast<size_t>(node_index)] = left_index;
-    right_child[static_cast<size_t>(node_index)] = right_index;
-    leaf_primitive[static_cast<size_t>(node_index)] = -1;
-    is_leaf[static_cast<size_t>(node_index)] = 0;
-    node_bbox_min[static_cast<size_t>(node_index)] =
-        scalar_min(node_bbox_min[static_cast<size_t>(left_index)],
-                   node_bbox_min[static_cast<size_t>(right_index)]);
-    node_bbox_max[static_cast<size_t>(node_index)] =
-        scalar_max(node_bbox_max[static_cast<size_t>(left_index)],
-                   node_bbox_max[static_cast<size_t>(right_index)]);
-    return node_index;
 }
 
 int compute_node_height(int node_index,
@@ -1606,10 +1259,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     const bool use_exact_host_compaction =
         !use_gpu_compaction &&
         compaction_mode == EdgeBVHCompactionMode::HostUploadExact;
-    require(!(compaction_mode == EdgeBVHCompactionMode::GpuEmit &&
-              post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH),
-            "SceneEdge::build(): GPU compaction is incompatible with the HybridTopLevelSAH path. "
-            "Choose host_upload_raw or host_upload_exact for a clean benchmark.");
     packed_node_layout_enabled_ = node_layout_mode == EdgeBVHNodeLayoutMode::Packed;
 
     edge_p0_ = detach<false>(edge_info.start);
@@ -1683,9 +1332,7 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     optimized_is_leaf = is_leaf;
     optimized_leaf_primitive = leaf_primitive;
     const bool needs_host_primitive_bbox = use_exact_host_compaction;
-    const bool needs_host_bbox =
-        post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH ||
-        (!use_gpu_compaction && !use_exact_host_compaction);
+    const bool needs_host_bbox = !use_gpu_compaction && !use_exact_host_compaction;
     if (needs_host_primitive_bbox && primitive_bbox_min_host.empty()) {
         primitive_bbox_min_host = copy_vector3_to_host(primitive_bbox_min_);
         primitive_bbox_max_host = copy_vector3_to_host(primitive_bbox_max_);
@@ -1693,68 +1340,6 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     if (needs_host_bbox && node_bbox_min.empty()) {
         node_bbox_min = copy_vector3_to_host(node_bbox_min_);
         node_bbox_max = copy_vector3_to_host(node_bbox_max_);
-    }
-
-    if (post_build_strategy == EdgeBVHPostBuildStrategy::HybridTopLevelSAH &&
-        primitive_count_ >= EdgeBVHHybridTopLevelMinPrimitives) {
-        std::vector<int> subtree_leaf_counts(static_cast<size_t>(node_count_), -1);
-        std::vector<int> subtree_heights(static_cast<size_t>(node_count_), -1);
-        compute_subtree_leaf_count(
-            0, optimized_left_child, optimized_right_child, optimized_is_leaf, subtree_leaf_counts);
-        compute_subtree_height(
-            0, optimized_left_child, optimized_right_child, optimized_is_leaf, subtree_heights);
-
-        std::vector<uint8_t> is_cluster_root(static_cast<size_t>(node_count_), 0);
-        std::vector<int> cluster_roots;
-        cluster_roots.reserve(static_cast<size_t>(
-            std::max(1, (primitive_count_ + EdgeBVHHybridClusterLeafCount - 1) /
-                            EdgeBVHHybridClusterLeafCount)));
-        select_lbvh_clusters(0,
-                             optimized_left_child,
-                             optimized_right_child,
-                             optimized_is_leaf,
-                             subtree_leaf_counts,
-                             subtree_heights,
-                             is_cluster_root,
-                             cluster_roots);
-
-        if (cluster_roots.size() > 1) {
-            std::vector<int> top_level_nodes;
-            top_level_nodes.reserve(cluster_roots.size() - 1);
-            collect_top_level_nodes(
-                0, optimized_left_child, optimized_right_child, is_cluster_root, top_level_nodes);
-
-            require(top_level_nodes.size() + 1 == cluster_roots.size(),
-            "SceneEdge::build(): invalid hybrid top-level node count.");
-
-            std::vector<TopLevelBuildRecord> records(cluster_roots.size());
-            for (size_t index = 0; index < cluster_roots.size(); ++index) {
-                const int node_index = cluster_roots[index];
-                records[index].node_index = node_index;
-                records[index].bbox_min = node_bbox_min[static_cast<size_t>(node_index)];
-                records[index].bbox_max = node_bbox_max[static_cast<size_t>(node_index)];
-                records[index].centroid =
-                    (records[index].bbox_min + records[index].bbox_max) * 0.5f;
-            }
-
-            size_t next_top_level_node = 0;
-            const int hybrid_root = build_top_level_bvh_recursive(records,
-                                                                  0,
-                                                                  static_cast<int>(records.size()),
-                                                                  top_level_nodes,
-                                                                  next_top_level_node,
-                                                                  optimized_left_child,
-                                                                  optimized_right_child,
-                                                                  optimized_leaf_primitive,
-                                                                  optimized_is_leaf,
-                                                                  node_bbox_min,
-                                                                  node_bbox_max);
-
-            require(hybrid_root == 0,
-            "SceneEdge::build(): hybrid top-level rebuild changed the root.");
-            require(next_top_level_node == top_level_nodes.size(),
-            "SceneEdge::build(): hybrid top-level rebuild left unused nodes.");
-        }
     }
 
     const Vector3f raw_node_bbox_min = node_bbox_min_;

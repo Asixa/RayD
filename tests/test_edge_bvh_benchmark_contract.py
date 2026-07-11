@@ -198,6 +198,21 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
                 self.assertFalse(report["passed"])
                 self.assertTrue(any(failure["metric"] == metric for failure in report["failures"]))
 
+    def test_sub_10_microsecond_timing_jitter_is_below_the_noise_floor(self):
+        baseline = result(self.matrix)
+        candidate = copy.deepcopy(baseline)
+        baseline["cases"][0]["performance"]["refit_ms"] = summary("ms", 0.00022)
+        candidate["cases"][0]["performance"]["refit_ms"] = summary("ms", 0.00026)
+
+        report = evaluate_gate(baseline, candidate, self.matrix)
+        self.assertTrue(report["passed"], report)
+
+        candidate["cases"][0]["performance"]["refit_ms"] = summary("ms", 0.002)
+        report = evaluate_gate(baseline, candidate, self.matrix)
+        self.assertFalse(report["passed"])
+        failure = next(item for item in report["failures"] if item["metric"] == "refit_ms")
+        self.assertEqual(failure["absolute_noise_floor"], 0.01)
+
     def test_correctness_and_ad_tolerances_are_enforced(self):
         for group, field in (
             ("correctness", "max_abs_error"),
