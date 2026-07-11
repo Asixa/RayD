@@ -9,7 +9,8 @@ import sys
 from typing import Any
 
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT_ROOT = WORKSPACE_ROOT / "artifacts" / "benchmarks" / "edge_bvh_stages"
 LOG_PATH = WORKSPACE_ROOT / "docs" / "edge_bvh_optimization_log.md"
 
@@ -468,8 +469,8 @@ def main() -> int:
     parser.add_argument(
         "--source-root",
         type=str,
-        default=os.fspath(WORKSPACE_ROOT),
-        help="Repository root to benchmark. Defaults to the current workspace.",
+        default=os.fspath(BACKEND_ROOT),
+        help="Backend source root to benchmark. Defaults to backends/drjit.",
     )
     parser.add_argument(
         "--post-build-strategy",

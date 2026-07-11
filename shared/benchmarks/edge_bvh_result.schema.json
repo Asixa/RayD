@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rayd.dev/schemas/edge_bvh_result.schema.json",
+  "title": "RayD edge BVH benchmark result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "matrix_id", "benchmark", "seed", "profile",
+    "environment", "tolerances", "cases"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "matrix_id": {"const": "rayd_edge_bvh_v1"},
+    "benchmark": {"const": "rayd_edge_bvh"},
+    "seed": {"type": "integer"},
+    "profile": {"enum": ["full", "smoke"]},
+    "environment": {
+      "type": "object",
+      "required": [
+        "gpu_name", "gpu_compute_capability", "cuda_runtime_version",
+        "cuda_driver_version", "optix_version", "compiler_id",
+        "compiler_version", "build_type", "git_commit"
+      ],
+      "properties": {
+        "gpu_name": {"type": "string", "minLength": 1},
+        "gpu_compute_capability": {"type": "string", "minLength": 1},
+        "cuda_runtime_version": {"type": "string", "minLength": 1},
+        "cuda_driver_version": {"type": "string", "minLength": 1},
+        "optix_version": {"type": "string", "minLength": 1},
+        "compiler_id": {"type": "string", "minLength": 1},
+        "compiler_version": {"type": "string", "minLength": 1},
+        "build_type": {"type": "string", "minLength": 1},
+        "git_commit": {"type": "string", "pattern": "^[0-9a-fA-F]{7,40}$"}
+      },
+      "additionalProperties": true
+    },
+    "tolerances": {"$ref": "#/$defs/tolerances"},
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/case"}
+    }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "samples", "median", "p95"],
+      "properties": {
+        "unit": {"enum": ["ms", "bytes"]},
+        "samples": {
+          "type": "array",
+          "minItems": 5,
+          "items": {"type": "number", "minimum": 0}
+        },
+        "median": {"type": "number", "minimum": 0},
+        "p95": {"type": "number", "minimum": 0}
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "ad"],
+      "properties": {
+        "correctness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_abs_error", "max_rel_error"],
+          "properties": {
+            "max_abs_error": {"type": "number", "minimum": 0},
+            "max_rel_error": {"type": "number", "minimum": 0}
+          }
+        },
+        "ad": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vjp_max_abs_error", "vjp_max_rel_error",
+            "jvp_max_abs_error", "jvp_max_rel_error"
+          ],
+          "properties": {
+            "vjp_max_abs_error": {"type": "number", "minimum": 0},
+            "vjp_max_rel_error": {"type": "number", "minimum": 0},
+            "jvp_max_abs_error": {"type": "number", "minimum": 0},
+            "jvp_max_rel_error": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "dimensions", "performance", "correctness", "ad"],
+      "properties": {
+        "case_id": {"type": "string", "minLength": 1},
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "edge_count", "query_count", "query_kind", "top_k",
+            "update_mode", "mask", "distribution"
+          ],
+          "properties": {
+            "edge_count": {"type": "integer", "minimum": 1},
+            "query_count": {"type": "integer", "minimum": 1},
+            "query_kind": {"enum": ["point", "finite_ray", "infinite_ray"]},
+            "top_k": {"enum": [1, 4, 8, 16]},
+            "update_mode": {
+              "enum": [
+                "static", "full_refit", "dirty_refit_1pct",
+                "dirty_refit_10pct", "dirty_refit_100pct"
+              ]
+            },
+            "mask": {"enum": ["sparse", "dense"]},
+            "distribution": {"enum": ["grid", "random", "long_thin"]}
+          }
+        },
+        "performance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hot_query_ms", "build_ms", "refit_ms", "peak_device_memory_bytes", "cold_create_ms"],
+          "properties": {
+            "hot_query_ms": {"$ref": "#/$defs/summary"},
+            "build_ms": {"$ref": "#/$defs/summary"},
+            "refit_ms": {"$ref": "#/$defs/summary"},
+            "peak_device_memory_bytes": {"$ref": "#/$defs/summary"},
+            "cold_create_ms": {"$ref": "#/$defs/summary"}
+          }
+        },
+        "correctness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_abs_error", "max_rel_error"],
+          "properties": {
+            "max_abs_error": {"type": "number", "minimum": 0},
+            "max_rel_error": {"type": "number", "minimum": 0}
+          }
+        },
+        "ad": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vjp_max_abs_error", "vjp_max_rel_error",
+            "jvp_max_abs_error", "jvp_max_rel_error"
+          ],
+          "properties": {
+            "vjp_max_abs_error": {"type": "number", "minimum": 0},
+            "vjp_max_rel_error": {"type": "number", "minimum": 0},
+            "jvp_max_abs_error": {"type": "number", "minimum": 0},
+            "jvp_max_rel_error": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    }
+  }
+}

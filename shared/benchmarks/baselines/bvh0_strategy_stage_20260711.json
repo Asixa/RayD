@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "benchmark": "rayd_edge_bvh_strategy_stage",
+  "recorded_at": "2026-07-11T11:49:46Z",
+  "environment": {
+    "gpu_name": "NVIDIA GeForce RTX 5080",
+    "gpu_compute_capability": "12.0",
+    "cuda_runtime_version": "12.9",
+    "cuda_driver_version": "unknown",
+    "optix_version": "9.1.0",
+    "compiler_id": "MSVC",
+    "compiler_version": "19.44.35207.1",
+    "build_type": "Release",
+    "python_version": "3.10.20",
+    "drjit_version": "1.3.1",
+    "git_commit": "f8bda6a39ae4e387cad0e647e2082054dd1dc9fe"
+  },
+  "measurement": {
+    "runner": "backends/drjit/tests/benchmark_edge_bvh_stages.py",
+    "warmup_runs": 2,
+    "timed_runs": {
+      "micro": 8,
+      "single_mesh": 5,
+      "pressure": 5
+    },
+    "timing": "explicitly synchronized wall time",
+    "note": "Legacy stage summaries report average/minimum. The canonical BVH-0 matrix requires median/p95 and is defined separately."
+  },
+  "single_mesh": {
+    "edge_count": 110976,
+    "query_count": 65536,
+    "strategies": {
+      "gpu_treelet": {
+        "build_avg_ms": 56.50398,
+        "point_query_avg_ms": 105.03142,
+        "finite_ray_query_avg_ms": 4.22860,
+        "infinite_ray_query_avg_ms": 3.94236,
+        "sync_avg_ms": 2.20046,
+        "point_gradient_avg_ms": 106.85310,
+        "finite_ray_gradient_avg_ms": 4.26536
+      },
+      "hybrid_top_level_sah": {
+        "build_avg_ms": 50.80400,
+        "point_query_avg_ms": 106.93846,
+        "finite_ray_query_avg_ms": 4.03976,
+        "infinite_ray_query_avg_ms": 4.21508,
+        "sync_avg_ms": 2.83312,
+        "point_gradient_avg_ms": 108.84942,
+        "finite_ray_gradient_avg_ms": 4.21232
+      },
+      "pure_lbvh": {
+        "build_avg_ms": 38.39182,
+        "point_query_avg_ms": 93.73060,
+        "finite_ray_query_avg_ms": 3.08760,
+        "infinite_ray_query_avg_ms": 3.05020,
+        "sync_avg_ms": 1.52430,
+        "point_gradient_avg_ms": 94.80426,
+        "finite_ray_gradient_avg_ms": 3.36408
+      }
+    }
+  },
+  "pressure_scene": {
+    "edge_count": 200704,
+    "query_count": 16384,
+    "strategies": {
+      "gpu_treelet": {
+        "build_avg_ms": 410.77376,
+        "point_query_avg_ms": 10.71100,
+        "finite_ray_query_avg_ms": 3.87870,
+        "infinite_ray_query_avg_ms": 3.00756
+      },
+      "hybrid_top_level_sah": {
+        "build_avg_ms": 218.13992,
+        "point_query_avg_ms": 8.87024,
+        "finite_ray_query_avg_ms": 2.23274,
+        "infinite_ray_query_avg_ms": 2.14860
+      },
+      "pure_lbvh": {
+        "build_avg_ms": 285.19090,
+        "point_query_avg_ms": 16.42696,
+        "finite_ray_query_avg_ms": 4.76284,
+        "infinite_ray_query_avg_ms": 1.85264
+      }
+    }
+  },
+  "historical_decision_baseline": {
+    "source": "docs/rayd_improvement_plan.md",
+    "scene": "192x192 grid, 110976 edges, 65536 queries",
+    "gpu_treelet": {
+      "build_ms": 138.43,
+      "point_query_ms": 9.99,
+      "finite_ray_query_ms": 14.34,
+      "infinite_ray_query_ms": 15.43,
+      "sync_ms": 3.69
+    },
+    "hybrid_top_level_sah": {
+      "build_ms": 13.45,
+      "point_query_ms": 102.91,
+      "finite_ray_query_ms": 136.59,
+      "infinite_ray_query_ms": 143.16,
+      "sync_ms": 3.09
+    }
+  },
+  "observations": [
+    "All three current strategies produced identical sanity totals for point, finite-ray, and infinite-ray queries.",
+    "The current single-mesh point-query results are roughly an order of magnitude slower than the historical treelet baseline and must not be treated as a clean performance comparison until that regression is diagnosed.",
+    "The historical HLBVH result remains the deletion decision baseline because it measured the intended optimized treelet path and showed order-of-magnitude query regressions."
+  ]
+}
