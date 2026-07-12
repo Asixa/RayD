@@ -32,13 +32,16 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("_ray" + "dn", source.lower())
 
     def test_stable_abi_slice_avoids_unstable_torch_and_python_apis(self):
-        stable_source = Path("src/stable/camera.cu").read_text(encoding="utf-8")
+        stable_source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(Path("src/stable").glob("*.cu"))
+        )
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
         for forbidden in ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h"):
             self.assertNotIn(forbidden, stable_source)
         self.assertIn("STABLE_TORCH_LIBRARY(rayd_torch_stable", stable_source)
         self.assertIn("TORCH_TARGET_VERSION=0x020a000000000000", cmake)
-        stable_start = cmake.index("add_library(rayd_torch_stable_ops")
+        stable_start = cmake.index("rayd_torch_stable_ops\n        SHARED")
         stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)

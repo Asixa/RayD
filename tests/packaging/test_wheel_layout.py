@@ -52,6 +52,23 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(len(stable), 1, stable)
         self.assertNotRegex(stable[0], r"cp3(?:10|11|12|13|14)")
 
+    def test_torch_wheel_separates_legacy_dispatcher_and_compatibility_shim(self):
+        names = self.names(self.torch_wheel)
+        legacy = [
+            name
+            for name in names
+            if name.startswith("rayd/torch/_legacy_ops")
+            and name.endswith((".dll", ".so", ".dylib"))
+        ]
+        compat = [
+            name
+            for name in names
+            if name.startswith("rayd/torch/_C")
+            and name.endswith((".pyd", ".so"))
+        ]
+        self.assertEqual(len(legacy), 1, legacy)
+        self.assertEqual(len(compat), 1, compat)
+
     def test_backend_wheels_include_partial_typing_metadata(self):
         drjit = self.names(self.drjit_wheel)
         torch = self.names(self.torch_wheel)

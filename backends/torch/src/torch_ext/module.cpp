@@ -1,13 +1,16 @@
-#include <torch/extension.h>
+#include <pybind11/pybind11.h>
 
 #include <rayd/shared/contracts.h>
 
 namespace rayd::torch_backend {
 
+namespace py = pybind11;
+
 py::dict build_info() {
     py::dict info;
     info["backend"] = "torch";
     info["uses_dr_jit"] = false;
+    info["role"] = "compatibility_metadata_shim";
     return info;
 }
 
@@ -36,7 +39,7 @@ py::dict contract_values() {
 }
 
 PYBIND11_MODULE(_C, m) {
-    m.doc() = "RayD Torch CUDA/OptiX backend.";
+    m.doc() = "RayD Torch compatibility metadata shim.";
     m.def("build_info", &build_info);
     m.def("contract_values", &contract_values);
 }

@@ -124,7 +124,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     # This library is intentionally not a Python extension. It uses only the
     # LibTorch Stable ABI and is loaded from Python through torch.ops.load_library().
-    add_library(rayd_torch_stable_ops SHARED src/stable/camera.cu)
+    add_library(
+        rayd_torch_stable_ops
+        SHARED
+            src/stable/camera.cu
+            src/stable/core.cu)
     set_target_properties(
         rayd_torch_stable_ops
         PROPERTIES
@@ -171,16 +175,6 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${TORCH_INSTALL_PREFIX}/lib"
             "${TORCH_PYTHON_PACKAGE_DIR}/lib"
         REQUIRED)
-
-    function(pybind11_add_module target)
-        Python_add_library(${target} MODULE WITH_SOABI ${ARGN})
-        target_include_directories(
-            ${target}
-            PRIVATE
-                "${TORCH_INSTALL_PREFIX}/include"
-                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
-        )
-    endfunction()
 
     set(RAYD_TORCH_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/optix_intersect.ptx")
     set(RAYD_TORCH_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/optix_intersect_ptx.h")
@@ -586,21 +580,51 @@ if(RAYD_TORCH_BUILD_NATIVE)
     target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
 
     if(RAYD_TORCH_BUILD_PYTHON_MODULE)
-        pybind11_add_module(
-            _C
-            src/torch_ext/module.cpp
-            src/torch_ext/library.cpp
-        )
+        add_library(
+            rayd_torch_legacy_ops
+            SHARED
+                src/torch_ext/library.cpp
+                src/torch_ext/legacy_ops_anchor.cpp)
+        set_target_properties(
+            rayd_torch_legacy_ops
+            PROPERTIES
+                PREFIX ""
+                OUTPUT_NAME "_legacy_ops"
+                POSITION_INDEPENDENT_CODE ON)
         target_include_directories(
-            _C
+            rayd_torch_legacy_ops
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${RAYD_SHARED_INCLUDE_DIR}
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
                 ${CMAKE_CURRENT_BINARY_DIR}/generated
                 ${CUDAToolkit_INCLUDE_DIRS}
                 ${OPTIX_INCLUDE_DIR}
         )
-        target_link_libraries(_C PRIVATE rayd_torch_native_core)
+        target_link_libraries(
+            rayd_torch_legacy_ops
+            PRIVATE
+                rayd_torch_native_core
+                Python::Module)
+        target_compile_features(rayd_torch_legacy_ops PRIVATE cxx_std_17)
+        install(
+            TARGETS rayd_torch_legacy_ops
+            LIBRARY DESTINATION rayd/torch
+            RUNTIME DESTINATION rayd/torch)
+
+        find_path(
+            RAYD_TORCH_PYBIND11_INCLUDE_DIR
+            pybind11/pybind11.h
+            HINTS "${TORCH_INSTALL_PREFIX}/include"
+            REQUIRED)
+        Python_add_library(_C MODULE WITH_SOABI src/torch_ext/module.cpp)
+        target_include_directories(
+            _C
+            PRIVATE
+                ${RAYD_SHARED_INCLUDE_DIR}
+                ${RAYD_TORCH_PYBIND11_INCLUDE_DIR})
         target_compile_features(_C PRIVATE cxx_std_17)
         install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
     endif()

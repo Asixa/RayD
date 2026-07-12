@@ -6,6 +6,7 @@ import math
 import torch
 
 from . import _C
+from ._stable import core_ops
 
 
 _CONTRACT_VALUES = {
@@ -106,7 +107,7 @@ class Intersection:
 
     def is_valid(self) -> torch.Tensor:
         if _C is not None and self.t.device.type == "cuda":
-            return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
+            return core_ops().intersection_valid(self.t, self.shape_id)
         if self.shape_id.numel() != self.t.numel():
             return torch.isfinite(self.t)
         return self.shape_id >= 0
@@ -225,7 +226,7 @@ class _ReducedIntersection:
         return self._empty_fields()[8]
 
     def is_valid(self) -> torch.Tensor:
-        return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
+        return core_ops().intersection_valid(self.t, self.shape_id)
 
 
 @dataclass(frozen=True)

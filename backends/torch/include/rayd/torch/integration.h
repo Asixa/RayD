@@ -4,9 +4,16 @@
 
 #include <cstdint>
 
-// Source-level integration ABI for native consumers built in the same CMake
-// graph as rayd_torch_native_core. This intentionally uses ATen tensors: it is
-// a C-linkage API, not a binary-stable C ABI across independent libtorch builds.
+// Source-level integration contract for consumers built in the SAME CMake
+// GRAPH as rayd_torch_native_core. Every caller must use the exact compiler,
+// CRT, CUDA toolkit, LibTorch headers/libraries, compile definitions, and link
+// configuration selected by that graph.
+//
+// This is NOT an independently binary-stable C ABI and must not be exposed as
+// a wheel-to-wheel FFI boundary. `extern "C"` only fixes symbol name mangling;
+// it does not stabilize at::Tensor layout, ownership, exceptions, the C++
+// runtime, or LibTorch ABI. Independently built plugins must use dispatcher
+// schemas or a separately versioned POD C ABI instead of this header.
 
 extern "C" int64_t rayd_torch_native_scene_create(
     const at::Tensor *vertices,
