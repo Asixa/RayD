@@ -88,7 +88,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         set(TORCH_CUDA_ARCH_LIST "$ENV{TORCH_CUDA_ARCH_LIST}")
     else()
         execute_process(
-            COMMAND "${Python_EXECUTABLE}" -c "import torch; major, minor = torch.cuda.get_device_capability(); print(f'{major}.{minor}+PTX')"
+            COMMAND "${Python_EXECUTABLE}" -c "import torch; major, minor = torch.cuda.get_device_capability(); print(f'{major}.{minor}')"
             RESULT_VARIABLE TORCH_CUDA_ARCH_RESULT
             OUTPUT_VARIABLE TORCH_CUDA_ARCH_LIST
             OUTPUT_STRIP_TRAILING_WHITESPACE)

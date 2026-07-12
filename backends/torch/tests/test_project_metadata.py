@@ -61,6 +61,8 @@ class ProjectMetadataTests(unittest.TestCase):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn('set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")', cmake)
         self.assertIn("torch.cuda.get_device_capability()", cmake)
+        self.assertIn("print(f'{major}.{minor}')", cmake)
+        self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
         self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
 
     def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
