@@ -509,6 +509,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/ops.cpp
         src/torch_ext/diffraction/ops.cpp
         src/torch_ext/scene/cache_kernels.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/scene/packing.cu
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu
@@ -518,6 +519,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/visibility_backward.cu
         src/torch_ext/reflection/backward.cu
         src/torch_ext/reflection/dedup.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu
         src/torch_ext/reflection/epc_field.cu
         src/torch_ext/reflection/accum_reduce.cu
         src/torch_ext/diffraction/accum_reduce.cu

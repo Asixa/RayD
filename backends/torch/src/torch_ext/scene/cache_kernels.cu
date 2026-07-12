@@ -1,6 +1,7 @@
 #include <rayd/torch/scene/cache_kernels.h>
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/common/optix_context.h>
+#include <rayd/shared/scene/packing.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -285,68 +286,6 @@ __global__ void compute_triangle_soa_kernel(
     e1_packed[tri] = make_float4(edge1.x, edge1.y, edge1.z, 0.0f);
     e2_packed[tri] = make_float4(edge2.x, edge2.y, edge2.z, 0.0f);
     fn_packed[tri] = make_float4(normal.x, normal.y, normal.z, 0.0f);
-}
-
-__global__ void pack_global_geometry_kernel(
-    int vertex_count,
-    int face_count,
-    const float *__restrict__ mesh_vertices,
-    const int *__restrict__ mesh_faces,
-    int vertex_offset,
-    int face_offset,
-    int shape_id,
-    float *__restrict__ global_vertices,
-    int *__restrict__ global_faces,
-    int *__restrict__ face_shape_id,
-    int *__restrict__ face_local_id) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < vertex_count) {
-        const int src = idx * 3;
-        const int dst = (vertex_offset + idx) * 3;
-        global_vertices[dst + 0] = mesh_vertices[src + 0];
-        global_vertices[dst + 1] = mesh_vertices[src + 1];
-        global_vertices[dst + 2] = mesh_vertices[src + 2];
-    }
-    if (idx < face_count) {
-        const int src = idx * 3;
-        const int dst_face = face_offset + idx;
-        const int dst = dst_face * 3;
-        global_faces[dst + 0] = mesh_faces[src + 0] + vertex_offset;
-        global_faces[dst + 1] = mesh_faces[src + 1] + vertex_offset;
-        global_faces[dst + 2] = mesh_faces[src + 2] + vertex_offset;
-        face_shape_id[dst_face] = shape_id;
-        face_local_id[dst_face] = idx;
-    }
-}
-
-__global__ void pack_global_vertex_tangent_kernel(
-    int vertex_count,
-    int vertex_offset,
-    const float *__restrict__ mesh_tangent,
-    float *__restrict__ global_tangent) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= vertex_count) {
-        return;
-    }
-    const int src = idx * 3;
-    const int dst = (vertex_offset + idx) * 3;
-    global_tangent[dst + 0] = mesh_tangent[src + 0];
-    global_tangent[dst + 1] = mesh_tangent[src + 1];
-    global_tangent[dst + 2] = mesh_tangent[src + 2];
-}
-
-__global__ void zero_global_vertex_tangent_range_kernel(
-    int vertex_count,
-    int vertex_offset,
-    float *__restrict__ global_tangent) {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= vertex_count) {
-        return;
-    }
-    const int dst = (vertex_offset + idx) * 3;
-    global_tangent[dst + 0] = 0.0f;
-    global_tangent[dst + 1] = 0.0f;
-    global_tangent[dst + 2] = 0.0f;
 }
 
 __global__ void compute_edge_soa_kernel(
@@ -769,22 +708,24 @@ void pack_global_geometry_cuda(
         return;
     }
 
-    constexpr int block_size = 256;
-    const int block_count = static_cast<int>((launch_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    pack_global_geometry_kernel<<<block_count, block_size, 0, torch_ctx.stream>>>(
-        static_cast<int>(vertex_count),
-        static_cast<int>(face_count),
+    const shared::scene::GlobalGeometryPackingParams params = {
         mesh_vertices.data_ptr<float>(),
         mesh_faces.data_ptr<int>(),
+        static_cast<int32_t>(vertex_count),
+        static_cast<int32_t>(face_count),
         vertex_offset,
         face_offset,
         shape_id,
         global_vertices.data_ptr<float>(),
         global_faces.data_ptr<int>(),
         face_shape_id.data_ptr<int>(),
-        face_local_id.data_ptr<int>());
-    cuda_check(cudaGetLastError(), "pack_global_geometry_kernel");
+        face_local_id.data_ptr<int>(),
+        torch_ctx.stream,
+    };
+    cuda_check(
+        shared::scene::launch_pack_global_geometry_async(params),
+        "launch_pack_global_geometry_async");
 }
 
 void pack_global_vertex_tangent_cuda(
@@ -802,15 +743,17 @@ void pack_global_vertex_tangent_cuda(
         throw std::runtime_error("pack_global_vertex_tangent_cuda(): vertex range exceeds int32.");
     }
 
-    constexpr int block_size = 256;
-    const int block_count = static_cast<int>((vertex_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    pack_global_vertex_tangent_kernel<<<block_count, block_size, 0, torch_ctx.stream>>>(
+    const shared::scene::GlobalVertexTangentPackingParams params = {
+        mesh_tangent.data_ptr<float>(),
         static_cast<int>(vertex_count),
         static_cast<int>(vertex_offset),
-        mesh_tangent.data_ptr<float>(),
-        global_tangent.data_ptr<float>());
-    cuda_check(cudaGetLastError(), "pack_global_vertex_tangent_kernel");
+        global_tangent.data_ptr<float>(),
+        torch_ctx.stream,
+    };
+    cuda_check(
+        shared::scene::launch_pack_global_vertex_tangent_async(params),
+        "launch_pack_global_vertex_tangent_async");
 }
 
 void zero_global_vertex_tangent_range_cuda(
@@ -827,14 +770,16 @@ void zero_global_vertex_tangent_range_cuda(
         throw std::runtime_error("zero_global_vertex_tangent_range_cuda(): vertex range exceeds int32.");
     }
 
-    constexpr int block_size = 256;
-    const int block_count = static_cast<int>((vertex_count + block_size - 1) / block_size);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    zero_global_vertex_tangent_range_kernel<<<block_count, block_size, 0, torch_ctx.stream>>>(
+    const shared::scene::GlobalVertexTangentZeroParams params = {
         static_cast<int>(vertex_count),
         static_cast<int>(vertex_offset),
-        global_tangent.data_ptr<float>());
-    cuda_check(cudaGetLastError(), "zero_global_vertex_tangent_range_kernel");
+        global_tangent.data_ptr<float>(),
+        torch_ctx.stream,
+    };
+    cuda_check(
+        shared::scene::launch_zero_global_vertex_tangent_range_async(params),
+        "launch_zero_global_vertex_tangent_range_async");
 }
 
 void compute_triangle_soa_cuda(

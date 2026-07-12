@@ -346,7 +346,52 @@ else()
     )
 endif()
 set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_DEDUP_OBJECT}")
+
+set(RAYD_SHARED_REFLECTION_DEDUP_CU
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu")
+set(RAYD_SHARED_REFLECTION_DEDUP_HEADER
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_dedup.h")
+if(WIN32)
+    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.obj")
+    set(RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT
+        "${CMAKE_CURRENT_BINARY_DIR}/build_shared_reflection_dedup.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
+        VERBATIM)
+else()
+    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.o")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        DEPENDS
+            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
+        VERBATIM)
+endif()
+set_source_files_properties(
+    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+    PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_REFLECTION_DEDUP_OBJECT}"
+    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}")
 
 set(RAYD_REFLECTION_EPC_FIELD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.cu")
 if(WIN32)
