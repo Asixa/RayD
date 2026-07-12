@@ -4,6 +4,7 @@
 #include <tuple>
 #include <vector>
 
+#include <drjit-core/jit.h>
 #include <drjit/while_loop.h>
 
 #include <rayd/edge/edge_bvh.h>
@@ -125,6 +126,16 @@ Vector3f zero_vector3(int size) {
     return Vector3f(zeros<Float>(size),
                             zeros<Float>(size),
                             zeros<Float>(size));
+}
+
+Vector3f empty_vector3(int size) {
+    if (size <= 0) {
+        return Vector3f();
+    }
+
+    return Vector3f(empty<Float>(size),
+                    empty<Float>(size),
+                    empty<Float>(size));
 }
 
 Int load_ints(const std::vector<int> &values) {
@@ -938,7 +949,12 @@ Vector3f SceneEdge::gather_node_bbox_max(const Int &node_indices,
 }
 
 void SceneEdge::build(const SecondaryEdgeInfoAD &edge_info) {
-    build_bvh(edge_info);
+    build(edge_info, true);
+}
+
+void SceneEdge::build(const SecondaryEdgeInfoAD &edge_info,
+                      bool allow_refit) {
+    build_bvh(edge_info, allow_refit);
     if (primitive_count_ > 0) {
         set_all_active_state();
     } else {
@@ -949,11 +965,17 @@ void SceneEdge::build(const SecondaryEdgeInfoAD &edge_info) {
 
 void SceneEdge::build(const SecondaryEdgeInfoAD &edge_info,
                       const Mask &mask) {
+    build(edge_info, mask, true);
+}
+
+void SceneEdge::build(const SecondaryEdgeInfoAD &edge_info,
+                      const Mask &mask,
+                      bool allow_refit) {
     const int edge_count = edge_info.size();
     require(static_cast<int>(mask.size()) == edge_count,
             "SceneEdge::build(): mask size must match the edge count.");
 
-    build_bvh(edge_info);
+    build_bvh(edge_info, allow_refit);
     if (edge_count > 0) {
         set_mask(mask);
     } else {
@@ -969,13 +991,15 @@ void SceneEdge::set_mask(const Mask &mask) {
     update_active_counts_from_mask(mask);
 }
 
-void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
+void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info,
+                          bool allow_refit) {
     primitive_count_ = edge_info.size();
     node_count_ = 0;
     ready_ = false;
     refit_levels_.clear();
     active_primitive_count_ = 0;
     full_refit_node_count_ = 0;
+    refit_enabled_ = allow_refit;
 
     if (primitive_count_ == 0) {
         edge_p0_ = Vector3f();
@@ -1005,14 +1029,14 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
 
     const int build_node_count = std::max(2 * primitive_count_ - 1, 1);
     node_count_ = build_node_count;
-    primitive_bbox_min_ = zero_vector3(primitive_count_);
-    primitive_bbox_max_ = zero_vector3(primitive_count_);
-    node_bbox_min_ = zero_vector3(node_count_);
-    node_bbox_max_ = zero_vector3(node_count_);
-    left_child_ = full<Int>(-1, node_count_);
-    right_child_ = full<Int>(-1, node_count_);
+    primitive_bbox_min_ = empty_vector3(primitive_count_);
+    primitive_bbox_max_ = empty_vector3(primitive_count_);
+    node_bbox_min_ = empty_vector3(node_count_);
+    node_bbox_max_ = empty_vector3(node_count_);
+    left_child_ = empty<Int>(node_count_);
+    right_child_ = empty<Int>(node_count_);
     leaf_primitives_ = Int();
-    primitive_leaf_node_ = full<Int>(-1, primitive_count_);
+    primitive_leaf_node_ = empty<Int>(primitive_count_);
     leaf_nodes_ = Int();
     primitive_active_flags_ = Int();
     node_active_count_ = Int();
@@ -1021,8 +1045,8 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     dirty_node_marks_ = Int();
     dirty_level_nodes_ = Int();
     dirty_level_count_ = Int();
-    Int build_leaf_primitive = full<Int>(-1, build_node_count);
-    Int build_is_leaf = zeros<Int>(build_node_count);
+    Int build_leaf_primitive = empty<Int>(build_node_count);
+    Int build_is_leaf = empty<Int>(build_node_count);
     std::vector<int> left_child;
     std::vector<int> right_child;
     std::vector<int> is_leaf;
@@ -1034,20 +1058,10 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
 
-    // The native builder uses independent non-blocking CUDA streams. Materialize
-    // and finish every Dr.Jit producer/initializer before exposing its pointers;
-    // otherwise a late JIT write can overwrite the in-place treelet topology.
-    drjit::eval(edge_p0_,
-                edge_e1_,
-                primitive_bbox_min_,
-                primitive_bbox_max_,
-                node_bbox_min_,
-                node_bbox_max_,
-                left_child_,
-                right_child_,
-                primitive_leaf_node_,
-                build_leaf_primitive,
-                build_is_leaf);
+    // The native builder uses independent non-blocking CUDA streams. Finish the
+    // Dr.Jit input producers before exposing their pointers. Its outputs use
+    // uninitialized storage because the native build fully writes every element.
+    drjit::eval(edge_p0_, edge_e1_);
     drjit::sync_thread();
 
     build_edge_bvh_gpu(
@@ -1117,7 +1131,9 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     left_child_ = load_ints(compacted.left_child);
     right_child_ = load_ints(compacted.right_child);
     leaf_primitives_ = load_ints(compacted.leaf_primitives);
-    primitive_leaf_node_ = load_ints(compacted.primitive_leaf_nodes);
+    primitive_leaf_node_ = allow_refit
+        ? load_ints(compacted.primitive_leaf_nodes)
+        : Int();
     final_left_child = compacted.left_child;
     final_right_child = compacted.right_child;
     final_is_leaf = compacted.is_leaf;
@@ -1181,10 +1197,30 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     primitive_active_flags_ = full<Int>(1, primitive_count_);
     node_active_count_ = load_ints(subtree_primitive_counts);
     node_subtree_primitive_count_ = load_ints(subtree_primitive_counts);
-    node_parent_ = load_ints(node_parent);
-    dirty_node_marks_ = zeros<Int>(node_count_);
-    dirty_level_nodes_ = full<Int>(-1, node_count_);
-    dirty_level_count_ = zeros<Int>(1);
+    node_parent_ = allow_refit ? load_ints(node_parent) : Int();
+    dirty_node_marks_ = Int();
+    dirty_level_nodes_ = Int();
+    dirty_level_count_ = Int();
+
+    if (!allow_refit) {
+        primitive_bbox_min_ = Vector3f();
+        primitive_bbox_max_ = Vector3f();
+        if (primitive_count_ > EdgeBVHTreeletMaxPrimitives) {
+            drjit::eval(edge_p0_,
+                        edge_e1_,
+                        node_bbox_min_,
+                        node_bbox_max_,
+                        left_child_,
+                        right_child_,
+                        leaf_primitives_,
+                        leaf_nodes_,
+                        primitive_active_flags_,
+                        node_active_count_,
+                        node_subtree_primitive_count_);
+            drjit::sync_thread();
+            jit_flush_malloc_cache();
+        }
+    }
 
     ready_ = true;
 }
@@ -1427,12 +1463,19 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_ch
     }
 
     if (node_parent_.size() != static_cast<size_t>(node_count_) ||
-        dirty_node_marks_.size() != static_cast<size_t>(node_count_) ||
-        dirty_level_nodes_.size() != static_cast<size_t>(node_count_) ||
-        dirty_level_count_.size() != 1 ||
         full_refit_node_count_ <= 0) {
         refit_internal_nodes_full();
         return;
+    }
+
+    if (dirty_node_marks_.size() != static_cast<size_t>(node_count_) ||
+        dirty_level_nodes_.size() != static_cast<size_t>(node_count_) ||
+        dirty_level_count_.size() != 1) {
+        // Native dirty-refit launchers clear/fill these buffers before reading
+        // them, so static scenes need not retain the scratch allocation.
+        dirty_node_marks_ = empty<Int>(node_count_);
+        dirty_level_nodes_ = empty<Int>(node_count_);
+        dirty_level_count_ = empty<Int>(1);
     }
 
     bool cleared_marks = false;
@@ -1481,6 +1524,7 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_ch
 void SceneEdge::refit(const SecondaryEdgeInfoAD &edge_info,
                       const std::vector<EdgeDirtyRange> &dirty_ranges) {
     require(ready_, "SceneEdge::refit(): BVH is not built.");
+    require(refit_enabled_, "SceneEdge::refit(): BVH was built without dynamic-refit state.");
     if (primitive_count_ == 0 || dirty_ranges.empty()) {
         return;
     }
@@ -1518,6 +1562,7 @@ void SceneEdge::refit(const SecondaryEdgeInfoAD &edge_info,
 void SceneEdge::refit(const SecondaryEdgeInfoAD &edge_info,
                           const Int &primitive_indices) {
     require(ready_, "SceneEdge::refit(): BVH is not built.");
+    require(refit_enabled_, "SceneEdge::refit(): BVH was built without dynamic-refit state.");
 
     if (primitive_count_ == 0 || primitive_indices.size() == 0) {
         return;

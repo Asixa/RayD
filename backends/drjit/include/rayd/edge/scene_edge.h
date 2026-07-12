@@ -55,9 +55,16 @@ public:
 
     /// Build the BVH over all edges in \p edge_info (all edges active).
     void build(const SecondaryEdgeInfoAD &edge_info);
+    /// Build while retaining dynamic-refit state only when \p allow_refit is true.
+    void build(const SecondaryEdgeInfoAD &edge_info,
+               bool allow_refit);
     /// Build the BVH, restricting queries to edges where \p mask is true.
     void build(const SecondaryEdgeInfoAD &edge_info,
                const Mask &mask);
+    /// Masked build with optional dynamic-refit state retention.
+    void build(const SecondaryEdgeInfoAD &edge_info,
+               const Mask &mask,
+               bool allow_refit);
     /// Update the per-edge active mask without rebuilding the tree.
     void set_mask(const Mask &mask);
     /// Refit node bounds after the edges in \p dirty_ranges moved (topology unchanged).
@@ -92,7 +99,7 @@ public:
                                       MaskT<Detached> &active) const;
 
 private:
-    void build_bvh(const SecondaryEdgeInfoAD &edge_info);
+    void build_bvh(const SecondaryEdgeInfoAD &edge_info, bool allow_refit);
     void set_all_active_state();
     void update_active_counts_from_mask(const Mask &mask);
     Int refit_leaf_nodes_from_primitive_indices(const SecondaryEdgeInfoAD &edge_info,
@@ -128,6 +135,7 @@ private:
     int node_count_ = 0;
     bool ready_ = false;
     bool all_active_ = true;
+    bool refit_enabled_ = true;
 
     Vector3f edge_p0_;
     Vector3f edge_e1_;

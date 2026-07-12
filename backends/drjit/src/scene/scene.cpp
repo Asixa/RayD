@@ -732,7 +732,7 @@ void Scene::build() {
     edge_bvh_ = std::make_unique<SceneEdge>();
     edge_optix_ = std::make_unique<SceneEdgeOptix>();
     if (edge_backend_builds_drjit(edge_bvh_backend_)) {
-        edge_bvh_->build(edge_info_, edge_mask_);
+        edge_bvh_->build(edge_info_, edge_mask_, dynamic_mesh_count > 0);
         if (edge_backend_builds_optix(edge_bvh_backend_)) {
             edge_bvh_->materialize();
         }
