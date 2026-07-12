@@ -2,6 +2,7 @@ import ast
 import hashlib
 import json
 import runpy
+import re
 import unittest
 from pathlib import Path
 
@@ -55,7 +56,7 @@ class PublicApiManifestTests(unittest.TestCase):
             entry = MANIFEST["backends"][backend]
             self.assertEqual(set(entry["capabilities"]), required)
             self.assertTrue(all(type(value) is bool for value in entry["capabilities"].values()))
-            self.assertEqual(entry["typing"], "partial")
+            self.assertEqual(entry["typing"], "complete")
 
     def test_runtime_modules_are_validated_copies_of_shared_manifest(self):
         schema_hash = hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest()
@@ -85,10 +86,10 @@ class PublicApiManifestTests(unittest.TestCase):
         self.assertEqual(aliases["hybrid"]["stability"], "deprecated")
         self.assertIn("unrelated", aliases["hybrid"]["summary"])
 
-    def test_partial_typing_markers_and_stubs_are_shipped(self):
+    def test_complete_typing_markers_and_stubs_are_shipped(self):
         for backend in ("drjit", "torch"):
             package = ROOT / "backends" / backend / "python" / "rayd" / backend
-            self.assertEqual((package / "py.typed").read_text(encoding="utf-8").strip(), "partial")
+            self.assertEqual((package / "py.typed").read_text(encoding="utf-8"), "")
             stub = (package / "_capabilities.pyi").read_text(encoding="utf-8")
             self.assertIn("def backend_capabilities()", stub)
             self.assertIn("def api_manifest()", stub)
@@ -104,6 +105,160 @@ class PublicApiManifestTests(unittest.TestCase):
             "SegmentChainVisibility",
         ):
             self.assertIn(name, public_stub)
+
+        drjit_package = ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit"
+        drjit_public_stub = (drjit_package / "__init__.pyi").read_text(encoding="utf-8")
+        self.assertIn("from ._C import *", drjit_public_stub)
+
+    def test_torch_top_level_stub_reexports_runtime_all(self):
+        package = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
+        runtime = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
+        stub = ast.parse((package / "__init__.pyi").read_text(encoding="utf-8"))
+        all_node = next(
+            node for node in runtime.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+        )
+        runtime_exports = {
+            element.value for element in all_node.value.elts if isinstance(element, ast.Constant)
+        }
+        stub_exports = {
+            alias.asname or alias.name
+            for node in stub.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        self.assertEqual(runtime_exports, stub_exports)
+
+    def test_drjit_native_stub_covers_bound_public_symbols(self):
+        source = (ROOT / "backends" / "drjit" / "src" / "rayd.cpp").read_text(
+            encoding="utf-8"
+        )
+        stub_path = (
+            ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit" / "_C.pyi"
+        )
+        tree = ast.parse(stub_path.read_text(encoding="utf-8"), filename=str(stub_path))
+        stub_names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        stub_names.update(
+            node.target.id
+            for node in tree.body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        )
+        bound_names = set(
+            re.findall(r'nb::(?:class_|enum_)<[^;\n]*?\(m,\s*"([A-Za-z0-9_]+)"', source)
+        )
+        bound_names.update(re.findall(r'\bm\.(?:def|attr)\("([A-Za-z0-9_]+)"', source))
+        bound_names.discard("__name__")
+        self.assertFalse(bound_names - stub_names, sorted(bound_names - stub_names))
+
+    def test_drjit_key_classes_have_typed_members(self):
+        stub_path = (
+            ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit" / "_C.pyi"
+        )
+        tree = ast.parse(stub_path.read_text(encoding="utf-8"), filename=str(stub_path))
+        classes = {
+            node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
+        }
+
+        def members(name):
+            node = classes[name]
+            result = {
+                child.name
+                for child in node.body
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            result.update(
+                child.target.id
+                for child in node.body
+                if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name)
+            )
+            for base in node.bases:
+                if isinstance(base, ast.Name) and base.id in classes:
+                    result.update(members(base.id))
+            return result
+
+        required = {
+            "Mesh": {
+                "vertex_positions", "face_indices", "to_world", "build",
+                "set_transform", "append_transform", "secondary_edges",
+            },
+            "Scene": {
+                "intersect", "nearest_edge", "nearest_edges", "set_edge_mask",
+                "visible", "visible_pair", "visible_edge", "visible_chain",
+                "trace_reflections", "trace_refl_epc_field", "trace_dfr_paths",
+                "accumulate_reflections", "accum_dfr_direct", "accum_dfr",
+            },
+            "ReflectionTraceOptions": {
+                "deduplicate", "canonical_prim_table", "export_mode", "return_trailing",
+            },
+            "DfrOptions": {
+                "strategy_mask", "sample_sequence", "receiver_model", "max_order",
+            },
+            "Intersection": {"is_valid", "t", "p", "global_prim_id"},
+            "NearestEdgesTopK": {"query_count", "k", "distances", "global_edge_ids"},
+            "ReflectionChain": {"is_valid", "bounce_count", "global_prim_ids"},
+        }
+        for class_name, expected in required.items():
+            with self.subTest(class_name=class_name):
+                self.assertLessEqual(expected, members(class_name))
+
+    def test_torch_public_python_modules_match_their_stubs(self):
+        package = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
+        for stem in ("autograd", "camera", "mesh", "path_exchange", "scene", "types"):
+            source_tree = ast.parse((package / f"{stem}.py").read_text(encoding="utf-8"))
+            stub_tree = ast.parse((package / f"{stem}.pyi").read_text(encoding="utf-8"))
+            source_defs = {
+                node.name: node
+                for node in source_tree.body
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and not node.name.startswith("_")
+            }
+            stub_defs = {
+                node.name: node
+                for node in stub_tree.body
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and not node.name.startswith("_")
+            }
+            with self.subTest(module=stem):
+                self.assertLessEqual(set(source_defs), set(stub_defs))
+            for name, source_node in source_defs.items():
+                if not isinstance(source_node, ast.ClassDef):
+                    continue
+                source_methods = {
+                    child.name
+                    for child in source_node.body
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not child.name.startswith("_")
+                }
+                stub_node = stub_defs[name]
+                stub_methods = {
+                    child.name
+                    for child in stub_node.body
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not child.name.startswith("_")
+                }
+                with self.subTest(module=stem, class_name=name):
+                    self.assertLessEqual(source_methods, stub_methods)
+                source_fields = {
+                    child.target.id
+                    for child in source_node.body
+                    if isinstance(child, ast.AnnAssign)
+                    and isinstance(child.target, ast.Name)
+                    and not child.target.id.startswith("_")
+                }
+                stub_fields = {
+                    child.target.id
+                    for child in stub_node.body
+                    if isinstance(child, ast.AnnAssign)
+                    and isinstance(child.target, ast.Name)
+                    and not child.target.id.startswith("_")
+                }
+                with self.subTest(module=stem, class_name=name, surface="fields"):
+                    self.assertLessEqual(source_fields, stub_fields)
 
 
 if __name__ == "__main__":

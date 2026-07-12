@@ -1,4 +1,3 @@
-from typing import Any
 from ._capabilities import api_manifest as api_manifest
 from ._capabilities import backend_capabilities as backend_capabilities
 from .camera import Camera as Camera

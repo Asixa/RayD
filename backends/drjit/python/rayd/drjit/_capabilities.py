@@ -4,9 +4,9 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 1
-_SCHEMA_SHA256 = "a0f1d1a1e6df5a5d76db34e3459c88130cc4c14b9892ecaab30498970264f77b"
+_SCHEMA_SHA256 = "5fb52cb0da6211cce30f572a5a3238743b432e527742e41bb6327dae6067cc1f"
 _BACKEND = "drjit"
-_TYPING = "partial"
+_TYPING = "complete"
 
 _NAMING_CONVENTIONS = {
     "options": "New configuration records use PascalCase <Operation>Options; existing domain records retain compatibility names until a major release.",

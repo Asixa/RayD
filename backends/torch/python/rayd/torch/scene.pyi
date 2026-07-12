@@ -4,6 +4,12 @@ import torch
 from .mesh import Mesh
 from .types import (
     AxialEdgeVisibility,
+    DfrAccum,
+    DfrCoherentAccum,
+    DfrGrid,
+    DfrMaterial,
+    DfrPaths,
+    DfrStates,
     Intersection,
     NearestEdgesTopK,
     NearestPointEdge,
@@ -89,6 +95,57 @@ class Scene:
         max_bounces: int,
         active: torch.Tensor | None = ...,
     ) -> ReflEpcField: ...
+    def trace_dfr_paths(
+        self,
+        *,
+        tx_positions: torch.Tensor,
+        rx_positions: torch.Tensor,
+        states: DfrStates,
+        material: DfrMaterial | None = ...,
+        active: torch.Tensor | None = ...,
+        max_paths: int | None = ...,
+        wavelength: float = ...,
+    ) -> DfrPaths: ...
+    def accum_dfr_direct(
+        self,
+        *,
+        states: DfrStates | None = ...,
+        grid: DfrGrid | None = ...,
+        material: DfrMaterial | None = ...,
+        active: torch.Tensor | None = ...,
+        wavelength: float = ...,
+        direct_samples: int = ...,
+        keller_samples: int = ...,
+        suffix_samples: int = ...,
+        seed: int = ...,
+    ) -> DfrAccum: ...
+    def accum_dfr(
+        self,
+        initial_states: DfrStates | None = ...,
+        recursive_states: DfrStates | None = ...,
+        grid: DfrGrid | None = ...,
+        material: DfrMaterial | None = ...,
+        active: torch.Tensor | None = ...,
+        recursive_active: torch.Tensor | None = ...,
+        wavelength: float = ...,
+        direct_samples: int = ...,
+        keller_samples: int = ...,
+        suffix_samples: int = ...,
+        seed: int = ...,
+        max_order: int = ...,
+        **kwargs: object,
+    ) -> DfrAccum: ...
+    def accum_dfr_coherent_direct(
+        self,
+        *,
+        states: DfrStates,
+        grid: DfrGrid,
+        material: DfrMaterial | None = ...,
+        active: torch.Tensor | None = ...,
+        wavelength: float = ...,
+        select_diffraction_point: bool = ...,
+        prefilter_visibility: bool = ...,
+    ) -> DfrCoherentAccum: ...
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None: ...
     def sync(self) -> None: ...
     def has_pending_updates(self) -> bool: ...

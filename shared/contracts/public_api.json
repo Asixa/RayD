@@ -89,7 +89,7 @@
         "forward_ad": true,
         "torch_compile": false
       },
-      "typing": "partial"
+      "typing": "complete"
     },
     "torch": {
       "capabilities": {
@@ -111,7 +111,7 @@
         "forward_ad": true,
         "torch_compile": true
       },
-      "typing": "partial"
+      "typing": "complete"
     }
   }
 }
