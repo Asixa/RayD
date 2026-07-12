@@ -239,6 +239,43 @@ class NearestPointEdge:
 
 
 @dataclass(frozen=True)
+class NearestEdgesTopK:
+    query_count: int
+    k: int
+    is_valid: torch.Tensor
+    distances: torch.Tensor
+    points: torch.Tensor
+    edge_t: torch.Tensor
+    edge_points: torch.Tensor
+    shape_ids: torch.Tensor
+    edge_ids: torch.Tensor
+    global_edge_ids: torch.Tensor
+    is_boundary: torch.Tensor
+
+
+@dataclass(frozen=True)
+class SegmentPairVisibility:
+    ray_count: int
+    visible_a: torch.Tensor
+    visible_b: torch.Tensor
+
+
+@dataclass(frozen=True)
+class AxialEdgeVisibility:
+    state_count: int
+    any_visible: torch.Tensor
+
+
+@dataclass(frozen=True)
+class SegmentChainVisibility:
+    chain_count: int
+    max_segments: int
+    all_visible: torch.Tensor
+    first_blocked_segment: torch.Tensor
+    first_blocked_prim: torch.Tensor
+
+
+@dataclass(frozen=True)
 class NearestRayEdge:
     distance: torch.Tensor
     ray_t: torch.Tensor

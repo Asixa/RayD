@@ -1,8 +1,9 @@
 {
-  "version": 2,
+  "version": 3,
   "required_capability_keys": [
     "backend", "intersect", "nearest_edge_point", "nearest_edge_ray",
-    "nearest_edges_topk", "visibility", "visibility_pair",
+    "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
+    "visibility_edge", "visibility_chain",
     "reflection_trace", "reflection_accumulation", "diffraction_direct",
     "diffraction_chain", "surfel", "reverse_ad", "forward_ad", "torch_compile"
   ],
@@ -131,6 +132,18 @@
       "inputs": ["start", "end_a", "end_b", "active_mask"],
       "result": "bool_pair",
       "ray_domain": "two finite segments with endpoint offsets",
+      "ad": "discrete result; no geometry derivative"
+    },
+    "visibility_edge": {
+      "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
+      "result": "bool",
+      "limits": {"min_samples": 1, "max_samples": 16},
+      "ad": "discrete result; no geometry derivative"
+    },
+    "visibility_chain": {
+      "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
+      "result": "chain_visibility_and_first_blocker",
+      "id_space": "scene-global primitive IDs",
       "ad": "discrete result; no geometry derivative"
     },
     "reflection_trace": {

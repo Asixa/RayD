@@ -31,6 +31,27 @@ struct EdgeForwardPublicOutputs {
 
 EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const at::Tensor &point);
 
+struct EdgeTopKForwardOutputs {
+    at::Tensor is_valid;
+    at::Tensor distances;
+    at::Tensor points;
+    at::Tensor edge_t;
+    at::Tensor edge_points;
+    at::Tensor shape_ids;
+    at::Tensor edge_ids;
+    at::Tensor global_edge_ids;
+    at::Tensor is_boundary;
+    at::Tensor tape_edge_id;
+    at::Tensor tape_s;
+    at::Tensor tape_d;
+};
+
+EdgeTopKForwardOutputs edge_topk_forward_cuda(
+    const SceneCache &scene,
+    const at::Tensor &point,
+    int64_t k,
+    const at::Tensor &active);
+
 struct EdgeRayForwardOutputs {
     at::Tensor distance;
     at::Tensor ray_t;

@@ -12,6 +12,7 @@ from .types import (
     DfrStates,
     Intersection,
     NearestPointEdge,
+    NearestEdgesTopK,
     NearestRayEdge,
     ReflEpcField,
     ReflectionChain,
@@ -568,6 +569,227 @@ def nearest_edge(
         return NearestPointEdge(*values[:6])
     values = _NearestEdgeFunction.apply(scene_handle, vertices, point)
     return NearestPointEdge(*values[:6])
+
+
+def _flatten_topk_point(point: torch.Tensor, k: int) -> torch.Tensor:
+    return point.unsqueeze(1).expand(-1, k, -1).reshape(-1, 3)
+
+
+def _reshape_topk_optional(value: torch.Tensor | None, trailing: int | None = None) -> torch.Tensor | None:
+    if value is None:
+        return None
+    if trailing is None:
+        return value.reshape(-1)
+    return value.reshape(-1, trailing)
+
+
+class _NearestEdgesTopKFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        vertices: torch.Tensor,
+        point: torch.Tensor,
+        k: int,
+        active: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayD Torch extension is not built yet.")
+        return tuple(torch.ops.rayd_torch.nearest_edges_topk_forward(scene_handle, point, int(k), active))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, vertices, point, k, _active = inputs
+        tape_edge_id, tape_s, tape_d = output[9:12]
+        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
+        point = torch.autograd.forward_ad.unpack_dual(point).primal
+        ctx.scene = scene_handle
+        ctx.k = int(k)
+        ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d)
+        ctx.save_for_forward(vertices, point, tape_edge_id, tape_s, tape_d)
+        ctx.mark_non_differentiable(output[0], output[5], output[6], output[7], output[8], tape_edge_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        k = ctx.k
+        grad_vertices, grad_point_slots = torch.ops.rayd_torch.nearest_edge_backward_optional(
+            ctx.scene,
+            _flatten_topk_point(point, k),
+            tape_edge_id.reshape(-1),
+            tape_s.reshape(-1),
+            tape_d.reshape(-1, 3),
+            _reshape_topk_optional(grad_outputs[1]),
+            _reshape_topk_optional(grad_outputs[4], 3),
+            _reshape_topk_optional(grad_outputs[3]),
+            _reshape_topk_optional(grad_outputs[10]),
+        )
+        grad_point = grad_point_slots.reshape(point.shape[0], k, 3).sum(dim=1)
+        if _has_grad(grad_outputs[2]):
+            grad_point = grad_point + grad_outputs[2].sum(dim=1)
+        return None, grad_vertices, grad_point, None, None
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_vertices, grad_point, grad_k, grad_active):
+        vertices, point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        k = ctx.k
+        with torch._C._DisableFuncTorch():
+            values = torch.ops.rayd_torch.nearest_edge_jvp_optional(
+                ctx.scene,
+                _native_tensor(_flatten_topk_point(point, k)),
+                _native_tensor(tape_edge_id.reshape(-1)),
+                _native_tensor(tape_s.reshape(-1)),
+                _native_tensor(tape_d.reshape(-1, 3)),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(
+                    None if grad_point is None else _flatten_topk_point(grad_point, k)
+                ),
+            )
+        tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = values
+        if grad_point is None:
+            tangent_points = torch.zeros_like(point).unsqueeze(1).expand(-1, k, -1)
+        else:
+            tangent_points = grad_point.unsqueeze(1).expand(-1, k, -1)
+        tangent_points = tangent_points * (tape_edge_id >= 0).unsqueeze(-1)
+        return (
+            None,
+            tangent_distance.reshape(point.shape[0], k),
+            tangent_points,
+            tangent_edge_t.reshape(point.shape[0], k),
+            tangent_edge_point.reshape(point.shape[0], k, 3),
+            None,
+            None,
+            None,
+            None,
+            None,
+            tangent_tape_s.reshape(point.shape[0], k),
+            tangent_tape_d.reshape(point.shape[0], k, 3),
+        )
+
+
+class _NearestEdgesTopKMeshesFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        scene_handle: int,
+        point: torch.Tensor,
+        k: int,
+        active: torch.Tensor,
+        *mesh_vertices: torch.Tensor,
+    ):
+        if _C is None:
+            raise RuntimeError("RayD Torch extension is not built yet.")
+        return tuple(torch.ops.rayd_torch.nearest_edges_topk_forward(scene_handle, point, int(k), active))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        scene_handle, point, k, _active, *mesh_vertices = inputs
+        tape_edge_id, tape_s, tape_d = output[9:12]
+        point = torch.autograd.forward_ad.unpack_dual(point).primal
+        ctx.scene = scene_handle
+        ctx.k = int(k)
+        ctx.mesh_count = len(mesh_vertices)
+        ctx.save_for_backward(point, tape_edge_id, tape_s, tape_d)
+        ctx.save_for_forward(point, tape_edge_id, tape_s, tape_d)
+        ctx.mark_non_differentiable(output[0], output[5], output[6], output[7], output[8], tape_edge_id)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        k = ctx.k
+        needs_mesh_grad = tuple(bool(value) for value in ctx.needs_input_grad[4 : 4 + ctx.mesh_count])
+        need_grad_vertices = any(needs_mesh_grad)
+        need_grad_point = bool(ctx.needs_input_grad[1])
+        grad_vertices, grad_point_slots = torch.ops.rayd_torch.nearest_edge_backward_optional(
+            ctx.scene,
+            _flatten_topk_point(point, k),
+            tape_edge_id.reshape(-1),
+            tape_s.reshape(-1),
+            tape_d.reshape(-1, 3),
+            _reshape_topk_optional(grad_outputs[1]),
+            _reshape_topk_optional(grad_outputs[4], 3),
+            _reshape_topk_optional(grad_outputs[3]),
+            _reshape_topk_optional(grad_outputs[10]),
+        )
+        grad_point = grad_point_slots.reshape(point.shape[0], k, 3).sum(dim=1)
+        if _has_grad(grad_outputs[2]):
+            grad_point = grad_point + grad_outputs[2].sum(dim=1)
+        if need_grad_vertices:
+            split_grad = torch.ops.rayd_torch.split_scene_vertex_grad(ctx.scene, grad_vertices)
+            mesh_grads = tuple(split_grad[i] if needs_mesh_grad[i] else None for i in range(ctx.mesh_count))
+        else:
+            mesh_grads = (None,) * ctx.mesh_count
+        return (None, grad_point if need_grad_point else None, None, None, *mesh_grads)
+
+    @staticmethod
+    def jvp(ctx, grad_scene_handle, grad_point, grad_k, grad_active, *grad_mesh_vertices):
+        point, tape_edge_id, tape_s, tape_d = ctx.saved_tensors
+        k = ctx.k
+        native_mesh_tangents = tuple(_native_tangent_or_none(value) for value in grad_mesh_vertices)
+        with torch._C._DisableFuncTorch():
+            grad_vertices = torch.ops.rayd_torch.pack_scene_vertex_tangents(
+                ctx.scene, list(native_mesh_tangents)
+            )
+            values = torch.ops.rayd_torch.nearest_edge_jvp_optional(
+                ctx.scene,
+                _native_tensor(_flatten_topk_point(point, k)),
+                _native_tensor(tape_edge_id.reshape(-1)),
+                _native_tensor(tape_s.reshape(-1)),
+                _native_tensor(tape_d.reshape(-1, 3)),
+                _native_tensor(grad_vertices),
+                _native_tangent_or_none(
+                    None if grad_point is None else _flatten_topk_point(grad_point, k)
+                ),
+            )
+        tangent_distance, tangent_edge_point, tangent_edge_t, tangent_tape_s, tangent_tape_d = values
+        if grad_point is None:
+            tangent_points = torch.zeros_like(point).unsqueeze(1).expand(-1, k, -1)
+        else:
+            tangent_points = grad_point.unsqueeze(1).expand(-1, k, -1)
+        tangent_points = tangent_points * (tape_edge_id >= 0).unsqueeze(-1)
+        return (
+            None,
+            tangent_distance.reshape(point.shape[0], k),
+            tangent_points,
+            tangent_edge_t.reshape(point.shape[0], k),
+            tangent_edge_point.reshape(point.shape[0], k, 3),
+            None,
+            None,
+            None,
+            None,
+            None,
+            tangent_tape_s.reshape(point.shape[0], k),
+            tangent_tape_d.reshape(point.shape[0], k, 3),
+        )
+
+
+def nearest_edges(
+    scene_handle: int,
+    vertices: torch.Tensor,
+    point: torch.Tensor,
+    k: int,
+    active: torch.Tensor | None,
+    mesh_vertices: tuple[torch.Tensor, ...] | None = None,
+) -> NearestEdgesTopK:
+    if _C is None:
+        raise RuntimeError("RayD Torch extension is not built yet.")
+    if not 1 <= int(k) <= 16:
+        raise ValueError("k must be in [1, 16].")
+    active_arg = _active_ctx_tensor(active, point)
+    tracked_vertices = (vertices,) if mesh_vertices is None else tuple(mesh_vertices)
+    if not _needs_nearest_edge_ad(point, *tracked_vertices):
+        values = torch.ops.rayd_torch.nearest_edges_topk_forward(
+            scene_handle, point, int(k), active_arg
+        )
+    elif len(tracked_vertices) > 1:
+        values = _NearestEdgesTopKMeshesFunction.apply(
+            scene_handle, point, int(k), active_arg, *tracked_vertices
+        )
+    else:
+        values = _NearestEdgesTopKFunction.apply(
+            scene_handle, vertices, point, int(k), active_arg
+        )
+    return NearestEdgesTopK(int(point.shape[0]), int(k), *values[:9])
 
 
 class _NearestEdgeRayFunction(torch.autograd.Function):

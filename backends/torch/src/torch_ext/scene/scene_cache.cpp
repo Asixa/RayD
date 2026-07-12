@@ -3,6 +3,7 @@
 #include <rayd/torch/common/tensor_check.h>
 #include <rayd/torch/edge/bvh.h>
 #include <rayd/torch/scene/cache_kernels.h>
+#include <rayd/shared/edge/bvh_build.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -503,7 +504,11 @@ void refresh_edge_soa(SceneCache &scene) {
     scene.edge_e1_x = at::empty({edge_count}, fopts);
     scene.edge_e1_y = at::empty({edge_count}, fopts);
     scene.edge_e1_z = at::empty({edge_count}, fopts);
-    scene.edge_mask = at::ones({edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
+    if (!scene.edge_mask.defined() || scene.edge_mask.numel() != edge_count) {
+        scene.edge_mask = at::ones(
+            {edge_count}, at::TensorOptions().device(device).dtype(at::kByte));
+        scene.edge_mask_version += 1;
+    }
     compute_edge_soa_cuda(
         edge_count,
         scene.global_vertices,
@@ -846,6 +851,281 @@ int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene) {
     return scene_edge_count(scene->handle);
 }
 
+namespace {
+
+struct HostTreeletSchedule {
+    std::vector<int> nodes;
+    std::vector<int> level_offsets;
+};
+
+HostTreeletSchedule build_treelet_schedule(
+    int primitive_count,
+    const std::vector<int> &left_child,
+    const std::vector<int> &right_child) {
+    const int node_count = primitive_count * 2 - 1;
+    const int leaf_base = primitive_count - 1;
+    std::vector<int> height(static_cast<size_t>(node_count), 0);
+    std::vector<int> leaf_count(static_cast<size_t>(node_count), 1);
+    std::vector<std::pair<int, bool>> stack;
+    stack.reserve(static_cast<size_t>(node_count) * 2);
+    stack.emplace_back(0, false);
+    int max_height = 0;
+    while (!stack.empty()) {
+        const auto [node, visited] = stack.back();
+        stack.pop_back();
+        if (node < 0 || node >= node_count)
+            throw std::runtime_error("custom edge BVH contains an invalid child index.");
+        if (node >= leaf_base)
+            continue;
+        if (!visited) {
+            const int left = left_child[static_cast<size_t>(node)];
+            const int right = right_child[static_cast<size_t>(node)];
+            if (left < 0 || left >= node_count || right < 0 || right >= node_count)
+                throw std::runtime_error("custom edge BVH contains an invalid internal node.");
+            stack.emplace_back(node, true);
+            stack.emplace_back(right, false);
+            stack.emplace_back(left, false);
+            continue;
+        }
+        const int left = left_child[static_cast<size_t>(node)];
+        const int right = right_child[static_cast<size_t>(node)];
+        height[static_cast<size_t>(node)] =
+            std::max(height[static_cast<size_t>(left)], height[static_cast<size_t>(right)]) + 1;
+        leaf_count[static_cast<size_t>(node)] =
+            leaf_count[static_cast<size_t>(left)] + leaf_count[static_cast<size_t>(right)];
+        max_height = std::max(max_height, height[static_cast<size_t>(node)]);
+    }
+
+    std::vector<std::vector<int>> levels(static_cast<size_t>(max_height + 1));
+    for (int node = 0; node < leaf_base; ++node) {
+        if (leaf_count[static_cast<size_t>(node)] >=
+            rayd::shared::edge::kBvhTreeletMinSubtreeLeaves) {
+            levels[static_cast<size_t>(height[static_cast<size_t>(node)])].push_back(node);
+        }
+    }
+    HostTreeletSchedule schedule;
+    schedule.level_offsets.resize(static_cast<size_t>(max_height + 2), 0);
+    for (int level = 0; level <= max_height; ++level) {
+        schedule.level_offsets[static_cast<size_t>(level)] =
+            static_cast<int>(schedule.nodes.size());
+        schedule.nodes.insert(schedule.nodes.end(), levels[static_cast<size_t>(level)].begin(),
+                              levels[static_cast<size_t>(level)].end());
+    }
+    schedule.level_offsets[static_cast<size_t>(max_height + 1)] =
+        static_cast<int>(schedule.nodes.size());
+    return schedule;
+}
+
+} // namespace
+
+rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache &scene) {
+    return {scene.edge_p0_x.data_ptr<float>(), scene.edge_p0_y.data_ptr<float>(),
+            scene.edge_p0_z.data_ptr<float>(), scene.edge_e1_x.data_ptr<float>(),
+            scene.edge_e1_y.data_ptr<float>(), scene.edge_e1_z.data_ptr<float>(),
+            static_cast<size_t>(scene.edge_v0.numel())};
+}
+
+rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &scene) {
+    const CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+    return {bvh.node_min_x.defined() ? bvh.node_min_x.data_ptr<float>() : nullptr,
+            bvh.node_min_y.defined() ? bvh.node_min_y.data_ptr<float>() : nullptr,
+            bvh.node_min_z.defined() ? bvh.node_min_z.data_ptr<float>() : nullptr,
+            bvh.node_max_x.defined() ? bvh.node_max_x.data_ptr<float>() : nullptr,
+            bvh.node_max_y.defined() ? bvh.node_max_y.data_ptr<float>() : nullptr,
+            bvh.node_max_z.defined() ? bvh.node_max_z.data_ptr<float>() : nullptr,
+            static_cast<size_t>(bvh.node_count)};
+}
+
+rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(
+    const SceneCache &scene) {
+    const CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+    const size_t primitive_count = static_cast<size_t>(scene.edge_v0.numel());
+    return {bvh.left_child.defined() ? bvh.left_child.data_ptr<int>() : nullptr,
+            bvh.right_child.defined() ? bvh.right_child.data_ptr<int>() : nullptr,
+            bvh.leaf_primitives.defined() ? bvh.leaf_primitives.data_ptr<int>() : nullptr, nullptr,
+            static_cast<size_t>(bvh.node_count), primitive_count, primitive_count};
+}
+
+void ensure_custom_edge_bvh(SceneCache &scene) {
+    CompactEdgeBvh &bvh = scene.custom_edge_bvh;
+    if (bvh.valid && bvh.geometry_version == scene.edge_version)
+        return;
+
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    if (torch_ctx.device_index != scene.device_index)
+        throw std::runtime_error("ensure_custom_edge_bvh(): current CUDA device does not match scene.");
+    const int64_t primitive_count = scene.edge_v0.numel();
+    const int64_t max_primitive_count =
+        (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
+    if (primitive_count > max_primitive_count)
+        throw std::runtime_error(
+            "ensure_custom_edge_bvh(): node topology exceeds int32 indexing range.");
+
+    bvh = {};
+    bvh.geometry_version = scene.edge_version;
+    if (primitive_count == 0) {
+        bvh.valid = true;
+        return;
+    }
+
+    const int64_t node_count = primitive_count * 2 - 1;
+    bvh.node_count = node_count;
+    const auto fopts = scene.edge_p0_x.options();
+    const auto iopts = scene.edge_v0.options();
+    const auto bopts = at::TensorOptions().device(scene.edge_v0.device()).dtype(at::kByte);
+    auto make_f = [&](int64_t count) { return at::empty({count}, fopts); };
+    auto make_i = [&](int64_t count) { return at::empty({count}, iopts); };
+    bvh.primitive_min_x = make_f(primitive_count); bvh.primitive_min_y = make_f(primitive_count);
+    bvh.primitive_min_z = make_f(primitive_count); bvh.primitive_max_x = make_f(primitive_count);
+    bvh.primitive_max_y = make_f(primitive_count); bvh.primitive_max_z = make_f(primitive_count);
+    bvh.node_min_x = make_f(node_count); bvh.node_min_y = make_f(node_count);
+    bvh.node_min_z = make_f(node_count); bvh.node_max_x = make_f(node_count);
+    bvh.node_max_y = make_f(node_count); bvh.node_max_z = make_f(node_count);
+    bvh.left_child = make_i(node_count).fill_(-1); bvh.right_child = make_i(node_count).fill_(-1);
+    bvh.parent = make_i(node_count).fill_(-1); bvh.leaf_primitive = make_i(node_count).fill_(-1);
+    bvh.is_leaf = make_i(node_count).zero_(); bvh.primitive_leaf_node = make_i(primitive_count).fill_(-1);
+    bvh.leaf_primitives = make_i(primitive_count).fill_(-1);
+    bvh.morton_in = make_i(primitive_count); bvh.morton_out = make_i(primitive_count);
+    bvh.primitive_ids_in = make_i(primitive_count); bvh.primitive_ids_out = make_i(primitive_count);
+    bvh.merge_counters = make_i(std::max<int64_t>(primitive_count - 1, 1)).zero_();
+    const size_t bounds_bytes = sizeof(rayd::shared::edge::BvhBounds3);
+    bvh.packed_bounds = at::empty({primitive_count * static_cast<int64_t>(bounds_bytes)}, bopts);
+    bvh.reduced_bound = at::empty({static_cast<int64_t>(bounds_bytes)}, bopts);
+    const size_t scratch_bytes = std::max(
+        edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
+        edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
+    bvh.scratch = at::empty({static_cast<int64_t>(scratch_bytes)}, bopts);
+
+    rayd::shared::edge::launch_compute_primitive_bounds_async({
+        scene_edge_view(scene),
+        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+         static_cast<size_t>(primitive_count)},
+        reinterpret_cast<rayd::shared::edge::BvhBounds3 *>(bvh.packed_bounds.data_ptr<uint8_t>()),
+        torch_ctx.stream});
+    reduce_edge_bvh_bounds_cuda(
+        primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
+    rayd::shared::edge::BvhBounds3 scene_bound = {};
+    cuda_check(cudaMemcpyAsync(&scene_bound, bvh.reduced_bound.data_ptr<uint8_t>(), bounds_bytes,
+                               cudaMemcpyDeviceToHost, torch_ctx.stream),
+               "cudaMemcpyAsync(custom BVH scene bound)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+               "cudaStreamSynchronize(custom BVH scene bound)");
+
+    rayd::shared::edge::launch_compute_morton_codes_async({
+        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+         static_cast<size_t>(primitive_count)},
+        scene_bound, reinterpret_cast<uint32_t *>(bvh.morton_in.data_ptr<int>()), torch_ctx.stream});
+    rayd::shared::edge::launch_init_sequence_async({
+        bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
+    sort_edge_bvh_morton_cuda(primitive_count, bvh.morton_in, bvh.morton_out,
+                              bvh.primitive_ids_in, bvh.primitive_ids_out,
+                              bvh.scratch, torch_ctx.stream);
+    HostTreeletSchedule treelet_schedule;
+    const bool optimize_treelets =
+        primitive_count >= rayd::shared::edge::kBvhTreeletMinPrimitives;
+    if (primitive_count > 1) {
+        rayd::shared::edge::launch_build_radix_tree_async({
+            reinterpret_cast<const uint32_t *>(bvh.morton_out.data_ptr<int>()),
+            bvh.primitive_ids_out.data_ptr<int>(), bvh.left_child.data_ptr<int>(),
+            bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+            static_cast<int>(primitive_count), torch_ctx.stream});
+    }
+    if (optimize_treelets) {
+        std::vector<int> host_left(static_cast<size_t>(node_count), -1);
+        std::vector<int> host_right(static_cast<size_t>(node_count), -1);
+        cuda_check(cudaMemcpyAsync(host_left.data(), bvh.left_child.data_ptr<int>(),
+                                   static_cast<size_t>(node_count) * sizeof(int),
+                                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+                   "cudaMemcpyAsync(custom BVH left topology)");
+        cuda_check(cudaMemcpyAsync(host_right.data(), bvh.right_child.data_ptr<int>(),
+                                   static_cast<size_t>(node_count) * sizeof(int),
+                                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+                   "cudaMemcpyAsync(custom BVH right topology)");
+        cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+                   "cudaStreamSynchronize(custom BVH topology)");
+        treelet_schedule = build_treelet_schedule(
+            static_cast<int>(primitive_count), host_left, host_right);
+        bvh.node_cost = make_f(node_count);
+        bvh.internal_cost_arrivals = make_i(node_count).zero_();
+        bvh.treelet_nodes = make_i(static_cast<int64_t>(treelet_schedule.nodes.size()));
+        if (!treelet_schedule.nodes.empty()) {
+            cuda_check(cudaMemcpyAsync(
+                           bvh.treelet_nodes.data_ptr<int>(), treelet_schedule.nodes.data(),
+                           treelet_schedule.nodes.size() * sizeof(int),
+                           cudaMemcpyHostToDevice, torch_ctx.stream),
+                       "cudaMemcpyAsync(custom BVH treelet schedule)");
+        }
+    }
+    rayd::shared::edge::launch_finalize_leaves_and_bounds_async({
+        bvh.primitive_ids_out.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+         static_cast<size_t>(primitive_count)},
+        bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
+        {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
+         bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
+         bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+         static_cast<size_t>(node_count)},
+        bvh.leaf_primitive.data_ptr<int>(), bvh.is_leaf.data_ptr<int>(),
+        bvh.primitive_leaf_node.data_ptr<int>(), bvh.merge_counters.data_ptr<int>(),
+        static_cast<int>(primitive_count), torch_ctx.stream});
+    if (optimize_treelets) {
+        const float scene_scale = std::max(
+            scene_bound.max.x - scene_bound.min.x,
+            std::max(scene_bound.max.y - scene_bound.min.y,
+                     scene_bound.max.z - scene_bound.min.z));
+        const float inflation = std::max(
+            scene_scale * rayd::shared::edge::kBvhTreeletCostInflationRatio, 1.0e-6f);
+        rayd::shared::edge::launch_initialize_leaf_costs_async({
+            {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
+             bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
+             bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+             static_cast<size_t>(node_count)},
+            bvh.node_cost.data_ptr<float>(), inflation, static_cast<int>(primitive_count),
+            torch_ctx.stream});
+        rayd::shared::edge::launch_initialize_internal_costs_async({
+            bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
+            bvh.parent.data_ptr<int>(),
+            {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
+             bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
+             bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+             static_cast<size_t>(node_count)},
+            bvh.node_cost.data_ptr<float>(), bvh.internal_cost_arrivals.data_ptr<int>(),
+            inflation, static_cast<int>(primitive_count), torch_ctx.stream});
+        const int max_height = static_cast<int>(treelet_schedule.level_offsets.size()) - 2;
+        for (int height = 1; height <= max_height; ++height) {
+            const int begin = treelet_schedule.level_offsets[static_cast<size_t>(height)];
+            const int end = treelet_schedule.level_offsets[static_cast<size_t>(height + 1)];
+            if (end == begin)
+                continue;
+            rayd::shared::edge::launch_optimize_selected_treelets_async({
+                bvh.treelet_nodes.data_ptr<int>() + begin, bvh.is_leaf.data_ptr<int>(),
+                bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
+                bvh.parent.data_ptr<int>(),
+                {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
+                 bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
+                 bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+                 static_cast<size_t>(node_count)},
+                bvh.leaf_primitive.data_ptr<int>(), bvh.node_cost.data_ptr<float>(),
+                inflation, end - begin, torch_ctx.stream});
+        }
+    }
+    encode_raw_edge_bvh_cuda(primitive_count, bvh.left_child, bvh.right_child,
+                             bvh.leaf_primitive, bvh.leaf_primitives, torch_ctx.stream);
+    cuda_check(cudaGetLastError(), "ensure_custom_edge_bvh() kernel launch");
+    // The cache may be consumed by a later dispatcher call on another Torch
+    // stream. Publish it only after its persistent topology is fully built.
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+               "cudaStreamSynchronize(custom BVH build)");
+    bvh.valid = true;
+}
+
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene_handle) {
     SceneCache &scene = get_scene(scene_handle->handle);
     at::Tensor edge_shape_index = scene.edge_shape_id.to(at::kLong);
@@ -870,6 +1150,53 @@ std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene
         scene.edge_local_id,
         scene.edge_opposite,
     };
+}
+
+std::vector<at::Tensor> scene_global_geometry(
+    c10::intrusive_ptr<SceneHandle> scene_handle) {
+    SceneCache &scene = get_scene(scene_handle->handle);
+    at::Tensor face_normal = at::stack(
+        {scene.tri_fn_x, scene.tri_fn_y, scene.tri_fn_z}, 1);
+    at::Tensor squared_normal = face_normal.square().sum(1, true);
+    at::Tensor inverse_normal = squared_normal
+        .clamp_min(std::numeric_limits<float>::min())
+        .rsqrt();
+    face_normal = at::where(
+        squared_normal.gt(0.0f), face_normal * inverse_normal,
+        at::zeros_like(face_normal));
+    at::Tensor global_prim_id = at::arange(
+        scene.global_faces.size(0), scene.face_local_id.options());
+    return {
+        scene.global_vertices,
+        scene.global_faces,
+        face_normal,
+        scene.face_shape_id,
+        scene.face_local_id,
+        global_prim_id,
+    };
+}
+
+at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene_handle) {
+    SceneCache &scene = get_scene(scene_handle->handle);
+    return scene.edge_mask.to(at::kBool);
+}
+
+void set_scene_edge_mask(
+    c10::intrusive_ptr<SceneHandle> scene_handle,
+    at::Tensor mask) {
+    SceneCache &scene = get_scene(scene_handle->handle);
+    require_cuda(mask, "edge_mask");
+    require_contiguous(mask, "edge_mask");
+    require_rank(mask, 1, "edge_mask");
+    if (mask.get_device() != scene.device_index)
+        throw std::runtime_error("set_scene_edge_mask(): mask must be on the scene device.");
+    if (mask.numel() != scene.edge_v0.numel())
+        throw std::runtime_error("set_scene_edge_mask(): mask length must equal edge count.");
+    if (mask.scalar_type() != at::kBool && mask.scalar_type() != at::kByte)
+        throw std::runtime_error("set_scene_edge_mask(): mask must have bool or uint8 dtype.");
+    scene.edge_mask = mask.to(at::kByte).contiguous().clone();
+    scene.edge_mask_version += 1;
+    scene.version += 1;
 }
 
 void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices) {

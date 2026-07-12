@@ -17,12 +17,14 @@
 #include <rayd/torch/reflection/epc_field.h>
 #include <rayd/torch/reflection/epc_params.h>
 #include <rayd/torch/reflection/trace_params.h>
+#include <rayd/torch/reflection/visibility.h>
 #include <rayd/torch/reflection/visibility_params.h>
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
 #include <rayd/torch/integration.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>
 
 #include <algorithm>
@@ -238,6 +240,62 @@ at::Tensor optional_active_from_tensor(const at::Tensor *active_ptr, int64_t cou
     return active.contiguous();
 }
 
+at::Tensor visibility_active_mask(
+    const c10::optional<at::Tensor> &active,
+    int64_t count,
+    const at::TensorOptions &options,
+    const char *name) {
+    if (!active.has_value() || !active->defined() || active->numel() == 0)
+        return at::ones({count}, options.dtype(at::kBool));
+    require_mask(*active, name);
+    if (active->size(0) != count)
+        throw std::runtime_error(std::string(name) + " must match the batch size.");
+    return active->contiguous();
+}
+
+at::Tensor finite_vec3_rows(const at::Tensor &value) {
+    return at::isfinite(value).all(1);
+}
+
+void require_scene_device(
+    const SceneCache &scene,
+    const at::Tensor &value,
+    const char *name) {
+    if (value.defined() && value.get_device() != scene.device_index)
+        throw std::runtime_error(
+            std::string(name) + " must be on the same CUDA device as the scene.");
+}
+
+void require_scene_device(
+    const SceneCache &scene,
+    const c10::optional<at::Tensor> &value,
+    const char *name) {
+    if (value.has_value())
+        require_scene_device(scene, *value, name);
+}
+
+at::Tensor prepare_visibility_ignore_ids(
+    const c10::optional<at::Tensor> &ignore_ids,
+    int64_t row_count,
+    int max_rank,
+    const char *name,
+    int32_t &ignore_k) {
+    ignore_k = 0;
+    if (!ignore_ids.has_value() || !ignore_ids->defined())
+        return at::Tensor();
+    require_cuda(*ignore_ids, name);
+    require_dtype(*ignore_ids, at::kInt, name);
+    if (ignore_ids->dim() < 1 || ignore_ids->dim() > max_rank)
+        throw std::runtime_error(std::string(name) + " has the wrong rank.");
+    if (ignore_ids->numel() == 0)
+        return at::Tensor();
+    if (row_count <= 0 || ignore_ids->numel() % row_count != 0)
+        throw std::runtime_error(
+            std::string(name) + " size must be a multiple of its visibility row count.");
+    ignore_k = checked_i32(ignore_ids->numel() / row_count, "ignore_k");
+    return ignore_ids->contiguous().reshape({-1});
+}
+
 at::Tensor stack_vec3(const at::Tensor &x, const at::Tensor &y, const at::Tensor &z) {
     return at::stack({x, y, z}, 1).contiguous();
 }
@@ -277,6 +335,12 @@ SegmentVisibilityNativeOutputs visibility_forward_native_impl(
     at::Tensor active = optional_active_from_tensor(active_ptr, start.size(0), "active");
 
     SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, start, "start");
+    require_scene_device(scene, end_a, "end_a");
+    require_scene_device(scene, end_b, "end_b");
+    require_scene_device(scene, ignore_prim_ids, "ignore_prim_ids");
+    require_scene_device(scene, active, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = start.size(0);
     at::Tensor visible = at::empty({ray_count}, start.options().dtype(at::kBool));
     at::Tensor blocker_prim = at::empty({ray_count}, scene.global_faces.options());
@@ -329,6 +393,204 @@ extern "C" void rayd_torch_native_visibility_forward(
     *visible = out.visible;
     *blocker_prim = out.blocker_prim;
     *tape_t = out.tape_t;
+}
+
+std::vector<at::Tensor> visible_pair_forward_impl(
+    int64_t scene_handle,
+    at::Tensor start,
+    at::Tensor end_a,
+    at::Tensor end_b,
+    c10::optional<at::Tensor> ignore_prim_ids,
+    c10::optional<at::Tensor> active) {
+    require_vec3f(start, "start");
+    require_vec3f(end_a, "end_a");
+    require_vec3f(end_b, "end_b");
+    require_same_batch(start, end_a, "visible_pair");
+    require_same_batch(start, end_b, "visible_pair");
+
+    SceneCache &scene = get_scene(scene_handle);
+    const int64_t ray_count = start.size(0);
+    at::Tensor visible_a = at::empty({ray_count}, start.options().dtype(at::kBool));
+    at::Tensor visible_b = at::empty({ray_count}, start.options().dtype(at::kBool));
+    if (ray_count == 0)
+        return {visible_a, visible_b};
+
+    at::Tensor active_mask = visibility_active_mask(
+        active, ray_count, start.options(), "active");
+    active_mask = (active_mask & finite_vec3_rows(start) &
+                   finite_vec3_rows(end_a) & finite_vec3_rows(end_b)).contiguous();
+    int32_t ignore_k = 0;
+    at::Tensor ignore_ids = prepare_visibility_ignore_ids(
+        ignore_prim_ids, ray_count, 2, "ignore_prim_ids", ignore_k);
+
+    SegmentVisibilityParams params = {};
+    params.handle = scene.triangle_ias.traversable;
+    params.face_offsets = scene.face_offsets.data_ptr<int>();
+    params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    params.start_aos = start.data_ptr<float>();
+    params.end_aos = end_a.data_ptr<float>();
+    params.end_b_aos = end_b.data_ptr<float>();
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_ids.data_ptr<int>() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = mask_ptr(active_mask);
+    params.n_rays = checked_i32(ray_count, "ray_count");
+    params.out_visible = mutable_mask_ptr(visible_a);
+    params.out_visible_b = mutable_mask_ptr(visible_b);
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
+        ->launch(1, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    return {visible_a, visible_b};
+}
+
+std::vector<at::Tensor> visible_edge_forward_impl(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor edge_position,
+    at::Tensor edge_direction,
+    at::Tensor edge_t_min,
+    at::Tensor edge_t_max,
+    std::vector<double> sample_fractions,
+    c10::optional<at::Tensor> active) {
+    if (sample_fractions.empty())
+        throw std::runtime_error("visible_edge sample_fractions must not be empty.");
+    if (sample_fractions.size() > static_cast<size_t>(SegmentVisibilityMaxSamples))
+        throw std::runtime_error("visible_edge supports at most 16 sample fractions.");
+    if (!std::all_of(sample_fractions.begin(), sample_fractions.end(), [](double value) {
+            return std::isfinite(value);
+        }))
+        throw std::runtime_error("visible_edge sample_fractions must be finite.");
+    require_vec3f(source, "source");
+    require_vec3f(edge_position, "edge_position");
+    require_vec3f(edge_direction, "edge_direction");
+    require_flat_f32(edge_t_min, "edge_t_min");
+    require_flat_f32(edge_t_max, "edge_t_max");
+    require_same_batch(source, edge_position, "visible_edge");
+    require_same_batch(source, edge_direction, "visible_edge");
+    if (edge_t_min.size(0) != source.size(0) ||
+        edge_t_max.size(0) != source.size(0))
+        throw std::runtime_error("visible_edge inputs must have the same batch size.");
+
+    SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, edge_position, "edge_position");
+    require_scene_device(scene, edge_direction, "edge_direction");
+    require_scene_device(scene, edge_t_min, "edge_t_min");
+    require_scene_device(scene, edge_t_max, "edge_t_max");
+    require_scene_device(scene, active, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    const int64_t state_count = source.size(0);
+    at::Tensor any_visible =
+        at::empty({state_count}, source.options().dtype(at::kBool));
+    if (state_count == 0)
+        return {any_visible};
+
+    at::Tensor active_mask = visibility_active_mask(
+        active, state_count, source.options(), "active");
+    active_mask = (active_mask & finite_vec3_rows(source) &
+                   finite_vec3_rows(edge_position) &
+                   finite_vec3_rows(edge_direction) & at::isfinite(edge_t_min) &
+                   at::isfinite(edge_t_max)).contiguous();
+    Vec3SoA edge_direction_soa = split_vec3(edge_direction);
+
+    SegmentVisibilityParams params = {};
+    params.handle = scene.triangle_ias.traversable;
+    params.face_offsets = scene.face_offsets.data_ptr<int>();
+    params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    params.start_aos = source.data_ptr<float>();
+    params.end_aos = edge_position.data_ptr<float>();
+    params.edge_dir_x = edge_direction_soa.x.data_ptr<float>();
+    params.edge_dir_y = edge_direction_soa.y.data_ptr<float>();
+    params.edge_dir_z = edge_direction_soa.z.data_ptr<float>();
+    params.edge_t_min = edge_t_min.data_ptr<float>();
+    params.edge_t_max = edge_t_max.data_ptr<float>();
+    params.active_mask = mask_ptr(active_mask);
+    params.n_rays = checked_i32(state_count, "state_count");
+    params.sample_count = checked_i32(sample_fractions.size(), "sample_count");
+    for (size_t i = 0; i < sample_fractions.size(); ++i)
+        params.sample_fractions[i] = static_cast<float>(sample_fractions[i]);
+    params.out_visible = mutable_mask_ptr(any_visible);
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
+        ->launch(2, params, static_cast<unsigned int>(state_count), torch_ctx.stream);
+    return {any_visible};
+}
+
+std::vector<at::Tensor> visible_chain_forward_impl(
+    int64_t scene_handle,
+    at::Tensor points,
+    at::Tensor chain_length,
+    c10::optional<at::Tensor> ignore_prim_per_segment,
+    c10::optional<at::Tensor> active) {
+    require_cuda(points, "points");
+    require_contiguous(points, "points");
+    require_dtype(points, at::kFloat, "points");
+    require_rank(points, 3, "points");
+    require_last_dim(points, 3, "points");
+    require_flat_i32(chain_length, "chain_length");
+    if (points.size(0) != chain_length.size(0))
+        throw std::runtime_error(
+            "visible_chain points and chain_length must have the same batch size.");
+
+    SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, points, "points");
+    require_scene_device(scene, chain_length, "chain_length");
+    require_scene_device(scene, ignore_prim_per_segment, "ignore_prim_per_segment");
+    require_scene_device(scene, active, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    const int64_t chain_count = chain_length.size(0);
+    at::Tensor all_visible =
+        at::empty({chain_count}, points.options().dtype(at::kBool));
+    at::Tensor first_blocked_segment =
+        at::empty({chain_count}, chain_length.options());
+    at::Tensor first_blocked_prim =
+        at::empty({chain_count}, chain_length.options());
+    if (chain_count == 0)
+        return {all_visible, first_blocked_segment, first_blocked_prim};
+
+    const int64_t max_points = points.size(1);
+    if (max_points < 2)
+        throw std::runtime_error("visible_chain requires at least two points per chain.");
+    const int64_t max_segments = max_points - 1;
+    at::Tensor active_mask = visibility_active_mask(
+        active, chain_count, points.options(), "active");
+    active_mask = (
+        active_mask & chain_length.ge(0) & at::isfinite(points).all(2).all(1)
+    ).contiguous();
+
+    int32_t ignore_k = 0;
+    at::Tensor ignore_ids = prepare_visibility_ignore_ids(
+        ignore_prim_per_segment,
+        chain_count * max_segments,
+        3,
+        "ignore_prim_per_segment",
+        ignore_k);
+    at::Tensor flat_points = points.reshape({chain_count * max_points, 3});
+    Vec3SoA point_soa = split_vec3(flat_points);
+
+    SegmentVisibilityParams params = {};
+    params.handle = scene.triangle_ias.traversable;
+    params.face_offsets = scene.face_offsets.data_ptr<int>();
+    params.n_meshes = checked_i32(scene.meshes.size(), "n_meshes");
+    params.chain_point_x = point_soa.x.data_ptr<float>();
+    params.chain_point_y = point_soa.y.data_ptr<float>();
+    params.chain_point_z = point_soa.z.data_ptr<float>();
+    params.chain_length = chain_length.data_ptr<int>();
+    params.max_points = checked_i32(max_points, "max_points");
+    params.max_segments = checked_i32(max_segments, "max_segments");
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_ids.data_ptr<int>() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = mask_ptr(active_mask);
+    params.n_rays = checked_i32(chain_count, "chain_count");
+    params.out_visible = mutable_mask_ptr(all_visible);
+    params.out_first_blocked_segment = first_blocked_segment.data_ptr<int>();
+    params.out_first_blocked_prim = first_blocked_prim.data_ptr<int>();
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
+        ->launch(3, params, static_cast<unsigned int>(chain_count), torch_ctx.stream);
+    return {all_visible, first_blocked_segment, first_blocked_prim};
 }
 
 std::vector<at::Tensor> trace_reflections_forward_native_impl(

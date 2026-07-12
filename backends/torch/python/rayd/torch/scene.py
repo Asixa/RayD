@@ -432,3 +432,94 @@ class Scene:
 
     def has_pending_updates(self) -> bool:
         return bool(self._pending_updates)
+
+    def nearest_edges(
+        self,
+        point: torch.Tensor,
+        k: int,
+        active: torch.Tensor | None = None,
+    ):
+        from .autograd import nearest_edges as _nearest_edges
+
+        scene = self._require_native_scene()
+        mesh_vertices = self._mesh_vertex_tensors()
+        return _nearest_edges(
+            scene,
+            mesh_vertices[0],
+            point,
+            int(k),
+            active,
+            mesh_vertices=mesh_vertices,
+        )
+
+    def edge_mask(self) -> torch.Tensor:
+        scene = self._require_native_scene()
+        return scene.edge_mask()
+
+    def set_edge_mask(self, mask: torch.Tensor) -> None:
+        scene = self._require_native_scene()
+        scene.set_edge_mask(mask)
+
+    def global_geometry(self):
+        from .types import SceneGlobalGeometry
+
+        scene = self._require_native_scene()
+        return SceneGlobalGeometry(*scene.global_geometry())
+
+    def visible_pair(
+        self,
+        start: torch.Tensor,
+        end_a: torch.Tensor,
+        end_b: torch.Tensor,
+        ignore_prim_ids: torch.Tensor | None = None,
+        active: torch.Tensor | None = None,
+    ):
+        from .types import SegmentPairVisibility
+
+        scene = self._require_native_scene()
+        values = torch.ops.rayd_torch.visible_pair_forward(
+            scene, start, end_a, end_b, ignore_prim_ids, active
+        )
+        return SegmentPairVisibility(int(start.shape[0]), *values)
+
+    def visible_edge(
+        self,
+        source: torch.Tensor,
+        edge_position: torch.Tensor,
+        edge_direction: torch.Tensor,
+        edge_t_min: torch.Tensor,
+        edge_t_max: torch.Tensor,
+        sample_fractions=(0.0, 0.25, 0.5, 0.75, 1.0),
+        active: torch.Tensor | None = None,
+    ):
+        from .types import AxialEdgeVisibility
+
+        scene = self._require_native_scene()
+        values = torch.ops.rayd_torch.visible_edge_forward(
+            scene,
+            source,
+            edge_position,
+            edge_direction,
+            edge_t_min,
+            edge_t_max,
+            [float(value) for value in sample_fractions],
+            active,
+        )
+        return AxialEdgeVisibility(int(source.shape[0]), *values)
+
+    def visible_chain(
+        self,
+        points: torch.Tensor,
+        chain_length: torch.Tensor,
+        ignore_prim_per_segment: torch.Tensor | None = None,
+        active: torch.Tensor | None = None,
+    ):
+        from .types import SegmentChainVisibility
+
+        scene = self._require_native_scene()
+        values = torch.ops.rayd_torch.visible_chain_forward(
+            scene, points, chain_length, ignore_prim_per_segment, active
+        )
+        return SegmentChainVisibility(
+            int(points.shape[0]), int(points.shape[1]) - 1, *values
+        )

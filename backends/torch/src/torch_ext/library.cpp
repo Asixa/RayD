@@ -1,4 +1,5 @@
 #include <rayd/torch/scene/cache.h>
+#include <rayd/torch/reflection/visibility.h>
 
 #include <torch/extension.h>
 #include <torch/library.h>
@@ -69,6 +70,7 @@ py::tuple intersect_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
 py::tuple nearest_edge_forward_op(int64_t, at::Tensor);
 py::tuple nearest_edge_forward_noad_op(int64_t, at::Tensor);
 py::tuple nearest_edge_ray_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
+py::tuple nearest_edges_topk_forward_op(int64_t, at::Tensor, int64_t, at::Tensor);
 py::tuple nearest_edge_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object, py::object, py::object);
 py::tuple nearest_edge_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object);
 
@@ -193,9 +195,57 @@ OptionalTensorList nearest_edge_jvp_optional_dispatch(ScenePtr scene, at::Tensor
     return tuple_to_optional_tensor_list(nearest_edge_jvp_optional_op(handle(scene), point, tape_edge_id, tape_s, tape_d, to_py_optional(tangent_vertices), to_py_optional(tangent_point)));
 }
 
+OptionalTensorList nearest_edges_topk_forward_dispatch(
+    ScenePtr scene,
+    at::Tensor point,
+    int64_t k,
+    at::Tensor active) {
+    py::gil_scoped_acquire gil;
+    return tuple_to_optional_tensor_list(
+        nearest_edges_topk_forward_op(handle(scene), std::move(point), k, std::move(active)));
+}
+
 OptionalTensorList visibility_forward_dispatch(ScenePtr scene, at::Tensor start, at::Tensor end, OptionalTensor active) {
     py::gil_scoped_acquire gil;
     return tuple_to_optional_tensor_list(visibility_forward_op(handle(scene), start, end, to_py_optional(active)));
+}
+
+std::vector<at::Tensor> visible_pair_forward_dispatch(
+    ScenePtr scene,
+    at::Tensor start,
+    at::Tensor end_a,
+    at::Tensor end_b,
+    OptionalTensor ignore_prim_ids,
+    OptionalTensor active) {
+    return visible_pair_forward_impl(
+        handle(scene), std::move(start), std::move(end_a), std::move(end_b),
+        std::move(ignore_prim_ids), std::move(active));
+}
+
+std::vector<at::Tensor> visible_edge_forward_dispatch(
+    ScenePtr scene,
+    at::Tensor source,
+    at::Tensor edge_position,
+    at::Tensor edge_direction,
+    at::Tensor edge_t_min,
+    at::Tensor edge_t_max,
+    std::vector<double> sample_fractions,
+    OptionalTensor active) {
+    return visible_edge_forward_impl(
+        handle(scene), std::move(source), std::move(edge_position),
+        std::move(edge_direction), std::move(edge_t_min), std::move(edge_t_max),
+        std::move(sample_fractions), std::move(active));
+}
+
+std::vector<at::Tensor> visible_chain_forward_dispatch(
+    ScenePtr scene,
+    at::Tensor points,
+    at::Tensor chain_length,
+    OptionalTensor ignore_prim_per_segment,
+    OptionalTensor active) {
+    return visible_chain_forward_impl(
+        handle(scene), std::move(points), std::move(chain_length),
+        std::move(ignore_prim_per_segment), std::move(active));
 }
 
 OptionalTensorList trace_reflections_forward_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax, OptionalTensor active, int64_t max_bounces) {
@@ -374,6 +424,18 @@ TORCH_LIBRARY(rayd_torch, m) {
         .def("edge_count", [](const ScenePtr &scene) {
             return scene_edge_count(scene);
         })
+        .def("edge_mask", [](const ScenePtr &scene) {
+            return get_scene_edge_mask(scene);
+        })
+        .def("set_edge_mask", [](const ScenePtr &scene, at::Tensor mask) {
+            set_scene_edge_mask(scene, std::move(mask));
+        })
+        .def("edge_records", [](const ScenePtr &scene) {
+            return scene_edge_records(scene);
+        })
+        .def("global_geometry", [](const ScenePtr &scene) {
+            return scene_global_geometry(scene);
+        })
         .def("handle", [](const ScenePtr &scene) {
             return scene->handle;
         });
@@ -400,8 +462,12 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
     m.def("nearest_edge_ray_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor active) -> Tensor?[]");
     m.def("nearest_edge_backward_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, Tensor tape_edge_id, Tensor tape_s, Tensor tape_d, Tensor? grad_distance, Tensor? grad_edge_point, Tensor? grad_edge_t, Tensor? grad_edge_t_alias) -> Tensor?[]");
     m.def("nearest_edge_jvp_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, Tensor tape_edge_id, Tensor tape_s, Tensor tape_d, Tensor? tangent_vertices, Tensor? tangent_point) -> Tensor?[]");
+    m.def("nearest_edges_topk_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, int k, Tensor active) -> Tensor?[]");
 
     m.def("visibility_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor start, Tensor end, Tensor? active) -> Tensor?[]");
+    m.def("visible_pair_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor start, Tensor end_a, Tensor end_b, Tensor? ignore_prim_ids, Tensor? active) -> Tensor[]");
+    m.def("visible_edge_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor source, Tensor edge_position, Tensor edge_direction, Tensor edge_t_min, Tensor edge_t_max, float[] sample_fractions, Tensor? active) -> Tensor[]");
+    m.def("visible_chain_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor points, Tensor chain_length, Tensor? ignore_prim_per_segment, Tensor? active) -> Tensor[]");
     m.def("trace_reflections_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor? active, int max_bounces) -> Tensor?[]");
     m.def("trace_reflections_forward_noad(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor? active, int max_bounces) -> Tensor?[]");
     m.def("trace_reflections_forward_reduced(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor? active, int max_bounces) -> Tensor?[]");
@@ -454,7 +520,11 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("nearest_edge_ray_forward", TORCH_FN(nearest_edge_ray_forward_dispatch));
     m.impl("nearest_edge_backward_optional", TORCH_FN(nearest_edge_backward_optional_dispatch));
     m.impl("nearest_edge_jvp_optional", TORCH_FN(nearest_edge_jvp_optional_dispatch));
+    m.impl("nearest_edges_topk_forward", TORCH_FN(nearest_edges_topk_forward_dispatch));
     m.impl("visibility_forward", TORCH_FN(visibility_forward_dispatch));
+    m.impl("visible_pair_forward", TORCH_FN(visible_pair_forward_dispatch));
+    m.impl("visible_edge_forward", TORCH_FN(visible_edge_forward_dispatch));
+    m.impl("visible_chain_forward", TORCH_FN(visible_chain_forward_dispatch));
     m.impl("trace_reflections_forward", TORCH_FN(trace_reflections_forward_dispatch));
     m.impl("trace_reflections_forward_noad", TORCH_FN(trace_reflections_forward_noad_dispatch));
     m.impl("trace_reflections_forward_reduced", TORCH_FN(trace_reflections_forward_reduced_dispatch));

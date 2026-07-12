@@ -535,6 +535,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu
         src/torch_ext/edge/bvh.cu
+        src/torch_ext/edge/edge_topk.cu
         src/torch_ext/edge/edge_forward.cu
         src/torch_ext/edge/edge_backward.cu
         src/torch_ext/reflection/visibility_backward.cu

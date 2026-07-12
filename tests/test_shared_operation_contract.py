@@ -10,8 +10,8 @@ CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
 class SharedOperationContractTests(unittest.TestCase):
-    def test_schema_v2_has_per_operation_contracts(self):
-        self.assertEqual(CONTRACT["version"], 2)
+    def test_schema_v3_has_per_operation_contracts(self):
+        self.assertEqual(CONTRACT["version"], 3)
         operations = CONTRACT["operations"]
         self.assertEqual(
             set(operations),
@@ -22,6 +22,8 @@ class SharedOperationContractTests(unittest.TestCase):
                 "nearest_edges_topk",
                 "visibility",
                 "visibility_pair",
+                "visibility_edge",
+                "visibility_chain",
                 "reflection_trace",
                 "reflection_accumulation",
                 "diffraction_direct",

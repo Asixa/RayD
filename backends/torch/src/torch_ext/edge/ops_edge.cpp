@@ -54,6 +54,39 @@ py::tuple nearest_edge_forward_noad_op(int64_t scene_handle, at::Tensor point) {
         out.global_edge_id);
 }
 
+py::tuple nearest_edges_topk_forward_op(
+    int64_t scene_handle,
+    at::Tensor point,
+    int64_t k,
+    at::Tensor active) {
+    require_vec3f(point, "point");
+    require_mask(active, "active");
+    if (k < 1 || k > 16)
+        throw std::runtime_error("k must be in [1, 16].");
+    if (active.numel() != 0 && active.size(0) != point.size(0))
+        throw std::runtime_error("active must be empty or match the point batch size.");
+    SceneCache &scene = get_scene(scene_handle);
+    if (point.get_device() != scene.device_index ||
+        (active.numel() != 0 && active.get_device() != scene.device_index))
+        throw std::runtime_error("point and active must be on the scene CUDA device.");
+    if (point.size(0) != 0 && scene.edge_v0.numel() != 0)
+        ensure_custom_edge_bvh(scene);
+    EdgeTopKForwardOutputs out = edge_topk_forward_cuda(scene, point, k, active);
+    return py::make_tuple(
+        out.is_valid,
+        out.distances,
+        out.points,
+        out.edge_t,
+        out.edge_points,
+        out.shape_ids,
+        out.edge_ids,
+        out.global_edge_ids,
+        out.is_boundary,
+        out.tape_edge_id,
+        out.tape_s,
+        out.tape_d);
+}
+
 py::tuple nearest_edge_backward_op(
     int64_t scene_handle,
     at::Tensor point,
