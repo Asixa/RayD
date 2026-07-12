@@ -105,6 +105,46 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         self.assertIn("depth * scratch.query_stride + query", source)
         self.assertIn("params.scratch.overflow[query] = 1u", source)
 
+    def test_topk_runtime_dispatch_uses_bucketed_local_state(self):
+        header = (SHARED_INCLUDE / "bvh_query.h").read_text(encoding="utf-8")
+        source = (SHARED_SOURCE / "bvh_query.cu").read_text(encoding="utf-8")
+        expected_buckets = {
+            0: 0,
+            1: 1,
+            2: 2,
+            3: 4,
+            4: 4,
+            5: 8,
+            6: 8,
+            7: 8,
+            8: 8,
+            9: 16,
+            10: 16,
+            11: 16,
+            12: 16,
+            13: 16,
+            14: 16,
+            15: 16,
+            16: 16,
+            17: 0,
+        }
+        for k, capacity in expected_buckets.items():
+            mapping = f"edge_bvh_topk_capacity({k}) == {capacity}"
+            self.assertIn(mapping, header)
+        for capacity in (1, 2, 4, 8, 16):
+            self.assertIn(
+                f"launch_bvh_query_capacity<{capacity}, RayQuery>", source
+            )
+        for local_array in (
+            "int edge_ids[TopKCapacity]",
+            "float distances[TopKCapacity]",
+            "float edge_parameters[TopKCapacity]",
+            "float query_parameters[TopKCapacity]",
+        ):
+            self.assertIn(local_array, source)
+        self.assertNotIn("edge_ids[EdgeBvhTopKMax]", source)
+        self.assertNotIn("distances[EdgeBvhTopKMax]", source)
+
     def test_exact_distance_contract_is_masked_and_async(self):
         header = (SHARED_INCLUDE / "edge_distance.h").read_text(encoding="utf-8")
         source = (SHARED_SOURCE / "edge_distance.cu").read_text(encoding="utf-8")

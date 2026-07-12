@@ -68,8 +68,42 @@ struct RayBvhQueryParams {
 inline constexpr std::size_t EdgeBvhTopKMax =
     static_cast<std::size_t>(kBvhTopKMax);
 
+/// Smallest compiled query-state capacity that can hold k results. Returning
+/// zero marks an unsupported k. Keeping this mapping in the shared contract
+/// lets both backend adapters use the same runtime dispatch semantics.
+constexpr std::size_t edge_bvh_topk_capacity(std::size_t k) noexcept {
+    return k == 0 || k > EdgeBvhTopKMax
+        ? 0
+        : k <= 1 ? 1
+        : k <= 2 ? 2
+        : k <= 4 ? 4
+        : k <= 8 ? 8
+                 : 16;
+}
+
+static_assert(EdgeBvhTopKMax == 16);
+static_assert(edge_bvh_topk_capacity(0) == 0);
+static_assert(edge_bvh_topk_capacity(1) == 1);
+static_assert(edge_bvh_topk_capacity(2) == 2);
+static_assert(edge_bvh_topk_capacity(3) == 4);
+static_assert(edge_bvh_topk_capacity(4) == 4);
+static_assert(edge_bvh_topk_capacity(5) == 8);
+static_assert(edge_bvh_topk_capacity(6) == 8);
+static_assert(edge_bvh_topk_capacity(7) == 8);
+static_assert(edge_bvh_topk_capacity(8) == 8);
+static_assert(edge_bvh_topk_capacity(9) == 16);
+static_assert(edge_bvh_topk_capacity(10) == 16);
+static_assert(edge_bvh_topk_capacity(11) == 16);
+static_assert(edge_bvh_topk_capacity(12) == 16);
+static_assert(edge_bvh_topk_capacity(13) == 16);
+static_assert(edge_bvh_topk_capacity(14) == 16);
+static_assert(edge_bvh_topk_capacity(15) == 16);
+static_assert(edge_bvh_topk_capacity(16) == 16);
+static_assert(edge_bvh_topk_capacity(17) == 0);
+
 /// Traverse a compacted edge BVH for point queries. result_count selects k and
-/// must be in [1, EdgeBvhTopKMax]. Results are ordered by
+/// must be in [1, EdgeBvhTopKMax]. Runtime k dispatches to local-state capacity
+/// 1, 2, 4, 8, or 16, rounding non-power-of-two k upward. Results are ordered by
 /// (squared_distance, edge_id), so equal-distance ties are deterministic.
 /// output.query_count must equal points.count, output.result_stride must be at
 /// least k, and output.capacity must cover the final strided result. Null masks

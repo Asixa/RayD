@@ -173,14 +173,20 @@ __device__ __forceinline__ bool candidate_precedes(float distance,
            (distance == slot_distance && edge < slot_edge);
 }
 
-__device__ __forceinline__ void insert_candidate(int k,
-                                                  int edge,
-                                                  CandidateDistance candidate,
-                                                  int *edge_ids,
-                                                  float *distances,
-                                                  float *edge_parameters,
-                                                  float *query_parameters) {
-    for (int rank = 0; rank < k; ++rank) {
+template <int TopKCapacity>
+__device__ __forceinline__ void insert_candidate(
+    int k,
+    int edge,
+    CandidateDistance candidate,
+    int (&edge_ids)[TopKCapacity],
+    float (&distances)[TopKCapacity],
+    float (&edge_parameters)[TopKCapacity],
+    float (&query_parameters)[TopKCapacity]) {
+#pragma unroll
+    for (int rank = 0; rank < TopKCapacity; ++rank) {
+        if (rank >= k) {
+            break;
+        }
         if (!candidate_precedes(candidate.squared_distance,
                                 edge,
                                 distances[rank],
@@ -242,8 +248,11 @@ __device__ __forceinline__ int stack_load(const BvhTraversalScratchView &scratch
     return scratch.node_indices[depth_index * scratch.query_stride + query];
 }
 
-template <bool RayQuery, typename Params>
+template <int TopKCapacity, bool RayQuery, typename Params>
 __global__ void bvh_query_kernel(Params params) {
+    static_assert(TopKCapacity == 1 || TopKCapacity == 2 ||
+                  TopKCapacity == 4 || TopKCapacity == 8 ||
+                  TopKCapacity == 16);
     const std::size_t query =
         static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     std::size_t query_count = 0;
@@ -257,7 +266,7 @@ __global__ void bvh_query_kernel(Params params) {
     }
 
     const int k = static_cast<int>(params.output.result_count);
-    if (k < 1 || k > static_cast<int>(EdgeBvhTopKMax)) {
+    if (k < 1 || k > TopKCapacity) {
         return;
     }
     initialize_output(params.output, query, k);
@@ -303,12 +312,12 @@ __global__ void bvh_query_kernel(Params params) {
         return;
     }
 
-    int edge_ids[EdgeBvhTopKMax];
-    float distances[EdgeBvhTopKMax];
-    float edge_parameters[EdgeBvhTopKMax];
-    float query_parameters[EdgeBvhTopKMax];
+    int edge_ids[TopKCapacity];
+    float distances[TopKCapacity];
+    float edge_parameters[TopKCapacity];
+    float query_parameters[TopKCapacity];
 #pragma unroll
-    for (int rank = 0; rank < static_cast<int>(EdgeBvhTopKMax); ++rank) {
+    for (int rank = 0; rank < TopKCapacity; ++rank) {
         edge_ids[rank] = -1;
         distances[rank] = CUDART_INF_F;
         edge_parameters[rank] = 0.0f;
@@ -358,7 +367,7 @@ __global__ void bvh_query_kernel(Params params) {
                     (params.edge_mask != nullptr && params.edge_mask[edge] == 0u)) {
                     continue;
                 }
-                insert_candidate(
+                insert_candidate<TopKCapacity>(
                     k,
                     edge,
                     exact_distance(geometry,
@@ -442,6 +451,37 @@ __global__ void bvh_query_kernel(Params params) {
     }
 }
 
+template <int TopKCapacity, bool RayQuery, typename Params>
+void launch_bvh_query_capacity(const Params &params,
+                               unsigned int blocks) {
+    bvh_query_kernel<TopKCapacity, RayQuery, Params>
+        <<<blocks, kBlockSize, 0, params.stream>>>(params);
+}
+
+template <bool RayQuery, typename Params>
+void dispatch_bvh_query_capacity(const Params &params,
+                                 unsigned int blocks) {
+    switch (edge_bvh_topk_capacity(params.output.result_count)) {
+        case 1:
+            launch_bvh_query_capacity<1, RayQuery>(params, blocks);
+            break;
+        case 2:
+            launch_bvh_query_capacity<2, RayQuery>(params, blocks);
+            break;
+        case 4:
+            launch_bvh_query_capacity<4, RayQuery>(params, blocks);
+            break;
+        case 8:
+            launch_bvh_query_capacity<8, RayQuery>(params, blocks);
+            break;
+        case 16:
+            launch_bvh_query_capacity<16, RayQuery>(params, blocks);
+            break;
+        default:
+            break;
+    }
+}
+
 } // namespace
 
 void launch_point_bvh_query_async(const PointBvhQueryParams &params) {
@@ -453,8 +493,7 @@ void launch_point_bvh_query_async(const PointBvhQueryParams &params) {
     }
     const unsigned int blocks = static_cast<unsigned int>(
         (count + static_cast<std::size_t>(kBlockSize) - 1) / kBlockSize);
-    bvh_query_kernel<false, PointBvhQueryParams>
-        <<<blocks, kBlockSize, 0, params.stream>>>(params);
+    dispatch_bvh_query_capacity<false>(params, blocks);
 }
 
 void launch_ray_bvh_query_async(const RayBvhQueryParams &params) {
@@ -466,8 +505,7 @@ void launch_ray_bvh_query_async(const RayBvhQueryParams &params) {
     }
     const unsigned int blocks = static_cast<unsigned int>(
         (count + static_cast<std::size_t>(kBlockSize) - 1) / kBlockSize);
-    bvh_query_kernel<true, RayBvhQueryParams>
-        <<<blocks, kBlockSize, 0, params.stream>>>(params);
+    dispatch_bvh_query_capacity<true>(params, blocks);
 }
 
 } // namespace rayd::shared::edge
