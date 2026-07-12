@@ -11,6 +11,8 @@ local/
 !scripts/
 scripts/*
 !scripts/verify_cuda_binary_arches.py
+!scripts/build_local.ps1
+!scripts/build_local.cmd
 AGENTS.md
 claude.md
 dev_notes.md

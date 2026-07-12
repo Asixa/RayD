@@ -1,6 +1,6 @@
 param(
     [string]$PythonExe = "C:\Users\Asixa\miniconda3\envs\witwin3\python.exe",
-    [string]$BuildDir = "artifacts/skbuild",
+    [string]$BuildDir = "build/local-120",
     [string]$Config = "Release"
 )
 

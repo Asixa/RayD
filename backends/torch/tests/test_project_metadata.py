@@ -59,6 +59,8 @@ class ProjectMetadataTests(unittest.TestCase):
 
     def test_local_cuda_build_targets_native_gpu(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(pyproject["tool"]["scikit-build"]["build-dir"], "build/{wheel_tag}")
         self.assertIn('set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")', cmake)
         self.assertIn("torch.cuda.get_device_capability()", cmake)
         self.assertIn("print(f'{major}.{minor}')", cmake)
@@ -71,6 +73,21 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertIn(target, dev_build)
         for artifact in ("_stable_ops*.dll", "_legacy_ops*.dll", "_C*.pyd"):
             self.assertIn(artifact, dev_build)
+
+        local_build = (Path(__file__).resolve().parents[3] / "scripts" / "build_local.ps1").read_text(
+            encoding="utf-8"
+        )
+        for marker in (
+            "CMAKE_BUILD_PARALLEL_LEVEL",
+            'CMAKE_GENERATOR = "Ninja"',
+            "RAYD_CUDA_GENCODE_ARCHES",
+            "CMAKE_CUDA_ARCHITECTURES",
+            "TORCH_CUDA_ARCH_LIST",
+            'build/local-$CudaArch',
+            "VsDevCmd.bat",
+        ):
+            self.assertIn(marker, local_build)
+        self.assertTrue((Path(__file__).resolve().parents[3] / "scripts" / "build_local.cmd").is_file())
 
     def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
         root = Path(__file__).resolve().parents[3]
