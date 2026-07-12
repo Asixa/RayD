@@ -2,9 +2,11 @@
 
 #include <cstdint>
 
+#include <rayd/shared/optix/scene_edge_contracts.h>
+
 namespace rayd::torch_backend {
 
-constexpr int EdgeOptixTopKMax = 16;
+constexpr int EdgeOptixTopKMax = rayd::shared::optix::EdgeTopKMax;
 constexpr int EdgeOptixMaxTiers = 4;
 
 struct EdgeOptixQueryParams {

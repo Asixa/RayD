@@ -359,15 +359,20 @@ Build the Dr.Jit backend:
 
 ```powershell
 python -m pip install "drjit==1.3.1" "nanobind==2.9.2"
-python -m pip install --no-build-isolation -ve backends/drjit
+.\scripts\build_local.cmd -Backend drjit
 ```
 
 Build the Torch backend:
 
 ```powershell
 python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install --no-build-isolation -ve backends/torch
+.\scripts\build_local.cmd -Backend torch
 ```
+
+The helper detects the current GPU, compiles only its CUDA architecture, uses a
+persistent per-architecture build directory, and enables parallel Ninja builds.
+The multi-architecture CUDA matrix is reserved for release CI. Pass
+`-PythonExe <path>` when `python` does not resolve to the intended environment.
 
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations

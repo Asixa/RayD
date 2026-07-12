@@ -1,4 +1,5 @@
 #include <rayd/torch/common/optix_pipeline.h>
+#include <rayd/shared/optix/pipeline_contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -6,6 +7,7 @@
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
 #include <rayd/torch/common/optix_context.h>
+#include <rayd/shared/optix/scene_edge_contracts.h>
 
 #include <algorithm>
 #include <cstring>
@@ -19,16 +21,9 @@ namespace rayd::torch_backend {
 
 namespace {
 
-struct EmptySbtData {
-};
-
-template <typename T>
-struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) SbtRecord {
-    char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-    T data;
-};
-
-using EmptySbtRecord = SbtRecord<EmptySbtData>;
+static_assert(shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
+static_assert(shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
+using EmptySbtRecord = shared::optix::EmptySbtRecord;
 
 using PipelineCacheKey = std::tuple<
     OptixDeviceContext,
@@ -162,7 +157,7 @@ void OptixLaunchPipeline::build(
     pipeline_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipeline_options.numPayloadValues = config.num_payload_values;
-    pipeline_options.numAttributeValues = 2;
+    pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
     pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags =

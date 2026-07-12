@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include <rayd/shared/contracts.h>
+
 /// Number of field channels carried per ray (e.g. RGB or three polarization components).
 constexpr int RAYD_NUM_CHANNELS = 3;
 
@@ -12,9 +14,9 @@ constexpr int RAYD_NUM_CHANNELS = 3;
 
 namespace rayd {
 
-constexpr float Epsilon = 1e-5f;       // General-purpose geometric tolerance.
-constexpr float RayEpsilon = 1e-3f;    // RayAD t_min offset to avoid self-intersection.
-constexpr float ShadowEpsilon = 1e-3f; // Shadow/visibility ray offset.
+constexpr float Epsilon = shared::GeneralEpsilon; // General-purpose geometric tolerance.
+constexpr float RayEpsilon = shared::RayEpsilon;  // RayAD t_min offset to avoid self-intersection.
+constexpr float ShadowEpsilon = shared::ShadowEpsilon; // Shadow/visibility ray offset.
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 

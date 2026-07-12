@@ -52,6 +52,40 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(len(stable), 1, stable)
         self.assertNotRegex(stable[0], r"cp3(?:10|11|12|13|14)")
 
+    def test_torch_wheel_separates_legacy_dispatcher_and_compatibility_shim(self):
+        names = self.names(self.torch_wheel)
+        legacy = [
+            name
+            for name in names
+            if name.startswith("rayd/torch/_legacy_ops")
+            and name.endswith((".dll", ".so", ".dylib"))
+        ]
+        compat = [
+            name
+            for name in names
+            if name.startswith("rayd/torch/_C")
+            and name.endswith((".pyd", ".so"))
+        ]
+        self.assertEqual(len(legacy), 1, legacy)
+        self.assertEqual(len(compat), 1, compat)
+
+    def test_backend_wheels_include_complete_typing_metadata(self):
+        drjit = self.names(self.drjit_wheel)
+        torch = self.names(self.torch_wheel)
+        self.assertIn("rayd/drjit/py.typed", drjit)
+        self.assertIn("rayd/drjit/__init__.pyi", drjit)
+        self.assertIn("rayd/drjit/_capabilities.pyi", drjit)
+        self.assertIn("rayd/torch/py.typed", torch)
+        for name in (
+            "__init__.pyi",
+            "_capabilities.pyi",
+            "camera.pyi",
+            "mesh.pyi",
+            "scene.pyi",
+            "types.pyi",
+        ):
+            self.assertIn(f"rayd/torch/{name}", torch)
+
     def test_meta_wheel_is_file_free_and_pins_both_backends(self):
         self.assertFalse(any(name.startswith("rayd/") for name in self.names(self.meta_wheel)))
         meta = self.metadata(self.meta_wheel)

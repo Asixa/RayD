@@ -2,19 +2,58 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntFlag
+import math
 import torch
 
 from . import _C
+from ._stable import core_ops
+
+
+_CONTRACT_VALUES = {
+    "invalid_signed_id": -1,
+    "invalid_unsigned_id": 0xFFFFFFFF,
+    "general_epsilon": 1.0e-5,
+    "ray_epsilon": 1.0e-3,
+    "shadow_epsilon": 1.0e-3,
+    "edge_epsilon": 1.0e-5,
+    "small_epsilon": 1.0e-6,
+    "vacuum_permittivity": 8.854187817e-12,
+    "speed_of_light": 299792458.0,
+    "ray_flags_none": 0x00,
+    "ray_flags_geometric": 0x01,
+    "ray_flags_shading_n": 0x02,
+    "ray_flags_uv": 0x04,
+    "ray_flags_all": 0x07,
+    "intersection_field_count": 10,
+    "nearest_point_edge_field_count": 8,
+    "nearest_ray_edge_field_count": 9,
+}
+
+
+def _validate_native_contract_values() -> None:
+    if _C is None or not hasattr(_C, "contract_values"):
+        return
+    native = _C.contract_values()
+    for key, expected in _CONTRACT_VALUES.items():
+        actual = native[key]
+        if isinstance(expected, float):
+            if not math.isclose(actual, expected, rel_tol=1.0e-7, abs_tol=0.0):
+                raise RuntimeError(f"RayD Torch native contract mismatch for {key}.")
+        elif actual != expected:
+            raise RuntimeError(f"RayD Torch native contract mismatch for {key}.")
+
+
+_validate_native_contract_values()
 
 
 RayFlags = IntFlag(
     "RayFlags",
     {
-        "None": 0x00,
-        "Geometric": 0x01,
-        "ShadingN": 0x02,
-        "UV": 0x04,
-        "All": 0x01 | 0x02 | 0x04,
+        "None": _CONTRACT_VALUES["ray_flags_none"],
+        "Geometric": _CONTRACT_VALUES["ray_flags_geometric"],
+        "ShadingN": _CONTRACT_VALUES["ray_flags_shading_n"],
+        "UV": _CONTRACT_VALUES["ray_flags_uv"],
+        "All": _CONTRACT_VALUES["ray_flags_all"],
     },
 )
 
@@ -68,7 +107,7 @@ class Intersection:
 
     def is_valid(self) -> torch.Tensor:
         if _C is not None and self.t.device.type == "cuda":
-            return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
+            return core_ops().intersection_valid(self.t, self.shape_id)
         if self.shape_id.numel() != self.t.numel():
             return torch.isfinite(self.t)
         return self.shape_id >= 0
@@ -187,7 +226,7 @@ class _ReducedIntersection:
         return self._empty_fields()[8]
 
     def is_valid(self) -> torch.Tensor:
-        return torch.ops.rayd_torch.intersection_valid(self.t, self.shape_id)
+        return core_ops().intersection_valid(self.t, self.shape_id)
 
 
 @dataclass(frozen=True)
@@ -198,6 +237,43 @@ class NearestPointEdge:
     shape_id: torch.Tensor
     edge_id: torch.Tensor
     global_edge_id: torch.Tensor
+
+
+@dataclass(frozen=True)
+class NearestEdgesTopK:
+    query_count: int
+    k: int
+    is_valid: torch.Tensor
+    distances: torch.Tensor
+    points: torch.Tensor
+    edge_t: torch.Tensor
+    edge_points: torch.Tensor
+    shape_ids: torch.Tensor
+    edge_ids: torch.Tensor
+    global_edge_ids: torch.Tensor
+    is_boundary: torch.Tensor
+
+
+@dataclass(frozen=True)
+class SegmentPairVisibility:
+    ray_count: int
+    visible_a: torch.Tensor
+    visible_b: torch.Tensor
+
+
+@dataclass(frozen=True)
+class AxialEdgeVisibility:
+    state_count: int
+    any_visible: torch.Tensor
+
+
+@dataclass(frozen=True)
+class SegmentChainVisibility:
+    chain_count: int
+    max_segments: int
+    all_visible: torch.Tensor
+    first_blocked_segment: torch.Tensor
+    first_blocked_prim: torch.Tensor
 
 
 @dataclass(frozen=True)

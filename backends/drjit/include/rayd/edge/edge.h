@@ -23,9 +23,9 @@ struct NearestPointEdgeData {
     Vec3f point = zeros<Vec3f>(1);       ///< The query point (echoed back).
     Float_ edge_t = zeros<Float_>(1);    ///< Parameter in [0, 1] of the closest point along the edge.
     Vec3f edge_point = zeros<Vec3f>(1);  ///< Closest point on the edge.
-    Int_ shape_id = full<Int_>(-1, 1);   ///< Owning mesh id; -1 when no edge found.
-    Int_ edge_id = full<Int_>(-1, 1);    ///< Edge index within the owning mesh; -1 when none.
-    Int_ global_edge_id = full<Int_>(-1, 1); ///< Edge index within the scene-global edge set.
+    Int_ shape_id = full<Int_>(shared::InvalidSignedId, 1); ///< Owning mesh id; -1 when no edge found.
+    Int_ edge_id = full<Int_>(shared::InvalidSignedId, 1); ///< Edge index within the owning mesh; -1 when none.
+    Int_ global_edge_id = full<Int_>(shared::InvalidSignedId, 1); ///< Scene-global edge index.
     Mask_ is_boundary = full<Mask_>(false, 1); ///< Whether the nearest edge is a boundary (open) edge.
 
     DRJIT_STRUCT(NearestPointEdgeData,
@@ -64,9 +64,9 @@ struct NearestRayEdgeData {
     Vec3f point = zeros<Vec3f>(1);       ///< Closest point on the ray.
     Float_ edge_t = zeros<Float_>(1);    ///< Parameter in [0, 1] of the closest point along the edge.
     Vec3f edge_point = zeros<Vec3f>(1);  ///< Closest point on the edge.
-    Int_ shape_id = full<Int_>(-1, 1);   ///< Owning mesh id; -1 when no edge found.
-    Int_ edge_id = full<Int_>(-1, 1);    ///< Edge index within the owning mesh; -1 when none.
-    Int_ global_edge_id = full<Int_>(-1, 1); ///< Edge index within the scene-global edge set.
+    Int_ shape_id = full<Int_>(shared::InvalidSignedId, 1); ///< Owning mesh id; -1 when no edge found.
+    Int_ edge_id = full<Int_>(shared::InvalidSignedId, 1); ///< Edge index within the owning mesh; -1 when none.
+    Int_ global_edge_id = full<Int_>(shared::InvalidSignedId, 1); ///< Scene-global edge index.
     Mask_ is_boundary = full<Mask_>(false, 1); ///< Whether the nearest edge is a boundary (open) edge.
 
     DRJIT_STRUCT(NearestRayEdgeData,
@@ -105,9 +105,9 @@ struct NearestEdgesTopKData {
     Vec3f points = zeros<Vec3f>(1);             ///< Query point echoed per slot.
     Float_ edge_t = zeros<Float_>(1);           ///< Closest-point parameter in [0, 1] along each edge.
     Vec3f edge_points = zeros<Vec3f>(1);        ///< Closest point on each result edge.
-    Int_ shape_ids = full<Int_>(-1, 1);         ///< Owning mesh id per slot.
-    Int_ edge_ids = full<Int_>(-1, 1);          ///< Per-mesh edge id per slot.
-    Int_ global_edge_ids = full<Int_>(-1, 1);   ///< Scene-global edge id per slot.
+    Int_ shape_ids = full<Int_>(shared::InvalidSignedId, 1); ///< Owning mesh id per slot.
+    Int_ edge_ids = full<Int_>(shared::InvalidSignedId, 1); ///< Per-mesh edge id per slot.
+    Int_ global_edge_ids = full<Int_>(shared::InvalidSignedId, 1); ///< Scene-global edge id per slot.
     Mask_ is_boundary = full<Mask_>(false, 1);  ///< Boundary-edge flag per slot.
 
     DRJIT_STRUCT(NearestEdgesTopKData,
@@ -127,6 +127,10 @@ using NearestEdgesTopKT = NearestEdgesTopKData<FloatT<Detached>>;
 
 using NearestEdgesTopKAD = NearestEdgesTopKT<false>;
 using NearestEdgesTopK = NearestEdgesTopKT<true>;
+
+static_assert(static_cast<std::uint8_t>(shared::NearestPointEdgeField::IsBoundary) == 7u);
+static_assert(static_cast<std::uint8_t>(shared::NearestRayEdgeField::IsBoundary) == 8u);
+static_assert(static_cast<std::uint8_t>(shared::NearestEdgesTopKField::IsBoundary) == 8u);
 
 /// World-space geometry per edge consumed by the edge BVH and edge queries.
 template <typename Float_>

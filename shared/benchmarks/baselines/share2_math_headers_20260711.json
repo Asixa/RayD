@@ -1,0 +1,23 @@
+{
+  "phase": "Share-2",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": [
+    "edge distance primal and fixed-winner derivatives",
+    "reflection direction and image-source geometry",
+    "complex, Fresnel, FSPL, and propagation field math",
+    "UTD namespace and first-order diffraction parameter"
+  ],
+  "lightweight_acceptance": {
+    "shared_static_and_reference_tests": {"passed": 19, "failed": 0},
+    "host_cpp_math_smoke": "passed",
+    "cuda_device_header_smoke": "passed",
+    "cross_backend_ad_parity": {"passed": 5, "skipped": 1, "failed": 0}
+  },
+  "known_boundaries": [
+    "Dr.Jit symbolic exact re-gather keeps its backend array math adapter",
+    "Torch nearest-edge ray treats finite tmax as a detached domain boundary, matching Dr.Jit",
+    "reflection EPC field parity fixture is skipped because the current public fixture is invalid"
+  ],
+  "full_native_group_acceptance": "deferred to Share-2/Share-3/Share-4 group gate"
+}

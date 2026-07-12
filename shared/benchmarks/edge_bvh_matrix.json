@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "matrix_id": "rayd_edge_bvh_v1",
+  "benchmark": "rayd_edge_bvh",
+  "result_schema": "edge_bvh_result.schema.json",
+  "seed": 20260711,
+  "profiles": {
+    "full": {
+      "edge_counts": [1000, 16000, 64000, 111000, 500000, 2000000],
+      "query_counts": [1, 256, 4096, 65536, 1000000],
+      "query_kinds": ["point", "finite_ray", "infinite_ray"],
+      "top_k": [1, 4, 8, 16],
+      "update_modes": [
+        "static",
+        "full_refit",
+        "dirty_refit_1pct",
+        "dirty_refit_10pct",
+        "dirty_refit_100pct"
+      ],
+      "masks": ["sparse", "dense"],
+      "distributions": ["grid", "random", "long_thin"]
+    },
+    "smoke": {
+      "edge_counts": [1000],
+      "query_counts": [1, 256],
+      "query_kinds": ["point", "finite_ray", "infinite_ray"],
+      "top_k": [1, 4, 8, 16],
+      "update_modes": ["static", "dirty_refit_1pct"],
+      "masks": ["sparse", "dense"],
+      "distributions": ["grid", "random", "long_thin"]
+    }
+  },
+  "dimension_contracts": {
+    "top_k_applies_to": ["point"],
+    "finite_ray_tmax": 2.0,
+    "update_modes": {
+      "static": {"operation": "build", "strategy": "default", "dirty_fraction": 0.0},
+      "full_refit": {"operation": "refit", "strategy": "full", "dirty_fraction": 1.0},
+      "dirty_refit_1pct": {"operation": "refit", "strategy": "dirty_ancestors", "dirty_fraction": 0.01},
+      "dirty_refit_10pct": {"operation": "refit", "strategy": "dirty_ancestors", "dirty_fraction": 0.1},
+      "dirty_refit_100pct": {"operation": "refit", "strategy": "dirty_ancestors", "dirty_fraction": 1.0}
+    },
+    "masks": {
+      "sparse": {"active_fraction": 0.1},
+      "dense": {"active_fraction": 0.9}
+    },
+    "distributions": {
+      "grid": {"description": "Coherent regular grid geometry and queries."},
+      "random": {"description": "Seeded uniform spatial geometry and queries."},
+      "long_thin": {"description": "Long, thin, nearly degenerate edge geometry."}
+    }
+  },
+  "measurement": {
+    "warmup_runs": 2,
+    "minimum_timed_runs": 5,
+    "required_statistics": ["median", "p95"],
+    "gate_statistic": "median",
+    "timing": "CUDA events or explicitly synchronized wall time",
+    "nsight_required": false,
+    "launch_audit": {
+      "method": "independent_stable_audit",
+      "timing_isolated": true,
+      "runs": 1,
+      "sampling": "single_deterministic_pass_not_timing_sample",
+      "state": "fresh_scene_build_warm_queries_and_refit",
+      "gate": "no_unexplained_component_increase"
+    }
+  },
+  "required_environment_fields": [
+    "gpu_name",
+    "gpu_compute_capability",
+    "cuda_runtime_version",
+    "cuda_driver_version",
+    "optix_version",
+    "compiler_id",
+    "compiler_version",
+    "build_type",
+    "git_commit"
+  ],
+  "tolerances": {
+    "correctness": {"max_abs_error": 1e-5, "max_rel_error": 1e-5},
+    "ad": {
+      "vjp_max_abs_error": 5e-4,
+      "vjp_max_rel_error": 5e-4,
+      "jvp_max_abs_error": 5e-4,
+      "jvp_max_rel_error": 5e-4
+    }
+  },
+  "performance_gate": {
+    "hot_query_max_regression": 0.03,
+    "build_max_regression": 0.05,
+    "refit_max_regression": 0.05,
+    "memory_max_regression": 0.05,
+    "cold_create_max_regression": 0.10,
+    "absolute_noise_floor_ms": 0.01
+  }
+}

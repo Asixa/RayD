@@ -1,0 +1,63 @@
+{
+  "phase": "Share-6 reflection accumulation operation core",
+  "date": "2026-07-11",
+  "environment": {
+    "conda": "witwin3",
+    "cuda_toolkit": "12.9",
+    "optix_sdk": "9.1.0",
+    "validation": "source contracts plus direct NVCC PTX compilation; no native host build"
+  },
+  "implementation": {
+    "shared_header": "shared/include/rayd/shared/multipath/reflection_accumulation_device.cuh",
+    "drjit_adapter": "backends/drjit/src/multipath/reflection_accumulation.cu",
+    "torch_adapter": "backends/torch/src/torch_ext/reflection/accum_optix.cu",
+    "shared_owns": [
+      "payload trace and closest-hit/miss operations",
+      "scene trace and split-handle hit selection",
+      "reflection geometry and Fresnel field update",
+      "wedge event operation",
+      "measurement-plane field and power operation",
+      "complete per-ray reflection loop"
+    ],
+    "policy_owns": {
+      "drjit": ["depth-greater-than-zero accumulation", "direct scalar atomics"],
+      "torch": ["optional depth-zero LOS", "staged outputs", "same-cell warp atomics"]
+    },
+    "params_abi_changed": false,
+    "cmake_changed": false,
+    "new_launches": 0,
+    "new_synchronizations": 0,
+    "new_global_buffers": 0
+  },
+  "source_reduction": {
+    "old_drjit_lines": 586,
+    "old_torch_lines": 565,
+    "old_combined_lines": 1151,
+    "shared_lines": 551,
+    "new_drjit_adapter_lines": 52,
+    "new_torch_adapter_lines": 66,
+    "new_combined_lines": 669,
+    "duplicate_lines_removed": 482
+  },
+  "acceptance": {
+    "source_contract": {
+      "command": "python -m unittest tests.test_share6_reflection_accumulation_device -v",
+      "tests_run": 6,
+      "tests_passed": 6,
+      "tests_failed": 0,
+      "tests_skipped": 0
+    },
+    "drjit_ptx": {
+      "status": "passed",
+      "architecture": "compute_70",
+      "output_bytes": 57086
+    },
+    "torch_ptx": {
+      "status": "passed",
+      "architecture": "compute_75",
+      "output_bytes": 135871
+    },
+    "diff_check": "passed",
+    "native_full_build": "deferred to grouped acceptance"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "phase": "F1",
+  "group": "Share-5/F1/F2",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": [
+    "Torch nearest_edges(point, k) for 1 <= k <= 16",
+    "persistent shared-core edge BVH with gpu_treelet product path",
+    "dynamic scene-global edge masks",
+    "visible_pair, visible_edge, and visible_chain",
+    "scene-global edge, face, and vertex ID contracts",
+    "fixed-winner top-k reverse and forward AD"
+  ],
+  "implementation_contract": {
+    "top_k_query": "shared compact BVH traversal with deterministic (distance_squared, global_edge_id) ordering",
+    "top_k_shapes": "scalar fields [N,k], vector fields [N,k,3]",
+    "top_k_limit": 16,
+    "mask_updates": "owned bool/uint8 scene-global mask; mask-only updates preserve BVH topology",
+    "dynamic_geometry": "sync increments geometry generation and triggers safe lazy BVH rebuild",
+    "large_scene_post_build": "host-prepared flat levels plus shared GPU treelet optimization",
+    "visibility": "Share-4 combined OptiX pipeline raygen entries 1, 2, and 3",
+    "id_spaces": {
+      "edge": "scene-global edge index plus owning shape/local edge index",
+      "face": "scene-global primitive index plus owning shape/local primitive index",
+      "vertex": "global faces index the packed scene-global vertex buffer"
+    }
+  },
+  "lightweight_acceptance": {
+    "python_compile": "passed",
+    "native_runtime_acceptance_modules_compile": "passed",
+    "shared_bvh_and_global_geometry_static_tests": {"passed": 11, "failed": 0},
+    "shared_operation_contract_tests": {"passed": 7, "failed": 0},
+    "git_diff_check": "passed"
+  },
+  "full_group_acceptance": "deferred to the Share-5/F1/F2 native build, runtime parity, and performance gate"
+}

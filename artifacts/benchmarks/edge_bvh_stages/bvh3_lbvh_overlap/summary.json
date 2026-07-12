@@ -1,0 +1,192 @@
+{
+  "benchmark": "rayd_edge_bvh_stage",
+  "stage": "bvh3_lbvh_overlap",
+  "recorded_at": "2026-07-11T22:25:42.013263+00:00",
+  "environment": {
+    "python_version": "3.10.20",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "git_head": "bc1f1c2382dc826143f0cd1b4994aede26497b57",
+    "gpu_name": "NVIDIA GeForce RTX 5080",
+    "drjit_version": "1.3.1",
+    "single_mesh_include_gradients": true,
+    "source_root": "E:\\Code\\RayDi\\backends\\drjit"
+  },
+  "edge_bvh_modes": {
+    "post_build_strategy": "none",
+    "build_stream_mode": "overlap"
+  },
+  "paths": {
+    "micro_raw": "artifacts\\benchmarks\\edge_bvh_stages\\bvh3_lbvh_overlap\\micro.json",
+    "single_mesh_raw": "artifacts\\benchmarks\\edge_bvh_stages\\bvh3_lbvh_overlap\\single_mesh.json",
+    "pressure_raw": "artifacts\\benchmarks\\edge_bvh_stages\\bvh3_lbvh_overlap\\pressure.json"
+  },
+  "micro": {
+    "config": {
+      "label": "48x48 mesh / 128x128 queries",
+      "mesh_resolution": 48,
+      "triangle_count": 4608,
+      "vertex_count": 2401,
+      "edge_count": 7008,
+      "query_grid_side": 128,
+      "query_count": 16384,
+      "point_z": 0.25,
+      "finite_ray_origin_z": 1.0,
+      "finite_ray_tmax": 2.0,
+      "dynamic_x_offset": 2.0
+    },
+    "sanity": {
+      "point_valid_count": 16384,
+      "point_distance_sum": 4096.20458984375,
+      "finite_ray_valid_count": 16384,
+      "finite_ray_distance_sum": 33.751686096191406,
+      "finite_ray_t_sum": 16384.0,
+      "infinite_ray_valid_count": 16384,
+      "infinite_ray_distance_sum": 33.751686096191406,
+      "infinite_ray_t_sum": 16384.0
+    },
+    "performance": {
+      "build": {
+        "min_ms": 7.270000001881272,
+        "avg_ms": 9.4057625028654
+      },
+      "point_query": {
+        "min_ms": 3.815300005953759,
+        "avg_ms": 5.397924993303604,
+        "qps_m": 3.035240397064644
+      },
+      "finite_ray_query": {
+        "min_ms": 1.5402999997604638,
+        "avg_ms": 2.1129374945303425,
+        "qps_m": 7.754133779353367
+      },
+      "infinite_ray_query": {
+        "min_ms": 1.5127999940887094,
+        "avg_ms": 1.9855250029650051,
+        "qps_m": 8.251721824471414
+      },
+      "sync": {
+        "min_ms": 1.0967999987769872,
+        "avg_ms": 1.2684875036939047
+      }
+    }
+  },
+  "single_mesh": {
+    "config": {
+      "label": "192x192 mesh / 256x256 queries",
+      "mesh_resolution": 192,
+      "triangle_count": 73728,
+      "vertex_count": 37249,
+      "edge_count": 110976,
+      "query_grid_side": 256,
+      "query_count": 65536,
+      "point_z": 0.25,
+      "finite_ray_origin_z": 1.0,
+      "finite_ray_tmax": 2.0,
+      "dynamic_x_offset": 2.0
+    },
+    "sanity": {
+      "point_valid_count": 65536,
+      "point_distance_sum": 16384.046875,
+      "finite_ray_valid_count": 65536,
+      "finite_ray_distance_sum": 34.20990753173828,
+      "finite_ray_t_sum": 65536.0,
+      "infinite_ray_valid_count": 65536,
+      "infinite_ray_distance_sum": 34.20990753173828,
+      "infinite_ray_t_sum": 65536.0
+    },
+    "performance": {
+      "build": {
+        "min_ms": 36.88910001073964,
+        "avg_ms": 45.90182001120411
+      },
+      "point_query": {
+        "min_ms": 101.37730001588352,
+        "avg_ms": 102.70887999795377,
+        "qps_m": 0.6380753056727485
+      },
+      "finite_ray_query": {
+        "min_ms": 3.0254999874159694,
+        "avg_ms": 3.1697799975518137,
+        "qps_m": 20.67525192619578
+      },
+      "infinite_ray_query": {
+        "min_ms": 2.961099991807714,
+        "avg_ms": 3.1514199974481016,
+        "qps_m": 20.795704810234287
+      },
+      "sync": {
+        "min_ms": 1.582500000949949,
+        "avg_ms": 2.4316600000020117
+      },
+      "point_gradient": {
+        "min_ms": 98.85060001397505,
+        "avg_ms": 99.38740000361577,
+        "qps_m": 0.6593994811979765
+      },
+      "finite_ray_gradient": {
+        "min_ms": 3.3743000240065157,
+        "avg_ms": 3.6435000016354024,
+        "qps_m": 17.98710030755698
+      }
+    }
+  },
+  "pressure": {
+    "scene": {
+      "mesh_resolution": 32,
+      "tiles_x": 8,
+      "tiles_y": 8,
+      "tile_count": 64,
+      "tile_spacing": 1.25,
+      "row_z_stride": 0.02,
+      "edge_count": 200704
+    },
+    "queries": {
+      "query_grid_side": 128,
+      "query_count": 16384,
+      "point_z": 0.05,
+      "ray_z_origin": 1.5,
+      "finite_ray_tmax": 3.0,
+      "mask_keep_stride": 8
+    },
+    "build": {
+      "min_ms": 163.48990000551566,
+      "avg_ms": 166.02577999583445
+    },
+    "full": {
+      "point_query": {
+        "min_ms": 8.334299986017868,
+        "avg_ms": 8.427859988296404,
+        "qps_m": 1.9440284986642071
+      },
+      "finite_ray_query": {
+        "min_ms": 1.8336999928578734,
+        "avg_ms": 1.9432999950367957,
+        "qps_m": 8.431019421522603
+      },
+      "infinite_ray_query": {
+        "min_ms": 1.599799987161532,
+        "avg_ms": 1.819079992128536,
+        "qps_m": 9.006750704145125
+      }
+    },
+    "stride_sparse": {
+      "point_query": {
+        "min_ms": 6.500100018456578,
+        "avg_ms": 6.745500001125038,
+        "qps_m": 2.4288785111952294
+      },
+      "finite_ray_query": {
+        "min_ms": 7.353499997407198,
+        "avg_ms": 7.507339998846874,
+        "qps_m": 2.1823974939880944
+      },
+      "infinite_ray_query": {
+        "min_ms": 7.219099992653355,
+        "avg_ms": 7.456119998823851,
+        "qps_m": 2.1973895273392134
+      },
+      "sync_to_mask_edge_refit_ms": 6.000000000000001e-05,
+      "restore_full_edge_refit_ms": 8e-05
+    }
+  }
+}

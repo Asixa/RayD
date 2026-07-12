@@ -1,5 +1,6 @@
 #include <rayd/torch/scene/geometry_kernels.h>
 #include <rayd/torch/common/math.cuh>
+#include <rayd/shared/contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cooperative_groups.h>
@@ -13,10 +14,13 @@ namespace rayd::torch_backend {
 
 namespace {
 
-constexpr int64_t kRayFlagsGeometric = 0x01;
-constexpr int64_t kRayFlagsShadingN = 0x02;
-constexpr int64_t kRayFlagsUV = 0x04;
-constexpr int64_t kRayFlagsAll = kRayFlagsGeometric | kRayFlagsShadingN | kRayFlagsUV;
+constexpr int64_t kRayFlagsGeometric =
+    static_cast<int64_t>(shared::RayFlagBits::Geometric);
+constexpr int64_t kRayFlagsShadingN =
+    static_cast<int64_t>(shared::RayFlagBits::ShadingN);
+constexpr int64_t kRayFlagsUV = static_cast<int64_t>(shared::RayFlagBits::UV);
+constexpr int64_t kRayFlagsAll = static_cast<int64_t>(shared::RayFlagBits::All);
+static_assert(static_cast<std::uint8_t>(shared::IntersectionField::Barycentric) == 5u);
 
 const bool *optional_mask_ptr(const at::Tensor &active) {
     if (!active.defined() || active.numel() == 0)

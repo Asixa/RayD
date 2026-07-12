@@ -1,0 +1,39 @@
+{
+  "phase": "F3 Torch Stable ABI",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "decision": {
+    "_C": "minimal metadata compatibility shim",
+    "_stable_ops": "independent LibTorch Stable ABI dispatcher",
+    "_legacy_ops": "separately loadable Python/LibTorch-ABI-bound dispatcher and Scene custom class owner",
+    "integration_h": "same-CMake-graph source contract, not an independent stable C ABI"
+  },
+  "inventory": {
+    "stable_operators": 7,
+    "legacy_dispatcher_operators": 52,
+    "compatibility_pybind_exports": 2,
+    "py_object_occurrences": 85,
+    "machine_readable_audit": "backends/torch/abi_audit.json"
+  },
+  "migration": {
+    "stable": [
+      "camera_sample_to_world forward/backward",
+      "camera_world_to_sample forward/backward",
+      "camera_sample_ray forward/backward",
+      "intersection_valid"
+    ],
+    "legacy_retained": {
+      "scene_and_queries": "Scene custom class ownership, OptiX state, intrusive_ptr, and ATen ABI",
+      "geometry_ad_and_multipath": "native_core ATen/autograd objects and py::object optional adapters",
+      "integration_h": "at::Tensor pointers and C++ exceptions require the same compiler/CRT/CUDA/LibTorch CMake graph"
+    }
+  },
+  "lightweight_acceptance": {
+    "stable_source_boundary": "passed (2 source files)",
+    "abi_audit_check": "passed",
+    "f3_source_contract_tests": "7/7 passed",
+    "metadata_public_api_loader_tests": "31/31 passed",
+    "stable_core_runtime": "1 skipped because the pre-F3 installed _stable_ops lacks intersection_valid",
+    "native_build": "deferred to grouped validation"
+  }
+}

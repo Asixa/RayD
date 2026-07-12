@@ -62,7 +62,7 @@ std::string normalize_edge_backend_value(const std::string &value) {
     return normalized;
 }
 
-/// Map a backend name ("drjit"/"optix"/"hybrid" and aliases) to EdgeBVHBackend; throws on unknown.
+/// Map a backend name ("drjit"/"optix"/"optix_drjit" and aliases) to EdgeBVHBackend.
 EdgeBVHBackend parse_edge_backend(const std::string &value) {
     const std::string normalized = normalize_edge_backend_value(value);
     if (normalized.empty() || normalized == "optix" ||
@@ -73,12 +73,12 @@ EdgeBVHBackend parse_edge_backend(const std::string &value) {
         normalized == "software") {
         return EdgeBVHBackend::DrJit;
     }
-    if (normalized == "hybrid" || normalized == "mixed" ||
+    if (normalized == "optix_drjit" || normalized == "hybrid" || normalized == "mixed" ||
         normalized == "optix_ray" || normalized == "ray_optix") {
-        return EdgeBVHBackend::Hybrid;
+        return EdgeBVHBackend::OptixDrJit;
     }
     throw std::runtime_error(
-        "Invalid edge_bvh_backend. Expected one of: 'drjit', 'optix', 'hybrid'.");
+        "Invalid edge_bvh_backend. Expected one of: 'drjit', 'optix', 'optix_drjit'.");
 }
 
 const char *edge_backend_name(EdgeBVHBackend backend) {
@@ -87,20 +87,20 @@ const char *edge_backend_name(EdgeBVHBackend backend) {
         return "drjit";
     case EdgeBVHBackend::Optix:
         return "optix";
-    case EdgeBVHBackend::Hybrid:
-        return "hybrid";
+    case EdgeBVHBackend::OptixDrJit:
+        return "optix_drjit";
     }
     return "drjit";
 }
 
 bool edge_backend_builds_drjit(EdgeBVHBackend backend) {
     return backend == EdgeBVHBackend::DrJit ||
-           backend == EdgeBVHBackend::Hybrid;
+           backend == EdgeBVHBackend::OptixDrJit;
 }
 
 bool edge_backend_builds_optix(EdgeBVHBackend backend) {
     return backend == EdgeBVHBackend::Optix ||
-           backend == EdgeBVHBackend::Hybrid;
+           backend == EdgeBVHBackend::OptixDrJit;
 }
 
 bool edge_backend_uses_optix_point(EdgeBVHBackend backend) {
@@ -109,7 +109,7 @@ bool edge_backend_uses_optix_point(EdgeBVHBackend backend) {
 
 bool edge_backend_uses_optix_ray(EdgeBVHBackend backend) {
     return backend == EdgeBVHBackend::Optix ||
-           backend == EdgeBVHBackend::Hybrid;
+           backend == EdgeBVHBackend::OptixDrJit;
 }
 
 bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {

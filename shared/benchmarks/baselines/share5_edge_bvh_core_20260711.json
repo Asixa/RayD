@@ -1,0 +1,62 @@
+{
+  "phase": "Share-5",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": [
+    "raw LBVH build stages",
+    "host-scheduled GPU treelet optimization",
+    "dirty-ancestor and per-level refit launchers",
+    "compacted preorder point/ray/top-k traversal",
+    "candidate exact-distance launchers"
+  ],
+  "topology_contracts": {
+    "raw_build": "internal [0,P-1), leaves [P-1,2P-1), explicit leaf_primitive/is_leaf",
+    "compact_query": "preorder root 0; leaf left=-begin-1, right=count, separate leaf_primitives",
+    "leaf_size": 4,
+    "traversal_stack_depth": 64,
+    "top_k_max": 16,
+    "tie_break": ["squared_distance", "global_edge_id"]
+  },
+  "ownership": {
+    "shared": "POD/raw-pointer stage launchers, exact distance, traversal, explicit caller stream",
+    "drjit_adapter": "CUB, allocation, overlap streams/events, D2H/H2D, host flat levels/treelet schedule, audit/errors/synchronization",
+    "torch_adapter_deferred_to_f1": "lazy persistent compact BVH buffers, per-call traversal scratch, public result assembly and fixed-winner AD"
+  },
+  "retained_product_configuration": {
+    "build": "LBVH",
+    "post_build": "gpu_treelet",
+    "stream": "overlap",
+    "finalize": "atomic_bottom_up",
+    "schedule": "host_prepared_flat_levels",
+    "node_layout": "scalar_soa"
+  },
+  "lightweight_acceptance": {
+    "static_contract_and_removal_tests": {"passed": 25, "failed": 0},
+    "drjit_shared_build_object": "passed",
+    "drjit_shared_query_object": "passed",
+    "drjit_shared_exact_distance_object": "passed",
+    "drjit_edge_adapter_object": "passed",
+    "torch_native_core_incremental_link": "passed",
+    "torch_cuda_architectures": ["sm_120", "compute_120"],
+    "cuda_runtime_smoke": {
+      "passed": true,
+      "coverage": [
+        "top-k deterministic tie",
+        "edge mask",
+        "stack overflow invalidation",
+        "finite tmax segment",
+        "infinite half-ray"
+      ]
+    }
+  },
+  "ptxas": {
+    "point_query_registers": 40,
+    "ray_query_registers": 60,
+    "query_stack_bytes": 256,
+    "query_spills": 0,
+    "point_exact_registers": 30,
+    "ray_exact_registers": 38,
+    "exact_distance_spills": 0
+  },
+  "full_native_and_performance_acceptance": "deferred to Share-5/F1/F2 group gate"
+}

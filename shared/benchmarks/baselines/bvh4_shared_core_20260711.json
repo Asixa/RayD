@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "phase": "BVH-4",
+  "recorded_at": "2026-07-11T23:00:00Z",
+  "implemented": {
+    "shared_headers": [
+      "bvh_types.h",
+      "bvh_build.h",
+      "bvh_query.h",
+      "edge_distance.h",
+      "edge_aabb.h"
+    ],
+    "shared_cuda": [
+      "edge AABB generation",
+      "dirty ancestor marking",
+      "dirty level compaction",
+      "selected internal node refit"
+    ],
+    "adapters": {
+      "torch": "validates tensors, allocates outputs, and passes the current Torch CUDA stream",
+      "drjit": "retains validation, audit labels, error translation, host scheduling, and its existing synchronization semantics"
+    }
+  },
+  "deferred_by_design": {
+    "lbvh_treelet_host_orchestration": "remains in the Dr.Jit adapter because it owns scratch allocation, CUB planning, host treelet scheduling, and explicit synchronization",
+    "shared_query_cuda": "POD layout only in BVH-4; implementation moves with Torch persistent BVH ownership in Share-5/F1",
+    "drjit_traversal": "retains drjit::while_loop and AD re-gather to preserve lazy JIT behavior"
+  },
+  "contract_guards": {
+    "forbidden_in_shared_cuda": [
+      "at::Tensor",
+      "drjit",
+      "nanobind",
+      "cudaMalloc",
+      "cudaFree",
+      "cudaDeviceSynchronize",
+      "cudaStreamSynchronize",
+      "throw"
+    ],
+    "storage": "raw pointers, fixed-width counts, caller-owned output and scratch",
+    "execution": "explicit cudaStream_t and enqueue-only launchers"
+  },
+  "acceptance": {
+    "static_contract_tests": {"passed": 20, "failed": 0},
+    "torch_edge_and_scene_cache_tests": {"passed": 15, "failed": 0, "seconds": 8.409},
+    "drjit_geometry_visibility_topk_tests": {"passed": 75, "failed": 0, "seconds": 324.500},
+    "drjit_native_build": "passed",
+    "torch_native_build": "passed",
+    "torch_runtime": {
+      "version": "2.11.0+cu128",
+      "cuda_available": true,
+      "gpu": "NVIDIA GeForce RTX 5080"
+    }
+  }
+}

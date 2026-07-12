@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rayd.dev/schemas/path_exchange.schema.json",
+  "title": "RayD backend-neutral path exchange contract",
+  "type": "object",
+  "required": [
+    "version", "layout", "enums", "path_fields", "interaction_fields",
+    "fixed_winner_ad", "backend_mappings", "scope"
+  ],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "layout": {
+      "type": "object",
+      "required": ["path_order", "interaction_order", "interaction_indexing"],
+      "properties": {
+        "path_order": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "interaction_order": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "interaction_indexing": {"const": "flattened offset/count"}
+      },
+      "additionalProperties": false
+    },
+    "enums": {"type": "object"},
+    "path_fields": {"type": "object"},
+    "interaction_fields": {"type": "object"},
+    "fixed_winner_ad": {"type": "object"},
+    "backend_mappings": {"type": "object"},
+    "scope": {
+      "type": "object",
+      "required": ["included", "excluded"],
+      "properties": {
+        "included": {"type": "array", "items": {"type": "string"}},
+        "excluded": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

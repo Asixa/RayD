@@ -2,7 +2,7 @@
 
 #include <rayd/shared/utd/utd_types.h>
 
-namespace witwin::channel::native_ext {
+namespace rayd::shared::utd {
 
 // ===================================================================
 // Safe length / normalize
@@ -2497,4 +2497,4 @@ UTD_DINLINE PairOutputs compute_pair_contribution(PairInputs state, float3a tgtP
     return out;
 }
 
-} // namespace witwin::channel::native_ext
+} // namespace rayd::shared::utd

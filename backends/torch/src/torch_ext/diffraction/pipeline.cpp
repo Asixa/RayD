@@ -2,6 +2,7 @@
 
 #include <rayd/torch/diffraction/accum_params.h>
 #include <rayd/torch/diffraction/paths_params.h>
+#include <rayd/shared/optix/pipeline_contracts.h>
 #include <rayd/torch/diffraction_accumulation_optix_ptx.h>
 #include <rayd/torch/diffraction_paths_optix_ptx.h>
 
@@ -19,7 +20,7 @@ OptixPipelineConfig dfr_paths_pipeline_config() {
     };
     config.miss_entry = "__miss__diffraction_paths";
     config.closesthit_entry = "__closesthit__diffraction_paths";
-    config.num_payload_values = 4;
+    config.num_payload_values = shared::optix::DiffractionPayloadCount;
     config.params_size = sizeof(DfrPathParams);
     return config;
 }
@@ -46,7 +47,7 @@ OptixPipelineConfig dfr_accum_pipeline_config() {
     };
     config.miss_entry = "__miss__diffraction_accumulation";
     config.closesthit_entry = "__closesthit__diffraction_accumulation";
-    config.num_payload_values = 4;
+    config.num_payload_values = shared::optix::DiffractionPayloadCount;
     config.params_size = sizeof(DfrAccumParams);
     return config;
 }

@@ -1,5 +1,7 @@
 #include <rayd/rayd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 #include <nanobind/stl/string.h>
@@ -22,6 +24,29 @@ using namespace nb::literals;
 using namespace rayd;
 
 namespace {
+
+/// True for legacy spellings of the combined OptiX/Dr.Jit edge backend.
+bool is_deprecated_combined_edge_backend(const std::string &value) {
+    std::string normalized = value;
+    std::transform(normalized.begin(),
+                   normalized.end(),
+                   normalized.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return normalized == "hybrid" || normalized == "mixed" ||
+           normalized == "optix_ray" || normalized == "ray_optix";
+}
+
+/// Construct a Scene while preserving one release cycle for legacy backend aliases.
+void construct_scene(Scene *scene, const std::string &edge_bvh_backend) {
+    if (is_deprecated_combined_edge_backend(edge_bvh_backend) &&
+        PyErr_WarnEx(PyExc_DeprecationWarning,
+                     "edge_bvh_backend='hybrid' and its legacy aliases are deprecated; "
+                     "use 'optix_drjit' instead.",
+                     2) < 0) {
+        throw nb::python_error();
+    }
+    new (scene) Scene(edge_bvh_backend);
+}
 
 /// Number of Dr.Jit-compatible CUDA devices; throws if none are available.
 int checked_cuda_device_count() {
@@ -1732,7 +1757,7 @@ NB_MODULE(_C, m) {
 
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
-            .def(nb::init<const std::string &>(), "edge_bvh_backend"_a = "optix")
+            .def("__init__", &construct_scene, "edge_bvh_backend"_a = "optix")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)

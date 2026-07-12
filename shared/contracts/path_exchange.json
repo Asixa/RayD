@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "layout": {
+    "path_order": [
+      "valid", "fixed_winner", "order", "source_index", "receiver_index",
+      "provenance", "available_fields", "differentiable_fields", "interaction_offset",
+      "interaction_count", "total_length", "delay", "aod", "aoa",
+      "field", "power"
+    ],
+    "interaction_order": [
+      "kind", "global_primitive_id", "global_edge_id", "position", "normal"
+    ],
+    "interaction_indexing": "flattened offset/count"
+  },
+  "enums": {
+    "interaction_kind": {"none": 0, "reflection": 1, "diffraction": 2},
+    "provenance": {
+      "unknown": 0,
+      "reflection_trace": 1,
+      "reflection_epc": 2,
+      "diffraction_direct": 3,
+      "diffraction_chain": 4,
+      "imported": 5
+    },
+    "derivative_mode": {"none": 0, "tangent": 1, "adjoint": 2},
+    "derivative_fields": {
+      "interaction_position": 1,
+      "interaction_normal": 2,
+      "total_length": 4,
+      "delay": 8,
+      "aod": 16,
+      "aoa": 32,
+      "complex_field": 64,
+      "power": 128
+    }
+  },
+  "path_fields": {
+    "valid": {"dtype": "bool", "required": true},
+    "fixed_winner": {"dtype": "bool", "required": true, "value": true},
+    "order": {"dtype": "int32", "required": true, "minimum": 0},
+    "source_index": {"dtype": "int32", "required": true, "invalid": -1},
+    "receiver_index": {"dtype": "int32", "required": true, "invalid": -1},
+    "provenance": {"dtype": "int32", "required": true, "enum": "provenance"},
+    "available_fields": {"dtype": "uint32", "required": true, "encoding": "derivative_fields bit mask"},
+    "differentiable_fields": {"dtype": "uint32", "required": true, "encoding": "bit mask"},
+    "interaction_offset": {"dtype": "uint32", "required": true},
+    "interaction_count": {"dtype": "uint32", "required": true},
+    "total_length": {"dtype": "float32", "required": true, "units": "metre", "availability": "explicit"},
+    "delay": {"dtype": "float32", "required": true, "units": "second", "availability": "explicit"},
+    "aod": {"dtype": "float32[3]", "required": true, "frame": "world", "convention": "unit vector from source", "availability": "explicit"},
+    "aoa": {"dtype": "float32[3]", "required": true, "frame": "world", "convention": "unit vector toward receiver", "availability": "explicit"},
+    "field": {"dtype": "complex64[3]", "required": true, "encoding": "x_re,x_im,y_re,y_im,z_re,z_im", "availability": "explicit"},
+    "power": {"dtype": "float32", "required": true, "minimum": 0, "availability": "explicit"}
+  },
+  "interaction_fields": {
+    "kind": {"dtype": "int32", "required": true, "enum": "interaction_kind"},
+    "global_primitive_id": {"dtype": "int32", "required": true, "id_space": "scene-global", "invalid": -1},
+    "global_edge_id": {"dtype": "int32", "required": true, "id_space": "scene-global", "invalid": -1},
+    "position": {"dtype": "float32[3]", "required": true, "frame": "world", "units": "metre", "availability": "explicit"},
+    "normal": {"dtype": "float32[3]", "required": true, "frame": "world", "convention": "unit geometric normal", "availability": "explicit"}
+  },
+  "fixed_winner_ad": {
+    "selection": "valid/order/IDs/provenance/interaction offsets are detached and fixed",
+    "continuous_fields": [
+      "interaction_position", "interaction_normal", "total_length", "delay",
+      "aod", "aoa", "complex_field", "power"
+    ],
+    "payload": "optional tangent or adjoint records with primal-identical indexing",
+    "winner_change": "undefined at discrete visibility, primitive, edge, order, or provenance boundaries"
+  },
+  "backend_mappings": {
+    "drjit": {
+      "reflection": {
+        "global_primitive_id": "ReflectionChain.global_prim_ids",
+        "position": "ReflectionChain.hit_points",
+        "normal": "ReflectionChain.geo_normals",
+        "segment_length": "ReflectionChain.t",
+        "availability_gaps": ["field", "power", "aod", "aoa", "source_index", "receiver_index"]
+      },
+      "diffraction": {
+        "source_index": "DfrPaths.tx_id",
+        "receiver_index": "DfrPaths.rx_id",
+        "order": "DfrPaths.order",
+        "global_edge_id": "DfrPaths.edge0/edge1/edge2",
+        "position": "DfrPaths.p0/p1/p2",
+        "delay": "DfrPaths.delay",
+        "field": "DfrPaths.field_x/field_y/field_z",
+        "availability_gaps": ["normal", "aod", "aoa", "total_length", "power"]
+      }
+    },
+    "torch": {
+      "reflection": {
+        "global_primitive_id": "ReflectionChain.prim_ids (scene-global)",
+        "segment_length": "ReflectionChain.t",
+        "availability_gaps": ["position", "normal", "field", "power", "aod", "aoa", "source_index", "receiver_index"]
+      },
+      "diffraction": {
+        "source_index": "DfrPaths.tx_id",
+        "receiver_index": "DfrPaths.rx_id",
+        "order": "DfrPaths.order",
+        "global_edge_id": "DfrPaths.edge0/edge1/edge2",
+        "position": "DfrPaths.p0/p1/p2",
+        "delay": "DfrPaths.delay",
+        "field": "DfrPaths field *_re/*_im components",
+        "availability_gaps": ["normal", "aod", "aoa", "total_length", "power"]
+      }
+    }
+  },
+  "scope": {
+    "included": [
+      "backend-neutral path and interaction records",
+      "global ID and units conventions",
+      "fixed-winner derivative exchange",
+      "reflection and diffraction result adapters"
+    ],
+    "excluded": ["scene loader", "integrator", "channel model", "material model", "antenna model", "path solver"]
+  }
+}

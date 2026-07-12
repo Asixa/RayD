@@ -81,12 +81,16 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("name: pypi-rayd-torch", release)
         self.assertEqual(release.count("name: pypi\n"), 1)
 
-        self.assertEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
+        self.assertGreaterEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
         self.assertIn(
             "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}",
             cmake,
         )
+        self.assertIn("--query-gpu=compute_cap", cmake)
+        self.assertIn("RayD local CUDA architecture: sm_", cmake)
+        self.assertIn("if(DEFINED ENV{VSCMD_VER})", cmake)
+        self.assertEqual(cmake.count('call \\"${RAYD_VSDEVCMD}\\" -arch=x64'), 1)
         self.assertTrue((ROOT / "CI_BUILD_MATRIX.md").is_file())
         self.assertTrue((ROOT / "scripts" / "verify_cuda_binary_arches.py").is_file())
 
@@ -187,7 +191,20 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("launch_segment_visibility_detached(", body)
         self.assertIn("out_visible_b", body)
         self.assertIn("segment_pair_visibility_pipeline_config", source)
-        self.assertIn("params.out_first_blocked_prim[ray]", segment_source)
+        shared_segment_source = (
+            WORKSPACE_ROOT
+            / "shared"
+            / "include"
+            / "rayd"
+            / "shared"
+            / "optix"
+            / "segment_visibility_device.cuh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "<rayd/shared/optix/segment_visibility_device.cuh>",
+            segment_source,
+        )
+        self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)
 
     def test_public_optix_cold_create_matrix_covers_multipath_apis(self):
         source = (ROOT / "tests" / "drjit" / "test_optix_pipeline_cold_create.py").read_text(

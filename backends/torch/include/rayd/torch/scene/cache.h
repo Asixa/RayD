@@ -3,6 +3,7 @@
 #include <ATen/ATen.h>
 #include <torch/custom_class.h>
 #include <optix.h>
+#include <rayd/shared/edge/bvh_types.h>
 
 #include <cstdint>
 #include <memory>
@@ -48,10 +49,26 @@ struct OptixInstanceAccel {
     OptixTraversableHandle traversable = 0;
 };
 
+struct CompactEdgeBvh {
+    int64_t geometry_version = 0;
+    int64_t node_count = 0;
+    bool valid = false;
+    at::Tensor primitive_min_x, primitive_min_y, primitive_min_z;
+    at::Tensor primitive_max_x, primitive_max_y, primitive_max_z;
+    at::Tensor node_min_x, node_min_y, node_min_z;
+    at::Tensor node_max_x, node_max_y, node_max_z;
+    at::Tensor left_child, right_child, leaf_primitives;
+    at::Tensor parent, leaf_primitive, is_leaf, primitive_leaf_node;
+    at::Tensor packed_bounds, reduced_bound, morton_in, morton_out;
+    at::Tensor primitive_ids_in, primitive_ids_out, merge_counters, scratch;
+    at::Tensor node_cost, internal_cost_arrivals, treelet_nodes;
+};
+
 struct SceneCache {
     int64_t handle = 0;
     int64_t version = 1;
     int64_t edge_version = 1;
+    int64_t edge_mask_version = 1;
     int64_t device_index = 0;
     std::vector<MeshRecord> meshes;
     std::vector<OptixTriangleAccel> triangle_accels;
@@ -87,6 +104,7 @@ struct SceneCache {
     at::Tensor edge_e1_z;
     at::Tensor edge_mask;
     at::Tensor edge_opposite;
+    CompactEdgeBvh custom_edge_bvh;
     OptixEdgeAccel edge_accel;
     std::vector<OptixEdgeAccel> edge_accels;
     at::Tensor tri_p0_packed;
@@ -124,6 +142,13 @@ int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene);
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene);
+std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene);
+at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene);
+void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene, at::Tensor mask);
+void ensure_custom_edge_bvh(SceneCache &scene);
+rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache &scene);
+rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &scene);
+rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const SceneCache &scene);
 void update_mesh_vertices(c10::intrusive_ptr<SceneHandle> scene, int64_t mesh_id, at::Tensor vertices);
 void sync_scene(c10::intrusive_ptr<SceneHandle> scene);
 std::vector<at::Tensor> split_scene_vertex_grad(c10::intrusive_ptr<SceneHandle> scene, at::Tensor grad_vertices);

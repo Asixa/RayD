@@ -1,17 +1,172 @@
 {
-  "version": 1,
+  "version": 3,
   "required_capability_keys": [
     "backend", "intersect", "nearest_edge_point", "nearest_edge_ray",
-    "nearest_edges_topk", "visibility", "visibility_pair",
+    "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
+    "visibility_edge", "visibility_chain",
     "reflection_trace", "reflection_accumulation", "diffraction_direct",
     "diffraction_chain", "surfel", "reverse_ad", "forward_ad", "torch_compile"
   ],
+  "constants": {
+    "invalid_signed_id": -1,
+    "invalid_unsigned_id": 4294967295,
+    "invalid_distance": "inf",
+    "epsilon": {
+      "default": 1e-5,
+      "small": 1e-6,
+      "ray": 1e-3,
+      "shadow": 1e-3,
+      "edge_point_probe": 1e-5,
+      "vacuum_permittivity": 8.854187817e-12
+    },
+    "ray_flags": {
+      "None": 0,
+      "Geometric": 1,
+      "ShadingN": 2,
+      "UV": 4,
+      "All": 7
+    }
+  },
   "tensor_contract": {
     "vectors": {"shape": "(..., 3)", "dtype": "float32", "layout": "row-major"},
     "indices": {"dtype": "int32", "id_space": "scene-global unless documented local"},
     "active_mask": {"dtype": "bool", "broadcast": "operation-specific"},
-    "invalid": {"shape_id": -1, "prim_id": -1, "distance": "inf"},
-    "ad": "fixed-winner derivatives for discrete hit and edge selection"
+    "invalid": {"shape_id": -1, "prim_id": -1, "edge_id": -1, "distance": "inf"},
+    "ad": "fixed-winner derivatives for discrete hit, path, and edge selection"
+  },
+  "result_contracts": {
+    "intersection": {
+      "canonical_fields": [
+        "t", "p", "n", "geo_n", "uv", "barycentric", "shape_id",
+        "prim_id", "local_prim_id", "global_prim_id"
+      ],
+      "backend_fields": {
+        "drjit": [
+          "t", "p", "n", "geo_n", "uv", "barycentric", "shape_id",
+          "prim_id", "local_prim_id", "global_prim_id"
+        ],
+        "torch": [
+          "t", "p", "n", "geo_n", "uv", "barycentric", "shape_id",
+          "prim_id", "local_prim_id", "global_prim_id"
+        ]
+      }
+    },
+    "nearest_edge_point": {
+      "canonical_semantics": [
+        "distance", "edge_point", "edge_t", "shape_id", "edge_id", "global_edge_id"
+      ],
+      "backend_fields": {
+        "drjit": [
+          "distance", "point", "edge_t", "edge_point", "shape_id", "edge_id",
+          "global_edge_id", "is_boundary"
+        ],
+        "torch": [
+          "distance", "edge_point", "edge_t", "shape_id", "edge_id", "global_edge_id"
+        ]
+      }
+    },
+    "nearest_edge_ray": {
+      "canonical_semantics": [
+        "distance", "ray_t", "point", "edge_t", "edge_point", "shape_id",
+        "edge_id", "global_edge_id"
+      ],
+      "backend_fields": {
+        "drjit": [
+          "distance", "ray_t", "point", "edge_t", "edge_point", "shape_id",
+          "edge_id", "global_edge_id", "is_boundary"
+        ],
+        "torch": [
+          "distance", "ray_t", "point", "edge_t", "edge_point", "shape_id",
+          "edge_id", "global_edge_id"
+        ]
+      }
+    },
+    "diffraction_states": {
+      "canonical_fields": [
+        "edge_index", "edge_pos", "edge_dir", "edge_t_min", "edge_t_max",
+        "n0", "n1", "prim0", "prim1", "exterior_angle", "src", "src_power",
+        "wi", "d0", "count"
+      ],
+      "backend_extensions": {"drjit": ["prefix_depth"], "torch": []},
+      "complex_encoding": {"drjit": "native_complex", "torch": "real_imag_components"}
+    }
+  },
+  "operations": {
+    "intersect": {
+      "inputs": ["ray", "active_mask", "ray_flags"],
+      "result": "intersection",
+      "id_spaces": {"shape_id": "scene-shape", "local_prim_id": "shape-local", "global_prim_id": "scene-global"},
+      "ad": "fixed-winner forward/VJP/JVP for continuous geometry fields",
+      "backend_overrides": {
+        "drjit": {"ray_tmin": 1e-3},
+        "torch": {"ray_tmin": 1e-6}
+      }
+    },
+    "nearest_edge_point": {
+      "inputs": ["point", "active_mask"],
+      "result": "nearest_edge_point",
+      "id_spaces": {"edge_id": "shape-local", "global_edge_id": "scene-global"},
+      "ad": "fixed-winner forward/VJP/JVP"
+    },
+    "nearest_edge_ray": {
+      "inputs": ["ray", "active_mask"],
+      "result": "nearest_edge_ray",
+      "ray_domain": "[0, tmax] when tmax is finite",
+      "id_spaces": {"edge_id": "shape-local", "global_edge_id": "scene-global"},
+      "ad": "fixed-winner forward/VJP/JVP"
+    },
+    "nearest_edges_topk": {
+      "inputs": ["point", "k", "active_mask", "edge_mask"],
+      "result": "nearest_edge_point[k]",
+      "limits": {"min_k": 1, "max_k": 16},
+      "ordering": "ascending distance, deterministic global_edge_id tie break",
+      "ad": "fixed-winner forward/VJP/JVP"
+    },
+    "visibility": {
+      "inputs": ["start", "end", "active_mask"],
+      "result": "bool",
+      "ray_domain": "finite segment with endpoint offsets",
+      "ad": "discrete result; no geometry derivative"
+    },
+    "visibility_pair": {
+      "inputs": ["start", "end_a", "end_b", "active_mask"],
+      "result": "bool_pair",
+      "ray_domain": "two finite segments with endpoint offsets",
+      "ad": "discrete result; no geometry derivative"
+    },
+    "visibility_edge": {
+      "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
+      "result": "bool",
+      "limits": {"min_samples": 1, "max_samples": 16},
+      "ad": "discrete result; no geometry derivative"
+    },
+    "visibility_chain": {
+      "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
+      "result": "chain_visibility_and_first_blocker",
+      "id_space": "scene-global primitive IDs",
+      "ad": "discrete result; no geometry derivative"
+    },
+    "reflection_trace": {
+      "inputs": ["source", "receiver", "max_depth", "active_mask"],
+      "result": "reflection_chain",
+      "id_space": "scene-global primitive IDs",
+      "ad": "fixed-path forward/VJP/JVP"
+    },
+    "reflection_accumulation": {
+      "inputs": ["reflection_chain", "material", "frequency"],
+      "result": "complex_field_and_power",
+      "ad": "fixed-path forward/VJP/JVP"
+    },
+    "diffraction_direct": {
+      "inputs": ["diffraction_states", "material", "grid", "frequency"],
+      "result": "diffraction_accumulation",
+      "ad": "fixed-path forward/VJP/JVP"
+    },
+    "diffraction_chain": {
+      "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
+      "result": "diffraction_paths_or_accumulation",
+      "ad": "fixed-path forward/VJP/JVP"
+    }
   },
   "tolerances": {
     "default_abs": 1e-5, "default_rel": 1e-5,

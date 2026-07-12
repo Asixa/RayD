@@ -1,6 +1,7 @@
 #include <rayd/torch/edge/kernels.h>
 #include <rayd/torch/edge/optix_params.h>
 #include <rayd/torch/common/optix_context.h>
+#include <rayd/shared/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -369,23 +370,13 @@ __global__ void edge_point_bruteforce_kernel(
             for (int j = 0; j < tile_n; ++j) {
                 if (s_mask[j] == 0u)
                     continue;
-                // Same math as point_segment_distance in edge_optix.cu.
-                const float ex = s_e1x[j];
-                const float ey = s_e1y[j];
-                const float ez = s_e1z[j];
-                const float len2 = ex * ex + ey * ey + ez * ez;
-                const float dx = qx - s_p0x[j];
-                const float dy = qy - s_p0y[j];
-                const float dz = qz - s_p0z[j];
-                float t = len2 > 1.0e-7f ? (dx * ex + dy * ey + dz * ez) / len2 : 0.f;
-                t = fminf(fmaxf(t, 0.f), 1.f);
-                const float qpx = s_p0x[j] + ex * t;
-                const float qpy = s_p0y[j] + ey * t;
-                const float qpz = s_p0z[j] + ez * t;
-                const float rx = qx - qpx;
-                const float ry = qy - qpy;
-                const float rz = qz - qpz;
-                const float d2 = rx * rx + ry * ry + rz * rz;
+                const shared::edge::PointSegmentDistance candidate =
+                    shared::edge::point_segment_distance(
+                        shared::math::make_vec3(qx, qy, qz),
+                        shared::math::make_vec3(s_p0x[j], s_p0y[j], s_p0z[j]),
+                        shared::math::make_vec3(s_e1x[j], s_e1y[j], s_e1z[j]));
+                const float t = candidate.edge_parameter;
+                const float d2 = candidate.squared_distance;
                 if (d2 < best_d2) {
                     best_d2 = d2;
                     best_t = t;

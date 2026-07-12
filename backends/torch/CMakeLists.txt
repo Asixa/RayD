@@ -11,7 +11,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayD Torch native targets." FORCE)
 endif()
 
-set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual")
+set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
@@ -82,8 +82,19 @@ if(RAYD_TORCH_BUILD_NATIVE)
     # -gencode flags from every target created below and silently fall back to
     # nvcc's default architecture. Save the requested value and restore it.
     set(RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-    if(NOT DEFINED TORCH_CUDA_ARCH_LIST OR TORCH_CUDA_ARCH_LIST STREQUAL "")
-        set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")
+    if(DEFINED TORCH_CUDA_ARCH_LIST AND NOT TORCH_CUDA_ARCH_LIST STREQUAL "")
+        # Explicit CMake configuration wins for cross-compilation.
+    elseif(DEFINED ENV{TORCH_CUDA_ARCH_LIST} AND NOT "$ENV{TORCH_CUDA_ARCH_LIST}" STREQUAL "")
+        set(TORCH_CUDA_ARCH_LIST "$ENV{TORCH_CUDA_ARCH_LIST}")
+    else()
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -c "import torch; major, minor = torch.cuda.get_device_capability(); print(f'{major}.{minor}')"
+            RESULT_VARIABLE TORCH_CUDA_ARCH_RESULT
+            OUTPUT_VARIABLE TORCH_CUDA_ARCH_LIST
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT TORCH_CUDA_ARCH_RESULT EQUAL 0 OR TORCH_CUDA_ARCH_LIST STREQUAL "")
+            message(FATAL_ERROR "Could not detect the local Torch CUDA architecture. Set CMAKE_CUDA_ARCHITECTURES and TORCH_CUDA_ARCH_LIST explicitly for cross-compilation.")
+        endif()
     endif()
     find_package(Torch REQUIRED)
     if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
@@ -113,7 +124,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     # This library is intentionally not a Python extension. It uses only the
     # LibTorch Stable ABI and is loaded from Python through torch.ops.load_library().
-    add_library(rayd_torch_stable_ops SHARED src/stable/camera.cu)
+    add_library(
+        rayd_torch_stable_ops
+        SHARED
+            src/stable/camera.cu
+            src/stable/core.cu)
     set_target_properties(
         rayd_torch_stable_ops
         PROPERTIES
@@ -161,16 +176,6 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${TORCH_PYTHON_PACKAGE_DIR}/lib"
         REQUIRED)
 
-    function(pybind11_add_module target)
-        Python_add_library(${target} MODULE WITH_SOABI ${ARGN})
-        target_include_directories(
-            ${target}
-            PRIVATE
-                "${TORCH_INSTALL_PREFIX}/include"
-                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
-        )
-    endfunction()
-
     set(RAYD_TORCH_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/optix_intersect.ptx")
     set(RAYD_TORCH_OPTIX_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/optix_intersect_ptx.h")
     set(RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix_point_ray.ptx")
@@ -197,12 +202,16 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/scene/optix_intersect.cu"
             -o "${RAYD_TORCH_OPTIX_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
         DEPENDS
             src/torch_ext/scene/optix_intersect.cu
             include/rayd/torch/scene/optix_intersect_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_OPTIX_PTX_HEADER}"
@@ -226,6 +235,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -o "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}"
             -DRAYD_TORCH_EDGE_POINT_RAY_ONLY=1
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -233,6 +243,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/edge/edge_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
@@ -255,6 +270,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -o "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}"
             -DRAYD_TORCH_EDGE_TOPK_ONLY=1
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -262,6 +278,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/edge/edge_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
@@ -288,6 +309,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/trace_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_TRACE_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -295,6 +317,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/trace_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/trace_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"
@@ -317,6 +344,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/visibility_optix.cu"
             -o "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -324,6 +352,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/visibility_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/visibility_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
@@ -346,6 +377,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/epc_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_EPC_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -353,6 +385,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/epc_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/epc_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX_HEADER}"
@@ -375,6 +411,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/accum_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -383,6 +420,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/complex.cuh
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/accum_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/field_math.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"
@@ -416,6 +455,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/diffraction/paths_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_PATHS_PTX_HEADER}"
@@ -449,6 +489,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/diffraction/accum_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"
@@ -480,14 +521,21 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/ops.cpp
         src/torch_ext/diffraction/ops.cpp
         src/torch_ext/scene/cache_kernels.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/scene/packing.cu
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu
         src/torch_ext/edge/bvh.cu
+        src/torch_ext/edge/edge_topk.cu
         src/torch_ext/edge/edge_forward.cu
         src/torch_ext/edge/edge_backward.cu
         src/torch_ext/reflection/visibility_backward.cu
         src/torch_ext/reflection/backward.cu
         src/torch_ext/reflection/dedup.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu
         src/torch_ext/reflection/epc_field.cu
         src/torch_ext/reflection/accum_reduce.cu
         src/torch_ext/diffraction/accum_reduce.cu
@@ -532,21 +580,51 @@ if(RAYD_TORCH_BUILD_NATIVE)
     target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
 
     if(RAYD_TORCH_BUILD_PYTHON_MODULE)
-        pybind11_add_module(
-            _C
-            src/torch_ext/module.cpp
-            src/torch_ext/library.cpp
-        )
+        add_library(
+            rayd_torch_legacy_ops
+            SHARED
+                src/torch_ext/library.cpp
+                src/torch_ext/legacy_ops_anchor.cpp)
+        set_target_properties(
+            rayd_torch_legacy_ops
+            PROPERTIES
+                PREFIX ""
+                OUTPUT_NAME "_legacy_ops"
+                POSITION_INDEPENDENT_CODE ON)
         target_include_directories(
-            _C
+            rayd_torch_legacy_ops
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${RAYD_SHARED_INCLUDE_DIR}
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
                 ${CMAKE_CURRENT_BINARY_DIR}/generated
                 ${CUDAToolkit_INCLUDE_DIRS}
                 ${OPTIX_INCLUDE_DIR}
         )
-        target_link_libraries(_C PRIVATE rayd_torch_native_core)
+        target_link_libraries(
+            rayd_torch_legacy_ops
+            PRIVATE
+                rayd_torch_native_core
+                Python::Module)
+        target_compile_features(rayd_torch_legacy_ops PRIVATE cxx_std_17)
+        install(
+            TARGETS rayd_torch_legacy_ops
+            LIBRARY DESTINATION rayd/torch
+            RUNTIME DESTINATION rayd/torch)
+
+        find_path(
+            RAYD_TORCH_PYBIND11_INCLUDE_DIR
+            pybind11/pybind11.h
+            HINTS "${TORCH_INSTALL_PREFIX}/include"
+            REQUIRED)
+        Python_add_library(_C MODULE WITH_SOABI src/torch_ext/module.cpp)
+        target_include_directories(
+            _C
+            PRIVATE
+                ${RAYD_SHARED_INCLUDE_DIR}
+                ${RAYD_TORCH_PYBIND11_INCLUDE_DIR})
         target_compile_features(_C PRIVATE cxx_std_17)
         install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
     endif()

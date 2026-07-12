@@ -7,7 +7,7 @@
 
 namespace rayd {
 
-namespace utd = witwin::channel::native_ext;
+namespace utd = shared::utd;
 
 extern "C" {
 extern __constant__ DfrPathParams params;

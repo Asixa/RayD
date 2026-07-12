@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include <rayd/shared/contracts.h>
+
 #ifdef __CUDACC__
 #define UTD_DEVICE   __device__
 #define UTD_DINLINE  __device__ __forceinline__
@@ -13,7 +15,7 @@
 #define UTD_GLOBAL
 #endif
 
-namespace witwin::channel::native_ext {
+namespace rayd::shared::utd {
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +24,7 @@ constexpr float UTD_PI             = 3.14159265358979323846f;
 constexpr float UTD_TWO_PI         = 6.28318530717958647692f;
 constexpr float UTD_EPS            = 1.0e-10f;
 constexpr float UTD_SMALL_EPS      = 1.0e-6f;
-constexpr float UTD_EPSILON_0      = 8.8541878128e-12f;
+constexpr float UTD_EPSILON_0      = rayd::shared::VacuumPermittivity;
 constexpr float UTD_MIN_DISTANCE   = 5.0e-2f;
 constexpr float UTD_SLOPE_STEP     = 1.0e-4f;
 
@@ -463,4 +465,10 @@ UTD_DINLINE void adj_assemble_diff_operator(
     gFace1Term = cplx_add(gFace1Term, gCoeff);
 }
 
-} // namespace witwin::channel::native_ext
+} // namespace rayd::shared::utd
+
+// Temporary source-compatibility bridge for downstream code that included the
+// original pre-RayD namespace directly.
+namespace witwin::channel {
+namespace native_ext = ::rayd::shared::utd;
+}

@@ -228,8 +228,8 @@ void SceneEdgeOptix::ensure_pipeline() {
     OptixPipelineCompileOptions pipeline_options = {};
     pipeline_options.usesMotionBlur = 0;
     pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipeline_options.numPayloadValues = 16;
-    pipeline_options.numAttributeValues = 3;
+    pipeline_options.numPayloadValues = shared::optix::EdgeTopKPayloadCount;
+    pipeline_options.numAttributeValues = shared::optix::EdgeAttributeCount;
     pipeline_options.exceptionFlags = RAYD_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags =

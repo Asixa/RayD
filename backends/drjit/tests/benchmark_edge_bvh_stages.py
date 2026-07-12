@@ -9,7 +9,8 @@ import sys
 from typing import Any
 
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 ARTIFACT_ROOT = WORKSPACE_ROOT / "artifacts" / "benchmarks" / "edge_bvh_stages"
 LOG_PATH = WORKSPACE_ROOT / "docs" / "edge_bvh_optimization_log.md"
 
@@ -61,19 +62,11 @@ PRESSURE_ARGS = (
 MODE_ENV_VARS = {
     "post_build_strategy": "RAYD_EDGE_BVH_POST_BUILD_STRATEGY",
     "build_stream_mode": "RAYD_EDGE_BVH_BUILD_STREAM_MODE",
-    "finalize_mode": "RAYD_EDGE_BVH_FINALIZE_MODE",
-    "treelet_schedule_mode": "RAYD_EDGE_BVH_TREELET_SCHEDULE_MODE",
-    "compaction_mode": "RAYD_EDGE_BVH_COMPACTION_MODE",
-    "node_layout_mode": "RAYD_EDGE_BVH_NODE_LAYOUT_MODE",
 }
 
 DEFAULT_EDGE_BVH_MODES = {
     "post_build_strategy": "gpu_treelet",
     "build_stream_mode": "overlap",
-    "finalize_mode": "atomic",
-    "treelet_schedule_mode": "flat_levels",
-    "compaction_mode": "host_upload_raw",
-    "node_layout_mode": "scalar_arrays",
 }
 
 
@@ -468,38 +461,18 @@ def main() -> int:
     parser.add_argument(
         "--source-root",
         type=str,
-        default=os.fspath(WORKSPACE_ROOT),
-        help="Repository root to benchmark. Defaults to the current workspace.",
+        default=os.fspath(BACKEND_ROOT),
+        help="Backend source root to benchmark. Defaults to backends/drjit.",
     )
     parser.add_argument(
         "--post-build-strategy",
-        choices=("none", "hybrid_top_level_sah", "gpu_treelet"),
+        choices=("none", "gpu_treelet"),
         help="Explicit Edge BVH post-build strategy for this stage run.",
     )
     parser.add_argument(
         "--build-stream-mode",
         choices=("serial", "overlap"),
         help="Explicit Edge BVH build stream mode for this stage run.",
-    )
-    parser.add_argument(
-        "--finalize-mode",
-        choices=("atomic", "level_by_level"),
-        help="Explicit Edge BVH finalize mode for this stage run.",
-    )
-    parser.add_argument(
-        "--treelet-schedule-mode",
-        choices=("per_level_uploads", "flat_levels"),
-        help="Explicit Edge BVH treelet schedule mode for this stage run.",
-    )
-    parser.add_argument(
-        "--compaction-mode",
-        choices=("host_upload_raw", "host_upload_exact", "gpu_emit"),
-        help="Explicit Edge BVH compaction mode for this stage run.",
-    )
-    parser.add_argument(
-        "--node-layout-mode",
-        choices=("scalar_arrays", "packed"),
-        help="Explicit Edge BVH node layout mode for this stage run.",
     )
     args = parser.parse_args()
 

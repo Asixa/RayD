@@ -37,12 +37,16 @@ struct RayData {
 
 /// Bit flags selecting which intersection fields Scene::intersect() computes.
 enum class RayFlags : uint32_t {
-    None      = 0x00,
-    Geometric = 0x01,   // t, p, barycentric, shape_id, prim_id, geo_n
-    ShadingN  = 0x02,   // interpolated shading normal (n)
-    UV        = 0x04,   // interpolated texture UV (uv)
+    None      = static_cast<uint32_t>(shared::RayFlagBits::None),
+    Geometric = static_cast<uint32_t>(shared::RayFlagBits::Geometric), // t, p, barycentric, ids, geo_n
+    ShadingN  = static_cast<uint32_t>(shared::RayFlagBits::ShadingN),  // interpolated shading normal (n)
+    UV        = static_cast<uint32_t>(shared::RayFlagBits::UV),        // interpolated texture UV (uv)
     All       = Geometric | ShadingN | UV,
 };
+
+static_assert(static_cast<uint32_t>(RayFlags::All) ==
+              static_cast<uint32_t>(shared::RayFlagBits::All));
+static_assert(static_cast<std::uint8_t>(shared::IntersectionField::GlobalPrimId) == 9u);
 
 inline constexpr RayFlags operator|(RayFlags a, RayFlags b) {
     return static_cast<RayFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
@@ -75,10 +79,10 @@ struct IntersectionData {
     Vec3f geo_n = zeros<Vec3f>(1);   ///< Geometric face normal (valid only if RayFlags::Geometric requested).
     Vec2f uv = zeros<Vec2f>(1);      ///< Interpolated texture UV (valid only if RayFlags::UV requested).
     Vec3f barycentric = zeros<Vec3f>(1); ///< Barycentric coordinates of the hit within the triangle.
-    Int_ shape_id = full<Int_>(-1, 1);        ///< Owning mesh id; -1 when no hit.
-    Int_ prim_id = full<Int_>(-1, 1);         ///< Face index within the owning mesh; -1 when no hit.
-    Int_ local_prim_id = full<Int_>(-1, 1);   ///< Same as prim_id (face index within the owning mesh).
-    Int_ global_prim_id = full<Int_>(-1, 1);  ///< Face index within the scene-global face buffer.
+    Int_ shape_id = full<Int_>(shared::InvalidSignedId, 1); ///< Owning mesh id; -1 when no hit.
+    Int_ prim_id = full<Int_>(shared::InvalidSignedId, 1);  ///< Face index within the owning mesh; -1 when no hit.
+    Int_ local_prim_id = full<Int_>(shared::InvalidSignedId, 1); ///< Same as prim_id (face index within the owning mesh).
+    Int_ global_prim_id = full<Int_>(shared::InvalidSignedId, 1); ///< Scene-global face index.
 
     DRJIT_STRUCT(IntersectionData,
                  t,

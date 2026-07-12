@@ -1652,6 +1652,68 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["edge_point"][1][1], 0.25, places=5)
         self.assertAlmostEqual(data["edge_point"][2][1], 0.0, places=5)
 
+    def test_scene_edge_bvh_combined_backend_alias_is_deprecated_and_canonicalized(self):
+        data = run_json_case(
+            """
+            import json
+            import warnings
+            import rayd.drjit as pj
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                legacy = pj.Scene(edge_bvh_backend="hybrid")
+
+            with warnings.catch_warnings(record=True) as canonical_caught:
+                warnings.simplefilter("always")
+                canonical = pj.Scene(edge_bvh_backend="optix_drjit")
+
+            print(json.dumps({
+                "legacy_backend": legacy.edge_bvh_backend,
+                "canonical_backend": canonical.edge_bvh_backend,
+                "legacy_warning_count": len(caught),
+                "legacy_warning_category": caught[0].category.__name__,
+                "legacy_warning": str(caught[0].message),
+                "canonical_warning_count": len(canonical_caught),
+            }))
+            """
+        )
+
+        self.assertEqual(data["legacy_backend"], "optix_drjit")
+        self.assertEqual(data["canonical_backend"], "optix_drjit")
+        self.assertEqual(data["legacy_warning_count"], 1)
+        self.assertEqual(data["legacy_warning_category"], "DeprecationWarning")
+        self.assertIn("optix_drjit", data["legacy_warning"])
+        self.assertEqual(data["canonical_warning_count"], 0)
+
+    def test_scene_edge_bvh_removed_hlbvh_strategy_is_rejected(self):
+        data = run_json_case(
+            """
+            import json
+            import os
+
+            os.environ["RAYD_EDGE_BVH_POST_BUILD_STRATEGY"] = "hybrid_top_level_sah"
+
+            import drjit.cuda as cuda
+            import rayd.drjit as pj
+
+            mesh = pj.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            scene = pj.Scene(edge_bvh_backend="drjit")
+            scene.add_mesh(mesh)
+            try:
+                scene.build()
+            except RuntimeError as exc:
+                print(json.dumps({"rejected": True, "error": str(exc)}))
+            else:
+                print(json.dumps({"rejected": False, "error": ""}))
+            """
+        )
+
+        self.assertTrue(data["rejected"])
+        self.assertIn("Expected one of: none, gpu_treelet", data["error"])
+
     def test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit(self):
         data = run_json_case(
             """
@@ -1685,7 +1747,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             drjit_scene, _ = make_scene("drjit")
             optix_scene, _ = make_scene("optix")
-            hybrid_scene, _ = make_scene("hybrid")
+            hybrid_scene, _ = make_scene("optix_drjit")
             drjit_point = drjit_scene.nearest_edge(query_points)
             optix_point = optix_scene.nearest_edge(query_points)
             hybrid_point = hybrid_scene.nearest_edge(query_points)
@@ -1711,7 +1773,7 @@ class GeometryCoreTests(unittest.TestCase):
 
             drjit_dynamic, drjit_mesh_id = make_scene("drjit", dynamic=True)
             optix_dynamic, optix_mesh_id = make_scene("optix", dynamic=True)
-            hybrid_dynamic, hybrid_mesh_id = make_scene("hybrid", dynamic=True)
+            hybrid_dynamic, hybrid_mesh_id = make_scene("optix_drjit", dynamic=True)
             shifted = cuda.Array3f([2.0, 3.0, 2.0],
                                    [0.0, 0.0, 1.0],
                                    [0.0, 0.0, 0.0])
@@ -1791,7 +1853,7 @@ class GeometryCoreTests(unittest.TestCase):
 
         self.assertEqual(data["default_backend"], "optix")
         self.assertEqual(data["optix_backend"], "optix")
-        self.assertEqual(data["hybrid_backend"], "hybrid")
+        self.assertEqual(data["hybrid_backend"], "optix_drjit")
         self.assertEqual(data["point_ids"]["optix"], data["point_ids"]["drjit"])
         self.assertEqual(data["point_ids"]["hybrid"], data["point_ids"]["drjit"])
         self.assertEqual(data["ray_ids"]["optix"], data["ray_ids"]["drjit"])
@@ -1824,7 +1886,7 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertAlmostEqual(data["updated_edge_point_x"]["optix"], 2.25, places=5)
         self.assertAlmostEqual(data["updated_edge_point_x"]["hybrid"], 2.25, places=5)
 
-    def test_scene_edge_bvh_hybrid_tiled_point_and_topk_match_drjit_distances(self):
+    def test_scene_edge_bvh_optix_drjit_tiled_point_and_topk_match_drjit_distances(self):
         data = run_json_case(
             """
             import json
@@ -1887,7 +1949,7 @@ class GeometryCoreTests(unittest.TestCase):
             query_points = cuda.Array3f(xs, ys, zs)
 
             drjit_scene = make_tiled_scene("drjit")
-            hybrid_scene = make_tiled_scene("hybrid")
+            hybrid_scene = make_tiled_scene("optix_drjit")
             drjit_point = drjit_scene.nearest_edge(query_points)
             hybrid_point = hybrid_scene.nearest_edge(query_points)
             drjit_topk = drjit_scene.nearest_edges(query_points, 4)
@@ -1916,11 +1978,11 @@ class GeometryCoreTests(unittest.TestCase):
             timeout=180,
         )
 
-        self.assertEqual(data["hybrid_backend"], "hybrid")
+        self.assertEqual(data["hybrid_backend"], "optix_drjit")
         self.assertEqual(data["edge_count"], 200704)
         self.assertEqual(data["query_count"], 4096)
-        self.assertLessEqual(data["point_max_distance_diff"], 2e-3)
-        self.assertLessEqual(data["topk_max_distance_diff"], 1e-2)
+        self.assertLessEqual(data["point_max_distance_diff"], 2e-3, data)
+        self.assertLessEqual(data["topk_max_distance_diff"], 1e-2, data)
 
     def test_scene_nearest_edge_multi_mesh_maps_shape_and_global_ids(self):
         data = run_json_case(

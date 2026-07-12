@@ -68,7 +68,10 @@ RAYD_CUDA_PTX_ARCH=120
 -gencode=arch=compute_120,code=compute_120
 ```
 
-Local source builds may omit these variables and use the local toolkit's default architecture. Release wheels must always set both variables.
+Local source builds may omit these variables; when `nvidia-smi` is available,
+CMake detects the first local GPU and compiles one native SASS image. Release
+wheels must always set both variables explicitly and never depend on local GPU
+detection.
 
 The Torch backend uses the equivalent `CMAKE_CUDA_ARCHITECTURES` list for `_C`, `_stable_ops`, and their linked CUDA objects. Its separately embedded OptiX PTX is a distinct compatibility layer.
 

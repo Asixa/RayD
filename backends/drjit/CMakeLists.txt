@@ -122,6 +122,27 @@ endif()
 if(DEFINED ENV{RAYD_CUDA_PTX_ARCH} AND NOT "$ENV{RAYD_CUDA_PTX_ARCH}" STREQUAL "")
     set(RAYD_CUDA_PTX_ARCH "$ENV{RAYD_CUDA_PTX_ARCH}")
 endif()
+if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
+    find_program(RAYD_NVIDIA_SMI_EXECUTABLE NAMES nvidia-smi)
+    if(RAYD_NVIDIA_SMI_EXECUTABLE)
+        execute_process(
+            COMMAND "${RAYD_NVIDIA_SMI_EXECUTABLE}" --query-gpu=compute_cap --format=csv,noheader
+            RESULT_VARIABLE RAYD_NVIDIA_SMI_RESULT
+            OUTPUT_VARIABLE RAYD_NVIDIA_SMI_COMPUTE_CAPABILITIES
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(RAYD_NVIDIA_SMI_RESULT EQUAL 0)
+            string(REGEX MATCH "^[0-9]+\\.[0-9]+" RAYD_LOCAL_COMPUTE_CAPABILITY
+                "${RAYD_NVIDIA_SMI_COMPUTE_CAPABILITIES}")
+            if(NOT RAYD_LOCAL_COMPUTE_CAPABILITY STREQUAL "")
+                string(REPLACE "." "" RAYD_CUDA_GENCODE_ARCHES
+                    "${RAYD_LOCAL_COMPUTE_CAPABILITY}")
+                message(STATUS
+                    "RayD local CUDA architecture: sm_${RAYD_CUDA_GENCODE_ARCHES}")
+            endif()
+        endif()
+    endif()
+endif()
 string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
 set(RAYD_CUDA_GENCODE_FLAGS_LIST "")
 foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
@@ -207,11 +228,24 @@ set(RAYD_CORE_SOURCE_FILES
 )
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
-    set(RAYD_VSDEVCMD "${CMAKE_GENERATOR_INSTANCE}/Common7/Tools/VsDevCmd.bat")
+    set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.obj")
+    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.obj")
+    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.obj")
+    set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.obj")
+    if(DEFINED ENV{VSCMD_VER})
+        set(RAYD_MSVC_SETUP "")
+    elseif(CMAKE_GENERATOR_INSTANCE)
+        set(RAYD_VSDEVCMD "${CMAKE_GENERATOR_INSTANCE}/Common7/Tools/VsDevCmd.bat")
+        set(RAYD_MSVC_SETUP "call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n")
+    else()
+        message(FATAL_ERROR
+            "RayD's Windows CUDA build needs an initialized MSVC environment. "
+            "Run scripts/build_local.cmd or configure from a Visual Studio developer shell.")
+    endif()
     set(RAYD_CUDA_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_bvh.bat")
     file(GENERATE OUTPUT "${RAYD_CUDA_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
 ")
@@ -224,8 +258,78 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
+    set(RAYD_SHARED_BVH_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_build.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_BUILD_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_BUILD_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_BVH_BUILD_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+        VERBATIM
+    )
+    set(RAYD_SHARED_BVH_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_query.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_QUERY_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_QUERY_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
+    set(RAYD_SHARED_EDGE_DISTANCE_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_distance.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_EDGE_DISTANCE_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        COMMAND "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
+    set(RAYD_SHARED_EDGE_AABB_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_aabb.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_AABB_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_EDGE_AABB_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_AABB_OBJECT}"
+        COMMAND "${RAYD_SHARED_EDGE_AABB_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_EDGE_AABB_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
+        VERBATIM
+    )
 else()
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
+    set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.o")
+    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.o")
+    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.o")
+    set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.o")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
         COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
@@ -239,9 +343,72 @@ else()
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
         VERBATIM
     )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_BUILD_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_BUILD_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_AABB_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_EDGE_AABB_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
 endif()
 set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_CUDA_OBJECT}")
+set_source_files_properties("${RAYD_SHARED_BVH_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_BVH_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_EDGE_DISTANCE_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_EDGE_AABB_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_CUDA_OBJECT}"
+    "${RAYD_SHARED_BVH_BUILD_OBJECT}"
+    "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+    "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+    "${RAYD_SHARED_EDGE_AABB_OBJECT}")
 
 set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
 if(WIN32)
@@ -249,7 +416,7 @@ if(WIN32)
     set(RAYD_REFLECTION_DEDUP_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_dedup.bat")
     file(GENERATE OUTPUT "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_DEDUP_OBJECT}\"\r\n\
 ")
@@ -279,7 +446,52 @@ else()
     )
 endif()
 set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_DEDUP_OBJECT}")
+
+set(RAYD_SHARED_REFLECTION_DEDUP_CU
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu")
+set(RAYD_SHARED_REFLECTION_DEDUP_HEADER
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_dedup.h")
+if(WIN32)
+    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.obj")
+    set(RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT
+        "${CMAKE_CURRENT_BINARY_DIR}/build_shared_reflection_dedup.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
+        VERBATIM)
+else()
+    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.o")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+        DEPENDS
+            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
+            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
+        VERBATIM)
+endif()
+set_source_files_properties(
+    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
+    PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_REFLECTION_DEDUP_OBJECT}"
+    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}")
 
 set(RAYD_REFLECTION_EPC_FIELD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.cu")
 if(WIN32)
@@ -287,7 +499,7 @@ if(WIN32)
     set(RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_epc_field.bat")
     file(GENERATE OUTPUT "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_EPC_FIELD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_EPC_FIELD_OBJECT}\"\r\n\
 ")
@@ -299,6 +511,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
         VERBATIM
     )
 else()
@@ -315,6 +528,7 @@ else()
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
         VERBATIM
     )
 endif()
@@ -327,7 +541,7 @@ if(WIN32)
     set(RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_accumulation_ad.bat")
     file(GENERATE OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}\"\r\n\
 ")
@@ -393,7 +607,7 @@ if(RAYD_REGENERATE_REFLECTION_TRACE_PTX)
         set(RAYD_REFLECTION_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_trace_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_TRACE_PTX}\"\r\n\
 ")
@@ -404,6 +618,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_TRACE_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
             VERBATIM
         )
     else()
@@ -418,6 +637,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_TRACE_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
             VERBATIM
         )
     endif()
@@ -478,7 +702,7 @@ if(RAYD_REGENERATE_REFLECTION_EPC_PTX)
         set(RAYD_REFLECTION_EPC_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_epc_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_EPC_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_EPC_PTX}\"\r\n\
 ")
@@ -489,6 +713,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_EPC_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
             VERBATIM
         )
     else()
@@ -503,6 +730,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_EPC_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
             VERBATIM
         )
     endif()
@@ -563,7 +793,7 @@ if(RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX)
         set(RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_accumulation_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_ACCUMULATION_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_ACCUMULATION_PTX}\"\r\n\
 ")
@@ -574,6 +804,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
             VERBATIM
         )
     else()
@@ -588,6 +819,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
             VERBATIM
         )
     endif()
@@ -648,7 +880,7 @@ if(RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX)
         set(RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_accumulation_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_DIFFRACTION_ACCUMULATION_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_DIFFRACTION_ACCUMULATION_PTX}\"\r\n\
 ")
@@ -662,6 +894,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     else()
@@ -679,6 +912,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     endif()
@@ -739,7 +973,7 @@ if(RAYD_REGENERATE_DIFFRACTION_PATHS_PTX)
         set(RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_paths_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_DIFFRACTION_PATHS_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_DIFFRACTION_PATHS_PTX}\"\r\n\
 ")
@@ -751,6 +985,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_PATHS_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     else()
@@ -766,6 +1001,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_PATHS_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     endif()
@@ -826,7 +1062,7 @@ if(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX)
         set(RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_segment_visibility_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SEGMENT_VISIBILITY_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SEGMENT_VISIBILITY_PTX}\"\r\n\
 ")
@@ -837,6 +1073,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
             VERBATIM
         )
     else()
@@ -851,6 +1090,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
             VERBATIM
         )
     endif()
@@ -911,7 +1153,7 @@ if(RAYD_REGENERATE_SURFEL_TRACE_PTX)
         set(RAYD_SURFEL_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_surfel_trace_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SURFEL_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SURFEL_TRACE_PTX}\"\r\n\
 ")
@@ -996,7 +1238,7 @@ if(RAYD_REGENERATE_EDGE_OPTIX_PTX)
         set(RAYD_EDGE_OPTIX_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_optix_ptx.bat")
         file(GENERATE OUTPUT "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}" CONTENT
 "@echo off\r\n\
-call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+${RAYD_MSVC_SETUP}\
 if errorlevel 1 exit /b %errorlevel%\r\n\
 \"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_EDGE_OPTIX_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_EDGE_OPTIX_PTX}\"\r\n\
 ")
@@ -1007,6 +1249,10 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
                 "${RAYD_EDGE_OPTIX_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
             VERBATIM
         )
     else()
@@ -1021,6 +1267,10 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_EDGE_OPTIX_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
             VERBATIM
         )
     endif()
@@ -1130,6 +1380,13 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd
     DESTINATION rayd/drjit/include
     FILES_MATCHING
         PATTERN "*.h"
+        PATTERN "*.cuh"
+)
+install(DIRECTORY ${RAYD_SHARED_INCLUDE_DIR}/rayd/shared
+    DESTINATION rayd/drjit/include/rayd
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.cuh"
 )
 
 set_target_properties(_C PROPERTIES

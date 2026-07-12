@@ -36,6 +36,7 @@ def _load() -> tuple[bool, Exception | None]:
         "camera_world_to_sample_backward",
         "camera_sample_ray",
         "camera_sample_ray_backward",
+        "intersection_valid",
     )
     if all(hasattr(torch.ops.rayd_torch_stable, name) for name in required):
         return True, None
@@ -56,4 +57,8 @@ AVAILABLE, LOAD_ERROR = _load()
 
 
 def camera_ops():
+    return torch.ops.rayd_torch_stable if AVAILABLE else torch.ops.rayd_torch
+
+
+def core_ops():
     return torch.ops.rayd_torch_stable if AVAILABLE else torch.ops.rayd_torch

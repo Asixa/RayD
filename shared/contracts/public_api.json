@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "capability_keys": [
+    "intersect",
+    "nearest_edge_point",
+    "nearest_edge_ray",
+    "nearest_edges_topk",
+    "edge_mask",
+    "visibility",
+    "visibility_pair",
+    "visibility_edge",
+    "visibility_chain",
+    "reflection_trace",
+    "reflection_accumulation",
+    "diffraction_direct",
+    "diffraction_chain",
+    "surfel",
+    "reverse_ad",
+    "forward_ad",
+    "torch_compile"
+  ],
+  "stability_levels": ["stable", "provisional", "experimental", "deprecated"],
+  "naming_conventions": {
+    "options": "New configuration records use PascalCase <Operation>Options; existing domain records retain compatibility names until a major release.",
+    "results": "Result records use PascalCase semantic nouns; plural names denote collections and AD does not change the public result type name.",
+    "fields": "Fields use snake_case; identifiers end in _id or _ids and ambiguous identifier spaces carry explicit local_ or global_ prefixes."
+  },
+  "apis": {
+    "intersect": {"category": "core", "stability": "stable", "summary": "Differentiable triangle intersection."},
+    "nearest_edge_point": {"category": "core", "stability": "stable", "summary": "Nearest scene edge to a point."},
+    "nearest_edge_ray": {"category": "core", "stability": "stable", "summary": "Nearest scene edge to a finite segment or half-ray."},
+    "nearest_edges_topk": {"category": "core", "stability": "provisional", "summary": "Deterministic top-k point-to-edge query, k <= 16."},
+    "edge_mask": {"category": "core", "stability": "provisional", "summary": "Dynamic scene-global edge activation mask."},
+    "visibility": {"category": "core", "stability": "stable", "summary": "Finite segment visibility."},
+    "visibility_pair": {"category": "multipath", "stability": "provisional", "summary": "Two visibility segments sharing one endpoint."},
+    "visibility_edge": {"category": "multipath", "stability": "provisional", "summary": "Sampled source-to-axial-edge visibility."},
+    "visibility_chain": {"category": "multipath", "stability": "provisional", "summary": "Ordered segment-chain visibility and first blocker."},
+    "reflection_trace": {"category": "multipath", "stability": "stable", "summary": "Specular reflection path tracing."},
+    "reflection_accumulation": {"category": "multipath", "stability": "provisional", "summary": "Reflection field and power accumulation."},
+    "diffraction_direct": {"category": "multipath", "stability": "provisional", "summary": "First-order diffraction path and accumulation primitives."},
+    "diffraction_chain": {"category": "multipath", "stability": "experimental", "summary": "Recursive diffraction path primitives."},
+    "surfel": {"category": "surfel", "stability": "experimental", "summary": "Dr.Jit-only surfel query primitives."},
+    "reverse_ad": {"category": "core", "stability": "stable", "summary": "Fixed-winner reverse-mode derivatives."},
+    "forward_ad": {"category": "core", "stability": "provisional", "summary": "Fixed-winner forward-mode derivatives where implemented."},
+    "torch_compile": {"category": "experimental", "stability": "provisional", "summary": "Torch dispatcher and torch.compile integration."}
+  },
+  "aliases": {
+    "edge_bvh_backend": {
+      "hybrid": {
+        "canonical": "optix_drjit",
+        "stability": "deprecated",
+        "summary": "Compatibility alias only; unrelated to the removed HLBVH experiment."
+      },
+      "mixed": {
+        "canonical": "optix_drjit",
+        "stability": "deprecated",
+        "summary": "Legacy compatibility alias."
+      },
+      "optix_ray": {
+        "canonical": "optix_drjit",
+        "stability": "deprecated",
+        "summary": "Legacy compatibility alias."
+      },
+      "ray_optix": {
+        "canonical": "optix_drjit",
+        "stability": "deprecated",
+        "summary": "Legacy compatibility alias."
+      }
+    }
+  },
+  "backends": {
+    "drjit": {
+      "capabilities": {
+        "intersect": true,
+        "nearest_edge_point": true,
+        "nearest_edge_ray": true,
+        "nearest_edges_topk": true,
+        "edge_mask": true,
+        "visibility": true,
+        "visibility_pair": true,
+        "visibility_edge": true,
+        "visibility_chain": true,
+        "reflection_trace": true,
+        "reflection_accumulation": true,
+        "diffraction_direct": true,
+        "diffraction_chain": true,
+        "surfel": true,
+        "reverse_ad": true,
+        "forward_ad": true,
+        "torch_compile": false
+      },
+      "typing": "complete"
+    },
+    "torch": {
+      "capabilities": {
+        "intersect": true,
+        "nearest_edge_point": true,
+        "nearest_edge_ray": true,
+        "nearest_edges_topk": true,
+        "edge_mask": true,
+        "visibility": true,
+        "visibility_pair": true,
+        "visibility_edge": true,
+        "visibility_chain": true,
+        "reflection_trace": true,
+        "reflection_accumulation": true,
+        "diffraction_direct": true,
+        "diffraction_chain": true,
+        "surfel": false,
+        "reverse_ad": true,
+        "forward_ad": true,
+        "torch_compile": true
+      },
+      "typing": "complete"
+    }
+  }
+}

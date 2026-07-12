@@ -57,9 +57,9 @@ class PublicApiContractTests(unittest.TestCase):
         start = source.index("class Intersection")
         end = source.index("@dataclass(frozen=True)\nclass NearestPointEdge")
         intersection_source = source[start:end]
-        self.assertIn("torch.ops.rayd_torch.intersection_valid", intersection_source)
+        self.assertIn("core_ops().intersection_valid", intersection_source)
         self.assertLess(
-            intersection_source.index("torch.ops.rayd_torch.intersection_valid"),
+            intersection_source.index("core_ops().intersection_valid"),
             intersection_source.index("torch.isfinite"),
         )
 

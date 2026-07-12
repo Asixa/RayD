@@ -13,6 +13,7 @@
 #include <rayd/scene/scene_optix.h>
 
 #include <rayd/native_launch_audit.h>
+#include <rayd/shared/optix/scene_edge_contracts.h>
 
 namespace rayd {
 
@@ -829,7 +830,9 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
         miss_sbt_index.index(),
     };
 
-    OptixHitObjectField fields[] {
+    constexpr std::size_t kSceneHitObjectFieldCount =
+        static_cast<std::size_t>(shared::optix::SceneHitObjectFieldSlot::Count);
+    OptixHitObjectField fields[kSceneHitObjectFieldCount] {
         OptixHitObjectField::IsHit,
         OptixHitObjectField::RayTMax,
         OptixHitObjectField::Attribute0,
@@ -837,11 +840,11 @@ OptixIntersection OptixScene::intersect(const RayT<Detached> &ray, MaskT<Detache
         OptixHitObjectField::PrimitiveIndex,
         OptixHitObjectField::InstanceId,
     };
-    uint32_t hitobject_out[6];
+    uint32_t hitobject_out[kSceneHitObjectFieldCount];
 
     jit_optix_ray_trace(sizeof(trace_args) / sizeof(uint32_t),
                         trace_args,
-                        6,
+                        static_cast<uint32_t>(kSceneHitObjectFieldCount),
                         fields,
                         hitobject_out,
                         0, 0, 0,

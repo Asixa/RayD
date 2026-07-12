@@ -2,10 +2,12 @@
 
 #include <cstdint>
 
+#include <rayd/shared/optix/scene_edge_contracts.h>
+
 namespace rayd {
 
 /// Maximum k supported by the OptiX top-k edge intersection program.
-constexpr int EdgeOptixTopKMax = 16;
+constexpr int EdgeOptixTopKMax = shared::optix::EdgeTopKMax;
 
 /// Launch parameters for the OptiX edge-query programs (point / ray / top-k).
 /// Inputs are flat SoA device pointers; \p k selects point vs. top-k semantics.

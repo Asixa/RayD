@@ -21,7 +21,7 @@ class ProjectMetadataTests(unittest.TestCase):
     def test_transitional_wheels_cover_supported_python_and_torch_baseline(self):
         data = tomllib.loads(Path("pyproject.toml").read_text())
         self.assertEqual(data["project"]["requires-python"], ">=3.10,<3.15")
-        self.assertIn("torch>=2.10,<2.11", data["project"]["dependencies"])
+        self.assertIn("torch>=2.10,<2.12", data["project"]["dependencies"])
         self.assertIn("torch==2.10.0", data["build-system"]["requires"])
 
     def test_public_python_source_has_no_obsolete_product_name(self):
@@ -32,13 +32,16 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("_ray" + "dn", source.lower())
 
     def test_stable_abi_slice_avoids_unstable_torch_and_python_apis(self):
-        stable_source = Path("src/stable/camera.cu").read_text(encoding="utf-8")
+        stable_source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(Path("src/stable").glob("*.cu"))
+        )
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
         for forbidden in ("at::", "c10::", "py::", "torch/extension.h", "torch/library.h"):
             self.assertNotIn(forbidden, stable_source)
         self.assertIn("STABLE_TORCH_LIBRARY(rayd_torch_stable", stable_source)
         self.assertIn("TORCH_TARGET_VERSION=0x020a000000000000", cmake)
-        stable_start = cmake.index("add_library(rayd_torch_stable_ops")
+        stable_start = cmake.index("rayd_torch_stable_ops\n        SHARED")
         stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
@@ -54,14 +57,60 @@ class ProjectMetadataTests(unittest.TestCase):
         for symbol in ('"at::"', '"c10::"', '"@at@@"', '"@c10@@"'):
             self.assertIn(symbol, source)
 
-    def test_cuda_fat_binary_covers_witwin_platform_matrix(self):
+    def test_local_cuda_build_targets_native_gpu(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
-        expected = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
-        self.assertIn(f'set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "{expected}")', cmake)
-        self.assertIn(
-            'set(TORCH_CUDA_ARCH_LIST "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX")',
-            cmake,
+        pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(pyproject["tool"]["scikit-build"]["build-dir"], "build/{wheel_tag}")
+        self.assertIn('set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")', cmake)
+        self.assertIn("torch.cuda.get_device_capability()", cmake)
+        self.assertIn("print(f'{major}.{minor}')", cmake)
+        self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
+        self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
+
+        dev_build = Path("scripts/dev_build_native.ps1").read_text(encoding="utf-8")
+        self.assertIn("envs\\witwin3\\python.exe", dev_build)
+        for target in ("rayd_torch_stable_ops", "rayd_torch_legacy_ops", "_C"):
+            self.assertIn(target, dev_build)
+        for artifact in ("_stable_ops*.dll", "_legacy_ops*.dll", "_C*.pyd"):
+            self.assertIn(artifact, dev_build)
+
+        local_build = (Path(__file__).resolve().parents[3] / "scripts" / "build_local.ps1").read_text(
+            encoding="utf-8"
         )
+        for marker in (
+            "CMAKE_BUILD_PARALLEL_LEVEL",
+            'CMAKE_GENERATOR = "Ninja"',
+            "RAYD_CUDA_GENCODE_ARCHES",
+            "CMAKE_CUDA_ARCHITECTURES",
+            "TORCH_CUDA_ARCH_LIST",
+            'build/local-$CudaArch',
+            "VsDevCmd.bat",
+        ):
+            self.assertIn(marker, local_build)
+        self.assertTrue((Path(__file__).resolve().parents[3] / "scripts" / "build_local.cmd").is_file())
+
+    def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
+        root = Path(__file__).resolve().parents[3]
+        expected_cmake = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        expected_torch = "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX"
+        pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
+        stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
+        for workflow in (pypi, stable):
+            self.assertIn(expected_cmake, workflow)
+            self.assertIn(expected_torch, workflow)
+        torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
+            "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
+        )[0]
+        self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
+        self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+
+    def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
+        cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        explicit = cmake.index("if(DEFINED TORCH_CUDA_ARCH_LIST")
+        environment = cmake.index("elseif(DEFINED ENV{TORCH_CUDA_ARCH_LIST}")
+        detection = cmake.index("torch.cuda.get_device_capability()")
+        self.assertLess(explicit, environment)
+        self.assertLess(environment, detection)
 
     def test_multipath_pipeline_uses_current_optix_link_options(self):
         source = Path("src/torch_ext/common/optix_pipeline.cpp").read_text(encoding="utf-8")

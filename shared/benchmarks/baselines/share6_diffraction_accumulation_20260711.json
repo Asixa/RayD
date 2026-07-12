@@ -1,0 +1,76 @@
+{
+  "phase": "Share-6 diffraction accumulation operation core",
+  "date": "2026-07-11",
+  "environment": {
+    "conda": "witwin3",
+    "cuda_toolkit": "12.9",
+    "optix_sdk": "9.1.0",
+    "validation": "source contracts plus direct NVCC PTX compilation; no native host build"
+  },
+  "implementation": {
+    "shared_header": "shared/include/rayd/shared/multipath/diffraction_accumulation_device.cuh",
+    "drjit_adapter": "backends/drjit/src/multipath/diffraction_accumulation.cu",
+    "torch_adapter": "backends/torch/src/torch_ext/diffraction/accum_optix.cu",
+    "shared_owns": [
+      "OptiX payload trace and visibility helpers",
+      "UTD coherent pair math and visibility support",
+      "Keller and suffix reflection connection math",
+      "complete order-1 accumulation operation family",
+      "coherent accumulation operation",
+      "order-2 and order-3 chain accumulation operation"
+    ],
+    "policy_owns": {
+      "drjit": [
+        "contiguous state access",
+        "lane modulo state sampling",
+        "direct scalar atomics"
+      ],
+      "torch": [
+        "strided state access and sample-state indirection",
+        "sample edge weights",
+        "optional staged outputs",
+        "same-cell warp atomics"
+      ]
+    },
+    "params_abi_changed": false,
+    "cmake_changed": false,
+    "entry_names_changed": false,
+    "new_launches": 0,
+    "new_synchronizations": 0,
+    "new_global_buffers": 0
+  },
+  "source_reduction": {
+    "old_drjit_lines": 1823,
+    "old_torch_lines": 2014,
+    "old_combined_lines": 3837,
+    "shared_lines": 1954,
+    "new_drjit_adapter_lines": 265,
+    "new_torch_adapter_lines": 359
+  },
+  "acceptance": {
+    "source_contract": {
+      "command": "python -m unittest tests.test_share6_diffraction_accumulation_device -v",
+      "tests_run": 7,
+      "tests_passed": 7,
+      "tests_failed": 0,
+      "tests_skipped": 0
+    },
+    "drjit_ptx": {
+      "status": "passed",
+      "architecture": "compute_70",
+      "output_bytes": 1652108
+    },
+    "torch_ptx": {
+      "status": "passed",
+      "architecture": "compute_70",
+      "output_bytes": 2578058
+    },
+    "coexistence_tu": {
+      "status": "passed",
+      "source": "tests/native/share6_accumulation_headers_coexist.cu",
+      "output_bytes": 339
+    },
+    "diff_check": "passed",
+    "native_full_build": "deferred to grouped acceptance"
+  }
+}
