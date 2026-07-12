@@ -1,0 +1,35 @@
+{
+  "scope": "edge BVH reproducible launch-count performance gate",
+  "date": "2026-07-11",
+  "environment": "witwin3 source-level validation",
+  "measurement_contract": {
+    "timing_and_memory": "at least five timed samples with raw values, median, and p95",
+    "launch_audit": "one deterministic timing-isolated audit pass",
+    "stages": [
+      "build",
+      "refit",
+      "query_point",
+      "query_finite_ray",
+      "query_infinite_ray"
+    ],
+    "components": [
+      "Dr.Jit kernels with OptiX classified as a subset",
+      "native CUDA kernels",
+      "native CUB operations",
+      "native OptiX launches",
+      "native OptiX acceleration operations"
+    ],
+    "total": "sum of mutually exclusive launch components; Dr.Jit OptiX classification is not double-counted"
+  },
+  "gate": {
+    "policy": "no unexplained per-stage component increase",
+    "candidate_explanation": "increase_explanation",
+    "legacy_baseline": "rejected by default; explicit compatibility flag skips only launch comparisons and emits warnings"
+  },
+  "lightweight_acceptance": {
+    "contract_runner_and_share5_tests": {"passed": 32, "failed": 0},
+    "python_compile": "passed",
+    "json_parse": "passed",
+    "native_benchmark": "deferred until freshly built binaries are available"
+  }
+}

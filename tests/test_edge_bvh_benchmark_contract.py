@@ -3,6 +3,9 @@ import unittest
 
 from tests.performance.edge_bvh_gate import (
     ContractError,
+    LAUNCH_COUNT_FIELDS,
+    LAUNCH_STAGES,
+    LAUNCH_TOTAL_FIELDS,
     PERFORMANCE_METRICS,
     evaluate_gate,
     expected_case_dimensions,
@@ -16,6 +19,22 @@ def summary(unit, scale=1.0):
     return {"unit": unit, "samples": samples, "median": 10.0 * scale, "p95": 11.0 * scale}
 
 
+def launch_audit(count=1):
+    stages = {}
+    for stage in LAUNCH_STAGES:
+        counts = {field: count for field in LAUNCH_COUNT_FIELDS}
+        counts["total_observed_launches"] = count * len(LAUNCH_TOTAL_FIELDS)
+        stages[stage] = counts
+    return {
+        "method": "independent_stable_audit",
+        "timing_isolated": True,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": stages,
+    }
+
+
 def result(matrix):
     cases = []
     for index, dimensions in enumerate(expected_case_dimensions(matrix, "smoke")):
@@ -27,6 +46,7 @@ def result(matrix):
             "case_id": f"smoke-{index:04d}",
             "dimensions": dimensions,
             "performance": performance,
+            "launch_audit": launch_audit(),
             "correctness": {"max_abs_error": 0.0, "max_rel_error": 0.0},
             "ad": {
                 "vjp_max_abs_error": 0.0,
@@ -99,6 +119,11 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
         }.issubset(fields))
         self.assertGreaterEqual(self.matrix["measurement"]["minimum_timed_runs"], 5)
         self.assertEqual(self.matrix["measurement"]["required_statistics"], ["median", "p95"])
+        self.assertEqual(
+            self.matrix["measurement"]["launch_audit"]["method"],
+            "independent_stable_audit",
+        )
+        self.assertTrue(self.matrix["measurement"]["launch_audit"]["timing_isolated"])
 
     def test_valid_result_passes_schema_validation(self):
         payload = result(self.matrix)
@@ -144,6 +169,58 @@ class EdgeBVHBenchmarkContractTests(unittest.TestCase):
         payload["cases"][0]["performance"]["refit_ms"]["median"] = 99.0
         with self.assertRaisesRegex(ContractError, "inconsistent"):
             validate_result(payload, self.matrix)
+
+    def test_launch_audit_requires_all_stages_and_consistent_counts(self):
+        payload = result(self.matrix)
+        del payload["cases"][0]["launch_audit"]["stages"]["query_infinite_ray"]
+        with self.assertRaisesRegex(ContractError, "launch_audit stages are incomplete"):
+            validate_result(payload, self.matrix)
+
+        payload = result(self.matrix)
+        payload["cases"][0]["launch_audit"]["stages"]["build"]["total_observed_launches"] += 1
+        with self.assertRaisesRegex(ContractError, "total_observed_launches is inconsistent"):
+            validate_result(payload, self.matrix)
+
+    def test_legacy_launch_baseline_requires_explicit_compatibility_mode(self):
+        baseline = result(self.matrix)
+        candidate = copy.deepcopy(baseline)
+        for case in baseline["cases"]:
+            del case["launch_audit"]
+        with self.assertRaisesRegex(ContractError, "legacy result"):
+            evaluate_gate(baseline, candidate, self.matrix)
+
+        report = evaluate_gate(
+            baseline,
+            candidate,
+            self.matrix,
+            allow_legacy_launch_baseline=True,
+        )
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(len(report["warnings"]), len(baseline["cases"]))
+
+    def test_unexplained_launch_increase_fails_and_explanation_is_reported(self):
+        baseline = result(self.matrix)
+        candidate = copy.deepcopy(baseline)
+        stage = candidate["cases"][0]["launch_audit"]["stages"]["query_point"]
+        stage["drjit_kernel_launches"] += 1
+        stage["total_observed_launches"] += 1
+        report = evaluate_gate(baseline, candidate, self.matrix)
+        self.assertFalse(report["passed"])
+        self.assertTrue(any(
+            failure["metric"] == "launch_audit.query_point.drjit_kernel_launches"
+            and failure["reason"] == "unexplained launch-count regression"
+            for failure in report["failures"]
+        ))
+
+        stage["increase_explanation"] = "One fused dispatch was split to preserve fixed-winner AD semantics."
+        report = evaluate_gate(baseline, candidate, self.matrix)
+        self.assertTrue(report["passed"], report)
+        comparison = next(
+            item for item in report["comparisons"]
+            if item["metric"] == "launch_audit.query_point.drjit_kernel_launches"
+        )
+        self.assertEqual(comparison["increase"], 1)
+        self.assertTrue(comparison["increase_explanation"])
 
     def test_top_k_is_restricted_to_point_queries(self):
         payload = result(self.matrix)

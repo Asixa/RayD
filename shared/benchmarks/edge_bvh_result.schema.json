@@ -57,6 +57,52 @@
         "p95": {"type": "number", "minimum": 0}
       }
     },
+    "launchCounts": {
+      "description": "Observed launch events. drjit_optix_launches classifies a subset of drjit_kernel_launches and is excluded from total_observed_launches.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "drjit_kernel_launches", "drjit_optix_launches",
+        "native_cuda_kernel_launches", "native_cub_launches",
+        "native_optix_launches", "native_optix_accel_operations",
+        "total_observed_launches"
+      ],
+      "properties": {
+        "drjit_kernel_launches": {"type": "integer", "minimum": 0},
+        "drjit_optix_launches": {"type": "integer", "minimum": 0},
+        "native_cuda_kernel_launches": {"type": "integer", "minimum": 0},
+        "native_cub_launches": {"type": "integer", "minimum": 0},
+        "native_optix_launches": {"type": "integer", "minimum": 0},
+        "native_optix_accel_operations": {"type": "integer", "minimum": 0},
+        "total_observed_launches": {"type": "integer", "minimum": 0},
+        "increase_explanation": {"type": "string", "minLength": 1}
+      }
+    },
+    "launch_audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A deterministic launch-count audit pass isolated from the five-or-more timing and memory samples; it is not a timing statistic.",
+      "required": ["method", "timing_isolated", "runs", "sampling", "state", "stages"],
+      "properties": {
+        "method": {"const": "independent_stable_audit"},
+        "timing_isolated": {"const": true},
+        "runs": {"const": 1},
+        "sampling": {"const": "single_deterministic_pass_not_timing_sample"},
+        "state": {"const": "fresh_scene_build_warm_queries_and_refit"},
+        "stages": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["build", "refit", "query_point", "query_finite_ray", "query_infinite_ray"],
+          "properties": {
+            "build": {"$ref": "#/$defs/launchCounts"},
+            "refit": {"$ref": "#/$defs/launchCounts"},
+            "query_point": {"$ref": "#/$defs/launchCounts"},
+            "query_finite_ray": {"$ref": "#/$defs/launchCounts"},
+            "query_infinite_ray": {"$ref": "#/$defs/launchCounts"}
+          }
+        }
+      }
+    },
     "tolerances": {
       "type": "object",
       "additionalProperties": false,
@@ -90,7 +136,7 @@
     "case": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["case_id", "dimensions", "performance", "correctness", "ad"],
+      "required": ["case_id", "dimensions", "performance", "launch_audit", "correctness", "ad"],
       "properties": {
         "case_id": {"type": "string", "minLength": 1},
         "dimensions": {
@@ -127,6 +173,7 @@
             "cold_create_ms": {"$ref": "#/$defs/summary"}
           }
         },
+        "launch_audit": {"$ref": "#/$defs/launch_audit"},
         "correctness": {
           "type": "object",
           "additionalProperties": false,

@@ -28,6 +28,28 @@ PERFORMANCE_METRICS = {
     "peak_device_memory_bytes": ("bytes", "memory_max_regression"),
     "cold_create_ms": ("ms", "cold_create_max_regression"),
 }
+LAUNCH_STAGES = (
+    "build", "refit", "query_point", "query_finite_ray", "query_infinite_ray",
+)
+LAUNCH_COUNT_FIELDS = (
+    "drjit_kernel_launches",
+    "drjit_optix_launches",
+    "native_cuda_kernel_launches",
+    "native_cub_launches",
+    "native_optix_launches",
+    "native_optix_accel_operations",
+)
+LAUNCH_TOTAL_FIELDS = tuple(
+    field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches"
+)
+LAUNCH_AUDIT_CONTRACT = {
+    "method": "independent_stable_audit",
+    "timing_isolated": True,
+    "runs": 1,
+    "sampling": "single_deterministic_pass_not_timing_sample",
+    "state": "fresh_scene_build_warm_queries_and_refit",
+    "gate": "no_unexplained_component_increase",
+}
 
 
 class ContractError(ValueError):
@@ -96,6 +118,10 @@ def validate_matrix(matrix: dict[str, Any], schema_dir: Path | None = None) -> N
     _require(measurement.get("minimum_timed_runs", 0) >= 5, "at least five timed runs are required")
     _require(measurement.get("required_statistics") == ["median", "p95"], "median and p95 are required")
     _require(measurement.get("gate_statistic") == "median", "the default gate statistic must be median")
+    _require(
+        measurement.get("launch_audit") == LAUNCH_AUDIT_CONTRACT,
+        "launch audit measurement contract does not match the stable independent audit",
+    )
 
     required_environment = matrix.get("required_environment_fields", [])
     _require(len(required_environment) == len(set(required_environment)), "environment fields contain duplicates")
@@ -131,6 +157,11 @@ def validate_matrix(matrix: dict[str, Any], schema_dir: Path | None = None) -> N
         _require(
             summary["properties"]["samples"]["minItems"] == measurement["minimum_timed_runs"],
             "schema and matrix timed-run minimum differ",
+        )
+        launch_audit = schema["$defs"]["launch_audit"]
+        _require(
+            set(launch_audit["properties"]["stages"]["required"]) == set(LAUNCH_STAGES),
+            "schema and matrix launch stages differ",
         )
 
 
@@ -193,7 +224,46 @@ def dimension_key(dimensions: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def validate_result(result: dict[str, Any], matrix: dict[str, Any]) -> None:
+def _validate_launch_audit(audit: Any, case_id: str, allow_missing: bool) -> bool:
+    if audit is None:
+        _require(
+            allow_missing,
+            f"{case_id}.launch_audit is required; this is a legacy result. "
+            "Regenerate it, or use --allow-legacy-launch-baseline only for the baseline.",
+        )
+        return False
+    _require(isinstance(audit, dict), f"{case_id}.launch_audit must be an object")
+    for field in ("method", "timing_isolated", "runs", "sampling", "state"):
+        _require(
+            audit.get(field) == LAUNCH_AUDIT_CONTRACT[field],
+            f"{case_id}.launch_audit.{field} does not match the measurement contract",
+        )
+    stages = audit.get("stages")
+    _require(isinstance(stages, dict) and set(stages) == set(LAUNCH_STAGES), f"{case_id}.launch_audit stages are incomplete")
+    for stage_name, stage in stages.items():
+        _require(isinstance(stage, dict), f"{case_id}.launch_audit.{stage_name} must be an object")
+        allowed = set(LAUNCH_COUNT_FIELDS) | {"total_observed_launches", "increase_explanation"}
+        _require(set(stage).issubset(allowed), f"{case_id}.launch_audit.{stage_name} has unknown fields")
+        _require(set(LAUNCH_COUNT_FIELDS) | {"total_observed_launches"} <= set(stage), f"{case_id}.launch_audit.{stage_name} counts are incomplete")
+        for field in (*LAUNCH_COUNT_FIELDS, "total_observed_launches"):
+            value = stage[field]
+            _require(isinstance(value, int) and not isinstance(value, bool) and value >= 0, f"{case_id}.launch_audit.{stage_name}.{field} must be a non-negative integer")
+        _require(
+            stage["total_observed_launches"] == sum(stage[field] for field in LAUNCH_TOTAL_FIELDS),
+            f"{case_id}.launch_audit.{stage_name}.total_observed_launches is inconsistent",
+        )
+        if "increase_explanation" in stage:
+            explanation = stage["increase_explanation"]
+            _require(isinstance(explanation, str) and explanation.strip(), f"{case_id}.launch_audit.{stage_name}.increase_explanation must be non-empty")
+    return True
+
+
+def validate_result(
+    result: dict[str, Any],
+    matrix: dict[str, Any],
+    *,
+    allow_legacy_launch_audit: bool = False,
+) -> None:
     for key in ("schema_version", "matrix_id", "benchmark", "seed"):
         _require(result.get(key) == matrix[key], f"result.{key} does not match matrix")
     profile_name = result.get("profile")
@@ -238,6 +308,8 @@ def validate_result(result: dict[str, Any], matrix: dict[str, Any]) -> None:
         for metric, (unit, _) in PERFORMANCE_METRICS.items():
             _validate_summary(performance[metric], metric, unit, minimum_runs)
 
+        _validate_launch_audit(case.get("launch_audit"), case_id, allow_legacy_launch_audit)
+
         for group_name in ("correctness", "ad"):
             group = case.get(group_name)
             expected_fields = matrix["tolerances"][group_name]
@@ -264,8 +336,14 @@ def evaluate_gate(
     baseline: dict[str, Any],
     candidate: dict[str, Any],
     matrix: dict[str, Any],
+    *,
+    allow_legacy_launch_baseline: bool = False,
 ) -> dict[str, Any]:
-    validate_result(baseline, matrix)
+    validate_result(
+        baseline,
+        matrix,
+        allow_legacy_launch_audit=allow_legacy_launch_baseline,
+    )
     validate_result(candidate, matrix)
     _require(baseline["profile"] == candidate["profile"], "profiles differ")
     for field in matrix["required_environment_fields"]:
@@ -278,6 +356,7 @@ def evaluate_gate(
 
     failures: list[dict[str, Any]] = []
     comparisons: list[dict[str, Any]] = []
+    warnings: list[str] = []
     gate_statistic = matrix["measurement"]["gate_statistic"]
     for case_id in sorted(baseline_cases):
         base_case = baseline_cases[case_id]
@@ -323,6 +402,34 @@ def evaluate_gate(
             if exceeds_limit:
                 failures.append({**comparison, "reason": "performance regression"})
 
+        baseline_audit = base_case.get("launch_audit")
+        if baseline_audit is None:
+            warning = (
+                "legacy baseline has no launch_audit; launch regression checks were skipped "
+                f"for {case_id}"
+            )
+            warnings.append(warning)
+        else:
+            for stage_name in LAUNCH_STAGES:
+                base_stage = baseline_audit["stages"][stage_name]
+                candidate_stage = candidate_case["launch_audit"]["stages"][stage_name]
+                explanation = candidate_stage.get("increase_explanation")
+                for field in LAUNCH_COUNT_FIELDS:
+                    baseline_value = base_stage[field]
+                    candidate_value = candidate_stage[field]
+                    increased = candidate_value > baseline_value
+                    comparison = {
+                        "case_id": case_id,
+                        "metric": f"launch_audit.{stage_name}.{field}",
+                        "baseline": baseline_value,
+                        "candidate": candidate_value,
+                        "increase": candidate_value - baseline_value,
+                        "increase_explanation": explanation,
+                    }
+                    comparisons.append(comparison)
+                    if increased and explanation is None:
+                        failures.append({**comparison, "reason": "unexplained launch-count regression"})
+
         for group_name in ("correctness", "ad"):
             for field, limit in matrix["tolerances"][group_name].items():
                 value = candidate_case[group_name][field]
@@ -335,7 +442,12 @@ def evaluate_gate(
                         "reason": "tolerance exceeded",
                     })
 
-    return {"passed": not failures, "failures": failures, "comparisons": comparisons}
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "comparisons": comparisons,
+        "warnings": warnings,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -343,10 +455,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", required=True, type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    parser.add_argument(
+        "--allow-legacy-launch-baseline",
+        action="store_true",
+        help="accept a baseline without launch_audit and skip only its launch-count comparisons",
+    )
     args = parser.parse_args(argv)
     try:
         matrix = load_matrix(args.matrix)
-        report = evaluate_gate(load_json(args.baseline), load_json(args.candidate), matrix)
+        report = evaluate_gate(
+            load_json(args.baseline),
+            load_json(args.candidate),
+            matrix,
+            allow_legacy_launch_baseline=args.allow_legacy_launch_baseline,
+        )
     except (ContractError, KeyError, TypeError, OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"passed": False, "validation_error": str(exc)}, indent=2))
         return 2

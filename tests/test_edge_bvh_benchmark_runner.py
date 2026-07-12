@@ -53,6 +53,28 @@ class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
                 "peak_device_memory_bytes": [4.0] * 5,
                 "cold_create_ms": [5.0] * 5,
             },
+            "launch_audit": {
+                "method": "independent_stable_audit",
+                "timing_isolated": True,
+                "runs": 1,
+                "sampling": "single_deterministic_pass_not_timing_sample",
+                "state": "fresh_scene_build_warm_queries_and_refit",
+                "stages": {
+                    stage: {
+                        "drjit_kernel_launches": 1,
+                        "drjit_optix_launches": 0,
+                        "native_cuda_kernel_launches": 2,
+                        "native_cub_launches": 0,
+                        "native_optix_launches": 0,
+                        "native_optix_accel_operations": 0,
+                        "total_observed_launches": 3,
+                    }
+                    for stage in (
+                        "build", "refit", "query_point",
+                        "query_finite_ray", "query_infinite_ray",
+                    )
+                },
+            },
             "correctness": {"max_abs_error": 1e-7, "max_rel_error": 2e-7},
             "ad": {
                 "vjp_max_abs_error": 1e-6,
@@ -64,6 +86,7 @@ class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
         case = aggregate_case(dimensions, sample)
         self.assertEqual(case["case_id"], case_id(dimensions))
         self.assertEqual(case["performance"]["cold_create_ms"]["median"], 5.0)
+        self.assertEqual(case["launch_audit"], sample["launch_audit"])
         self.assertEqual(case["ad"], sample["ad"])
 
 

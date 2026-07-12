@@ -56,7 +56,15 @@
     "required_statistics": ["median", "p95"],
     "gate_statistic": "median",
     "timing": "CUDA events or explicitly synchronized wall time",
-    "nsight_required": false
+    "nsight_required": false,
+    "launch_audit": {
+      "method": "independent_stable_audit",
+      "timing_isolated": true,
+      "runs": 1,
+      "sampling": "single_deterministic_pass_not_timing_sample",
+      "state": "fresh_scene_build_warm_queries_and_refit",
+      "gate": "no_unexplained_component_increase"
+    }
   },
   "required_environment_fields": [
     "gpu_name",

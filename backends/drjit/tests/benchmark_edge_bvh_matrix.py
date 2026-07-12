@@ -50,6 +50,18 @@ MATRIX_PATH = ROOT / "shared" / "benchmarks" / "edge_bvh_matrix.json"
 WORKER_PREFIX = "RAYD_EDGE_BVH_WORKER="
 COLD_PREFIX = "RAYD_EDGE_BVH_COLD="
 
+LAUNCH_COUNT_FIELDS = (
+    "drjit_kernel_launches",
+    "drjit_optix_launches",
+    "native_cuda_kernel_launches",
+    "native_cub_launches",
+    "native_optix_launches",
+    "native_optix_accel_operations",
+)
+LAUNCH_TOTAL_FIELDS = tuple(
+    field for field in LAUNCH_COUNT_FIELDS if field != "drjit_optix_launches"
+)
+
 
 def case_id(dimensions: dict[str, Any]) -> str:
     return "-".join(
@@ -168,6 +180,7 @@ def aggregate_case(dimensions: dict[str, Any], sample: dict[str, Any]) -> dict[s
         "case_id": case_id(dimensions),
         "dimensions": dimensions,
         "performance": performance,
+        "launch_audit": sample["launch_audit"],
         "correctness": sample["correctness"],
         "ad": sample["ad"],
     }
@@ -316,6 +329,101 @@ def _materialize(result: Any, dimensions: dict[str, Any], dr: Any) -> None:
         dr.eval(result.is_valid(), result.distance, result.point, result.edge_point, result.global_edge_id)
 
 
+def _launch_counts(history: list[dict[str, Any]], native: dict[str, Any]) -> dict[str, int]:
+    counts = {
+        "drjit_kernel_launches": len(history),
+        "drjit_optix_launches": sum(bool(entry.get("uses_optix", False)) for entry in history),
+        "native_cuda_kernel_launches": int(native.get("cuda_kernel_launches", 0)),
+        "native_cub_launches": sum(int(native.get(name, 0)) for name in ("cub_reduce", "cub_sort", "cub_scan")),
+        "native_optix_launches": int(native.get("optix_launch", 0)),
+        "native_optix_accel_operations": (
+            int(native.get("optix_accel_build", 0))
+            + int(native.get("optix_accel_compact", 0))
+        ),
+    }
+    counts["total_observed_launches"] = sum(counts[name] for name in LAUNCH_TOTAL_FIELDS)
+    return counts
+
+
+def _audit_stage(
+    operation: Any,
+    dr: Any,
+    rayd: Any,
+    native_stage: str,
+    materialize: Any | None = None,
+) -> tuple[dict[str, int], Any]:
+    """Count launches in one timing-isolated operation using both audit surfaces."""
+    dr.kernel_history_clear()
+    rayd.native_launch_audit_clear()
+    with dr.scoped_set_flag(dr.JitFlag.KernelHistory, True):
+        with dr.scoped_set_flag(dr.JitFlag.LaunchBlocking, True):
+            value = operation()
+            if materialize is not None:
+                materialize(value)
+            dr.sync_thread()
+    history = dr.kernel_history()
+    native = rayd.native_launch_audit().get(native_stage, {})
+    return _launch_counts(history, native), value
+
+
+def _collect_launch_audit(
+    components: list[dict[str, list[Any]]],
+    dimensions: dict[str, Any],
+    query_data: dict[str, list[float]],
+    matrix: dict[str, Any],
+    dr: Any,
+    cuda: Any,
+    rayd: Any,
+) -> dict[str, Any]:
+    build_counts, built = _audit_stage(
+        lambda: _build_scene(components, dimensions["update_mode"] != "static", cuda, rayd),
+        dr,
+        rayd,
+        "build",
+    )
+    scene, mesh_ids = built
+    _apply_mask(scene, dimensions, matrix, cuda, dr)
+
+    stages: dict[str, dict[str, int]] = {"build": build_counts}
+    for query_kind, stage_name in (
+        ("point", "query_point"),
+        ("finite_ray", "query_finite_ray"),
+        ("infinite_ray", "query_infinite_ray"),
+    ):
+        query_dimensions = dict(dimensions, query_kind=query_kind)
+        if query_kind != "point":
+            query_dimensions["top_k"] = 1
+        query = _make_query(query_dimensions, query_data, cuda, rayd)
+        _materialize(_query(scene, query_dimensions, query), query_dimensions, dr)
+        dr.sync_thread()
+        counts, _ = _audit_stage(
+            lambda q=query, d=query_dimensions: _query(scene, d, q),
+            dr,
+            rayd,
+            "unknown",
+            lambda value, d=query_dimensions: _materialize(value, d, dr),
+        )
+        stages[stage_name] = counts
+
+    _measure_refit(scene, mesh_ids, components, dimensions, cuda, dr)
+    _prepare_refit(scene, mesh_ids, components, dimensions, cuda)
+    refit_counts, _ = _audit_stage(
+        scene.sync,
+        dr,
+        rayd,
+        "sync",
+    )
+    stages["refit"] = refit_counts
+    return {
+        "method": "independent_stable_audit",
+        "timing_isolated": True,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": stages,
+    }
+
+
 def _correctness(result: Any, dimensions: dict[str, Any], dr: Any) -> dict[str, float]:
     if dimensions["query_kind"] == "point":
         valid, distance, point, edge_point = result.is_valid, result.distances, result.points, result.edge_points
@@ -441,7 +549,7 @@ def _apply_mask(scene: Any, dimensions: dict[str, Any], matrix: dict[str, Any], 
     dr.sync_thread()
 
 
-def _measure_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any, dr: Any) -> float:
+def _prepare_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any) -> None:
     mode = dimensions["update_mode"]
     fraction = {
         "static": 0.0, "full_refit": 1.0, "dirty_refit_1pct": 0.01,
@@ -454,6 +562,10 @@ def _measure_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, l
             mesh_ids[index],
             cuda.Array3f(data["x"], data["y"], [value + 0.001 for value in data["z"]]),
         )
+
+
+def _measure_refit(scene: Any, mesh_ids: list[int], components: list[dict[str, list[Any]]], dimensions: dict[str, Any], cuda: Any, dr: Any) -> float:
+    _prepare_refit(scene, mesh_ids, components, dimensions, cuda)
     start = time.perf_counter()
     scene.sync()
     dr.sync_thread()
@@ -554,6 +666,9 @@ def collect_case_sample(
             "peak_device_memory_bytes": memory_samples,
             "cold_create_ms": cold_samples,
         },
+        "launch_audit": _collect_launch_audit(
+            components, dimensions, query_data, matrix, dr, cuda, rayd
+        ),
         "correctness": _correctness(result, dimensions, dr),
         "ad": _ad_errors(scene, dimensions, query_data, dr, cuda, ad, rayd),
     }
