@@ -65,6 +65,13 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
         self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
 
+        dev_build = Path("scripts/dev_build_native.ps1").read_text(encoding="utf-8")
+        self.assertIn("envs\\witwin3\\python.exe", dev_build)
+        for target in ("rayd_torch_stable_ops", "rayd_torch_legacy_ops", "_C"):
+            self.assertIn(target, dev_build)
+        for artifact in ("_stable_ops*.dll", "_legacy_ops*.dll", "_C*.pyd"):
+            self.assertIn(artifact, dev_build)
+
     def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
         root = Path(__file__).resolve().parents[3]
         expected_cmake = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
