@@ -10,6 +10,7 @@
 #include <rayd/torch/edge_optix_topk_ptx.h>
 #include <rayd/torch/optix_intersect_ptx.h>
 #include <rayd/torch/reflection_trace_optix_ptx.h>
+#include <rayd/shared/optix/scene_edge_contracts.h>
 
 #include <mutex>
 #include <stdexcept>
@@ -22,16 +23,9 @@ namespace {
 std::mutex context_mutex;
 std::unordered_map<int, OptixDeviceContextEntry> contexts;
 
-struct EmptySbtData {
-};
-
-template <typename T>
-struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) SbtRecord {
-    char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-    T data;
-};
-
-using EmptySbtRecord = SbtRecord<EmptySbtData>;
+static_assert(shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
+static_assert(shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
+using EmptySbtRecord = shared::optix::EmptySbtRecord;
 
 void cuda_check(cudaError_t result, const char *expr) {
     if (result == cudaSuccess)
@@ -132,8 +126,8 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
     pipeline_options.usesMotionBlur = false;
     pipeline_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    pipeline_options.numPayloadValues = 5;
-    pipeline_options.numAttributeValues = 2;
+    pipeline_options.numPayloadValues = shared::optix::SceneIntersectionPayloadCount;
+    pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
     pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
 
@@ -246,15 +240,17 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
         options.usesMotionBlur = false;
         options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
         options.numPayloadValues = payload_count;
-        options.numAttributeValues = 3;
+        options.numAttributeValues = shared::optix::EdgeAttributeCount;
         options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
         options.pipelineLaunchParamsVariableName = "params";
         options.usesPrimitiveTypeFlags =
             static_cast<unsigned int>(OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM);
         return options;
     };
-    OptixPipelineCompileOptions point_ray_options = make_pipeline_options(5);
-    OptixPipelineCompileOptions topk_options = make_pipeline_options(16);
+    OptixPipelineCompileOptions point_ray_options =
+        make_pipeline_options(shared::optix::EdgePointRayPayloadCount);
+    OptixPipelineCompileOptions topk_options =
+        make_pipeline_options(shared::optix::EdgeTopKPayloadCount);
 
     char log[8192] = {};
     size_t log_size = sizeof(log);
@@ -493,8 +489,8 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
     OptixPipelineCompileOptions pipeline_options = {};
     pipeline_options.usesMotionBlur = false;
     pipeline_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
-    pipeline_options.numPayloadValues = 6;
-    pipeline_options.numAttributeValues = 2;
+    pipeline_options.numPayloadValues = shared::optix::TriangleHitPayloadCount;
+    pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
     pipeline_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags =

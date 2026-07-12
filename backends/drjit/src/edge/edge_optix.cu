@@ -4,6 +4,7 @@
 #include <rayd/edge/edge_optix_params.h>
 #include <rayd/shared/contracts.h>
 #include <rayd/shared/edge/edge_distance_math.h>
+#include <rayd/shared/optix/scene_edge_device.cuh>
 
 namespace rayd {
 
@@ -17,8 +18,21 @@ constexpr float kInfiniteRayTMax = 1.0e8f;
 constexpr float kPointProbeTMax = shared::EdgeEpsilon;
 constexpr uint32_t kInvalidEdgeId = shared::InvalidUnsignedId;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
+static __forceinline__ __device__ shared::optix::EdgeGeometrySoAView edge_geometry_view() {
+    return { params.edge_p0_x, params.edge_p0_y, params.edge_p0_z,
+             params.edge_e1_x, params.edge_e1_y, params.edge_e1_z,
+             params.edge_mask, params.edge_count, params.search_radius };
+}
+
+static __forceinline__ __device__ shared::optix::EdgeQuerySoAView edge_query_view() {
+    return { params.query_x, params.query_y, params.query_z,
+             params.ray_dx, params.ray_dy, params.ray_dz, params.ray_tmax,
+             params.active_mask, params.query_count, params.k };
+}
+
+static __forceinline__ __device__ shared::optix::EdgeQueryOutputView edge_output_view() {
+    return { params.out_edge_ids, params.out_distance_sq, params.out_ray_t,
+             params.out_edge_t, params.out_valid };
 }
 
 static __forceinline__ __device__ float3 operator*(float3 a, float s) {
@@ -26,31 +40,31 @@ static __forceinline__ __device__ float3 operator*(float3 a, float s) {
 }
 
 static __forceinline__ __device__ bool is_active(unsigned int query) {
-    return params.active_mask == nullptr || params.active_mask[query] != 0u;
+    return shared::optix::edge_query_active(edge_query_view(), query);
 }
 
 static __forceinline__ __device__ bool edge_visible(unsigned int edge) {
-    return params.edge_mask == nullptr || params.edge_mask[edge] != 0u;
+    return shared::optix::edge_geometry_active(edge_geometry_view(), edge);
 }
 
 static __forceinline__ __device__ float3 load_query_point(unsigned int query) {
-    return make_vec3(params.query_x[query], params.query_y[query], params.query_z[query]);
+    return shared::optix::load_edge_query_origin(edge_query_view(), query);
 }
 
 static __forceinline__ __device__ float3 load_ray_direction(unsigned int query) {
-    return make_vec3(params.ray_dx[query], params.ray_dy[query], params.ray_dz[query]);
+    return shared::optix::load_edge_query_direction(edge_query_view(), query);
 }
 
 static __forceinline__ __device__ float3 load_edge_start(unsigned int edge) {
-    return make_vec3(params.edge_p0_x[edge], params.edge_p0_y[edge], params.edge_p0_z[edge]);
+    return shared::optix::load_edge_start(edge_geometry_view(), edge);
 }
 
 static __forceinline__ __device__ float3 load_edge_vector(unsigned int edge) {
-    return make_vec3(params.edge_e1_x[edge], params.edge_e1_y[edge], params.edge_e1_z[edge]);
+    return shared::optix::load_edge_vector(edge_geometry_view(), edge);
 }
 
 static __forceinline__ __device__ float safe_search_radius() {
-    return fmaxf(params.search_radius, 0.0f);
+    return shared::optix::safe_edge_search_radius(edge_geometry_view());
 }
 
 static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 value) {
@@ -88,15 +102,7 @@ static __forceinline__ __device__ void segment_segment_distance(float3 query_ori
 }
 
 static __forceinline__ __device__ void write_invalid(unsigned int query) {
-    params.out_edge_ids[query] = -1;
-    params.out_distance_sq[query] = 3.4028234663852886e38f;
-    if (params.out_ray_t != nullptr) {
-        params.out_ray_t[query] = 0.0f;
-    }
-    params.out_edge_t[query] = 0.0f;
-    if (params.out_valid != nullptr) {
-        params.out_valid[query] = 0u;
-    }
+    shared::optix::write_invalid_edge_result(edge_output_view(), query);
 }
 
 static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
@@ -126,97 +132,6 @@ static __forceinline__ __device__ void insert_topk_candidate(unsigned int query,
     params.out_edge_ids[base + insert] = edge_id;
     params.out_edge_t[base + insert] = edge_t;
     params.out_valid[base + insert] = 1u;
-}
-
-static __forceinline__ __device__ uint32_t get_topk_payload_id(int slot) {
-    switch (slot) {
-    case 0: return optixGetPayload_0();
-    case 1: return optixGetPayload_1();
-    case 2: return optixGetPayload_2();
-    case 3: return optixGetPayload_3();
-    case 4: return optixGetPayload_4();
-    case 5: return optixGetPayload_5();
-    case 6: return optixGetPayload_6();
-    default: return optixGetPayload_7();
-    }
-}
-
-static __forceinline__ __device__ uint32_t get_topk_payload_distance(int slot) {
-    switch (slot) {
-    case 0: return optixGetPayload_8();
-    case 1: return optixGetPayload_9();
-    case 2: return optixGetPayload_10();
-    case 3: return optixGetPayload_11();
-    case 4: return optixGetPayload_12();
-    case 5: return optixGetPayload_13();
-    case 6: return optixGetPayload_14();
-    default: return optixGetPayload_15();
-    }
-}
-
-static __forceinline__ __device__ void set_topk_payload_slot(int slot,
-                                                             uint32_t edge_id,
-                                                             uint32_t distance_sq) {
-    switch (slot) {
-    case 0:
-        optixSetPayload_0(edge_id);
-        optixSetPayload_8(distance_sq);
-        break;
-    case 1:
-        optixSetPayload_1(edge_id);
-        optixSetPayload_9(distance_sq);
-        break;
-    case 2:
-        optixSetPayload_2(edge_id);
-        optixSetPayload_10(distance_sq);
-        break;
-    case 3:
-        optixSetPayload_3(edge_id);
-        optixSetPayload_11(distance_sq);
-        break;
-    case 4:
-        optixSetPayload_4(edge_id);
-        optixSetPayload_12(distance_sq);
-        break;
-    case 5:
-        optixSetPayload_5(edge_id);
-        optixSetPayload_13(distance_sq);
-        break;
-    case 6:
-        optixSetPayload_6(edge_id);
-        optixSetPayload_14(distance_sq);
-        break;
-    default:
-        optixSetPayload_7(edge_id);
-        optixSetPayload_15(distance_sq);
-        break;
-    }
-}
-
-static __forceinline__ __device__ void insert_topk_payload_candidate(int edge_id,
-                                                                     float distance_sq) {
-    const int k = params.k;
-    if (k <= 0 || k > 8) {
-        return;
-    }
-
-    const uint32_t candidate_distance = __float_as_uint(distance_sq);
-    if (distance_sq >= __uint_as_float(get_topk_payload_distance(k - 1))) {
-        return;
-    }
-
-    int insert = k - 1;
-    while (insert > 0 &&
-           distance_sq < __uint_as_float(get_topk_payload_distance(insert - 1))) {
-        set_topk_payload_slot(insert,
-                              get_topk_payload_id(insert - 1),
-                              get_topk_payload_distance(insert - 1));
-        --insert;
-    }
-
-    set_topk_payload_slot(insert,
-                          static_cast<uint32_t>(edge_id),
-                          candidate_distance);
 }
 
 } // namespace
@@ -302,10 +217,8 @@ extern "C" __global__ void __intersection__edge_topk_point() {
 /// Closest-hit for point queries: publish the winning edge id, distance, and edge parameter to payload.
 extern "C" __global__ void __closesthit__edge_point() {
     const float distance = optixGetRayTmax();
-    optixSetPayload_0(optixGetPrimitiveIndex());
-    optixSetPayload_1(__float_as_uint(distance * distance));
-    optixSetPayload_2(optixGetAttribute_0());
-    optixSetPayload_3(1u);
+    shared::optix::set_edge_point_payload(
+        distance, optixGetPrimitiveIndex(), optixGetAttribute_0());
 }
 
 /// Anyhit for ray queries: keep the nearest edge so far in payload, then ignore the hit to continue.
@@ -326,8 +239,10 @@ extern "C" __global__ void __anyhit__edge_ray() {
 /// global buffer otherwise), then ignore the hit to keep traversing.
 extern "C" __global__ void __anyhit__edge_topk_point() {
     if (params.k <= 8) {
-        insert_topk_payload_candidate(static_cast<int>(optixGetPrimitiveIndex()),
-                                      __uint_as_float(optixGetAttribute_0()));
+        shared::optix::insert_edge_topk_payload_candidate(
+            params.k,
+            static_cast<int>(optixGetPrimitiveIndex()),
+            __uint_as_float(optixGetAttribute_0()));
     } else {
         insert_topk_candidate(optixGetLaunchIndex().x,
                               static_cast<int>(optixGetPrimitiveIndex()),

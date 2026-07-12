@@ -5,6 +5,7 @@
 #include <drjit/complex.h>
 
 #include <rayd/rayd.h>
+#include <rayd/shared/optix/diffraction_contracts.h>
 
 namespace rayd {
 
@@ -22,18 +23,18 @@ struct DfrGrid {
 };
 
 enum DfrStrategyMask {
-    RAYD_DFR_DIRECT = 1 << 0,
-    RAYD_DFR_KELLER = 1 << 1,
-    RAYD_DFR_SUFFIX_REFL = 1 << 2
+    RAYD_DFR_DIRECT = static_cast<int>(shared::optix::DiffractionStrategyBit::Direct),
+    RAYD_DFR_KELLER = static_cast<int>(shared::optix::DiffractionStrategyBit::Keller),
+    RAYD_DFR_SUFFIX_REFL = static_cast<int>(shared::optix::DiffractionStrategyBit::SuffixReflection)
 };
 
 enum DfrSampleSequence {
-    RAYD_DFR_HASH = 0,
-    RAYD_DFR_SOBOL = 1
+    RAYD_DFR_HASH = static_cast<int>(shared::optix::DiffractionSampleSequence::Hash),
+    RAYD_DFR_SOBOL = static_cast<int>(shared::optix::DiffractionSampleSequence::Sobol)
 };
 
 enum DfrReceiverModel {
-    RAYD_DFR_MATCHED_ISO = 0
+    RAYD_DFR_MATCHED_ISO = static_cast<int>(shared::optix::DiffractionReceiverModel::MatchedIsotropic)
 };
 
 /// Options for native diffraction accumulation kernels.

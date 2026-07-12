@@ -216,6 +216,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/scene/optix_intersect.cu
             include/rayd/torch/scene/optix_intersect_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_OPTIX_PTX_HEADER}"
@@ -250,6 +252,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
@@ -283,6 +287,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
@@ -319,6 +325,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/reflection/trace_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"
@@ -341,6 +350,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/visibility_optix.cu"
             -o "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -348,6 +358,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/visibility_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/visibility_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
@@ -379,6 +392,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/epc_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX_HEADER}"
@@ -445,6 +461,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/diffraction/paths_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_PATHS_PTX_HEADER}"
@@ -478,6 +495,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/diffraction/accum_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"

@@ -1,0 +1,48 @@
+{
+  "phase": "Share-4",
+  "group": "Share-2/Share-3/Share-4",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": [
+    "shared scene/edge SBT, payload, attribute, and pipeline compile contracts",
+    "shared reflection trace, segment visibility, and reflection EPC params/result layouts",
+    "shared reflection trace, segment visibility, and reflection EPC OptiX device programs",
+    "shared diffraction enums and common path/output/tape sub-layouts"
+  ],
+  "ownership": {
+    "shared": "POD layouts, payload slots, compile counts, device helpers, and backend-neutral device program bodies",
+    "backend_adapters": "constant params symbols, OptiX entry wrappers, policy differences, host pipeline/SBT, buffers, streams, and exception flags"
+  },
+  "device_policy_boundaries": {
+    "reflection_trace": "Dr.Jit keeps SoA/ray-major/no-tail-clear; Torch keeps AoS/packed/output-layout/tail-clear extensions",
+    "segment_visibility": "Dr.Jit keeps always-enabled any-hit/no out_t write; Torch disables any-hit without ignores and writes out_t",
+    "reflection_epc": "Torch disables any-hit when no ignore list is present; Dr.Jit keeps its previous any-hit behavior"
+  },
+  "ptx_abi": {
+    "reflection_trace": {"params_bytes": 504, "entries_per_backend": 3},
+    "segment_visibility": {"params_bytes": 336, "entries_per_backend": 7},
+    "reflection_epc": {"params_bytes": 496, "entries_per_backend": 6},
+    "drjit_committed_headers_match_generated_sha256": true
+  },
+  "build_acceptance": {
+    "drjit_editable_native_build": "passed",
+    "torch_editable_native_build": "passed",
+    "drjit_default_embedded_ptx_build_all_regeneration_off": "passed",
+    "torch_cuda_architectures": ["sm_120", "compute_120"],
+    "torch_affected_cmake_ptx_targets": {"passed": 3, "failed": 0},
+    "drjit_shared_cuh_wheel_install": "passed"
+  },
+  "test_acceptance": {
+    "share2_share3_share4_static_contracts": {"passed": 38, "failed": 0},
+    "group_drjit_full_runtime_before_final_device_extraction": {"passed": 124, "failed": 0},
+    "group_torch_runtime": {"passed": 47, "failed": 0},
+    "cross_backend_ad_parity": {"passed": 5, "skipped": 1, "failed": 0},
+    "post_extraction_torch_runtime": {"passed": 47, "failed": 0},
+    "post_extraction_drjit_default_ptx_runtime": {"passed": 28, "failed": 0}
+  },
+  "known_boundaries": [
+    "diffraction uses shared enums and validated common sub-layouts while backend-specific stride/staging outer params remain adapters",
+    "reflection and diffraction accumulation operation bodies remain scheduled for Share-6",
+    "scene/edge device programs share contracts and device helpers while tiered Torch and Dr.Jit hit-object adapters remain backend-specific"
+  ]
+}

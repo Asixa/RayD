@@ -39,7 +39,7 @@ R"PTX_CHUNK(//
 	// end inline asm
 	setp.lt.s32 	%p2, %r14, 0;
 	ld.const.u32 	%r17, [params+128];
-	setp.le.s32 	%p3, %r17, %r14;
+	setp.ge.s32 	%p3, %r14, %r17;
 	mov.u32 	%r29, 0;
 	or.pred  	%p4, %p2, %p3;
 	@%p4 bra 	$L__BB0_3;
@@ -149,7 +149,7 @@ $L__BB1_2:
 	// end inline asm
 	setp.lt.s32 	%p2, %r21, 0;
 	ld.const.u32 	%r24, [params+128];
-	setp.le.s32 	%p3, %r24, %r21;
+	setp.ge.s32 	%p3, %r21, %r24;
 	mov.u32 	%r23, 0;
 	or.pred  	%p4, %p2, %p3;
 	mov.u32 	%r29, %r23;
@@ -653,7 +653,7 @@ $L__BB3_46:
 	@%p82 bra 	$L__BB3_29;
 
 	setp.lt.s32 	%p83, %r606, 0;
-	setp.le.s32 	%p84, %r195, %r606;
+	setp.ge.s32 	%p84, %r606, %r195;
 	mov.u32 	%r607, 0;
 	or.pred  	%p85, %p83, %p84;
 	@%p85 bra 	$L__BB3_49;

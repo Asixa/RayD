@@ -5,6 +5,8 @@
 
 #include <drjit-core/optix.h>
 
+#include <rayd/shared/optix/scene_edge_contracts.h>
+
 #include <string>
 
 // Minimal host-side OptiX declarations used by RayD.
@@ -272,17 +274,13 @@ struct OptixHitGroupData {
     int shape_id;      ///< Owning mesh id.
 };
 
-/// Shader binding table record: the OptiX header followed by user payload \p T.
-template <typename T>
-struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) SbtRecord {
-    char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-    T data;
-};
+static_assert(rayd::shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
+static_assert(rayd::shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
 
-/// Shader binding table record carrying only the OptiX header (no payload).
-struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) EmptySbtRecord {
-    char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-};
+template <typename T>
+using SbtRecord = rayd::shared::optix::SbtRecord<T>;
+
+using EmptySbtRecord = rayd::shared::optix::EmptySbtRecord;
 
 using MissSbtRecord = EmptySbtRecord;
 using HitGroupSbtRecord = SbtRecord<OptixHitGroupData>;

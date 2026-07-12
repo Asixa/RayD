@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
+
+#include <rayd/shared/optix/diffraction_contracts.h>
 
 #ifdef __CUDACC__
 #  include <optix.h>
@@ -253,5 +257,73 @@ struct DfrAccumParams {
     int *tape_material_idx;
     float *tape_edge_u;
 };
+
+static_assert(std::is_standard_layout_v<DfrAccumParams>);
+static_assert(std::is_trivially_copyable_v<DfrAccumParams>);
+static_assert(sizeof(int) == sizeof(std::int32_t));
+
+#define RAYD_ASSERT_DFR_GRID(Member, ContractMember)                         \
+    static_assert(offsetof(DfrAccumParams, Member) - offsetof(DfrAccumParams, grid_axis) == \
+                  offsetof(shared::optix::DiffractionGridParams, ContractMember))
+
+RAYD_ASSERT_DFR_GRID(grid_axis, axis);
+RAYD_ASSERT_DFR_GRID(grid_position, position);
+RAYD_ASSERT_DFR_GRID(grid_coord0_min, coord0_min);
+RAYD_ASSERT_DFR_GRID(grid_coord0_max, coord0_max);
+RAYD_ASSERT_DFR_GRID(grid_coord1_min, coord1_min);
+RAYD_ASSERT_DFR_GRID(grid_coord1_max, coord1_max);
+RAYD_ASSERT_DFR_GRID(grid_resolution0, resolution0);
+RAYD_ASSERT_DFR_GRID(grid_resolution1, resolution1);
+RAYD_ASSERT_DFR_GRID(grid_cell_area, cell_area);
+
+#undef RAYD_ASSERT_DFR_GRID
+
+#define RAYD_ASSERT_DFR_ACCUM_OUTPUT(Member, ContractMember)                 \
+    static_assert(offsetof(DfrAccumParams, Member) - offsetof(DfrAccumParams, out_power) == \
+                  offsetof(shared::optix::DiffractionAccumOutputPointers, ContractMember))
+
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_power, power);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_x_re, field_x_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_x_im, field_x_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_y_re, field_y_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_y_im, field_y_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_z_re, field_z_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_field_z_im, field_z_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_count, direct_count);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_keller_count, keller_count);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_suffix_count, suffix_count);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_vis_rejects, visibility_rejects);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_edge_vis_rejects, edge_visibility_rejects);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_utd_rejects, utd_rejects);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_edge_uses, edge_uses);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_x_re, direct_field_x_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_x_im, direct_field_x_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_y_re, direct_field_y_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_y_im, direct_field_y_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_z_re, direct_field_z_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_direct_field_z_im, direct_field_z_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_x_re, multi_field_x_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_x_im, multi_field_x_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_y_re, multi_field_y_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_y_im, multi_field_y_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_z_re, multi_field_z_re);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_field_z_im, multi_field_z_im);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_multi_count, multi_count);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_visibility_reject_count, visibility_reject_count);
+RAYD_ASSERT_DFR_ACCUM_OUTPUT(out_utd_reject_count, utd_reject_count);
+
+#undef RAYD_ASSERT_DFR_ACCUM_OUTPUT
+
+#define RAYD_ASSERT_DFR_ACCUM_TAPE(Member, ContractMember)                   \
+    static_assert(offsetof(DfrAccumParams, Member) - offsetof(DfrAccumParams, tape_active) == \
+                  offsetof(shared::optix::DiffractionAccumTapePointers, ContractMember))
+
+RAYD_ASSERT_DFR_ACCUM_TAPE(tape_active, active);
+RAYD_ASSERT_DFR_ACCUM_TAPE(tape_state_idx, state_index);
+RAYD_ASSERT_DFR_ACCUM_TAPE(tape_cell, cell);
+RAYD_ASSERT_DFR_ACCUM_TAPE(tape_material_idx, material_index);
+RAYD_ASSERT_DFR_ACCUM_TAPE(tape_edge_u, edge_u);
+
+#undef RAYD_ASSERT_DFR_ACCUM_TAPE
 
 } // namespace rayd

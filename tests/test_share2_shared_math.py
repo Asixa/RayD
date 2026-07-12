@@ -69,18 +69,23 @@ class Share2SharedMathTests(unittest.TestCase):
 
     def test_reflection_trace_callers_use_shared_primitives(self):
         required = (
-            "shared::reflection::orient_normal_against",
-            "shared::reflection::reflect_direction",
-            "shared::reflection::reflect_point_across_plane",
+            "reflection::orient_normal_against",
+            "reflection::reflect_direction",
+            "reflection::reflect_point_across_plane",
         )
+        shared_device = (
+            ROOT / "shared/include/rayd/shared/optix/reflection_trace_device.cuh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", shared_device)
+        for symbol in required:
+            self.assertIn(symbol, shared_device)
+
         for relative in (
             "backends/drjit/src/multipath/reflection_trace.cu",
             "backends/torch/src/torch_ext/reflection/trace_optix.cu",
         ):
             source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", source)
-            for symbol in required:
-                self.assertIn(symbol, source)
+            self.assertIn("<rayd/shared/optix/reflection_trace_device.cuh>", source)
 
 
 if __name__ == "__main__":

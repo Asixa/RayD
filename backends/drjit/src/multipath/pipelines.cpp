@@ -10,6 +10,7 @@
 #include <cuda_runtime_api.h>
 
 #include <rayd/native_launch_audit.h>
+#include <rayd/shared/optix/pipeline_contracts.h>
 
 #include <rayd/multipath/reflection_trace_ptx.h>
 #include <rayd/multipath/reflection_epc_ptx.h>
@@ -150,7 +151,7 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     pipeline_options.traversableGraphFlags =
         OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     pipeline_options.numPayloadValues = config.num_payload_values;
-    pipeline_options.numAttributeValues = 2;
+    pipeline_options.numAttributeValues = shared::optix::TriangleAttributeCount;
     pipeline_options.exceptionFlags = RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS;
     pipeline_options.pipelineLaunchParamsVariableName = "params";
     pipeline_options.usesPrimitiveTypeFlags =
@@ -350,7 +351,7 @@ OptixPipelineConfig reflection_trace_pipeline_config() {
     config.raygen_entries = {"__raygen__reflection_trace"};
     config.miss_entry = "__miss__reflection";
     config.closesthit_entry = "__closesthit__reflection";
-    config.num_payload_values = 6;
+    config.num_payload_values = shared::optix::TriangleHitPayloadCount;
     config.params_size = sizeof(ReflectionTraceParams);
     return config;
 }
@@ -363,7 +364,7 @@ OptixPipelineConfig reflection_epc_pipeline_config() {
     config.miss_entry = "__miss__reflection_epc";
     config.closesthit_entry = "__closesthit__reflection_epc";
     config.anyhit_entry = "__anyhit__reflection_epc";
-    config.num_payload_values = 6;
+    config.num_payload_values = shared::optix::TriangleHitPayloadCount;
     config.params_size = sizeof(ReflEpcParams);
     return config;
 }
@@ -376,7 +377,7 @@ OptixPipelineConfig reflection_epc_direct_pipeline_config() {
     config.miss_entry = "__miss__reflection_epc";
     config.closesthit_entry = "__closesthit__reflection_epc";
     config.anyhit_entry = "__anyhit__reflection_epc";
-    config.num_payload_values = 6;
+    config.num_payload_values = shared::optix::TriangleHitPayloadCount;
     config.params_size = sizeof(ReflEpcParams);
     return config;
 }
@@ -389,7 +390,7 @@ OptixPipelineConfig reflection_epc_direct_primary_pipeline_config() {
     config.miss_entry = "__miss__reflection_epc";
     config.closesthit_entry = "__closesthit__reflection_epc";
     config.anyhit_entry = "__anyhit__reflection_epc";
-    config.num_payload_values = 6;
+    config.num_payload_values = shared::optix::TriangleHitPayloadCount;
     config.params_size = sizeof(ReflEpcParams);
     return config;
 }
@@ -401,7 +402,7 @@ OptixPipelineConfig reflection_accumulation_pipeline_config() {
     config.raygen_entries = {"__raygen__reflection_accumulation"};
     config.miss_entry = "__miss__reflection_accumulation";
     config.closesthit_entry = "__closesthit__reflection_accumulation";
-    config.num_payload_values = 6;
+    config.num_payload_values = shared::optix::TriangleHitPayloadCount;
     config.params_size = sizeof(AccumParams);
     return config;
 }
@@ -417,7 +418,7 @@ OptixPipelineConfig diffraction_accumulation_pipeline_config() {
     };
     config.miss_entry = "__miss__diffraction_accumulation";
     config.closesthit_entry = "__closesthit__diffraction_accumulation";
-    config.num_payload_values = 4;
+    config.num_payload_values = shared::optix::DiffractionPayloadCount;
     config.params_size = sizeof(DfrAccumParams);
     return config;
 }
@@ -513,7 +514,7 @@ OptixPipelineConfig diffraction_paths_pipeline_config() {
     config.raygen_entries = {"__raygen__diffraction_paths_order1"};
     config.miss_entry = "__miss__diffraction_paths";
     config.closesthit_entry = "__closesthit__diffraction_paths";
-    config.num_payload_values = 4;
+    config.num_payload_values = shared::optix::DiffractionPayloadCount;
     config.params_size = sizeof(DfrPathParams);
     return config;
 }
@@ -544,7 +545,7 @@ OptixPipelineConfig segment_visibility_pipeline_config() {
     config.miss_entry = "__miss__segment_visibility";
     config.closesthit_entry = "__closesthit__segment_visibility";
     config.anyhit_entry = "__anyhit__segment_visibility";
-    config.num_payload_values = 3;
+    config.num_payload_values = shared::optix::VisibilityPayloadCount;
     config.params_size = sizeof(SegmentVisibilityParams);
     return config;
 }

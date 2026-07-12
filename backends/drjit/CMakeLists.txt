@@ -520,6 +520,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
             VERBATIM
         )
     else()
@@ -536,6 +539,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
             VERBATIM
         )
     endif()
@@ -607,6 +613,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_EPC_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
             VERBATIM
         )
     else()
@@ -621,6 +630,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_EPC_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
             VERBATIM
         )
     endif()
@@ -782,6 +794,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     else()
@@ -799,6 +812,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     endif()
@@ -871,6 +885,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_PATHS_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     else()
@@ -886,6 +901,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_DIFFRACTION_PATHS_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
             VERBATIM
         )
     endif()
@@ -957,6 +973,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
             VERBATIM
         )
     else()
@@ -971,6 +990,9 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_SEGMENT_VISIBILITY_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
             VERBATIM
         )
     endif()
@@ -1129,6 +1151,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
             VERBATIM
         )
     else()
@@ -1145,6 +1169,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
             VERBATIM
         )
     endif()
@@ -1254,11 +1280,13 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/rayd
     DESTINATION rayd/drjit/include
     FILES_MATCHING
         PATTERN "*.h"
+        PATTERN "*.cuh"
 )
 install(DIRECTORY ${RAYD_SHARED_INCLUDE_DIR}/rayd/shared
     DESTINATION rayd/drjit/include/rayd
     FILES_MATCHING
         PATTERN "*.h"
+        PATTERN "*.cuh"
 )
 
 set_target_properties(_C PROPERTIES
