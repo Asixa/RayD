@@ -48,7 +48,11 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
             source,
             re.compile(r"launch_edge_aabb\([\s\S]+?torch_ctx\.stream\s*\);"),
         )
-        self.assertNotIn("__global__", source)
+        # F1 keeps a Torch-only raw-BVH encoding kernel in this adapter.  The
+        # edge AABB implementation itself must remain exclusively shared.
+        global_kernels = re.findall(r"__global__\s+void\s+(\w+)", source)
+        self.assertEqual(global_kernels, ["encode_raw_bvh_kernel"])
+        self.assertNotIn("compute_edge_aabbs_kernel", source)
         self.assertNotIn("compute_edge_optix_aabbs_gpu", header)
         self.assertIn("shared/src/edge/edge_aabb.cu", cmake)
 

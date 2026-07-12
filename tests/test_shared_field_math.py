@@ -18,14 +18,24 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertNotIn("namespace witwin::channel::native_ext {", types)
 
     def test_accumulation_backends_delegate_diffraction_parameter(self):
+        shared_device = (
+            SHARED / "multipath" / "diffraction_accumulation_device.cuh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_device)
+        self.assertIn("namespace utd = ::rayd::shared::utd;", shared_device)
+        self.assertIn("return utd::first_order_diffraction_parameter(", shared_device)
+
         paths = (
             ROOT / "backends" / "drjit" / "src" / "multipath" / "diffraction_accumulation.cu",
             ROOT / "backends" / "torch" / "src" / "torch_ext" / "diffraction" / "accum_optix.cu",
         )
         for path in paths:
             source = path.read_text(encoding="utf-8")
-            self.assertIn("namespace utd = shared::utd;", source)
-            self.assertIn("return utd::first_order_diffraction_parameter(", source)
+            self.assertIn(
+                "<rayd/shared/multipath/diffraction_accumulation_device.cuh>",
+                source,
+            )
+            self.assertNotIn("first_order_diffraction_parameter", source)
             self.assertNotIn("rotate_around_axis", source)
 
     def test_complex_and_field_scalars_have_one_implementation(self):
@@ -42,13 +52,30 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("<rayd/shared/field_math.h>", torch_compat)
         self.assertNotIn("struct Complex {", torch_compat)
 
-        consumers = (
+        shared_reflection = (
+            SHARED / "multipath" / "reflection_accumulation_device.cuh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection)
+
+        accumulation_adapters = (
             ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_accumulation.cu",
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_epc_field.cu",
             ROOT / "backends" / "torch" / "src" / "torch_ext" / "reflection" / "accum_optix.cu",
+        )
+        for path in accumulation_adapters:
+            source = path.read_text(encoding="utf-8")
+            self.assertIn(
+                "<rayd/shared/multipath/reflection_accumulation_device.cuh>",
+                source,
+            )
+            self.assertNotIn("fresnel_reflection_coefficients", source)
+            self.assertNotIn("kEpsilon0", source)
+            self.assertNotIn("struct Complex {", source)
+
+        epc_consumers = (
+            ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_epc_field.cu",
             ROOT / "backends" / "torch" / "src" / "torch_ext" / "reflection" / "epc_field.cu",
         )
-        for path in consumers:
+        for path in epc_consumers:
             source = path.read_text(encoding="utf-8")
             self.assertIn("fresnel_reflection_coefficients", source)
             self.assertNotIn("kEpsilon0", source)
