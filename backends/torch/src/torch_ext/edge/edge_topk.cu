@@ -11,12 +11,22 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace rayd::torch_backend {
 
 namespace {
 
 constexpr int kThreads = 128;
+
+void cuda_check(cudaError_t result, const char *expr) {
+    if (result == cudaSuccess)
+        return;
+    throw std::runtime_error(
+        std::string("CUDA error in ") + expr + ": " + cudaGetErrorString(result));
+}
 
 __global__ void prepare_topk_queries_kernel(
     const float *__restrict__ point,
@@ -226,7 +236,8 @@ EdgeTopKForwardOutputs edge_topk_forward_cuda(
 
     EdgeTopKForwardOutputs out;
     out.is_valid = at::zeros({query_count, k}, bool_options);
-    out.distances = at::full({query_count, k}, CUDART_INF_F, float_options);
+    out.distances = at::full(
+        {query_count, k}, std::numeric_limits<float>::infinity(), float_options);
     out.points = at::zeros({query_count, k, 3}, float_options);
     out.edge_t = at::zeros({query_count, k}, float_options);
     out.edge_points = at::zeros({query_count, k, 3}, float_options);

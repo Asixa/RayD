@@ -336,9 +336,7 @@ SegmentVisibilityNativeOutputs visibility_forward_native_impl(
 
     SceneCache &scene = get_scene(scene_handle);
     require_scene_device(scene, start, "start");
-    require_scene_device(scene, end_a, "end_a");
-    require_scene_device(scene, end_b, "end_b");
-    require_scene_device(scene, ignore_prim_ids, "ignore_prim_ids");
+    require_scene_device(scene, end, "end");
     require_scene_device(scene, active, "active");
     c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = start.size(0);
@@ -409,6 +407,11 @@ std::vector<at::Tensor> visible_pair_forward_impl(
     require_same_batch(start, end_b, "visible_pair");
 
     SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, start, "start");
+    require_scene_device(scene, end_a, "end_a");
+    require_scene_device(scene, end_b, "end_b");
+    require_scene_device(scene, ignore_prim_ids, "ignore_prim_ids");
+    require_scene_device(scene, active, "active");
     const int64_t ray_count = start.size(0);
     at::Tensor visible_a = at::empty({ray_count}, start.options().dtype(at::kBool));
     at::Tensor visible_b = at::empty({ray_count}, start.options().dtype(at::kBool));

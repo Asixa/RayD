@@ -93,8 +93,12 @@ size_t edge_bvh_bounds_reduce_scratch_bytes(int64_t edge_count, cudaStream_t str
                   "edge_bvh_bounds_reduce_scratch_bytes(): invalid edge count.");
     size_t bytes = 0;
     const rayd::shared::edge::BvhBounds3 empty = {
-        {CUDART_INF_F, CUDART_INF_F, CUDART_INF_F},
-        {-CUDART_INF_F, -CUDART_INF_F, -CUDART_INF_F}};
+        {std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity()},
+        {-std::numeric_limits<float>::infinity(),
+         -std::numeric_limits<float>::infinity(),
+         -std::numeric_limits<float>::infinity()}};
     auto error = cub::DeviceReduce::Reduce(
         nullptr, bytes,
         static_cast<const rayd::shared::edge::BvhBounds3 *>(nullptr),
@@ -113,8 +117,12 @@ void reduce_edge_bvh_bounds_cuda(
     cudaStream_t stream) {
     size_t bytes = static_cast<size_t>(scratch.numel());
     const rayd::shared::edge::BvhBounds3 empty = {
-        {CUDART_INF_F, CUDART_INF_F, CUDART_INF_F},
-        {-CUDART_INF_F, -CUDART_INF_F, -CUDART_INF_F}};
+        {std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity()},
+        {-std::numeric_limits<float>::infinity(),
+         -std::numeric_limits<float>::infinity(),
+         -std::numeric_limits<float>::infinity()}};
     auto error = cub::DeviceReduce::Reduce(
         scratch.data_ptr<uint8_t>(), bytes,
         reinterpret_cast<const rayd::shared::edge::BvhBounds3 *>(packed_bounds.data_ptr<uint8_t>()),
