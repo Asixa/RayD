@@ -69,7 +69,7 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(len(legacy), 1, legacy)
         self.assertEqual(len(compat), 1, compat)
 
-    def test_backend_wheels_include_partial_typing_metadata(self):
+    def test_backend_wheels_include_complete_typing_metadata(self):
         drjit = self.names(self.drjit_wheel)
         torch = self.names(self.torch_wheel)
         self.assertIn("rayd/drjit/py.typed", drjit)
