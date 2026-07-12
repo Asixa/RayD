@@ -122,6 +122,27 @@ endif()
 if(DEFINED ENV{RAYD_CUDA_PTX_ARCH} AND NOT "$ENV{RAYD_CUDA_PTX_ARCH}" STREQUAL "")
     set(RAYD_CUDA_PTX_ARCH "$ENV{RAYD_CUDA_PTX_ARCH}")
 endif()
+if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
+    find_program(RAYD_NVIDIA_SMI_EXECUTABLE NAMES nvidia-smi)
+    if(RAYD_NVIDIA_SMI_EXECUTABLE)
+        execute_process(
+            COMMAND "${RAYD_NVIDIA_SMI_EXECUTABLE}" --query-gpu=compute_cap --format=csv,noheader
+            RESULT_VARIABLE RAYD_NVIDIA_SMI_RESULT
+            OUTPUT_VARIABLE RAYD_NVIDIA_SMI_COMPUTE_CAPABILITIES
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(RAYD_NVIDIA_SMI_RESULT EQUAL 0)
+            string(REGEX MATCH "^[0-9]+\\.[0-9]+" RAYD_LOCAL_COMPUTE_CAPABILITY
+                "${RAYD_NVIDIA_SMI_COMPUTE_CAPABILITIES}")
+            if(NOT RAYD_LOCAL_COMPUTE_CAPABILITY STREQUAL "")
+                string(REPLACE "." "" RAYD_CUDA_GENCODE_ARCHES
+                    "${RAYD_LOCAL_COMPUTE_CAPABILITY}")
+                message(STATUS
+                    "RayD local CUDA architecture: sm_${RAYD_CUDA_GENCODE_ARCHES}")
+            endif()
+        endif()
+    endif()
+endif()
 string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
 set(RAYD_CUDA_GENCODE_FLAGS_LIST "")
 foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
