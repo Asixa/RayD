@@ -30,6 +30,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         for token in (
             "kBvhTreeletMaxLeaves = 7",
             "kBvhTreeletMinPrimitives = 65536",
+            "kBvhTreeletMaxPrimitives = 500000",
             "kBvhTreeletMinSubtreeLeaves = 32",
             "kBvhTreeletCostInflationRatio = 1e-4f",
             "kBvhLeafSize = 4",
@@ -43,6 +44,17 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("shared::edge::kBvhTraversalStackDepth", scene_edge)
+        drjit_build = (ROOT / "backends/drjit/src/edge/edge_bvh.cu").read_text(
+            encoding="utf-8"
+        )
+        torch_build = (
+            ROOT / "backends/torch/src/torch_ext/scene/scene_cache.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("primitive_count <= EdgeBVHTreeletMaxPrimitives", drjit_build)
+        self.assertIn(
+            "primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives",
+            torch_build,
+        )
 
     def test_build_stages_are_shared_and_drjit_is_an_adapter(self):
         header = (SHARED_INCLUDE / "bvh_build.h").read_text(encoding="utf-8")

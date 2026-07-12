@@ -22,6 +22,11 @@ struct BvhBounds3 {
 // compile a different optimizer shape.
 inline constexpr std::int32_t kBvhTreeletMaxLeaves = 7;
 inline constexpr std::int32_t kBvhTreeletMinPrimitives = 65536;
+// The host-prepared GPU treelet pass is verified through 500k primitives. At
+// larger sizes, retain the valid LBVH instead of risking a non-transactional
+// topology rewrite; large-scene treelet support can be raised after a dedicated
+// coverage gate proves primitive preservation.
+inline constexpr std::int32_t kBvhTreeletMaxPrimitives = 500000;
 inline constexpr std::int32_t kBvhTreeletMinSubtreeLeaves = 32;
 inline constexpr float kBvhTreeletCostInflationRatio = 1e-4f;
 inline constexpr std::int32_t kBvhLeafSize = 4;

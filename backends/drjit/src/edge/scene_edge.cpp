@@ -1034,6 +1034,22 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info) {
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
 
+    // The native builder uses independent non-blocking CUDA streams. Materialize
+    // and finish every Dr.Jit producer/initializer before exposing its pointers;
+    // otherwise a late JIT write can overwrite the in-place treelet topology.
+    drjit::eval(edge_p0_,
+                edge_e1_,
+                primitive_bbox_min_,
+                primitive_bbox_max_,
+                node_bbox_min_,
+                node_bbox_max_,
+                left_child_,
+                right_child_,
+                primitive_leaf_node_,
+                build_leaf_primitive,
+                build_is_leaf);
+    drjit::sync_thread();
+
     build_edge_bvh_gpu(
         primitive_count_,
         edge_p0_[0].data(),

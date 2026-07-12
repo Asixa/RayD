@@ -56,6 +56,7 @@ Current edge-query acceleration design:
 Current status notes:
 
 - the treelet path is the best current tradeoff for actual nearest-edge query throughput
+- GPU treelet optimization is enabled for the verified `65,536..500,000`-primitive range; larger builds retain the valid pure LBVH topology until a dedicated large-scene primitive-coverage gate raises that bound
 - the combined public backend is named `optix_drjit`; `hybrid` is a deprecated compatibility alias and is unrelated to the removed HLBVH experiment
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
@@ -64,8 +65,8 @@ Current status notes:
 
 Supported custom-BVH configuration after BVH-3 convergence:
 
-- the product build pipeline is `LBVH + gpu_treelet + overlap + atomic + flat host-prepared levels + host_upload_raw + scalar_arrays`
-- `post_build_strategy=none` is retained only as a benchmark/reference pure-LBVH baseline, not as a public product strategy
+- the product build pipeline is `LBVH + gpu_treelet + overlap + atomic + flat host-prepared levels + host_upload_raw + scalar_arrays` within the verified treelet range, with an automatic pure-LBVH correctness guard above `500,000` primitives
+- explicit `post_build_strategy=none` is retained only as a benchmark/reference pure-LBVH baseline, not as a public product strategy; the automatic large-scene guard is internal and backend-consistent
 - serial build remains a deterministic debug mode only; it has no public performance commitment
 - refit keeps `Auto`, `Full`, and `DirtyAncestors`; `Auto` is the product default while the explicit modes remain calibration and debug controls
 - `PerLevelUploads`, `LevelByLevel`, `HostUploadExact`, `GpuEmit`, and `Packed` were removed from the supported configuration surface after their measured benefits failed the BVH-3 Pareto thresholds

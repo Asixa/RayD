@@ -379,6 +379,7 @@ void build_edge_bvh_gpu(
         const bool treelet_enabled =
             post_build_strategy == EdgeBVHPostBuildStrategy::GpuTreelet &&
             primitive_count >= EdgeBVHTreeletMinPrimitives &&
+            primitive_count <= EdgeBVHTreeletMaxPrimitives &&
             internal_count > 0;
 
         CudaBuffer<Bounds3> primitive_bounds(static_cast<size_t>(primitive_count));

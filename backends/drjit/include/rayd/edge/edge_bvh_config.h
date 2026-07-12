@@ -93,6 +93,7 @@ inline EdgeBVHBuildStreamMode active_edge_bvh_build_stream_mode() {
 // Treelet reoptimization thresholds (GpuTreelet post-build strategy).
 constexpr int EdgeBVHTreeletMaxLeaves = shared::edge::kBvhTreeletMaxLeaves;
 constexpr int EdgeBVHTreeletMinPrimitives = shared::edge::kBvhTreeletMinPrimitives;
+constexpr int EdgeBVHTreeletMaxPrimitives = shared::edge::kBvhTreeletMaxPrimitives;
 constexpr int EdgeBVHTreeletMinSubtreeLeaves = shared::edge::kBvhTreeletMinSubtreeLeaves;
 constexpr float EdgeBVHTreeletCostInflationRatio =
     shared::edge::kBvhTreeletCostInflationRatio;

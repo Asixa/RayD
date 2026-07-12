@@ -1027,7 +1027,8 @@ void ensure_custom_edge_bvh(SceneCache &scene) {
                               bvh.scratch, torch_ctx.stream);
     HostTreeletSchedule treelet_schedule;
     const bool optimize_treelets =
-        primitive_count >= rayd::shared::edge::kBvhTreeletMinPrimitives;
+        primitive_count >= rayd::shared::edge::kBvhTreeletMinPrimitives &&
+        primitive_count <= rayd::shared::edge::kBvhTreeletMaxPrimitives;
     if (primitive_count > 1) {
         rayd::shared::edge::launch_build_radix_tree_async({
             reinterpret_cast<const uint32_t *>(bvh.morton_out.data_ptr<int>()),
