@@ -1,15 +1,47 @@
 import unittest
+from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from backends.drjit.tests.benchmark_edge_bvh_matrix import (
+    WORKER_PREFIX,
     _component_edge_counts,
     _mesh_components,
     aggregate_case,
     case_id,
+    run_worker,
     summarize,
 )
+from tests.performance.edge_bvh_gate import ContractError
 
 
 class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
+    def test_worker_failure_reports_the_case_id(self):
+        dimensions = {
+            "edge_count": 1000,
+            "query_count": 1,
+            "query_kind": "point",
+            "top_k": 1,
+            "update_mode": "static",
+            "mask": "sparse",
+            "distribution": "long_thin",
+        }
+        failed = CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout=f'{WORKER_PREFIX}{{"error":"build failed"}}\n',
+            stderr="",
+        )
+        with patch(
+            "backends.drjit.tests.benchmark_edge_bvh_matrix.subprocess.run",
+            return_value=failed,
+        ):
+            with self.assertRaisesRegex(
+                ContractError,
+                "1000-1-point-1-static-sparse-long_thin: build failed",
+            ):
+                run_worker(dimensions, Path("matrix.json"))
+
     def test_component_partition_preserves_every_full_profile_edge_count(self):
         for edge_count in (1000, 16000, 64000, 111000, 500000, 2000000):
             with self.subTest(edge_count=edge_count):

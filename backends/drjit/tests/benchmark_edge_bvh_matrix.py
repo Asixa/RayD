@@ -161,9 +161,14 @@ def run_worker(dimensions: dict[str, Any], matrix_path: Path) -> dict[str, Any]:
         if line.startswith(WORKER_PREFIX):
             payload = json.loads(line[len(WORKER_PREFIX):])
             if result.returncode != 0 or "error" in payload:
-                raise ContractError(payload.get("error", "worker failed"))
+                raise ContractError(
+                    f"{case_id(dimensions)}: {payload.get('error', 'worker failed')}"
+                )
             return payload
-    raise ContractError(result.stderr.strip() or "worker returned no machine-readable payload")
+    raise ContractError(
+        f"{case_id(dimensions)}: "
+        f"{result.stderr.strip() or 'worker returned no machine-readable payload'}"
+    )
 
 
 def aggregate_case(dimensions: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
