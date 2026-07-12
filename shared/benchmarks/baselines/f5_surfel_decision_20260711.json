@@ -1,0 +1,41 @@
+{
+  "phase": "F5",
+  "date": "2026-07-11",
+  "environment": "source-level decision audit; no native build required",
+  "decision_id": "F5-surfel-backend-scope",
+  "decision": "drjit_only",
+  "stability": "experimental",
+  "evidence": {
+    "drjit_tracked_files": 16,
+    "drjit_tracked_lines": 10248,
+    "drjit_native_lines_excluding_embedded_ptx": 3178,
+    "embedded_ptx_header_bytes": 72068,
+    "focused_tests": 57,
+    "surfel_commits": 10,
+    "torch_implementation_files": 0,
+    "torch_focused_tests": 0,
+    "torch_examples": 0,
+    "confirmed_torch_repository_workflows": 0
+  },
+  "assessment": {
+    "shared_params_and_device_math_possible": true,
+    "shared_host_owner_available": false,
+    "shared_ad_replay_available": false,
+    "torch_port_justified": false,
+    "core_edge_visibility_has_higher_priority": true
+  },
+  "artifacts": [
+    "docs/adr/0001-surfel-remains-drjit-only.md",
+    "shared/contracts/surfel_backend_decision.json",
+    "tests/test_f5_surfel_decision.py"
+  ],
+  "acceptance": {
+    "test_command": "python -m unittest tests.test_f5_surfel_decision -v",
+    "tests_run": 5,
+    "tests_passed": 5,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "native_build_required": false,
+    "public_manifest_files_modified_by_f5": false
+  }
+}
