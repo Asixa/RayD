@@ -14,9 +14,8 @@ extern __constant__ AccumParams params;
 
 namespace {
 
-constexpr float kReflEps = 1e-6f;
-constexpr float kEpsilon0 = shared::VacuumPermittivity;
-constexpr float kSpeedOfLight = 299792458.0f;
+constexpr float kReflEps = shared::SmallEpsilon;
+constexpr float kSpeedOfLight = shared::SpeedOfLight;
 
 struct HitPayload {
     unsigned int hit = 0u;
@@ -188,29 +187,19 @@ static __forceinline__ __device__ bool material_reflection_coefficients(int glob
         return false;
     }
 
-    const float eta_r = fmaxf(params.material_eta_r[global_prim], kReflEps);
-    const float sigma = fmaxf(params.material_sigma[global_prim], 0.f);
-    const float gain = params.material_gain[global_prim];
-    const float mu_r = fmaxf(params.material_mu_r[global_prim], kReflEps);
     const float omega = fmaxf(2.f * kPi * kSpeedOfLight /
                                   fmaxf(params.wavelength, kReflEps),
                               kReflEps);
-    const Complex eta = c_make(eta_r, -sigma / (omega * kEpsilon0));
-    const Complex mu = c_make(mu_r, 0.f);
-    const float cos_clamped = fminf(fmaxf(fabsf(cos_theta), kReflEps), 1.f);
-    const float sin2 = fmaxf(0.f, 1.f - cos_clamped * cos_clamped);
-    const Complex a = c_sqrt(c_sub(c_mul(mu, eta), c_make(sin2, 0.f)));
-    const Complex mu_cos = c_make(mu_r * cos_clamped, 0.f);
-    const Complex eta_cos = c_make(eta_r * cos_clamped, eta.i * cos_clamped);
-    r_te = c_scale(c_div(c_sub(mu_cos, a), c_add(mu_cos, a)), gain);
-    r_tm = c_scale(c_div(c_sub(eta_cos, a), c_add(eta_cos, a)), gain);
-    if (!isfinite(r_te.r) || !isfinite(r_te.i)) {
-        r_te = c_make(0.f, 0.f);
-    }
-    if (!isfinite(r_tm.r) || !isfinite(r_tm.i)) {
-        r_tm = c_make(0.f, 0.f);
-    }
-    return c_abs2(r_te) > 0.f || c_abs2(r_tm) > 0.f;
+    return shared::field::fresnel_reflection_coefficients(
+        params.material_eta_r[global_prim],
+        params.material_sigma[global_prim],
+        params.material_mu_r[global_prim],
+        params.material_gain[global_prim],
+        omega,
+        cos_theta,
+        r_te,
+        r_tm,
+        kReflEps);
 }
 
 static __forceinline__ __device__ Complex3 reflect_field_vector(Complex3 field,
@@ -361,8 +350,8 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
     const float3 target_plane =
         axis_plane_point(axis, params.grid_position, coord0, coord1);
     const float unfolded_distance = norm3(target_plane - image_source);
-    const float fspl =
-        params.wavelength / (4.f * kPi * fmaxf(unfolded_distance, kReflEps));
+    const float fspl = shared::field::free_space_amplitude(
+        params.wavelength, unfolded_distance, kReflEps);
     const float cos_theta = fmaxf(fabsf(axis_dir), kReflEps);
     const float geometry_power_scale =
         params.solid_angle_per_ray / fmaxf(params.cell_area, kReflEps) *
@@ -372,7 +361,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
     const float wave_k = fabsf(params.k) > kReflEps
                              ? params.k
                              : (2.f * kPi / fmaxf(params.wavelength, kReflEps));
-    const Complex phase = c_exp_neg_i_product(wave_k, unfolded_distance);
+    const Complex phase = shared::field::propagation_phase(wave_k, unfolded_distance);
     const Complex coeff = c_scale(phase, amplitude_scale);
     Complex3 contribution_field = c3_mul_complex(field, coeff);
 
@@ -564,9 +553,8 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
         }
 
         if (params.stop_threshold > 0.f) {
-            const float fspl =
-                params.wavelength /
-                (4.f * kPi * fmaxf(path_length, kReflEps));
+            const float fspl = shared::field::free_space_amplitude(
+                params.wavelength, path_length, kReflEps);
             if (c3_power(field) * fspl * fspl <= params.stop_threshold) {
                 break;
             }

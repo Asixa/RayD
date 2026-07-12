@@ -15,7 +15,7 @@
 #define UTD_GLOBAL
 #endif
 
-namespace witwin::channel::native_ext {
+namespace rayd::shared::utd {
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -465,4 +465,10 @@ UTD_DINLINE void adj_assemble_diff_operator(
     gFace1Term = cplx_add(gFace1Term, gCoeff);
 }
 
-} // namespace witwin::channel::native_ext
+} // namespace rayd::shared::utd
+
+// Temporary source-compatibility bridge for downstream code that included the
+// original pre-RayD namespace directly.
+namespace witwin::channel {
+namespace native_ext = ::rayd::shared::utd;
+}

@@ -2,6 +2,7 @@
 #include <optix_device.h>
 
 #include <rayd/multipath/reflection_trace_params.h>
+#include <rayd/shared/reflection/reflection_geometry.h>
 
 namespace rayd {
 
@@ -43,6 +44,14 @@ static __forceinline__ __device__ float dot3(float3 a, float3 b) {
 static __forceinline__ __device__ float3 normalize3(float3 v) {
     const float inv_len = rsqrtf(fmaxf(dot3(v, v), 1e-12f));
     return inv_len * v;
+}
+
+static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 value) {
+    return shared::math::make_vec3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ float3 from_shared_vec3(shared::math::Vec3f value) {
+    return make_vec3(value.x, value.y, value.z);
 }
 
 static __forceinline__ __device__ void clear_payload(HitPayload &payload) {
@@ -204,17 +213,18 @@ extern "C" __global__ void __raygen__reflection_trace() {
                                               params.tri_fn_z[global_prim]));
         }
 
-        if (dot3(direction, geo_normal) > 0.0f) {
-            geo_normal = -1.0f * geo_normal;
-        }
+        geo_normal = from_shared_vec3(shared::reflection::orient_normal_against(
+            to_shared_vec3(direction), to_shared_vec3(geo_normal)));
 
         const bool write_image_source =
             params.out_img_x != nullptr &&
             params.out_img_y != nullptr &&
             params.out_img_z != nullptr;
         if (write_image_source) {
-            const float image_distance = dot3(image_source - hit_point, geo_normal);
-            image_source = image_source - 2.0f * image_distance * geo_normal;
+            image_source = from_shared_vec3(shared::reflection::reflect_point_across_plane(
+                to_shared_vec3(image_source),
+                to_shared_vec3(hit_point),
+                to_shared_vec3(geo_normal)));
         }
 
         const int slot = base + bounce;
@@ -260,8 +270,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
             params.out_img_z[slot] = image_source.z;
         }
 
-        const float dot_dn = dot3(direction, geo_normal);
-        direction = direction - 2.0f * dot_dn * geo_normal;
+        direction = from_shared_vec3(shared::reflection::reflect_direction(
+            to_shared_vec3(direction), to_shared_vec3(geo_normal)));
         origin = hit_point + kRayBias * direction;
         bounce_count = bounce + 1;
     }

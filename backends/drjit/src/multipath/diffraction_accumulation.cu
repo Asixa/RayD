@@ -281,7 +281,7 @@ static __forceinline__ __device__ bool grid_cell_from_point(float3 point, int &c
 }
 
 
-namespace utd = witwin::channel::native_ext;
+namespace utd = shared::utd;
 
 static __forceinline__ __device__ float first_order_diffraction_parameter(float3 source, float3 target, float3 edge_origin, float3 edge_dir);
 
@@ -767,50 +767,16 @@ static __forceinline__ __device__ bool suffix_reflection_connection(float3 diff_
     return true;
 }
 
-static __forceinline__ __device__ float3 rotate_around_axis(float3 value,
-                                                            float3 axis,
-                                                            float angle) {
-    const float c = cosf(angle);
-    const float s = sinf(angle);
-    return c * value + s * cross3(axis, value) +
-           (1.f - c) * dot3(axis, value) * axis;
-}
-
 static __forceinline__ __device__ float first_order_diffraction_parameter(
     float3 source,
     float3 target,
     float3 edge_origin,
     float3 edge_dir) {
-    const float3 zeta = normalize3(edge_dir);
-    const float3 target_offset = target - edge_origin;
-    const float3 source_offset = source - edge_origin;
-    const float3 target_projection = dot3(target_offset, zeta) * zeta;
-    const float3 source_projection = dot3(source_offset, zeta) * zeta;
-    const float3 target_radial = target_offset - target_projection;
-    const float3 source_radial = source_offset - source_projection;
-    const float target_radial_norm = norm3(target_radial);
-    const float source_radial_norm = norm3(source_radial);
-    const float3 v1 = (1.f / fmaxf(target_radial_norm, kSmallEps)) * target_radial;
-    const float3 v2 = (1.f / fmaxf(source_radial_norm, kSmallEps)) * source_radial;
-    const float theta = kPi - acosf(fminf(fmaxf(dot3(v1, v2), -1.f), 1.f));
-
-    const float3 raw_rotation_axis = cross3(source_radial, target_radial);
-    const float rotation_axis_norm = norm3(raw_rotation_axis);
-    const float3 rotation_axis = rotation_axis_norm > kSmallEps
-        ? (1.f / rotation_axis_norm) * raw_rotation_axis
-        : zeta;
-
-    const float3 coplanar_target =
-        rotate_around_axis(target_offset, rotation_axis, theta);
-    const float3 source_to_target = coplanar_target - source_offset;
-    const float source_to_target_norm = norm3(source_to_target);
-    const float3 u0 =
-        (1.f / fmaxf(source_to_target_norm, kSmallEps)) * source_to_target;
-    const float3 u1 = cross3(source_offset, u0);
-    const float3 u2 = cross3(zeta, u0);
-    const float u2_norm = norm3(u2);
-    const float sign = dot3(u1, u2) < 0.f ? -1.f : 1.f;
-    return sign * norm3(u1) / fmaxf(u2_norm, kSmallEps);
+    return utd::first_order_diffraction_parameter(
+        utd::make_f3(source.x, source.y, source.z),
+        utd::make_f3(target.x, target.y, target.z),
+        utd::make_f3(edge_origin.x, edge_origin.y, edge_origin.z),
+        utd::make_f3(edge_dir.x, edge_dir.y, edge_dir.z));
 }
 
 static __forceinline__ __device__ float diffraction_weight(int state_idx,

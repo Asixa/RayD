@@ -4,6 +4,7 @@
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/edge/optix_params.h>
 #include <rayd/shared/contracts.h>
+#include <rayd/shared/edge/edge_distance_math.h>
 
 namespace rayd::torch_backend {
 
@@ -65,39 +66,20 @@ static __forceinline__ __device__ float tier_search_radius(int tier) {
                                  : safe_search_radius();
 }
 
+static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 value) {
+    return shared::math::make_vec3(value.x, value.y, value.z);
+}
+
 static __forceinline__ __device__ void point_segment_distance(float3 point,
                                                               float3 p0,
                                                               float3 e1,
                                                               float &edge_t,
                                                               float &distance_sq) {
-    const float edge_length_sq = squared_norm(e1);
-    edge_t = edge_length_sq > 1.0e-7f ? clamp01(dot3(point - p0, e1) / edge_length_sq) : 0.0f;
-    const float3 edge_point = p0 + e1 * edge_t;
-    distance_sq = squared_norm(point - edge_point);
-}
-
-static __forceinline__ __device__ void update_segment_best(float3 query_origin,
-                                                           float3 query_edge,
-                                                           float3 edge_origin,
-                                                           float3 edge_vector,
-                                                           float query_t,
-                                                           float edge_t,
-                                                           bool enabled,
-                                                           float &best_distance_sq,
-                                                           float &best_query_t,
-                                                           float &best_edge_t) {
-    if (!enabled) {
-        return;
-    }
-
-    const float3 query_point = query_origin + query_edge * query_t;
-    const float3 edge_point = edge_origin + edge_vector * edge_t;
-    const float distance_sq = squared_norm(query_point - edge_point);
-    if (distance_sq < best_distance_sq) {
-        best_distance_sq = distance_sq;
-        best_query_t = query_t;
-        best_edge_t = edge_t;
-    }
+    const shared::edge::PointSegmentDistance result =
+        shared::edge::point_segment_distance(
+            to_shared_vec3(point), to_shared_vec3(p0), to_shared_vec3(e1));
+    edge_t = result.edge_parameter;
+    distance_sq = result.squared_distance;
 }
 
 static __forceinline__ __device__ void segment_segment_distance(float3 query_origin,
@@ -107,63 +89,15 @@ static __forceinline__ __device__ void segment_segment_distance(float3 query_ori
                                                                 float &query_t,
                                                                 float &edge_t,
                                                                 float &distance_sq) {
-    const float3 w0 = query_origin - edge_origin;
-    const float3 query_end = query_origin + query_edge;
-    const float3 edge_end = edge_origin + edge_vector;
-
-    const float a = squared_norm(query_edge);
-    const float b = dot3(query_edge, edge_vector);
-    const float c = squared_norm(edge_vector);
-    const float d = dot3(query_edge, w0);
-    const float e = dot3(edge_vector, w0);
-    const float det = a * c - b * b;
-
-    float best_distance_sq = 3.4028234663852886e38f;
-    float best_query_t = 0.0f;
-    float best_edge_t = 0.0f;
-
-    float candidate_edge_t = 0.0f;
-    float candidate_distance_sq = 0.0f;
-    point_segment_distance(query_origin, edge_origin, edge_vector,
-                           candidate_edge_t, candidate_distance_sq);
-    update_segment_best(query_origin, query_edge, edge_origin, edge_vector,
-                        0.0f, candidate_edge_t, true,
-                        best_distance_sq, best_query_t, best_edge_t);
-
-    point_segment_distance(query_end, edge_origin, edge_vector,
-                           candidate_edge_t, candidate_distance_sq);
-    update_segment_best(query_origin, query_edge, edge_origin, edge_vector,
-                        1.0f, candidate_edge_t, true,
-                        best_distance_sq, best_query_t, best_edge_t);
-
-    float candidate_query_t = 0.0f;
-    point_segment_distance(edge_origin, query_origin, query_edge,
-                           candidate_query_t, candidate_distance_sq);
-    update_segment_best(query_origin, query_edge, edge_origin, edge_vector,
-                        candidate_query_t, 0.0f, true,
-                        best_distance_sq, best_query_t, best_edge_t);
-
-    point_segment_distance(edge_end, query_origin, query_edge,
-                           candidate_query_t, candidate_distance_sq);
-    update_segment_best(query_origin, query_edge, edge_origin, edge_vector,
-                        candidate_query_t, 1.0f, true,
-                        best_distance_sq, best_query_t, best_edge_t);
-
-    const bool interior = a > 1.0e-7f && c > 1.0e-7f && fabsf(det) > 1.0e-7f;
-    if (interior) {
-        const float query_t_line = (b * e - c * d) / det;
-        const float edge_t_line = (a * e - b * d) / det;
-        update_segment_best(query_origin, query_edge, edge_origin, edge_vector,
-                            query_t_line,
-                            edge_t_line,
-                            query_t_line >= 0.0f && query_t_line <= 1.0f &&
-                                edge_t_line >= 0.0f && edge_t_line <= 1.0f,
-                            best_distance_sq, best_query_t, best_edge_t);
-    }
-
-    query_t = best_query_t;
-    edge_t = best_edge_t;
-    distance_sq = best_distance_sq;
+    const shared::edge::SegmentSegmentDistance result =
+        shared::edge::segment_segment_distance(
+            to_shared_vec3(query_origin),
+            to_shared_vec3(query_edge),
+            to_shared_vec3(edge_origin),
+            to_shared_vec3(edge_vector));
+    query_t = result.query_parameter;
+    edge_t = result.edge_parameter;
+    distance_sq = result.squared_distance;
 }
 
 static __forceinline__ __device__ void write_invalid(unsigned int query) {

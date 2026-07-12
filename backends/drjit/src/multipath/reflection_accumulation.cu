@@ -3,6 +3,7 @@
 
 #include <rayd/multipath/reflection_accumulation_params.h>
 #include <rayd/shared/contracts.h>
+#include <rayd/shared/field_math.h>
 
 namespace rayd {
 
@@ -15,10 +16,11 @@ namespace {
 constexpr float kTraceTMin = 1e-5f;
 constexpr float kTraceTMax = 1e8f;
 constexpr float kRayBias = 1e-5f;
-constexpr float kSmallEps = 1e-6f;
-constexpr float kEpsilon0 = shared::VacuumPermittivity;
-constexpr float kSpeedOfLight = 299792458.0f;
+constexpr float kSmallEps = shared::SmallEpsilon;
+constexpr float kSpeedOfLight = shared::SpeedOfLight;
 constexpr float kPi = 3.14159265358979323846f;
+
+using namespace shared::field;
 
 struct HitPayload {
     unsigned int hit = 0u;
@@ -27,17 +29,6 @@ struct HitPayload {
     unsigned int bary_v = 0u;
     unsigned int prim = 0u;
     unsigned int instance = 0u;
-};
-
-struct Complex {
-    float r;
-    float i;
-};
-
-struct Complex3 {
-    Complex x;
-    Complex y;
-    Complex z;
 };
 
 static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
@@ -73,121 +64,6 @@ static __forceinline__ __device__ float norm3(float3 v) {
 static __forceinline__ __device__ float3 normalize3(float3 v) {
     const float inv_len = rsqrtf(fmaxf(dot3(v, v), 1e-12f));
     return inv_len * v;
-}
-
-static __forceinline__ __device__ Complex c_make(float r, float i = 0.f) {
-    Complex z;
-    z.r = r;
-    z.i = i;
-    return z;
-}
-
-static __forceinline__ __device__ Complex c_add(Complex a, Complex b) {
-    return c_make(a.r + b.r, a.i + b.i);
-}
-
-static __forceinline__ __device__ Complex c_sub(Complex a, Complex b) {
-    return c_make(a.r - b.r, a.i - b.i);
-}
-
-static __forceinline__ __device__ Complex c_mul(Complex a, Complex b) {
-    return c_make(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
-}
-
-static __forceinline__ __device__ Complex c_scale(Complex a, float s) {
-    return c_make(a.r * s, a.i * s);
-}
-
-static __forceinline__ __device__ Complex c_mul_real(Complex a, float s) {
-    return c_scale(a, s);
-}
-
-static __forceinline__ __device__ Complex c_div(Complex a, Complex b) {
-    const float denom = fmaxf(b.r * b.r + b.i * b.i, 1e-20f);
-    return c_make((a.r * b.r + a.i * b.i) / denom,
-                  (a.i * b.r - a.r * b.i) / denom);
-}
-
-static __forceinline__ __device__ float c_abs2(Complex z) {
-    return z.r * z.r + z.i * z.i;
-}
-
-static __forceinline__ __device__ Complex c_sqrt(Complex z) {
-    const float r = hypotf(z.r, z.i);
-    if (r <= 0.f) {
-        return c_make(0.f, 0.f);
-    }
-    const float real_mag = sqrtf(fmaxf(0.f, 0.5f * (r + z.r)));
-    const float imag_mag = sqrtf(fmaxf(0.f, 0.5f * (r - z.r)));
-    const float imag = copysignf(imag_mag, z.i);
-    return c_make(real_mag, imag);
-}
-
-static __forceinline__ __device__ Complex c_exp_neg_i(float phase) {
-    float s;
-    float c;
-    sincosf(phase, &s, &c);
-    return c_make(c, -s);
-}
-
-static __forceinline__ __device__ Complex c_exp_neg_i_product(float lhs, float rhs) {
-    constexpr double kTwoPi = 6.283185307179586476925286766559;
-    const double reduced = fmod(
-        static_cast<double>(lhs) * static_cast<double>(rhs),
-        kTwoPi);
-    return c_exp_neg_i(static_cast<float>(reduced));
-}
-
-static __forceinline__ __device__ Complex3 c3_zero() {
-    Complex3 v;
-    v.x = c_make(0.f, 0.f);
-    v.y = c_make(0.f, 0.f);
-    v.z = c_make(0.f, 0.f);
-    return v;
-}
-
-static __forceinline__ __device__ Complex3 c3_from_real(float3 value) {
-    Complex3 v;
-    v.x = c_make(value.x, 0.f);
-    v.y = c_make(value.y, 0.f);
-    v.z = c_make(value.z, 0.f);
-    return v;
-}
-
-static __forceinline__ __device__ Complex3 c3_add(Complex3 a, Complex3 b) {
-    Complex3 v;
-    v.x = c_add(a.x, b.x);
-    v.y = c_add(a.y, b.y);
-    v.z = c_add(a.z, b.z);
-    return v;
-}
-
-static __forceinline__ __device__ Complex3 c3_scale_complex(float3 basis, Complex coeff) {
-    Complex3 v;
-    v.x = c_mul_real(coeff, basis.x);
-    v.y = c_mul_real(coeff, basis.y);
-    v.z = c_mul_real(coeff, basis.z);
-    return v;
-}
-
-static __forceinline__ __device__ Complex3 c3_mul_complex(Complex3 value,
-                                                          Complex coeff) {
-    Complex3 v;
-    v.x = c_mul(value.x, coeff);
-    v.y = c_mul(value.y, coeff);
-    v.z = c_mul(value.z, coeff);
-    return v;
-}
-
-static __forceinline__ __device__ Complex c3_dot_real(Complex3 value,
-                                                      float3 basis) {
-    return c_add(c_add(c_mul_real(value.x, basis.x),
-                       c_mul_real(value.y, basis.y)),
-                 c_mul_real(value.z, basis.z));
-}
-
-static __forceinline__ __device__ float c3_power(Complex3 value) {
-    return c_abs2(value.x) + c_abs2(value.y) + c_abs2(value.z);
 }
 
 static __forceinline__ __device__ float3 fallback_axis(float3 direction) {
@@ -351,29 +227,19 @@ static __forceinline__ __device__ bool material_reflection_coefficients(int glob
         return false;
     }
 
-    const float eta_r = fmaxf(params.material_eta_r[global_prim], kSmallEps);
-    const float sigma = fmaxf(params.material_sigma[global_prim], 0.f);
-    const float gain = params.material_gain[global_prim];
-    const float mu_r = fmaxf(params.material_mu_r[global_prim], kSmallEps);
     const float omega = fmaxf(2.f * kPi * kSpeedOfLight /
                                   fmaxf(params.wavelength, kSmallEps),
                               kSmallEps);
-    const Complex eta = c_make(eta_r, -sigma / (omega * kEpsilon0));
-    const Complex mu = c_make(mu_r, 0.f);
-    const float cos_clamped = fminf(fmaxf(fabsf(cos_theta), kSmallEps), 1.f);
-    const float sin2 = fmaxf(0.f, 1.f - cos_clamped * cos_clamped);
-    const Complex a = c_sqrt(c_sub(c_mul(mu, eta), c_make(sin2, 0.f)));
-    const Complex mu_cos = c_make(mu_r * cos_clamped, 0.f);
-    const Complex eta_cos = c_make(eta_r * cos_clamped, eta.i * cos_clamped);
-    r_te = c_scale(c_div(c_sub(mu_cos, a), c_add(mu_cos, a)), gain);
-    r_tm = c_scale(c_div(c_sub(eta_cos, a), c_add(eta_cos, a)), gain);
-    if (!isfinite(r_te.r) || !isfinite(r_te.i)) {
-        r_te = c_make(0.f, 0.f);
-    }
-    if (!isfinite(r_tm.r) || !isfinite(r_tm.i)) {
-        r_tm = c_make(0.f, 0.f);
-    }
-    return c_abs2(r_te) > 0.f || c_abs2(r_tm) > 0.f;
+    return fresnel_reflection_coefficients(
+        params.material_eta_r[global_prim],
+        params.material_sigma[global_prim],
+        params.material_mu_r[global_prim],
+        params.material_gain[global_prim],
+        omega,
+        cos_theta,
+        r_te,
+        r_tm,
+        kSmallEps);
 }
 
 static __forceinline__ __device__ Complex3 reflect_field_vector(Complex3 field,
@@ -525,7 +391,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
         axis_plane_point(axis, params.grid_position, coord0, coord1);
     const float unfolded_distance = norm3(target_plane - image_source);
     const float fspl =
-        params.wavelength / (4.f * kPi * fmaxf(unfolded_distance, kSmallEps));
+        free_space_amplitude(params.wavelength, unfolded_distance, kSmallEps);
     const float cos_theta = fmaxf(fabsf(axis_dir), kSmallEps);
     const float geometry_power_scale =
         params.solid_angle_per_ray / fmaxf(params.cell_area, kSmallEps) *
@@ -535,7 +401,7 @@ static __forceinline__ __device__ bool accumulate_plane(unsigned int ray_index,
     const float wave_k = fabsf(params.k) > kSmallEps
                              ? params.k
                              : (2.f * kPi / fmaxf(params.wavelength, kSmallEps));
-    const Complex phase = c_exp_neg_i_product(wave_k, unfolded_distance);
+    const Complex phase = propagation_phase(wave_k, unfolded_distance);
     const Complex coeff = c_scale(phase, amplitude_scale);
     Complex3 contribution_field = c3_mul_complex(field, coeff);
 
@@ -709,8 +575,7 @@ extern "C" __global__ void __raygen__reflection_accumulation() {
 
         if (params.stop_threshold > 0.f) {
             const float fspl =
-                params.wavelength /
-                (4.f * kPi * fmaxf(path_length, kSmallEps));
+                free_space_amplitude(params.wavelength, path_length, kSmallEps);
             if (c3_power(field) * fspl * fspl <= params.stop_threshold) {
                 break;
             }

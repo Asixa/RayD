@@ -366,6 +366,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
         VERBATIM
     )
 else()
@@ -382,6 +383,7 @@ else()
             "${RAYD_REFLECTION_EPC_FIELD_CU}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
         VERBATIM
     )
 endif()
@@ -471,6 +473,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_TRACE_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
             VERBATIM
         )
     else()
@@ -485,6 +489,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_TRACE_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
             VERBATIM
         )
     endif()
@@ -641,6 +647,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
             VERBATIM
         )
     else()
@@ -655,6 +662,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
             VERBATIM
         )
     endif()
@@ -1074,6 +1082,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
                 "${RAYD_EDGE_OPTIX_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
             VERBATIM
         )
     else()
@@ -1088,6 +1098,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             DEPENDS
                 "${RAYD_EDGE_OPTIX_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
             VERBATIM
         )
     endif()

@@ -3,10 +3,19 @@
 
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/reflection/trace_params.h>
+#include <rayd/shared/reflection/reflection_geometry.h>
 
 namespace rayd::torch_backend {
 
 namespace {
+
+static __forceinline__ __device__ shared::math::Vec3f to_shared_vec3(float3 value) {
+    return shared::math::make_vec3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ float3 from_shared_vec3(shared::math::Vec3f value) {
+    return make_f3(value.x, value.y, value.z);
+}
 
 struct HitPayload {
     unsigned int hit = 0u;
@@ -242,8 +251,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
             geo_normal = normalize3(tri.fn);
         }
 
-        if (dot3(direction, geo_normal) > 0.0f)
-            geo_normal = -1.0f * geo_normal;
+        geo_normal = from_shared_vec3(shared::reflection::orient_normal_against(
+            to_shared_vec3(direction), to_shared_vec3(geo_normal)));
 
         const bool write_image_source =
             params.out_img != nullptr ||
@@ -251,8 +260,10 @@ extern "C" __global__ void __raygen__reflection_trace() {
              params.out_img_y != nullptr &&
              params.out_img_z != nullptr);
         if (write_image_source) {
-            const float image_distance = dot3(image_source - hit_point, geo_normal);
-            image_source = image_source - 2.0f * image_distance * geo_normal;
+            image_source = from_shared_vec3(shared::reflection::reflect_point_across_plane(
+                to_shared_vec3(image_source),
+                to_shared_vec3(hit_point),
+                to_shared_vec3(geo_normal)));
         }
 
         const int slot = output_slot(ray_index, bounce);
@@ -309,8 +320,8 @@ extern "C" __global__ void __raygen__reflection_trace() {
             }
         }
 
-        const float dot_dn = dot3(direction, geo_normal);
-        direction = direction - 2.0f * dot_dn * geo_normal;
+        direction = from_shared_vec3(shared::reflection::reflect_direction(
+            to_shared_vec3(direction), to_shared_vec3(geo_normal)));
         origin = hit_point + kRayBias * direction;
         bounce_count = bounce + 1;
     }

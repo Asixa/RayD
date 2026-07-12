@@ -17,7 +17,6 @@ namespace rayd::torch_backend {
 namespace {
 
 constexpr float kReflEps = shared::SmallEpsilon;
-constexpr float kEpsilon0 = shared::VacuumPermittivity;
 
 static __forceinline__ __device__ float3 fallback_axis(float3 direction) {
     return fabsf(direction.z) < 0.9f
@@ -47,26 +46,16 @@ static __forceinline__ __device__ bool slot_reflection_coefficients(
     const float sigma_value = params.slot_sigma != nullptr ? params.slot_sigma[slot] : 0.f;
     const float gain = params.slot_gain != nullptr ? params.slot_gain[slot] : 1.f;
     const float mu_r_value = params.slot_mu_r != nullptr ? params.slot_mu_r[slot] : 1.f;
-    const float eta_r = fmaxf(eta_r_value, kReflEps);
-    const float sigma = fmaxf(sigma_value, 0.f);
-    const float mu_r = fmaxf(mu_r_value, kReflEps);
-    const float omega = fmaxf(params.omega, kReflEps);
-    const Complex eta = c_make(eta_r, -sigma / (omega * kEpsilon0));
-    const Complex mu = c_make(mu_r, 0.f);
-    const float cos_clamped = fminf(fmaxf(fabsf(cos_theta), kReflEps), 1.f);
-    const float sin2 = fmaxf(0.f, 1.f - cos_clamped * cos_clamped);
-    const Complex a = c_sqrt(c_sub(c_mul(mu, eta), c_make(sin2, 0.f)));
-    const Complex mu_cos = c_make(mu_r * cos_clamped, 0.f);
-    const Complex eta_cos = c_make(eta.r * cos_clamped, eta.i * cos_clamped);
-    r_te = c_scale(c_div(c_sub(mu_cos, a), c_add(mu_cos, a)), gain);
-    r_tm = c_scale(c_div(c_sub(eta_cos, a), c_add(eta_cos, a)), gain);
-    if (!isfinite(r_te.r) || !isfinite(r_te.i)) {
-        r_te = c_make(0.f, 0.f);
-    }
-    if (!isfinite(r_tm.r) || !isfinite(r_tm.i)) {
-        r_tm = c_make(0.f, 0.f);
-    }
-    return c_abs2(r_te) > 0.f || c_abs2(r_tm) > 0.f;
+    return shared::field::fresnel_reflection_coefficients(
+        eta_r_value,
+        sigma_value,
+        mu_r_value,
+        gain,
+        params.omega,
+        cos_theta,
+        r_te,
+        r_tm,
+        kReflEps);
 }
 
 static __forceinline__ __device__ Complex3 reflect_field_vector(
@@ -350,9 +339,9 @@ __global__ void reflection_epc_field_kernel(ReflEpcFieldParams params) {
     }
 
     const float wave_k = 2.f * kPi / fmaxf(params.wavelength, kReflEps);
-    const Complex phase = c_exp_neg_i_product(wave_k, path_length);
-    const float amplitude =
-        params.wavelength / (4.f * kPi * fmaxf(path_length, kReflEps));
+    const Complex phase = shared::field::propagation_phase(wave_k, path_length);
+    const float amplitude = shared::field::free_space_amplitude(
+        params.wavelength, path_length, kReflEps);
     field = c3_mul_complex(field, c_scale(phase, amplitude));
     const float power = c3_power(field);
     if (!finite_complex3(field) || !isfinite(power)) {

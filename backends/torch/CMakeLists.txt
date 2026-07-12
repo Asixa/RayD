@@ -248,6 +248,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
@@ -279,6 +281,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/edge/optix_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
@@ -305,6 +309,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/trace_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_TRACE_PTX}"
             -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
@@ -312,6 +317,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/reflection/trace_optix.cu
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/trace_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"
@@ -404,6 +411,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             include/rayd/torch/common/math.cuh
             include/rayd/torch/reflection/accum_params.h
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/field_math.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"
