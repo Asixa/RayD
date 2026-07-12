@@ -18,10 +18,12 @@ if _C is not None:
     _compile_support.register()
 
 from .camera import Camera
+from ._capabilities import api_manifest, backend_capabilities
 from .mesh import Mesh
 from .scene import Scene
 from .types import (
     DfrAccum,
+    DfrCoherentAccum,
     DfrGrid,
     DfrMaterial,
     DfrPaths,
@@ -39,32 +41,9 @@ from .types import (
     SegmentChainVisibility,
     SegmentPairVisibility,
 )
-
-
-def backend_capabilities():
-    return {
-        "backend": "torch",
-        "intersect": True,
-        "nearest_edge_point": True,
-        "nearest_edge_ray": True,
-        "nearest_edges_topk": True,
-        "edge_mask": True,
-        "visibility": True,
-        "visibility_pair": True,
-        "visibility_edge": True,
-        "visibility_chain": True,
-        "reflection_trace": True,
-        "reflection_accumulation": True,
-        "diffraction_direct": True,
-        "diffraction_chain": True,
-        "surfel": False,
-        "reverse_ad": True,
-        "forward_ad": True,
-        "torch_compile": True,
-    }
-
 __all__ = [
     "DfrAccum",
+    "DfrCoherentAccum",
     "DfrGrid",
     "DfrMaterial",
     "DfrPaths",
@@ -73,8 +52,8 @@ __all__ = [
     "Intersection",
     "AxialEdgeVisibility",
     "Mesh",
-    "NearestEdgesTopK",
     "NearestPointEdge",
+    "NearestEdgesTopK",
     "NearestRayEdge",
     "Ray",
     "RayFlags",
@@ -84,5 +63,6 @@ __all__ = [
     "SceneGlobalGeometry",
     "SegmentChainVisibility",
     "SegmentPairVisibility",
+    "api_manifest",
     "backend_capabilities",
 ]

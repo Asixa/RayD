@@ -1,0 +1,36 @@
+{
+  "phase": "F2",
+  "group": "Share-5/F1/F2",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "scope": [
+    "shared public API schema and backend capability validation",
+    "core, multipath, surfel, and experimental API classification",
+    "stable, provisional, experimental, and deprecated stability labels",
+    "public options, result, field, and identifier naming conventions",
+    "unambiguous optix_drjit backend name and deprecated hybrid aliases",
+    "partial PEP 561 typing for both backends and public Torch stubs"
+  ],
+  "shared_sources_of_truth": {
+    "operation_contract": "shared/contracts/operations.json v3",
+    "public_api_manifest": "shared/contracts/public_api.json v1",
+    "json_schema": "shared/contracts/public_api.schema.json",
+    "runtime_validation": "backend capability modules embed and expose the validated manifest SHA256"
+  },
+  "alias_contract": {
+    "canonical": "optix_drjit",
+    "deprecated": ["hybrid", "mixed", "optix_ray", "ray_optix"],
+    "hlbvh_relationship": "none"
+  },
+  "typing": {
+    "drjit": "partial py.typed plus package and capability stubs",
+    "torch": "partial py.typed plus package, Scene, Mesh, Camera, capability, result, and option stubs"
+  },
+  "lightweight_acceptance": {
+    "manifest_contract_namespace_tests": {"passed": 18, "failed": 0},
+    "stub_ast_parse": "passed",
+    "capability_python_compile": "passed",
+    "git_diff_check": "passed"
+  },
+  "full_group_acceptance": "deferred to the Share-5/F1/F2 wheel, native build, runtime parity, and performance gate"
+}

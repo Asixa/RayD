@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rayd.dev/schemas/public_api.schema.json",
+  "title": "RayD public API and capability manifest",
+  "type": "object",
+  "required": ["version", "capability_keys", "stability_levels", "naming_conventions", "apis", "aliases", "backends"],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "capability_keys": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "stability_levels": {
+      "type": "array",
+      "items": {"enum": ["stable", "provisional", "experimental", "deprecated"]},
+      "uniqueItems": true
+    },
+    "naming_conventions": {
+      "type": "object",
+      "required": ["options", "results", "fields"],
+      "properties": {
+        "options": {"type": "string", "minLength": 1},
+        "results": {"type": "string", "minLength": 1},
+        "fields": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "apis": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["category", "stability"],
+        "properties": {
+          "category": {"enum": ["core", "multipath", "surfel", "experimental"]},
+          "stability": {"enum": ["stable", "provisional", "experimental", "deprecated"]},
+          "summary": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "aliases": {"type": "object"},
+    "backends": {
+      "type": "object",
+      "required": ["drjit", "torch"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["capabilities", "typing"],
+        "properties": {
+          "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+          "typing": {"enum": ["none", "partial", "complete"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
