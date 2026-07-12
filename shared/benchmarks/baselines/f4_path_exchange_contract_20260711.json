@@ -1,0 +1,36 @@
+{
+  "phase": "F4",
+  "date": "2026-07-11",
+  "environment": "witwin3",
+  "status": "accepted_lightweight",
+  "contract": {
+    "schema": "shared/contracts/path_exchange.json",
+    "json_schema": "shared/contracts/path_exchange.schema.json",
+    "cpp_header": "shared/include/rayd/shared/multipath/path_record.h",
+    "layout": "scalar paths plus flattened offset/count interactions",
+    "id_spaces": "scene-global primitive and edge IDs",
+    "derivatives": "optional tangent or adjoint continuous payload with primal-identical fixed-winner indexing",
+    "excluded_scope": [
+      "scene loader",
+      "integrator",
+      "channel model",
+      "material model",
+      "antenna model",
+      "path solver"
+    ]
+  },
+  "backend_audit": {
+    "drjit_reflection": "global primitive IDs, interaction positions, normals, and segment lengths available",
+    "torch_reflection": "global primitive IDs and segment lengths public; positions and normals remain internal tape",
+    "drjit_diffraction": "tx/rx/order, global edges, positions, delay, and complex field available",
+    "torch_diffraction": "tx/rx/order, global edges, positions, delay, and split real/imag field available",
+    "shared_gaps": ["diffraction interaction normals", "AoD", "AoA", "explicit total length", "explicit path power"]
+  },
+  "checks": {
+    "python_contract_conversion_parity": {"passed": 8, "failed": 0},
+    "host_cpp_layout_smoke": "passed",
+    "backend_adapter_source_identity": "passed",
+    "git_diff_check": "pending_final_workspace_check"
+  },
+  "native_build": "not required; header-only POD contract and pure-Python adapters"
+}
