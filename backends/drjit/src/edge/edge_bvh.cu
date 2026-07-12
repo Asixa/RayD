@@ -28,27 +28,12 @@ inline void require_local(bool condition, const std::string &message) {
 namespace {
 
 
-struct Float3 {
-    float x;
-    float y;
-    float z;
+using Bounds3 = shared::edge::BvhBounds3;
 
-    __host__ __device__ Float3()
-        : x(0.f), y(0.f), z(0.f) { }
-
-    __host__ __device__ Float3(float x_, float y_, float z_)
-        : x(x_), y(y_), z(z_) { }
-};
-
-struct Bounds3 {
-    Float3 min;
-    Float3 max;
-
-    __host__ __device__ static Bounds3 empty() {
-        const float inf = 1e30f;
-        return Bounds3{ Float3(inf, inf, inf), Float3(-inf, -inf, -inf) };
-    }
-};
+inline Bounds3 empty_bounds() {
+    constexpr float inf = 1e30f;
+    return { { inf, inf, inf }, { -inf, -inf, -inf } };
+}
 
 template <typename T>
 class CudaBuffer {
@@ -112,748 +97,25 @@ private:
     size_t count_ = 0;
 };
 
-__host__ __device__ inline Float3 min3(const Float3 &a, const Float3 &b) {
-    return Float3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z));
-}
-
-__host__ __device__ inline Float3 max3(const Float3 &a, const Float3 &b) {
-    return Float3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z));
-}
-
-__host__ __device__ inline Float3 add3(const Float3 &a, const Float3 &b) {
-    return Float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-__host__ __device__ inline Float3 mul3(const Float3 &a, float scale) {
-    return Float3(a.x * scale, a.y * scale, a.z * scale);
-}
-
-__host__ __device__ inline Bounds3 merge_bounds(const Bounds3 &a, const Bounds3 &b) {
-    return Bounds3{ min3(a.min, b.min), max3(a.max, b.max) };
-}
-
 struct BoundsUnion {
     __host__ __device__ Bounds3 operator()(const Bounds3 &a, const Bounds3 &b) const {
-        return merge_bounds(a, b);
+        return {
+            { fminf(a.min.x, b.min.x), fminf(a.min.y, b.min.y), fminf(a.min.z, b.min.z) },
+            { fmaxf(a.max.x, b.max.x), fmaxf(a.max.y, b.max.y), fmaxf(a.max.z, b.max.z) }
+        };
     }
 };
 
-__host__ __device__ inline uint32_t expand_bits_10(uint32_t value) {
-    value &= 0x000003ffu;
-    value = (value | (value << 16)) & 0x030000FFu;
-    value = (value | (value << 8)) & 0x0300F00Fu;
-    value = (value | (value << 4)) & 0x030C30C3u;
-    value = (value | (value << 2)) & 0x09249249u;
-    return value;
-}
 
-__host__ __device__ inline uint32_t morton_code_3d(const Float3 &point, const Bounds3 &scene_bounds) {
-    Float3 normalized(0.5f, 0.5f, 0.5f);
-    const Float3 extent(scene_bounds.max.x - scene_bounds.min.x,
-                        scene_bounds.max.y - scene_bounds.min.y,
-                        scene_bounds.max.z - scene_bounds.min.z);
 
-    if (extent.x > 0.f) {
-        normalized.x = (point.x - scene_bounds.min.x) / extent.x;
-    }
-    if (extent.y > 0.f) {
-        normalized.y = (point.y - scene_bounds.min.y) / extent.y;
-    }
-    if (extent.z > 0.f) {
-        normalized.z = (point.z - scene_bounds.min.z) / extent.z;
-    }
 
-    normalized.x = fminf(fmaxf(normalized.x, 0.f), 1.f);
-    normalized.y = fminf(fmaxf(normalized.y, 0.f), 1.f);
-    normalized.z = fminf(fmaxf(normalized.z, 0.f), 1.f);
 
-    constexpr uint32_t scale = (1u << 10) - 1u;
-    const uint32_t x = static_cast<uint32_t>(normalized.x * static_cast<float>(scale));
-    const uint32_t y = static_cast<uint32_t>(normalized.y * static_cast<float>(scale));
-    const uint32_t z = static_cast<uint32_t>(normalized.z * static_cast<float>(scale));
-    return (expand_bits_10(x) << 2u) |
-           (expand_bits_10(y) << 1u) |
-           (expand_bits_10(z) << 0u);
-}
 
-__device__ inline int clz_u32(uint32_t value) {
-    return value == 0u ? 32 : __clz(value);
-}
 
-__device__ inline Bounds3 load_bounds(int node_index,
-                                      const float *node_bbox_min_x,
-                                      const float *node_bbox_min_y,
-                                      const float *node_bbox_min_z,
-                                      const float *node_bbox_max_x,
-                                      const float *node_bbox_max_y,
-                                      const float *node_bbox_max_z) {
-    return Bounds3{
-        Float3(node_bbox_min_x[node_index], node_bbox_min_y[node_index], node_bbox_min_z[node_index]),
-        Float3(node_bbox_max_x[node_index], node_bbox_max_y[node_index], node_bbox_max_z[node_index])
-    };
-}
 
-__device__ inline void store_bounds(int node_index,
-                                    const Bounds3 &bounds,
-                                    float *node_bbox_min_x,
-                                    float *node_bbox_min_y,
-                                    float *node_bbox_min_z,
-                                    float *node_bbox_max_x,
-                                    float *node_bbox_max_y,
-                                    float *node_bbox_max_z) {
-    node_bbox_min_x[node_index] = bounds.min.x;
-    node_bbox_min_y[node_index] = bounds.min.y;
-    node_bbox_min_z[node_index] = bounds.min.z;
-    node_bbox_max_x[node_index] = bounds.max.x;
-    node_bbox_max_y[node_index] = bounds.max.y;
-    node_bbox_max_z[node_index] = bounds.max.z;
-}
 
-__device__ inline float bbox_cost_inflated(const Bounds3 &bounds, float inflation) {
-    const float dx = fmaxf(bounds.max.x - bounds.min.x, 0.f) + inflation;
-    const float dy = fmaxf(bounds.max.y - bounds.min.y, 0.f) + inflation;
-    const float dz = fmaxf(bounds.max.z - bounds.min.z, 0.f) + inflation;
-    return 2.f * (dx * dy + dx * dz + dy * dz);
-}
 
-__device__ inline bool node_in_treelet(int node_index,
-                                       const int *treelet_nodes,
-                                       int treelet_node_count) {
-    for (int index = 0; index < treelet_node_count; ++index) {
-        if (treelet_nodes[index] == node_index) {
-            return true;
-        }
-    }
-    return false;
-}
 
-__device__ inline void update_internal_node(int node_index,
-                                            const int *left_child,
-                                            const int *right_child,
-                                            float *node_bbox_min_x,
-                                            float *node_bbox_min_y,
-                                            float *node_bbox_min_z,
-                                            float *node_bbox_max_x,
-                                            float *node_bbox_max_y,
-                                            float *node_bbox_max_z,
-                                            float *node_cost,
-                                            float inflation) {
-    const int left_index = left_child[node_index];
-    const int right_index = right_child[node_index];
-    const Bounds3 left_bounds = load_bounds(left_index,
-                                            node_bbox_min_x,
-                                            node_bbox_min_y,
-                                            node_bbox_min_z,
-                                            node_bbox_max_x,
-                                            node_bbox_max_y,
-                                            node_bbox_max_z);
-    const Bounds3 right_bounds = load_bounds(right_index,
-                                             node_bbox_min_x,
-                                             node_bbox_min_y,
-                                             node_bbox_min_z,
-                                             node_bbox_max_x,
-                                             node_bbox_max_y,
-                                             node_bbox_max_z);
-    const Bounds3 merged = merge_bounds(left_bounds, right_bounds);
-    store_bounds(node_index,
-                 merged,
-                 node_bbox_min_x,
-                 node_bbox_min_y,
-                 node_bbox_min_z,
-                 node_bbox_max_x,
-                 node_bbox_max_y,
-                 node_bbox_max_z);
-    node_cost[node_index] =
-        bbox_cost_inflated(merged, inflation) + node_cost[left_index] + node_cost[right_index];
-}
-
-struct TreeletPartitionEntry {
-    uint8_t partition;
-    uint8_t child_slot;
-    int parent_node;
-};
-
-__device__ inline void treelet_optimize_node(int root_index,
-                                             const int *is_leaf,
-                                             int *left_child,
-                                             int *right_child,
-                                             int *parent,
-                                             float *node_bbox_min_x,
-                                             float *node_bbox_min_y,
-                                             float *node_bbox_min_z,
-                                             float *node_bbox_max_x,
-                                             float *node_bbox_max_y,
-                                             float *node_bbox_max_z,
-                                             int *leaf_primitive,
-                                             float *node_cost,
-                                             float inflation) {
-    update_internal_node(root_index,
-                         left_child,
-                         right_child,
-                         node_bbox_min_x,
-                         node_bbox_min_y,
-                         node_bbox_min_z,
-                         node_bbox_max_x,
-                         node_bbox_max_y,
-                         node_bbox_max_z,
-                         node_cost,
-                         inflation);
-
-    int frontier_nodes[EdgeBVHTreeletMaxLeaves];
-    int reusable_nodes[EdgeBVHTreeletMaxLeaves - 2];
-    int treelet_nodes[EdgeBVHTreeletMaxLeaves - 1];
-    int frontier_count = 0;
-    int reusable_count = 0;
-
-    frontier_nodes[frontier_count++] = left_child[root_index];
-    frontier_nodes[frontier_count++] = right_child[root_index];
-
-    while (frontier_count < EdgeBVHTreeletMaxLeaves) {
-        int expand_slot = -1;
-        float max_cost = -1.f;
-        for (int frontier_index = 0; frontier_index < frontier_count; ++frontier_index) {
-            const int node_index = frontier_nodes[frontier_index];
-            if (is_leaf[node_index] > 0) {
-                continue;
-            }
-
-            const Bounds3 bounds = load_bounds(node_index,
-                                               node_bbox_min_x,
-                                               node_bbox_min_y,
-                                               node_bbox_min_z,
-                                               node_bbox_max_x,
-                                               node_bbox_max_y,
-                                               node_bbox_max_z);
-            const float candidate_cost = bbox_cost_inflated(bounds, inflation);
-            if (candidate_cost > max_cost) {
-                max_cost = candidate_cost;
-                expand_slot = frontier_index;
-            }
-        }
-
-        if (expand_slot < 0) {
-            break;
-        }
-
-        const int expanded_node = frontier_nodes[expand_slot];
-        reusable_nodes[reusable_count++] = expanded_node;
-        frontier_nodes[expand_slot] = left_child[expanded_node];
-        frontier_nodes[frontier_count++] = right_child[expanded_node];
-    }
-
-    if (frontier_count < 3) {
-        return;
-    }
-
-    constexpr int MaxTreeletSubsets = 1 << EdgeBVHTreeletMaxLeaves;
-    Bounds3 subset_bounds[MaxTreeletSubsets];
-    float subset_bbox_cost[MaxTreeletSubsets];
-    float optimal_cost[MaxTreeletSubsets];
-    uint8_t optimal_partitions[MaxTreeletSubsets];
-    const uint32_t full_mask = (1u << frontier_count) - 1u;
-
-    for (uint32_t subset = 1u; subset <= full_mask; ++subset) {
-        Bounds3 bounds = Bounds3::empty();
-        for (int frontier_index = 0; frontier_index < frontier_count; ++frontier_index) {
-            if ((subset & (1u << frontier_index)) == 0u) {
-                continue;
-            }
-            const int node_index = frontier_nodes[frontier_index];
-            bounds = merge_bounds(bounds,
-                                  load_bounds(node_index,
-                                              node_bbox_min_x,
-                                              node_bbox_min_y,
-                                              node_bbox_min_z,
-                                              node_bbox_max_x,
-                                              node_bbox_max_y,
-                                              node_bbox_max_z));
-        }
-        subset_bounds[subset] = bounds;
-        subset_bbox_cost[subset] = bbox_cost_inflated(bounds, inflation);
-    }
-
-    for (int frontier_index = 0; frontier_index < frontier_count; ++frontier_index) {
-        const uint32_t subset = 1u << frontier_index;
-        optimal_cost[subset] = node_cost[frontier_nodes[frontier_index]];
-        optimal_partitions[subset] = 0u;
-    }
-
-    for (int subset_size = 2; subset_size <= frontier_count; ++subset_size) {
-        for (uint32_t subset = 1u; subset <= full_mask; ++subset) {
-            if (__popc(subset) != subset_size) {
-                continue;
-            }
-
-            float best_children_cost = 1e30f;
-            uint32_t best_partition = 0u;
-            for (uint32_t left_subset = (subset - 1u) & subset;
-                 left_subset > 0u;
-                 left_subset = (left_subset - 1u) & subset) {
-                const uint32_t right_subset = subset ^ left_subset;
-                if (right_subset == 0u || left_subset > right_subset) {
-                    continue;
-                }
-
-                const float candidate_cost =
-                    optimal_cost[left_subset] + optimal_cost[right_subset];
-                if (candidate_cost < best_children_cost) {
-                    best_children_cost = candidate_cost;
-                    best_partition = left_subset;
-                }
-            }
-
-            if (best_partition == 0u) {
-                best_partition = subset & (~(subset - 1u));
-                best_children_cost =
-                    optimal_cost[best_partition] + optimal_cost[subset ^ best_partition];
-            }
-
-            optimal_cost[subset] = subset_bbox_cost[subset] + best_children_cost;
-            optimal_partitions[subset] = static_cast<uint8_t>(best_partition);
-        }
-    }
-
-    if (!(optimal_cost[full_mask] < node_cost[root_index] - 1e-6f)) {
-        return;
-    }
-
-    const uint8_t left_partition = optimal_partitions[full_mask];
-    const uint8_t right_partition = static_cast<uint8_t>(full_mask ^ left_partition);
-    if (left_partition == 0u || right_partition == 0u) {
-        return;
-    }
-
-    treelet_nodes[0] = root_index;
-    int treelet_node_count = 1;
-    int next_reusable_node = 0;
-    TreeletPartitionEntry stack[2 * EdgeBVHTreeletMaxLeaves];
-    int stack_size = 0;
-    stack[stack_size++] = TreeletPartitionEntry{ right_partition, 1u, root_index };
-    stack[stack_size++] = TreeletPartitionEntry{ left_partition, 0u, root_index };
-
-    while (stack_size > 0) {
-        const TreeletPartitionEntry entry = stack[--stack_size];
-        const uint8_t partition = entry.partition;
-        const int partition_size = __popc(static_cast<uint32_t>(partition));
-        if (partition_size == 1) {
-            const int frontier_index = __ffs(static_cast<unsigned int>(partition)) - 1;
-            const int child_node = frontier_nodes[frontier_index];
-            if (entry.child_slot == 0u) {
-                left_child[entry.parent_node] = child_node;
-            } else {
-                right_child[entry.parent_node] = child_node;
-            }
-            parent[child_node] = entry.parent_node;
-            continue;
-        }
-
-        if (next_reusable_node >= reusable_count) {
-            return;
-        }
-
-        const int internal_node = reusable_nodes[next_reusable_node++];
-        treelet_nodes[treelet_node_count++] = internal_node;
-        if (entry.child_slot == 0u) {
-            left_child[entry.parent_node] = internal_node;
-        } else {
-            right_child[entry.parent_node] = internal_node;
-        }
-        parent[internal_node] = entry.parent_node;
-        leaf_primitive[internal_node] = -1;
-
-        const uint8_t left_subset = optimal_partitions[partition];
-        const uint8_t right_subset = static_cast<uint8_t>(partition ^ left_subset);
-        if (left_subset == 0u || right_subset == 0u) {
-            return;
-        }
-
-        stack[stack_size++] = TreeletPartitionEntry{ right_subset, 1u, internal_node };
-        stack[stack_size++] = TreeletPartitionEntry{ left_subset, 0u, internal_node };
-    }
-
-    int post_nodes[2 * EdgeBVHTreeletMaxLeaves];
-    uint8_t post_states[2 * EdgeBVHTreeletMaxLeaves];
-    int post_size = 0;
-    post_nodes[post_size] = root_index;
-    post_states[post_size++] = 0u;
-    while (post_size > 0) {
-        const int node_index = post_nodes[post_size - 1];
-        const uint8_t state = post_states[post_size - 1];
-        if (state == 0u) {
-            post_states[post_size - 1] = 1u;
-            const int right_index = right_child[node_index];
-            if (is_leaf[right_index] == 0 &&
-                node_in_treelet(right_index, treelet_nodes, treelet_node_count)) {
-                post_nodes[post_size] = right_index;
-                post_states[post_size++] = 0u;
-            }
-            const int left_index = left_child[node_index];
-            if (is_leaf[left_index] == 0 &&
-                node_in_treelet(left_index, treelet_nodes, treelet_node_count)) {
-                post_nodes[post_size] = left_index;
-                post_states[post_size++] = 0u;
-            }
-        } else {
-            --post_size;
-            update_internal_node(node_index,
-                                 left_child,
-                                 right_child,
-                                 node_bbox_min_x,
-                                 node_bbox_min_y,
-                                 node_bbox_min_z,
-                                 node_bbox_max_x,
-                                 node_bbox_max_y,
-                                 node_bbox_max_z,
-                                 node_cost,
-                                 inflation);
-        }
-    }
-}
-
-// All kernels below map one thread to one element (leaf, node, edge, or level
-// entry) via blockIdx.x * blockDim.x + threadIdx.x and early-out past the count.
-
-/// One leaf per thread; sets each leaf node's SAH cost from its inflated bounds.
-__global__ void initialize_leaf_costs_kernel(int primitive_count,
-                                             float *node_bbox_min_x,
-                                             float *node_bbox_min_y,
-                                             float *node_bbox_min_z,
-                                             float *node_bbox_max_x,
-                                             float *node_bbox_max_y,
-                                             float *node_bbox_max_z,
-                                             float *node_cost,
-                                             float inflation) {
-    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (leaf_index >= primitive_count) {
-        return;
-    }
-
-    const int node_index = primitive_count - 1 + leaf_index;
-    node_cost[node_index] =
-        bbox_cost_inflated(load_bounds(node_index,
-                                       node_bbox_min_x,
-                                       node_bbox_min_y,
-                                       node_bbox_min_z,
-                                       node_bbox_max_x,
-                                       node_bbox_max_y,
-                                       node_bbox_max_z),
-                           inflation);
-}
-
-/// One leaf per thread; walks to the root accumulating each internal node's SAH cost
-/// (the last child to arrive at a node continues upward).
-__global__ void initialize_internal_costs_kernel(int primitive_count,
-                                                 const int *left_child,
-                                                 const int *right_child,
-                                                 const int *parent,
-                                                 const float *node_bbox_min_x,
-                                                 const float *node_bbox_min_y,
-                                                 const float *node_bbox_min_z,
-                                                 const float *node_bbox_max_x,
-                                                 const float *node_bbox_max_y,
-                                                 const float *node_bbox_max_z,
-                                                 float *node_cost,
-                                                 int *arrival_counter,
-                                                 float inflation) {
-    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (leaf_index >= primitive_count) {
-        return;
-    }
-
-    int current = parent[primitive_count - 1 + leaf_index];
-    while (current >= 0) {
-        if (atomicAdd(arrival_counter + current, 1) == 0) {
-            return;
-        }
-
-        node_cost[current] =
-            bbox_cost_inflated(load_bounds(current,
-                                           node_bbox_min_x,
-                                           node_bbox_min_y,
-                                           node_bbox_min_z,
-                                           node_bbox_max_x,
-                                           node_bbox_max_y,
-                                           node_bbox_max_z),
-                               inflation) +
-            node_cost[left_child[current]] + node_cost[right_child[current]];
-        __threadfence();
-        current = parent[current];
-    }
-}
-
-/// One node per thread; runs treelet reorganization rooted at each selected node.
-__global__ void optimize_selected_treelets_kernel(int node_count,
-                                                  const int *node_indices,
-                                                  const int *is_leaf,
-                                                  int *left_child,
-                                                  int *right_child,
-                                                  int *parent,
-                                                  float *node_bbox_min_x,
-                                                  float *node_bbox_min_y,
-                                                  float *node_bbox_min_z,
-                                                  float *node_bbox_max_x,
-                                                  float *node_bbox_max_y,
-                                                  float *node_bbox_max_z,
-                                                  int *leaf_primitive,
-                                                  float *node_cost,
-                                                  float inflation) {
-    const int item_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (item_index >= node_count) {
-        return;
-    }
-
-    treelet_optimize_node(node_indices[item_index],
-                          is_leaf,
-                          left_child,
-                          right_child,
-                          parent,
-                          node_bbox_min_x,
-                          node_bbox_min_y,
-                          node_bbox_min_z,
-                          node_bbox_max_x,
-                          node_bbox_max_y,
-                          node_bbox_max_z,
-                          leaf_primitive,
-                          node_cost,
-                          inflation);
-}
-
-/// One edge per thread; computes its AABB (scalar arrays and Bounds3) from the two endpoints.
-__global__ void compute_primitive_bounds_kernel(
-    int primitive_count,
-    const float *edge_p0_x,
-    const float *edge_p0_y,
-    const float *edge_p0_z,
-    const float *edge_e1_x,
-    const float *edge_e1_y,
-    const float *edge_e1_z,
-    float *primitive_bbox_min_x,
-    float *primitive_bbox_min_y,
-    float *primitive_bbox_min_z,
-    float *primitive_bbox_max_x,
-    float *primitive_bbox_max_y,
-    float *primitive_bbox_max_z,
-    Bounds3 *primitive_bounds) {
-    const int primitive = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (primitive >= primitive_count) {
-        return;
-    }
-
-    const Float3 p0(edge_p0_x[primitive], edge_p0_y[primitive], edge_p0_z[primitive]);
-    const Float3 p1(p0.x + edge_e1_x[primitive],
-                    p0.y + edge_e1_y[primitive],
-                    p0.z + edge_e1_z[primitive]);
-    const Float3 bbox_min = min3(p0, p1);
-    const Float3 bbox_max = max3(p0, p1);
-
-    primitive_bbox_min_x[primitive] = bbox_min.x;
-    primitive_bbox_min_y[primitive] = bbox_min.y;
-    primitive_bbox_min_z[primitive] = bbox_min.z;
-    primitive_bbox_max_x[primitive] = bbox_max.x;
-    primitive_bbox_max_y[primitive] = bbox_max.y;
-    primitive_bbox_max_z[primitive] = bbox_max.z;
-    primitive_bounds[primitive] = Bounds3{ bbox_min, bbox_max };
-}
-
-/// One element per thread; fills values[i] = i (identity permutation).
-__global__ void init_sequence_kernel(int count, int *values) {
-    const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (index >= count) {
-        return;
-    }
-    values[index] = index;
-}
-
-/// One edge per thread; computes the 3D Morton code of its centroid within the scene bounds.
-__global__ void compute_morton_codes_kernel(
-    int primitive_count,
-    Bounds3 scene_bounds,
-    const float *primitive_bbox_min_x,
-    const float *primitive_bbox_min_y,
-    const float *primitive_bbox_min_z,
-    const float *primitive_bbox_max_x,
-    const float *primitive_bbox_max_y,
-    const float *primitive_bbox_max_z,
-    uint32_t *morton_codes) {
-    const int primitive = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (primitive >= primitive_count) {
-        return;
-    }
-
-    const Float3 bbox_min(primitive_bbox_min_x[primitive],
-                          primitive_bbox_min_y[primitive],
-                          primitive_bbox_min_z[primitive]);
-    const Float3 bbox_max(primitive_bbox_max_x[primitive],
-                          primitive_bbox_max_y[primitive],
-                          primitive_bbox_max_z[primitive]);
-    morton_codes[primitive] = morton_code_3d(mul3(add3(bbox_min, bbox_max), 0.5f), scene_bounds);
-}
-
-/// Karras LCP metric: shared high-bit count of two Morton codes, with primitive
-/// indices appended as a tiebreaker so equal codes still order deterministically.
-__device__ inline int longest_common_prefix(const uint32_t *morton_codes,
-                                            const int *sorted_primitives,
-                                            int primitive_count,
-                                            int first,
-                                            int second) {
-    if (first < 0 || first >= primitive_count || second < 0 || second >= primitive_count) {
-        return -1;
-    }
-
-    const uint32_t code_first = morton_codes[first];
-    const uint32_t code_second = morton_codes[second];
-    if (code_first != code_second) {
-        return clz_u32(code_first ^ code_second);
-    }
-
-    const uint32_t primitive_first = static_cast<uint32_t>(sorted_primitives[first]);
-    const uint32_t primitive_second = static_cast<uint32_t>(sorted_primitives[second]);
-    return 32 + clz_u32(primitive_first ^ primitive_second);
-}
-
-/// One internal node per thread; builds the Karras radix-tree topology (child and parent links).
-__global__ void build_radix_tree_kernel(
-    int primitive_count,
-    const uint32_t *morton_codes,
-    const int *sorted_primitives,
-    int *left_child,
-    int *right_child,
-    int *parent) {
-    const int node_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (node_index >= primitive_count - 1) {
-        return;
-    }
-
-    const int delta_next =
-        longest_common_prefix(morton_codes, sorted_primitives, primitive_count, node_index, node_index + 1);
-    const int delta_prev =
-        longest_common_prefix(morton_codes, sorted_primitives, primitive_count, node_index, node_index - 1);
-    const int direction = (delta_next - delta_prev) >= 0 ? 1 : -1;
-
-    const int delta_min =
-        longest_common_prefix(morton_codes, sorted_primitives, primitive_count, node_index, node_index - direction);
-    int max_length = 2;
-    while (longest_common_prefix(morton_codes,
-                                 sorted_primitives,
-                                 primitive_count,
-                                 node_index,
-                                 node_index + max_length * direction) > delta_min) {
-        max_length *= 2;
-    }
-
-    int length = 0;
-    int divider = 2;
-    for (int step = max_length / divider; step >= 1;) {
-        if (longest_common_prefix(morton_codes,
-                                  sorted_primitives,
-                                  primitive_count,
-                                  node_index,
-                                  node_index + (length + step) * direction) > delta_min) {
-            length += step;
-        }
-        if (step == 1) {
-            break;
-        }
-        divider *= 2;
-        step = max_length / divider;
-    }
-
-    const int other = node_index + length * direction;
-    const int node_prefix =
-        longest_common_prefix(morton_codes, sorted_primitives, primitive_count, node_index, other);
-
-    int split = 0;
-    divider = 2;
-    for (int step = (length + (divider - 1)) / divider; step >= 1;) {
-        if (longest_common_prefix(morton_codes,
-                                  sorted_primitives,
-                                  primitive_count,
-                                  node_index,
-                                  node_index + (split + step) * direction) > node_prefix) {
-            split += step;
-        }
-        if (step == 1) {
-            break;
-        }
-        divider *= 2;
-        step = (length + (divider - 1)) / divider;
-    }
-
-    const int direction_min = direction < 0 ? direction : 0;
-    const int gamma = node_index + split * direction + direction_min;
-    const int range_min = node_index < other ? node_index : other;
-    const int range_max = node_index > other ? node_index : other;
-    const int leaf_base = primitive_count - 1;
-    const int left_index = range_min == gamma ? leaf_base + gamma : gamma;
-    const int right_index = range_max == gamma + 1 ? leaf_base + gamma + 1 : gamma + 1;
-
-    left_child[node_index] = left_index;
-    right_child[node_index] = right_index;
-    parent[left_index] = node_index;
-    parent[right_index] = node_index;
-}
-
-/// One sorted leaf per thread; writes its leaf, then walks to the root merging bounds
-/// (the last child to arrive at each node continues upward).
-__global__ void finalize_leaves_and_bounds_kernel(
-    int primitive_count,
-    const int *sorted_primitives,
-    const int *parent,
-    const float *primitive_bbox_min_x,
-    const float *primitive_bbox_min_y,
-    const float *primitive_bbox_min_z,
-    const float *primitive_bbox_max_x,
-    const float *primitive_bbox_max_y,
-    const float *primitive_bbox_max_z,
-    const int *left_child,
-    const int *right_child,
-    float *node_bbox_min_x,
-    float *node_bbox_min_y,
-    float *node_bbox_min_z,
-    float *node_bbox_max_x,
-    float *node_bbox_max_y,
-    float *node_bbox_max_z,
-    int *leaf_primitive,
-    int *is_leaf,
-    int *primitive_leaf_node,
-    int *merge_counters) {
-    const int leaf_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (leaf_index >= primitive_count) {
-        return;
-    }
-
-    const int primitive = sorted_primitives[leaf_index];
-    const int node_index = primitive_count - 1 + leaf_index;
-
-    node_bbox_min_x[node_index] = primitive_bbox_min_x[primitive];
-    node_bbox_min_y[node_index] = primitive_bbox_min_y[primitive];
-    node_bbox_min_z[node_index] = primitive_bbox_min_z[primitive];
-    node_bbox_max_x[node_index] = primitive_bbox_max_x[primitive];
-    node_bbox_max_y[node_index] = primitive_bbox_max_y[primitive];
-    node_bbox_max_z[node_index] = primitive_bbox_max_z[primitive];
-    leaf_primitive[node_index] = primitive;
-    is_leaf[node_index] = 1;
-    primitive_leaf_node[primitive] = node_index;
-
-    int current = parent[node_index];
-    while (current >= 0) {
-        // Publish this leaf/internal AABB before announcing it to the parent.
-        __threadfence();
-        if (atomicAdd(merge_counters + current, 1) == 0) {
-            return;
-        }
-
-        const int left = left_child[current];
-        const int right = right_child[current];
-        node_bbox_min_x[current] = fminf(node_bbox_min_x[left], node_bbox_min_x[right]);
-        node_bbox_min_y[current] = fminf(node_bbox_min_y[left], node_bbox_min_y[right]);
-        node_bbox_min_z[current] = fminf(node_bbox_min_z[left], node_bbox_min_z[right]);
-        node_bbox_max_x[current] = fmaxf(node_bbox_max_x[left], node_bbox_max_x[right]);
-        node_bbox_max_y[current] = fmaxf(node_bbox_max_y[left], node_bbox_max_y[right]);
-        node_bbox_max_z[current] = fmaxf(node_bbox_max_z[left], node_bbox_max_z[right]);
-        current = parent[current];
-    }
-}
 
 void check_cuda_call(cudaError_t error, const char *message) {
     require_local(error == cudaSuccess,
@@ -1142,21 +404,15 @@ void build_edge_bvh_gpu(
         std::vector<std::vector<int>> host_level_groups;
         int max_height = 0;
 
-        compute_primitive_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-            primitive_count,
-            edge_p0_x,
-            edge_p0_y,
-            edge_p0_z,
-            edge_e1_x,
-            edge_e1_y,
-            edge_e1_z,
-            primitive_bbox_min_x,
-            primitive_bbox_min_y,
-            primitive_bbox_min_z,
-            primitive_bbox_max_x,
-            primitive_bbox_max_y,
-            primitive_bbox_max_z,
-            primitive_bounds.get());
+        shared::edge::launch_compute_primitive_bounds_async({
+            { edge_p0_x, edge_p0_y, edge_p0_z, edge_e1_x, edge_e1_y, edge_e1_z,
+              static_cast<size_t>(primitive_count) },
+            { primitive_bbox_min_x, primitive_bbox_min_y, primitive_bbox_min_z,
+              primitive_bbox_max_x, primitive_bbox_max_y, primitive_bbox_max_z,
+              static_cast<size_t>(primitive_count) },
+            primitive_bounds.get(),
+            bounds_stream
+        });
         audit_cuda_kernel_launch("compute_primitive_bounds_kernel",
                                  static_cast<uint32_t>(primitive_blocks), 1, 1,
                                  block_size, 1, 1,
@@ -1172,7 +428,7 @@ void build_edge_bvh_gpu(
                                       reduced_bounds.get(),
                                       primitive_count,
                                       BoundsUnion(),
-                                      Bounds3::empty(),
+                                      empty_bounds(),
                                       bounds_stream),
             "build_edge_lbvh_gpu(): failed to size scene-bound reduction");
         CudaBuffer<char> reduce_temp(reduce_temp_size);
@@ -1184,12 +440,12 @@ void build_edge_bvh_gpu(
                                       reduced_bounds.get(),
                                       primitive_count,
                                       BoundsUnion(),
-                                      Bounds3::empty(),
+                                      empty_bounds(),
                                       bounds_stream),
             "build_edge_lbvh_gpu(): failed to reduce scene bounds");
         check_cuda_last_error("build_edge_lbvh_gpu(): failed to launch scene-bound reduction");
 
-        Bounds3 scene_bounds = Bounds3::empty();
+        Bounds3 scene_bounds = empty_bounds();
         audit_cuda_memcpy_async();
         check_cuda_call(cudaMemcpyAsync(&scene_bounds,
                                         reduced_bounds.get(),
@@ -1197,8 +453,9 @@ void build_edge_bvh_gpu(
                                         cudaMemcpyDeviceToHost,
                                         bounds_stream),
                         "build_edge_lbvh_gpu(): failed to copy scene bounds");
-        init_sequence_kernel<<<primitive_blocks, block_size, 0, sequence_stream>>>(
-            primitive_count, primitive_indices_in.get());
+        shared::edge::launch_init_sequence_async({
+            primitive_indices_in.get(), primitive_count, sequence_stream
+        });
         audit_cuda_kernel_launch("init_sequence_kernel",
                                  static_cast<uint32_t>(primitive_blocks), 1, 1,
                                  block_size, 1, 1,
@@ -1213,16 +470,20 @@ void build_edge_bvh_gpu(
         check_cuda_call(cudaStreamSynchronize(bounds_stream),
                         "build_edge_lbvh_gpu(): failed to reduce scene bounds");
 
-        compute_morton_codes_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-            primitive_count,
+        shared::edge::launch_compute_morton_codes_async({
+            {
+                primitive_bbox_min_x,
+                primitive_bbox_min_y,
+                primitive_bbox_min_z,
+                primitive_bbox_max_x,
+                primitive_bbox_max_y,
+                primitive_bbox_max_z,
+                static_cast<size_t>(primitive_count)
+            },
             scene_bounds,
-            primitive_bbox_min_x,
-            primitive_bbox_min_y,
-            primitive_bbox_min_z,
-            primitive_bbox_max_x,
-            primitive_bbox_max_y,
-            primitive_bbox_max_z,
-            morton_codes_in.get());
+            morton_codes_in.get(),
+            bounds_stream
+        });
         audit_cuda_kernel_launch("compute_morton_codes_kernel",
                                  static_cast<uint32_t>(primitive_blocks), 1, 1,
                                  block_size, 1, 1,
@@ -1301,13 +562,15 @@ void build_edge_bvh_gpu(
                          "build_edge_lbvh_gpu(): failed to init merge counters");
 
         if (internal_count > 0) {
-            build_radix_tree_kernel<<<internal_blocks, block_size, 0, bounds_stream>>>(
-                primitive_count,
+            shared::edge::launch_build_radix_tree_async({
                 morton_codes_out.get(),
                 primitive_indices_out.get(),
                 left_child,
                 right_child,
-                parent.get());
+                parent.get(),
+                primitive_count,
+                bounds_stream
+            });
             audit_cuda_kernel_launch("build_radix_tree_kernel",
                                      static_cast<uint32_t>(internal_blocks), 1, 1,
                                      block_size, 1, 1,
@@ -1351,28 +614,24 @@ void build_edge_bvh_gpu(
             }
         }
 
-        finalize_leaves_and_bounds_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-            primitive_count,
+        shared::edge::launch_finalize_leaves_and_bounds_async({
             primitive_indices_out.get(),
             parent.get(),
-            primitive_bbox_min_x,
-            primitive_bbox_min_y,
-            primitive_bbox_min_z,
-            primitive_bbox_max_x,
-            primitive_bbox_max_y,
-            primitive_bbox_max_z,
+            { primitive_bbox_min_x, primitive_bbox_min_y, primitive_bbox_min_z,
+              primitive_bbox_max_x, primitive_bbox_max_y, primitive_bbox_max_z,
+              static_cast<size_t>(primitive_count) },
             left_child,
             right_child,
-            node_bbox_min_x,
-            node_bbox_min_y,
-            node_bbox_min_z,
-            node_bbox_max_x,
-            node_bbox_max_y,
-            node_bbox_max_z,
+            { node_bbox_min_x, node_bbox_min_y, node_bbox_min_z,
+              node_bbox_max_x, node_bbox_max_y, node_bbox_max_z,
+              static_cast<size_t>(node_count) },
             leaf_primitive,
             is_leaf,
             primitive_leaf_node,
-            merge_counters.get());
+            merge_counters.get(),
+            primitive_count,
+            bounds_stream
+        });
         audit_cuda_kernel_launch("finalize_leaves_and_bounds_kernel",
                                  static_cast<uint32_t>(primitive_blocks), 1, 1,
                                  block_size, 1, 1,
@@ -1386,16 +645,15 @@ void build_edge_bvh_gpu(
                             scene_bounds.max.z - scene_bounds.min.z));
             const float inflation =
                 fmaxf(scene_scale * EdgeBVHTreeletCostInflationRatio, 1e-6f);
-            initialize_leaf_costs_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-                primitive_count,
-                node_bbox_min_x,
-                node_bbox_min_y,
-                node_bbox_min_z,
-                node_bbox_max_x,
-                node_bbox_max_y,
-                node_bbox_max_z,
+            shared::edge::launch_initialize_leaf_costs_async({
+                { node_bbox_min_x, node_bbox_min_y, node_bbox_min_z,
+                  node_bbox_max_x, node_bbox_max_y, node_bbox_max_z,
+                  static_cast<size_t>(node_count) },
                 node_costs.get(),
-                inflation);
+                inflation,
+                primitive_count,
+                bounds_stream
+            });
             audit_cuda_kernel_launch("initialize_leaf_costs_kernel",
                                      static_cast<uint32_t>(primitive_blocks), 1, 1,
                                      block_size, 1, 1,
@@ -1408,20 +666,19 @@ void build_edge_bvh_gpu(
                              bounds_stream,
                              "build_edge_lbvh_gpu(): failed to init internal-cost arrivals");
             if (internal_count > 0) {
-                initialize_internal_costs_kernel<<<primitive_blocks, block_size, 0, bounds_stream>>>(
-                    primitive_count,
+                shared::edge::launch_initialize_internal_costs_async({
                     left_child,
                     right_child,
                     parent.get(),
-                    node_bbox_min_x,
-                    node_bbox_min_y,
-                    node_bbox_min_z,
-                    node_bbox_max_x,
-                    node_bbox_max_y,
-                    node_bbox_max_z,
+                    { node_bbox_min_x, node_bbox_min_y, node_bbox_min_z,
+                      node_bbox_max_x, node_bbox_max_y, node_bbox_max_z,
+                      static_cast<size_t>(node_count) },
                     node_costs.get(),
                     internal_cost_arrival_counter.get(),
-                    inflation);
+                    inflation,
+                    primitive_count,
+                    bounds_stream
+                });
                 audit_cuda_kernel_launch("initialize_internal_costs_kernel",
                                          static_cast<uint32_t>(primitive_blocks), 1, 1,
                                          block_size, 1, 1,
@@ -1461,22 +718,21 @@ void build_edge_bvh_gpu(
                     const int optimize_count = optimize_end - optimize_start;
                     if (optimize_count > 0) {
                         const int level_blocks = (optimize_count + block_size - 1) / block_size;
-                        optimize_selected_treelets_kernel<<<level_blocks, block_size, 0, bounds_stream>>>(
-                            optimize_count,
+                        shared::edge::launch_optimize_selected_treelets_async({
                             optimize_nodes_device.get() + optimize_start,
                             is_leaf,
                             left_child,
                             right_child,
                             parent.get(),
-                            node_bbox_min_x,
-                            node_bbox_min_y,
-                            node_bbox_min_z,
-                            node_bbox_max_x,
-                            node_bbox_max_y,
-                            node_bbox_max_z,
+                            { node_bbox_min_x, node_bbox_min_y, node_bbox_min_z,
+                              node_bbox_max_x, node_bbox_max_y, node_bbox_max_z,
+                              static_cast<size_t>(node_count) },
                             leaf_primitive,
                             node_costs.get(),
-                            inflation);
+                            inflation,
+                            optimize_count,
+                            bounds_stream
+                        });
                         audit_cuda_kernel_launch("optimize_selected_treelets_kernel",
                                                  static_cast<uint32_t>(level_blocks), 1, 1,
                                                  block_size, 1, 1,

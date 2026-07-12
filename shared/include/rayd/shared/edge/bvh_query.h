@@ -23,36 +23,67 @@ struct EdgeQueryOutputView {
     std::size_t capacity;
 };
 
-/// Caller-owned per-query traversal stack.
+/// Caller-owned depth-major traversal stack. The caller must provide at least
+/// query_stride * stack_depth entries and one overflow byte per query.
 struct BvhTraversalScratchView {
     std::int32_t *node_indices;
+    /// One byte per query. The kernel writes zero before traversal and one if
+    /// the query exhausts stack_depth or observes invalid topology.
+    std::uint8_t *overflow;
+    /// Distance between adjacent stack depths. Set to at least query_count;
+    /// depth-major storage keeps equal-depth warp accesses coalesced.
+    std::size_t query_stride;
+    /// Maximum number of deferred nodes per query.
+    std::size_t stack_depth;
+    /// Total number of entries in node_indices.
     std::size_t capacity;
+    /// Total number of entries in overflow.
+    std::size_t overflow_capacity;
 };
 
 struct PointBvhQueryParams {
     EdgeSoAView edges;
     AabbSoAView node_bounds;
-    BvhTopologyView topology;
+    CompactBvhTopologyView topology;
     PointSoAView points;
     EdgeQueryOutputView output;
     BvhTraversalScratchView scratch;
+    const std::uint8_t *active_mask;
+    const std::uint8_t *edge_mask;
     cudaStream_t stream;
 };
 
 struct RayBvhQueryParams {
     EdgeSoAView edges;
     AabbSoAView node_bounds;
-    BvhTopologyView topology;
+    CompactBvhTopologyView topology;
     RaySoAView rays;
     EdgeQueryOutputView output;
     BvhTraversalScratchView scratch;
+    const std::uint8_t *active_mask;
+    const std::uint8_t *edge_mask;
     cudaStream_t stream;
 };
 
-// This phase freezes the backend-neutral query layout only. The shared CUDA
-// traversal entry points are added when Torch takes ownership of persistent BVH
-// buffers in Share-5/F1; declaring unimplemented launchers here would create a
-// misleading link-time API.
+inline constexpr std::size_t EdgeBvhTopKMax =
+    static_cast<std::size_t>(kBvhTopKMax);
+
+/// Traverse a compacted edge BVH for point queries. result_count selects k and
+/// must be in [1, EdgeBvhTopKMax]. Results are ordered by
+/// (squared_distance, edge_id), so equal-distance ties are deterministic.
+/// output.query_count must equal points.count, output.result_stride must be at
+/// least k, and output.capacity must cover the final strided result. Null masks
+/// mean all-active. The launch allocates nothing, performs no synchronization,
+/// and is asynchronous on `params.stream`.
+void launch_point_bvh_query_async(const PointBvhQueryParams &params);
+
+/// Traverse a compacted edge BVH for ray queries. Finite t_max uses segment
+/// semantics on [0, max(t_max, 0)]; positive infinity uses half-ray semantics.
+/// result_count may be in [1, EdgeBvhTopKMax]. Null masks mean all-active. The
+/// output and scratch shape rules match launch_point_bvh_query_async. The launch
+/// allocates nothing, performs no synchronization, and is asynchronous on
+/// `params.stream`.
+void launch_ray_bvh_query_async(const RayBvhQueryParams &params);
 
 #define RAYD_SHARED_EDGE_ASSERT_POD(Type)                                     \
     static_assert(std::is_standard_layout_v<Type>);                           \

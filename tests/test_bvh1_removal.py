@@ -52,13 +52,13 @@ class BVH1RemovalTests(unittest.TestCase):
 
     def test_atomic_bottom_up_builds_publish_before_arrival(self):
         source = (
-            ROOT / "backends" / "drjit" / "src" / "edge" / "edge_bvh.cu"
+            ROOT / "shared" / "src" / "edge" / "bvh_build.cu"
         ).read_text(encoding="utf-8")
         kernels = {
             "finalize_leaves_and_bounds_kernel": (
                 r"while \(current >= 0\) \{"
                 r".*?__threadfence\(\);"
-                r"\s*if \(atomicAdd\(merge_counters \+ current, 1\) == 0\)"
+                r"\s*if \(atomicAdd\((?:params\.)?merge_counters \+ current, 1\) == 0\)"
             ),
         }
         for kernel, pattern in kernels.items():

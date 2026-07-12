@@ -208,6 +208,8 @@ set(RAYD_CORE_SOURCE_FILES
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
     set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.obj")
+    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.obj")
+    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.obj")
     set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.obj")
     set(RAYD_VSDEVCMD "${CMAKE_GENERATOR_INSTANCE}/Common7/Tools/VsDevCmd.bat")
     set(RAYD_CUDA_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_bvh.bat")
@@ -242,6 +244,40 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
         VERBATIM
     )
+    set(RAYD_SHARED_BVH_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_query.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_QUERY_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_QUERY_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
+    set(RAYD_SHARED_EDGE_DISTANCE_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_distance.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}" CONTENT
+"@echo off\r\n\
+call \"${RAYD_VSDEVCMD}\" -arch=x64\r\n\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_EDGE_DISTANCE_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        COMMAND "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
     set(RAYD_SHARED_EDGE_AABB_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_aabb.bat")
     file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_AABB_SCRIPT}" CONTENT
 "@echo off\r\n\
@@ -261,6 +297,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
 else()
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
     set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.o")
+    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.o")
+    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.o")
     set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.o")
     add_custom_command(
         OUTPUT "${RAYD_CUDA_OBJECT}"
@@ -301,13 +339,45 @@ else()
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
         VERBATIM
     )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        VERBATIM
+    )
 endif()
 set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_BVH_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_BVH_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_EDGE_DISTANCE_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_EDGE_AABB_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 list(APPEND RAYD_CORE_SOURCE_FILES
     "${RAYD_CUDA_OBJECT}"
     "${RAYD_SHARED_BVH_BUILD_OBJECT}"
+    "${RAYD_SHARED_BVH_QUERY_OBJECT}"
+    "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
     "${RAYD_SHARED_EDGE_AABB_OBJECT}")
 
 set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")

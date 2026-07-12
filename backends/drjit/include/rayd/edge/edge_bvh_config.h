@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <string>
 
+#include <rayd/shared/edge/bvh_types.h>
+
 namespace rayd {
 
 // Retained edge-BVH build controls after configuration convergence. GpuTreelet
@@ -28,7 +30,7 @@ constexpr EdgeBVHPostBuildStrategy EdgeBVHDefaultPostBuildStrategy =
     EdgeBVHPostBuildStrategy::GpuTreelet;
 constexpr EdgeBVHBuildStreamMode EdgeBVHDefaultBuildStreamMode =
     EdgeBVHBuildStreamMode::Overlap;
-constexpr int EdgeBVHLeafSize = 4; ///< Target primitives per BVH leaf.
+constexpr int EdgeBVHLeafSize = shared::edge::kBvhLeafSize;
 
 /// Lower-case an env-var value and map '-' to '_' so mode names compare uniformly.
 inline std::string normalize_edge_bvh_mode_value(const char *value) {
@@ -89,9 +91,10 @@ inline EdgeBVHBuildStreamMode active_edge_bvh_build_stream_mode() {
 }
 
 // Treelet reoptimization thresholds (GpuTreelet post-build strategy).
-constexpr int EdgeBVHTreeletMaxLeaves = 7;          ///< Leaves per treelet reorganized at once.
-constexpr int EdgeBVHTreeletMinPrimitives = 65536;  ///< Skip treelet optimization below this primitive count.
-constexpr int EdgeBVHTreeletMinSubtreeLeaves = 32;  ///< Minimum subtree size eligible for a treelet.
-constexpr float EdgeBVHTreeletCostInflationRatio = 1e-4f; ///< SAH-cost improvement required to accept a reorg.
+constexpr int EdgeBVHTreeletMaxLeaves = shared::edge::kBvhTreeletMaxLeaves;
+constexpr int EdgeBVHTreeletMinPrimitives = shared::edge::kBvhTreeletMinPrimitives;
+constexpr int EdgeBVHTreeletMinSubtreeLeaves = shared::edge::kBvhTreeletMinSubtreeLeaves;
+constexpr float EdgeBVHTreeletCostInflationRatio =
+    shared::edge::kBvhTreeletCostInflationRatio;
 
 } // namespace rayd

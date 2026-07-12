@@ -61,8 +61,10 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
         for name in ("bvh_build.h", "bvh_query.h", "edge_distance.h"):
             self.assertIn("cudaStream_t stream;", self.sources[name])
         self.assertIn("launch_mark_dirty_ancestors_async", self.sources["bvh_build.h"])
-        self.assertNotIn("query_point_edge_bvh_async", self.sources["bvh_query.h"])
-        self.assertNotIn("compute_point_edge_distance_async", self.sources["edge_distance.h"])
+        self.assertIn("launch_point_bvh_query_async", self.sources["bvh_query.h"])
+        self.assertIn("launch_ray_bvh_query_async", self.sources["bvh_query.h"])
+        self.assertIn("launch_point_edge_distances_async", self.sources["edge_distance.h"])
+        self.assertIn("launch_ray_edge_distances_async", self.sources["edge_distance.h"])
 
     def test_shared_build_source_is_backend_neutral_and_enqueue_only(self):
         source = (SOURCE_DIR / "bvh_build.cu").read_text(encoding="utf-8")

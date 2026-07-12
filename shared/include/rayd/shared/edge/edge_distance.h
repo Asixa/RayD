@@ -51,6 +51,8 @@ struct PointEdgeDistanceParams {
     PointSoAView points;
     EdgeCandidateView candidates;
     EdgeDistanceOutputView output;
+    const std::uint8_t *active_mask;
+    const std::uint8_t *edge_mask;
     cudaStream_t stream;
 };
 
@@ -59,12 +61,21 @@ struct RayEdgeDistanceParams {
     RaySoAView rays;
     EdgeCandidateView candidates;
     EdgeDistanceOutputView output;
+    const std::uint8_t *active_mask;
+    const std::uint8_t *edge_mask;
     cudaStream_t stream;
 };
 
-// Exact-distance launchers are introduced formula-by-formula in Share-2. These
-// PODs define the stable raw-pointer/stream contract without advertising symbols
-// that are not linked yet.
+/// Evaluate exact point-to-edge distances for a caller-owned candidate list.
+/// Null masks mean all-active. Invalid or masked candidates produce
+/// (infinity, 0, 0). The launch is asynchronous on `params.stream`.
+void launch_point_edge_distances_async(const PointEdgeDistanceParams &params);
+
+/// Evaluate exact ray-to-edge distances for a caller-owned candidate list.
+/// Finite t_max uses segment semantics on [0, max(t_max, 0)]; positive infinity
+/// uses half-ray semantics. Null masks mean all-active. The launch is
+/// asynchronous on `params.stream`.
+void launch_ray_edge_distances_async(const RayEdgeDistanceParams &params);
 
 #define RAYD_SHARED_EDGE_ASSERT_POD(Type)                                     \
     static_assert(std::is_standard_layout_v<Type>);                           \

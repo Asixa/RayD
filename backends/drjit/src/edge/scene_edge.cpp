@@ -16,7 +16,8 @@ namespace rayd {
 
 namespace {
 
-constexpr size_t EdgeBVHTraversalStackSize = 64;
+constexpr size_t EdgeBVHTraversalStackSize =
+    static_cast<size_t>(shared::edge::kBvhTraversalStackDepth);
 constexpr int EdgeBVHPackedBoundsStride = 6;
 constexpr int EdgeBVHPackedChildrenStride = 2;
 constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
