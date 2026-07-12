@@ -172,6 +172,108 @@ py::tuple nearest_edge_ray_forward_op(
         out.tape_edge_id);
 }
 
+py::tuple nearest_edge_ray_backward_optional_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    at::Tensor tape_edge_id,
+    at::Tensor ray_t,
+    at::Tensor edge_t,
+    py::object grad_distance_obj,
+    py::object grad_ray_t_obj,
+    py::object grad_point_obj,
+    py::object grad_edge_t_obj,
+    py::object grad_edge_point_obj) {
+    at::Tensor grad_distance_storage;
+    at::Tensor grad_ray_t_storage;
+    at::Tensor grad_point_storage;
+    at::Tensor grad_edge_t_storage;
+    at::Tensor grad_edge_point_storage;
+    const at::Tensor *grad_distance =
+        optional_tensor(grad_distance_obj, grad_distance_storage);
+    const at::Tensor *grad_ray_t =
+        optional_tensor(grad_ray_t_obj, grad_ray_t_storage);
+    const at::Tensor *grad_point =
+        optional_tensor(grad_point_obj, grad_point_storage);
+    const at::Tensor *grad_edge_t =
+        optional_tensor(grad_edge_t_obj, grad_edge_t_storage);
+    const at::Tensor *grad_edge_point =
+        optional_tensor(grad_edge_point_obj, grad_edge_point_storage);
+    SceneCache &scene = get_scene(scene_handle);
+    EdgeRayBackwardOutputs out = edge_ray_backward_optional_cuda(
+        scene.global_vertices,
+        scene.edge_v0,
+        scene.edge_v1,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        tape_edge_id,
+        ray_t,
+        edge_t,
+        grad_distance,
+        grad_ray_t,
+        grad_point,
+        grad_edge_t,
+        grad_edge_point);
+    return py::make_tuple(out.grad_vertices, out.grad_ray_o, out.grad_ray_d);
+}
+
+py::tuple nearest_edge_ray_jvp_optional_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    at::Tensor tape_edge_id,
+    at::Tensor ray_t,
+    at::Tensor edge_t,
+    py::object tangent_vertices_obj,
+    py::object tangent_ray_o_obj,
+    py::object tangent_ray_d_obj) {
+    at::Tensor tangent_vertices_storage;
+    at::Tensor tangent_ray_o_storage;
+    at::Tensor tangent_ray_d_storage;
+    const at::Tensor *tangent_vertices =
+        optional_tensor(tangent_vertices_obj, tangent_vertices_storage);
+    const at::Tensor *tangent_ray_o =
+        optional_tensor(tangent_ray_o_obj, tangent_ray_o_storage);
+    const at::Tensor *tangent_ray_d =
+        optional_tensor(tangent_ray_d_obj, tangent_ray_d_storage);
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor tangent_vertices_global;
+    if (tangent_vertices != nullptr &&
+        tangent_vertices->sizes() != scene.global_vertices.sizes()) {
+        if (tangent_vertices->dim() != 2 || tangent_vertices->size(1) != 3 ||
+            tangent_vertices->size(0) > scene.global_vertices.size(0)) {
+            throw std::runtime_error(
+                "tangent_vertices must fit the scene-global vertex buffer.");
+        }
+        tangent_vertices_global = at::zeros_like(scene.global_vertices);
+        tangent_vertices_global.narrow(0, 0, tangent_vertices->size(0))
+            .copy_(*tangent_vertices);
+        tangent_vertices = &tangent_vertices_global;
+    }
+    EdgeRayJvpOutputs out = edge_ray_jvp_optional_cuda(
+        scene.global_vertices,
+        scene.edge_v0,
+        scene.edge_v1,
+        ray_o,
+        ray_d,
+        ray_tmax,
+        tape_edge_id,
+        ray_t,
+        edge_t,
+        tangent_vertices,
+        tangent_ray_o,
+        tangent_ray_d);
+    return py::make_tuple(
+        out.tangent_distance,
+        out.tangent_ray_t,
+        out.tangent_point,
+        out.tangent_edge_t,
+        out.tangent_edge_point);
+}
+
 py::tuple nearest_edge_jvp_op(
     int64_t scene_handle,
     at::Tensor point,

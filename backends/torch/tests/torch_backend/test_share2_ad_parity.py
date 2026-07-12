@@ -113,10 +113,7 @@ class Share2AdParityTests(unittest.TestCase):
         self.assertVectorClose(grad_t, grad_d)
         self.assertAlmostEqual(float(jvp_t[0]), jvp_d, delta=_GRAD_ATOL)
 
-    def test_nearest_edge_ray_fixed_winner_forward(self):
-        # Torch's current public ray-edge Function intentionally returns None
-        # from backward and has no jvp. Keep forward parity explicit here; point
-        # edge above exercises the shared fixed-winner derivative contract.
+    def test_nearest_edge_ray_fixed_winner_forward_vjp_jvp(self):
         dr_backend, rt, cuda = _load_backends()
         dr = importlib.import_module("drjit")
         ad = importlib.import_module("drjit.cuda.ad")
@@ -125,23 +122,58 @@ class Share2AdParityTests(unittest.TestCase):
             device="cuda",
             dtype=torch.float32,
         )
-        direction_t = torch.tensor([[0.0, 0.0, -1.0]], device="cuda")
+        direction_t = torch.tensor(
+            [[0.0, 0.0, -1.0]], device="cuda", requires_grad=True
+        )
         origin_t = torch.tensor(
-            [[0.25, -0.4, 1.0]], device="cuda", dtype=torch.float32
+            [[0.25, -0.4, 1.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
         )
         scene_t = _torch_triangle_scene(rt, vertices)
         hit_t = scene_t.nearest_edge(rt.Ray(origin_t, direction_t))
         self.assertEqual(int(hit_t.edge_id[0]), 0)
+        hit_t.distance.sum().backward()
+        grad_origin_t = origin_t.grad.detach().flatten().tolist()
+        grad_direction_t = direction_t.grad.detach().flatten().tolist()
+
+        def torch_distance(origin):
+            return scene_t.nearest_edge(rt.Ray(origin, direction_t.detach())).distance
+
+        tangent_origin_t = torch.tensor([[0.0, 0.07, 0.0]], device="cuda")
+        _, jvp_t = torch.func.jvp(
+            torch_distance, (origin_t.detach(),), (tangent_origin_t,)
+        )
+
         origin_d = ad.Array3f([0.25], [-0.4], [1.0])
+        direction_d = ad.Array3f([0.0], [0.0], [-1.0])
+        dr.enable_grad(origin_d, direction_d)
         scene_d = _drjit_triangle_scene(dr_backend, cuda)
-        ray_d = dr_backend.RayAD(origin_d, ad.Array3f([0.0], [0.0], [-1.0]))
+        ray_d = dr_backend.RayAD(origin_d, direction_d)
         ray_d.tmax = ad.Float([2.0])
         hit_d = scene_d.nearest_edge(ray_d)
         self.assertEqual(int(hit_d.edge_id[0]), 0)
         forward_d = float(hit_d.distance[0])
+        dr.backward(hit_d.distance)
+        grad_origin_d = _dr_vec3(dr.grad(origin_d))
+        grad_direction_d = _dr_vec3(dr.grad(direction_d))
+
+        origin_j = ad.Array3f([0.25], [-0.4], [1.0])
+        dr.enable_grad(origin_j)
+        ray_j = dr_backend.RayAD(origin_j, ad.Array3f([0.0], [0.0], [-1.0]))
+        ray_j.tmax = ad.Float([2.0])
+        hit_j = scene_d.nearest_edge(ray_j)
+        dr.set_grad(origin_j, ad.Array3f([0.0], [0.07], [0.0]))
+        dr.forward_from(origin_j)
+        jvp_d = float(dr.grad(hit_j.distance)[0])
+
         self.assertAlmostEqual(float(hit_t.distance[0]), forward_d, delta=_FORWARD_ATOL)
         self.assertAlmostEqual(float(hit_t.ray_t[0]), float(hit_d.ray_t[0]), delta=_FORWARD_ATOL)
         self.assertAlmostEqual(float(hit_t.edge_t[0]), float(hit_d.edge_t[0]), delta=_FORWARD_ATOL)
+        self.assertVectorClose(grad_origin_t, grad_origin_d)
+        self.assertVectorClose(grad_direction_t, grad_direction_d)
+        self.assertAlmostEqual(float(jvp_t[0]), jvp_d, delta=_GRAD_ATOL)
 
     def test_reflection_geometry_fixed_hit_forward_vjp_jvp(self):
         dr_backend, rt, cuda = _load_backends()

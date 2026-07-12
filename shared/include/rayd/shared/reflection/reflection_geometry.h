@@ -37,6 +37,28 @@ RAYD_SHARED_REFLECTION_INLINE math::Vec3f reflect_point_across_plane(
             2.0f * math::dot(math::subtract(point, plane_point), unit_normal)));
 }
 
+RAYD_SHARED_REFLECTION_INLINE bool intersect_segment_plane(
+    math::Vec3f segment_start,
+    math::Vec3f segment_end,
+    math::Vec3f plane_point,
+    math::Vec3f plane_normal,
+    float parallel_tolerance,
+    float segment_tolerance,
+    math::Vec3f &intersection) {
+    const math::Vec3f direction = math::subtract(segment_end, segment_start);
+    const float denominator = math::dot(direction, plane_normal);
+    if (fabsf(denominator) <= parallel_tolerance) {
+        return false;
+    }
+    const float t = math::dot(
+        math::subtract(plane_point, segment_start), plane_normal) / denominator;
+    if (t < -segment_tolerance || t > 1.0f + segment_tolerance) {
+        return false;
+    }
+    intersection = math::add(segment_start, math::scale(direction, t));
+    return true;
+}
+
 } // namespace rayd::shared::reflection
 
 #undef RAYD_SHARED_REFLECTION_INLINE

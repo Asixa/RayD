@@ -16,7 +16,7 @@
   },
   "known_boundaries": [
     "Dr.Jit symbolic exact re-gather keeps its backend array math adapter",
-    "Torch nearest-edge ray currently has no backward or jvp",
+    "Torch nearest-edge ray treats finite tmax as a detached domain boundary, matching Dr.Jit",
     "reflection EPC field parity fixture is skipped because the current public fixture is invalid"
   ],
   "full_native_group_acceptance": "deferred to Share-2/Share-3/Share-4 group gate"

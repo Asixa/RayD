@@ -14,7 +14,7 @@
     "_legacy_ops": {
       "links_native_core": true,
       "links_torch_python": true,
-      "operator_count": 52,
+      "operator_count": 54,
       "operators": [
         "camera_sample_ray",
         "camera_sample_ray_backward",
@@ -48,7 +48,9 @@
         "nearest_edge_forward",
         "nearest_edge_forward_noad",
         "nearest_edge_jvp_optional",
+        "nearest_edge_ray_backward_optional",
         "nearest_edge_ray_forward",
+        "nearest_edge_ray_jvp_optional",
         "nearest_edges_topk_forward",
         "pack_scene_vertex_tangents",
         "reflection_accumulation_forward",
@@ -107,12 +109,12 @@
   },
   "inventory": {
     "compatibility_pybind_export_count": 2,
-    "legacy_dispatcher_operator_count": 52,
-    "py_object_occurrence_count": 85,
+    "legacy_dispatcher_operator_count": 54,
+    "py_object_occurrence_count": 101,
     "py_object_occurrences_by_file": {
       "src/torch_ext/diffraction/ops.cpp": 1,
-      "src/torch_ext/edge/ops_edge.cpp": 7,
-      "src/torch_ext/library.cpp": 40,
+      "src/torch_ext/edge/ops_edge.cpp": 15,
+      "src/torch_ext/library.cpp": 48,
       "src/torch_ext/reflection/ops.cpp": 19,
       "src/torch_ext/scene/ops_intersect.cpp": 17,
       "src/torch_ext/scene/ops_scene.cpp": 1
@@ -135,6 +137,6 @@
       "intersection_valid"
     ]
   },
-  "source_sha256": "65aa49323489a7769d9bddfe5db9719b11a91ca2b63b8606b8d47c6e5109acbf",
+  "source_sha256": "676255360a1b4ca901f68ad4ba10d4d771c8f084fb6627b3c9e782ad897fea0b",
   "version": 1
 }

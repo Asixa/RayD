@@ -50,6 +50,21 @@ struct PointSegmentVjp {
     math::Vec3f edge_end;
 };
 
+struct RaySegmentJvp {
+    float distance;
+    float ray_parameter;
+    math::Vec3f ray_point;
+    float edge_parameter;
+    math::Vec3f edge_point;
+};
+
+struct RaySegmentVjp {
+    math::Vec3f ray_origin;
+    math::Vec3f ray_direction;
+    math::Vec3f edge_start;
+    math::Vec3f edge_end;
+};
+
 RAYD_SHARED_EDGE_MATH_INLINE float clamp_unit(float value) {
     return fminf(fmaxf(value, 0.0f), 1.0f);
 }
@@ -310,6 +325,178 @@ RAYD_SHARED_EDGE_MATH_INLINE PointSegmentVjp point_segment_vjp_fixed_winner(
         result.edge_start = math::subtract(
             result.edge_start, math::add(point_term, edge_term));
         result.edge_end = math::add(result.edge_end, edge_term);
+    }
+    return result;
+}
+
+RAYD_SHARED_EDGE_MATH_INLINE RaySegmentJvp ray_segment_jvp_fixed_winner(
+    math::Vec3f ray_origin,
+    math::Vec3f ray_direction,
+    math::Vec3f edge_start,
+    math::Vec3f edge_end,
+    float ray_parameter,
+    float edge_parameter,
+    bool ray_parameter_has_max,
+    float ray_parameter_max,
+    math::Vec3f tangent_ray_origin,
+    math::Vec3f tangent_ray_direction,
+    math::Vec3f tangent_edge_start,
+    math::Vec3f tangent_edge_end) {
+    const math::Vec3f edge_vector = math::subtract(edge_end, edge_start);
+    const math::Vec3f tangent_edge_vector =
+        math::subtract(tangent_edge_end, tangent_edge_start);
+    const math::Vec3f ray_point = math::add(
+        ray_origin, math::scale(ray_direction, ray_parameter));
+    const math::Vec3f edge_point = math::add(
+        edge_start, math::scale(edge_vector, edge_parameter));
+    const math::Vec3f separation = math::subtract(ray_point, edge_point);
+
+    const math::Vec3f tangent_ray_point_fixed = math::add(
+        tangent_ray_origin,
+        math::scale(tangent_ray_direction, ray_parameter));
+    const math::Vec3f tangent_edge_point_fixed = math::add(
+        tangent_edge_start,
+        math::scale(tangent_edge_vector, edge_parameter));
+    const math::Vec3f tangent_separation_fixed = math::subtract(
+        tangent_ray_point_fixed, tangent_edge_point_fixed);
+
+    const float a = math::squared_norm(ray_direction);
+    const float b = math::dot(ray_direction, edge_vector);
+    const float c = math::squared_norm(edge_vector);
+    const float determinant = a * c - b * b;
+    const bool ray_parameter_free =
+        ray_parameter > 0.0f &&
+        (!ray_parameter_has_max || ray_parameter < ray_parameter_max);
+    const bool edge_parameter_free =
+        edge_parameter > 0.0f && edge_parameter < 1.0f;
+
+    float tangent_ray_parameter = 0.0f;
+    float tangent_edge_parameter = 0.0f;
+    const float ray_stationarity_tangent =
+        math::dot(tangent_separation_fixed, ray_direction) +
+        math::dot(separation, tangent_ray_direction);
+    const float edge_stationarity_tangent =
+        math::dot(tangent_separation_fixed, edge_vector) +
+        math::dot(separation, tangent_edge_vector);
+    if (ray_parameter_free && edge_parameter_free &&
+        fabsf(determinant) > EdgeDistanceDeviceEpsilon) {
+        tangent_ray_parameter =
+            (-c * ray_stationarity_tangent +
+             b * edge_stationarity_tangent) /
+            determinant;
+        tangent_edge_parameter =
+            (-b * ray_stationarity_tangent +
+             a * edge_stationarity_tangent) /
+            determinant;
+    } else if (ray_parameter_free && a > EdgeDistanceDeviceEpsilon) {
+        tangent_ray_parameter = -ray_stationarity_tangent / a;
+    } else if (edge_parameter_free && c > EdgeDistanceDeviceEpsilon) {
+        tangent_edge_parameter = edge_stationarity_tangent / c;
+    }
+
+    const math::Vec3f tangent_ray_point = math::add(
+        tangent_ray_point_fixed,
+        math::scale(ray_direction, tangent_ray_parameter));
+    const math::Vec3f tangent_edge_point = math::add(
+        tangent_edge_point_fixed,
+        math::scale(edge_vector, tangent_edge_parameter));
+    const math::Vec3f tangent_separation =
+        math::subtract(tangent_ray_point, tangent_edge_point);
+    const float distance =
+        sqrtf(fmaxf(math::squared_norm(separation), 1.0e-20f));
+    return {
+        math::dot(math::scale(separation, 1.0f / distance),
+                  tangent_separation),
+        tangent_ray_parameter,
+        tangent_ray_point,
+        tangent_edge_parameter,
+        tangent_edge_point,
+    };
+}
+
+RAYD_SHARED_EDGE_MATH_INLINE float ray_segment_jvp_output_dot(
+    const RaySegmentJvp &jvp,
+    float grad_distance,
+    float grad_ray_parameter,
+    math::Vec3f grad_ray_point,
+    float grad_edge_parameter,
+    math::Vec3f grad_edge_point) {
+    return grad_distance * jvp.distance +
+           grad_ray_parameter * jvp.ray_parameter +
+           math::dot(grad_ray_point, jvp.ray_point) +
+           grad_edge_parameter * jvp.edge_parameter +
+           math::dot(grad_edge_point, jvp.edge_point);
+}
+
+RAYD_SHARED_EDGE_MATH_INLINE RaySegmentVjp ray_segment_vjp_fixed_winner(
+    math::Vec3f ray_origin,
+    math::Vec3f ray_direction,
+    math::Vec3f edge_start,
+    math::Vec3f edge_end,
+    float ray_parameter,
+    float edge_parameter,
+    bool ray_parameter_has_max,
+    float ray_parameter_max,
+    float grad_distance,
+    float grad_ray_parameter,
+    math::Vec3f grad_ray_point,
+    float grad_edge_parameter,
+    math::Vec3f grad_edge_point) {
+    RaySegmentVjp result = {
+        math::make_vec3(0.0f, 0.0f, 0.0f),
+        math::make_vec3(0.0f, 0.0f, 0.0f),
+        math::make_vec3(0.0f, 0.0f, 0.0f),
+        math::make_vec3(0.0f, 0.0f, 0.0f),
+    };
+    math::Vec3f *outputs[4] = {
+        &result.ray_origin,
+        &result.ray_direction,
+        &result.edge_start,
+        &result.edge_end,
+    };
+    for (int input = 0; input < 4; ++input) {
+        for (int axis = 0; axis < 3; ++axis) {
+            math::Vec3f tangents[4] = {
+                math::make_vec3(0.0f, 0.0f, 0.0f),
+                math::make_vec3(0.0f, 0.0f, 0.0f),
+                math::make_vec3(0.0f, 0.0f, 0.0f),
+                math::make_vec3(0.0f, 0.0f, 0.0f),
+            };
+            if (axis == 0) {
+                tangents[input].x = 1.0f;
+            } else if (axis == 1) {
+                tangents[input].y = 1.0f;
+            } else {
+                tangents[input].z = 1.0f;
+            }
+            const RaySegmentJvp jvp = ray_segment_jvp_fixed_winner(
+                ray_origin,
+                ray_direction,
+                edge_start,
+                edge_end,
+                ray_parameter,
+                edge_parameter,
+                ray_parameter_has_max,
+                ray_parameter_max,
+                tangents[0],
+                tangents[1],
+                tangents[2],
+                tangents[3]);
+            const float value = ray_segment_jvp_output_dot(
+                jvp,
+                grad_distance,
+                grad_ray_parameter,
+                grad_ray_point,
+                grad_edge_parameter,
+                grad_edge_point);
+            if (axis == 0) {
+                outputs[input]->x = value;
+            } else if (axis == 1) {
+                outputs[input]->y = value;
+            } else {
+                outputs[input]->z = value;
+            }
+        }
     }
     return result;
 }

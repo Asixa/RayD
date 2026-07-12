@@ -6,6 +6,7 @@
 #include <rayd/shared/optix/reflection_epc_params.h>
 #include <rayd/shared/contracts.h>
 #include <rayd/shared/optix/device_hit.h>
+#include <rayd/shared/reflection/reflection_geometry.h>
 
 namespace rayd::shared::optix {
 
@@ -31,6 +32,14 @@ using HitPayload = TriangleHitPayload;
 
 static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
     return make_float3(x, y, z);
+}
+
+static __forceinline__ __device__ math::Vec3f to_shared(float3 value) {
+    return math::make_vec3(value.x, value.y, value.z);
+}
+
+static __forceinline__ __device__ float3 from_shared(math::Vec3f value) {
+    return make_vec3(value.x, value.y, value.z);
 }
 
 static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
@@ -351,18 +360,20 @@ static __forceinline__ __device__ bool point_inside_surface_group(int group,
 static __forceinline__ __device__ bool intersect_line_plane(float3 line_start,
                                                             float3 line_end,
                                                             float3 plane_point,
-                                                            float3 plane_normal,
-                                                            float3 &point) {
-    const float3 direction = line_end - line_start;
-    const float denom = dot3(direction, plane_normal);
-    if (fabsf(denom) <= 1e-7f) {
+                                                             float3 plane_normal,
+                                                             float3 &point) {
+    math::Vec3f shared_point = {};
+    if (!reflection::intersect_segment_plane(
+            to_shared(line_start),
+            to_shared(line_end),
+            to_shared(plane_point),
+            to_shared(plane_normal),
+            1e-7f,
+            kEpcTolerance,
+            shared_point)) {
         return false;
     }
-    const float t = dot3(plane_point - line_start, plane_normal) / denom;
-    if (!isfinite(t) || t < -kEpcTolerance || t > 1.f + kEpcTolerance) {
-        return false;
-    }
-    point = line_start + t * direction;
+    point = from_shared(shared_point);
     return isfinite(point.x) && isfinite(point.y) && isfinite(point.z);
 }
 
@@ -513,8 +524,10 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
                 return;
             }
 
-            const float image_distance = dot3(image_source - plane_point, plane_normal);
-            image_source = image_source - 2.f * image_distance * plane_normal;
+            image_source = from_shared(reflection::reflect_point_across_plane(
+                to_shared(image_source),
+                to_shared(plane_point),
+                to_shared(plane_normal)));
             image_sources[bounce + 1] = image_source;
             plane_points[bounce] = plane_point;
             plane_normals[bounce] = plane_normal;

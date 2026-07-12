@@ -70,6 +70,8 @@ py::tuple intersect_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor,
 py::tuple nearest_edge_forward_op(int64_t, at::Tensor);
 py::tuple nearest_edge_forward_noad_op(int64_t, at::Tensor);
 py::tuple nearest_edge_ray_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
+py::tuple nearest_edge_ray_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object, py::object, py::object, py::object);
+py::tuple nearest_edge_ray_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object, py::object);
 py::tuple nearest_edges_topk_forward_op(int64_t, at::Tensor, int64_t, at::Tensor);
 py::tuple nearest_edge_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object, py::object, py::object);
 py::tuple nearest_edge_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object);
@@ -193,6 +195,16 @@ OptionalTensorList nearest_edge_backward_optional_dispatch(ScenePtr scene, at::T
 OptionalTensorList nearest_edge_jvp_optional_dispatch(ScenePtr scene, at::Tensor point, at::Tensor tape_edge_id, at::Tensor tape_s, at::Tensor tape_d, OptionalTensor tangent_vertices, OptionalTensor tangent_point) {
     py::gil_scoped_acquire gil;
     return tuple_to_optional_tensor_list(nearest_edge_jvp_optional_op(handle(scene), point, tape_edge_id, tape_s, tape_d, to_py_optional(tangent_vertices), to_py_optional(tangent_point)));
+}
+
+OptionalTensorList nearest_edge_ray_backward_optional_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax, at::Tensor tape_edge_id, at::Tensor ray_t, at::Tensor edge_t, OptionalTensor grad_distance, OptionalTensor grad_ray_t, OptionalTensor grad_point, OptionalTensor grad_edge_t, OptionalTensor grad_edge_point) {
+    py::gil_scoped_acquire gil;
+    return tuple_to_optional_tensor_list(nearest_edge_ray_backward_optional_op(handle(scene), ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t, to_py_optional(grad_distance), to_py_optional(grad_ray_t), to_py_optional(grad_point), to_py_optional(grad_edge_t), to_py_optional(grad_edge_point)));
+}
+
+OptionalTensorList nearest_edge_ray_jvp_optional_dispatch(ScenePtr scene, at::Tensor ray_o, at::Tensor ray_d, at::Tensor ray_tmax, at::Tensor tape_edge_id, at::Tensor ray_t, at::Tensor edge_t, OptionalTensor tangent_vertices, OptionalTensor tangent_ray_o, OptionalTensor tangent_ray_d) {
+    py::gil_scoped_acquire gil;
+    return tuple_to_optional_tensor_list(nearest_edge_ray_jvp_optional_op(handle(scene), ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t, to_py_optional(tangent_vertices), to_py_optional(tangent_ray_o), to_py_optional(tangent_ray_d)));
 }
 
 OptionalTensorList nearest_edges_topk_forward_dispatch(
@@ -460,6 +472,8 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
     m.def("nearest_edge_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point) -> Tensor?[]");
     m.def("nearest_edge_forward_noad(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point) -> Tensor?[]");
     m.def("nearest_edge_ray_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor active) -> Tensor?[]");
+    m.def("nearest_edge_ray_backward_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor tape_edge_id, Tensor ray_t, Tensor edge_t, Tensor? grad_distance, Tensor? grad_ray_t, Tensor? grad_point, Tensor? grad_edge_t, Tensor? grad_edge_point) -> Tensor?[]");
+    m.def("nearest_edge_ray_jvp_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor tape_edge_id, Tensor ray_t, Tensor edge_t, Tensor? tangent_vertices, Tensor? tangent_ray_o, Tensor? tangent_ray_d) -> Tensor?[]");
     m.def("nearest_edge_backward_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, Tensor tape_edge_id, Tensor tape_s, Tensor tape_d, Tensor? grad_distance, Tensor? grad_edge_point, Tensor? grad_edge_t, Tensor? grad_edge_t_alias) -> Tensor?[]");
     m.def("nearest_edge_jvp_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, Tensor tape_edge_id, Tensor tape_s, Tensor tape_d, Tensor? tangent_vertices, Tensor? tangent_point) -> Tensor?[]");
     m.def("nearest_edges_topk_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point, int k, Tensor active) -> Tensor?[]");
@@ -518,6 +532,8 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("nearest_edge_forward", TORCH_FN(nearest_edge_forward_dispatch));
     m.impl("nearest_edge_forward_noad", TORCH_FN(nearest_edge_forward_noad_dispatch));
     m.impl("nearest_edge_ray_forward", TORCH_FN(nearest_edge_ray_forward_dispatch));
+    m.impl("nearest_edge_ray_backward_optional", TORCH_FN(nearest_edge_ray_backward_optional_dispatch));
+    m.impl("nearest_edge_ray_jvp_optional", TORCH_FN(nearest_edge_ray_jvp_optional_dispatch));
     m.impl("nearest_edge_backward_optional", TORCH_FN(nearest_edge_backward_optional_dispatch));
     m.impl("nearest_edge_jvp_optional", TORCH_FN(nearest_edge_jvp_optional_dispatch));
     m.impl("nearest_edges_topk_forward", TORCH_FN(nearest_edges_topk_forward_dispatch));

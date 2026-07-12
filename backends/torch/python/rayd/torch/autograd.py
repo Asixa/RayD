@@ -809,12 +809,65 @@ class _NearestEdgeRayFunction(torch.autograd.Function):
     @staticmethod
     def setup_context(ctx, inputs, output):
         ctx.set_materialize_grads(False)
+        scene_handle, vertices, ray_o, ray_d, ray_tmax, _active = inputs
         distance, ray_t, point, edge_t, edge_point, shape_id, edge_id, global_edge_id, tape_edge_id = output
+        vertices = torch.autograd.forward_ad.unpack_dual(vertices).primal
+        ray_o = torch.autograd.forward_ad.unpack_dual(ray_o).primal
+        ray_d = torch.autograd.forward_ad.unpack_dual(ray_d).primal
+        ray_tmax = torch.autograd.forward_ad.unpack_dual(ray_tmax).primal
+        ctx.scene = scene_handle
+        ctx.save_for_backward(vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
+        ctx.save_for_forward(vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t)
         ctx.mark_non_differentiable(shape_id, edge_id, global_edge_id, tape_edge_id)
 
     @staticmethod
     def backward(ctx, *grad_outputs):
-        return None, None, None, None, None, None
+        vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
+        grad_vertices, grad_ray_o, grad_ray_d = torch.ops.rayd_torch.nearest_edge_ray_backward_optional(
+            ctx.scene,
+            ray_o,
+            ray_d,
+            ray_tmax,
+            tape_edge_id,
+            ray_t,
+            edge_t,
+            grad_outputs[0],
+            grad_outputs[1],
+            grad_outputs[2],
+            grad_outputs[3],
+            grad_outputs[4],
+        )
+        if not ctx.needs_input_grad[1]:
+            grad_vertices = None
+        elif grad_vertices.shape != vertices.shape:
+            grad_vertices = grad_vertices[: vertices.shape[0]]
+        return None, grad_vertices, grad_ray_o, grad_ray_d, None, None
+
+    @staticmethod
+    def jvp(
+        ctx,
+        grad_scene_handle,
+        grad_vertices,
+        grad_ray_o,
+        grad_ray_d,
+        grad_ray_tmax,
+        grad_active,
+    ):
+        vertices, ray_o, ray_d, ray_tmax, tape_edge_id, ray_t, edge_t = ctx.saved_tensors
+        with torch._C._DisableFuncTorch():
+            values = torch.ops.rayd_torch.nearest_edge_ray_jvp_optional(
+                ctx.scene,
+                _native_tensor(ray_o),
+                _native_tensor(ray_d),
+                _native_tensor(ray_tmax),
+                _native_tensor(tape_edge_id),
+                _native_tensor(ray_t),
+                _native_tensor(edge_t),
+                _native_tangent_or_none(grad_vertices),
+                _native_tangent_or_none(grad_ray_o),
+                _native_tangent_or_none(grad_ray_d),
+            )
+        return (*values, None, None, None, None)
 
 
 def nearest_edge_ray(

@@ -33,6 +33,8 @@ class Share2SharedMathTests(unittest.TestCase):
             "ray_segment_distance",
             "point_segment_jvp_fixed_winner",
             "point_segment_vjp_fixed_winner",
+            "ray_segment_jvp_fixed_winner",
+            "ray_segment_vjp_fixed_winner",
         ):
             self.assertIn(symbol, source)
 
@@ -52,6 +54,8 @@ class Share2SharedMathTests(unittest.TestCase):
             "backends/torch/src/torch_ext/edge/edge_backward.cu": (
                 "shared::edge::point_segment_jvp_fixed_winner",
                 "shared::edge::point_segment_vjp_fixed_winner",
+                "shared::edge::ray_segment_jvp_fixed_winner",
+                "shared::edge::ray_segment_vjp_fixed_winner",
             ),
         }
         for relative, symbols in callers.items():
@@ -79,6 +83,13 @@ class Share2SharedMathTests(unittest.TestCase):
         self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", shared_device)
         for symbol in required:
             self.assertIn(symbol, shared_device)
+
+        epc_device = (
+            ROOT / "shared/include/rayd/shared/optix/reflection_epc_device.cuh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", epc_device)
+        self.assertIn("reflection::intersect_segment_plane", epc_device)
+        self.assertIn("reflection::reflect_point_across_plane", epc_device)
 
         for relative in (
             "backends/drjit/src/multipath/reflection_trace.cu",
