@@ -85,6 +85,8 @@ class ProjectMetadataTests(unittest.TestCase):
             "TORCH_CUDA_ARCH_LIST",
             'build/local-$CudaArch',
             "VsDevCmd.bat",
+            "NVCC_CCBIN",
+            "Get-Command cl.exe -ErrorAction Stop",
         ):
             self.assertIn(marker, local_build)
         self.assertTrue((Path(__file__).resolve().parents[3] / "scripts" / "build_local.cmd").is_file())

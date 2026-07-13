@@ -38,6 +38,11 @@ function Initialize-MSVCEnvironment {
 
 Initialize-MSVCEnvironment
 
+if ($env:OS -eq "Windows_NT") {
+    $ClCommand = Get-Command cl.exe -ErrorAction Stop
+    $env:NVCC_CCBIN = Split-Path -Parent $ClCommand.Source
+}
+
 if (-not $CudaArch) {
     $ComputeCapability = & nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null |
         Select-Object -First 1
