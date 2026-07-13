@@ -1,9 +1,8 @@
 # RayD improvement plan execution record (2026-07-11)
 
 This record maps `docs/rayd_improvement_plan.md` to the implementation commits
-and grouped acceptance evidence on `codex/rayd-improvement-plan`. Historical
-phase JSON files remain immutable; this document records the final grouped
-native acceptance.
+and grouped acceptance evidence. Historical phase JSON files remain immutable;
+this document records the final grouped native acceptance.
 
 ## Phase commits
 
@@ -18,8 +17,9 @@ native acceptance.
 | F4 | `47f715b` |
 | F5 | `95139ea` |
 | Share-6 | `b43aa2b`, `714da19` |
-| Performance gate | `06f08bc`, `630dcd0` |
+| Performance gate | `06f08bc`, `630dcd0`, `69e6634`, `3a3c060`, `2c7afaa` |
 | Contract maintenance | `a7bf714` |
+| Local CUDA build workflow | `86f7b70`, `df2a59c`, `6b4cf90` |
 
 ## Build configuration
 
@@ -60,24 +60,31 @@ parity.
 
 ## Performance acceptance
 
-The first post-change smoke run produced a complete schema-valid candidate,
-including correctness, AD, five-run timing/memory samples, and per-stage launch
-audits. It was not accepted because the GPU was simultaneously occupied by
-`Palworld-Win64-Shipping.exe` at 72-84% utilization and approximately 9-10 GiB
-device memory. The contaminated run failed the timing gate globally and showed
-large outliers, so it must not be used as a product regression conclusion.
+The first post-change smoke run was rejected because the GPU was simultaneously
+occupied by another application. A subsequent GPU-idle smoke candidate,
+`artifacts/benchmarks/edge_bvh_matrix/final_smoke_df2a59c_r3.json`, passed all
+11 cases against `bvh0_smoke_f8bda6a_v2.json`.
 
-Final performance acceptance requires a GPU-idle rerun in this order:
+The authoritative GPU-idle full candidate is
+`artifacts/benchmarks/edge_bvh_matrix/final_full_2c7afaa.json`. It passed all 22
+cases and all 110 metric comparisons against the frozen
+`bvh0_full_f8bda6a.json` baseline, with no correctness or AD failures. The gate
+used `--allow-legacy-launch-baseline` only because the frozen pre-change
+baseline predates launch-audit fields; the candidate retains complete per-stage
+launch audits.
 
-1. Generate the 11-case smoke candidate and compare it with
-   `artifacts/benchmarks/edge_bvh_matrix/bvh0_smoke_f8bda6a_v2.json` using
-   `--allow-legacy-launch-baseline`.
-2. If smoke passes, generate the 22-case full candidate and compare it with
-   `artifacts/benchmarks/edge_bvh_matrix/bvh0_full_f8bda6a.json` using the same
-   explicit legacy-baseline option.
-3. Preserve the candidate JSON and gate output only when the GPU-idle run is
-   complete.
+Representative largest-scene results (2,000,000 edges) were:
 
-The candidate must retain complete launch audits; the compatibility option
-only acknowledges that the frozen pre-change baseline predates launch-audit
-fields.
+| Metric | Baseline | Final | Change |
+| --- | ---: | ---: | ---: |
+| hot point query | 132.804 ms | 96.814 ms | -27.10% |
+| build | 1363.856 ms | 725.047 ms | -46.84% |
+| cold create | 9266.200 ms | 5204.856 ms | -43.83% |
+| peak device memory | 1,342,177,280 B | 1,386,217,472 B | +3.28% |
+
+The memory increase remains below the frozen +5% limit. To preserve correctness
+on very large scenes, product builds apply GPU treelet optimization through
+500,000 primitives and retain a valid LBVH above that size. Static scenes also
+release dynamic-refit-only buffers after compaction; the final 2,000,000-edge
+candidate therefore remains within the memory gate while keeping complete
+query launch auditing.

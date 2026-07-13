@@ -1,0 +1,3068 @@
+{
+  "schema_version": 1,
+  "matrix_id": "rayd_edge_bvh_v1",
+  "benchmark": "rayd_edge_bvh",
+  "seed": 20260711,
+  "profile": "full",
+  "environment": {
+    "gpu_name": "NVIDIA GeForce RTX 5080",
+    "gpu_compute_capability": "12.0",
+    "cuda_runtime_version": "12.9",
+    "cuda_driver_version": "596.49",
+    "optix_version": "8.1.0",
+    "compiler_id": "MSVC",
+    "compiler_version": "19.44.35207.1",
+    "build_type": "Release",
+    "git_commit": "2c7afaa423e6520155dd64787a1dadc07d6b02a5"
+  },
+  "tolerances": {
+    "correctness": {
+      "max_abs_error": 1e-05,
+      "max_rel_error": 1e-05
+    },
+    "ad": {
+      "vjp_max_abs_error": 0.0005,
+      "vjp_max_rel_error": 0.0005,
+      "jvp_max_abs_error": 0.0005,
+      "jvp_max_rel_error": 0.0005
+    }
+  },
+  "cases": [
+    {
+      "case_id": "1000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            7.996600001206389,
+            10.913600001003942,
+            7.778899998811539,
+            7.647599999472732,
+            7.532100000389619
+          ],
+          "median": 7.778899998811539,
+          "p95": 10.913600001003942
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4476.821199999904,
+            122.90190000021539,
+            118.87850000130129,
+            118.05810000078054,
+            114.66289999953005
+          ],
+          "median": 118.87850000130129,
+          "p95": 4476.821199999904
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0018999999156221747,
+            0.0018000009731622413,
+            0.002200000380980782,
+            0.0013999997463542968,
+            0.0013000008038943633
+          ],
+          "median": 0.0018000009731622413,
+          "p95": 0.002200000380980782
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4448.270400000183,
+            4686.0452000000805,
+            4728.676800001267,
+            4516.785899999377,
+            4489.339799998561
+          ],
+          "median": 4516.785899999377,
+          "p95": 4728.676800001267
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "16000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 16000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            39.96209999968414,
+            35.8909999995376,
+            33.97369999947841,
+            33.747899999070796,
+            34.809900000254856
+          ],
+          "median": 34.809900000254856,
+          "p95": 39.96209999968414
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4611.5804000000935,
+            131.87990000005811,
+            135.23990000066988,
+            141.49280000128783,
+            141.86510000035923
+          ],
+          "median": 141.49280000128783,
+          "p95": 4611.5804000000935
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0024000000848900527,
+            0.0017000002117129043,
+            0.0015999994502635673,
+            0.0016000012692529708,
+            0.0015999994502635673
+          ],
+          "median": 0.0016000012692529708,
+          "p95": 0.0024000000848900527
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4991.526399999202,
+            4659.576099998958,
+            4734.902799998963,
+            4686.101999999664,
+            4667.06030000023
+          ],
+          "median": 4686.101999999664,
+          "p95": 4991.526399999202
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1715,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1925
+          },
+          "query_point": {
+            "drjit_kernel_launches": 179,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 179
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 179,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 179
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 179,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 179
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "64000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 64000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            53.63450000004377,
+            50.23289999917324,
+            52.20060000101512,
+            57.7101999988372,
+            52.23099999966507
+          ],
+          "median": 52.23099999966507,
+          "p95": 57.7101999988372
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4484.426099999837,
+            214.69369999977062,
+            162.50829999989946,
+            163.83390000009967,
+            168.27919999923324
+          ],
+          "median": 168.27919999923324,
+          "p95": 4484.426099999837
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0025000008463393897,
+            0.0020000006770715117,
+            0.0017999991541728377,
+            0.0021999985619913787,
+            0.0018000009731622413
+          ],
+          "median": 0.0020000006770715117,
+          "p95": 0.0025000008463393897
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            379584512.0,
+            379584512.0,
+            379584512.0,
+            379584512.0,
+            379584512.0
+          ],
+          "median": 379584512.0,
+          "p95": 379584512.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4849.515599998995,
+            4791.460799999186,
+            4778.404099999534,
+            4945.579900000666,
+            4797.011900000143
+          ],
+          "median": 4797.011900000143,
+          "p95": 4945.579900000666
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1719,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1929
+          },
+          "query_point": {
+            "drjit_kernel_launches": 263,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 263
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 263,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 263
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 263,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 263
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "111000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 111000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            41.4163000004919,
+            39.96030000052997,
+            39.107500000682194,
+            39.29270000116958,
+            41.146699999444536
+          ],
+          "median": 39.96030000052997,
+          "p95": 41.4163000004919
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4712.58780000062,
+            235.91180000039458,
+            193.21879999915836,
+            171.13880000033532,
+            177.93669999991835
+          ],
+          "median": 193.21879999915836,
+          "p95": 4712.58780000062
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0017999991541728377,
+            0.0018999999156221747,
+            0.0021999985619913787,
+            0.0017000002117129043,
+            0.003099999958067201
+          ],
+          "median": 0.0018999999156221747,
+          "p95": 0.003099999958067201
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            167772160.0,
+            167772160.0,
+            167772160.0,
+            167772160.0,
+            167772160.0
+          ],
+          "median": 167772160.0,
+          "p95": 167772160.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4784.296399999221,
+            4781.359800001155,
+            5185.569999999643,
+            4931.828000000678,
+            5058.927500000209
+          ],
+          "median": 4931.828000000678,
+          "p95": 5185.569999999643
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1721,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 23,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1949
+          },
+          "query_point": {
+            "drjit_kernel_launches": 202,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 202
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 202,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 202
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 202,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 202
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "500000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 500000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            52.0459999988816,
+            56.04889999995066,
+            58.947000001353445,
+            51.24749999959022,
+            53.723400000308175
+          ],
+          "median": 53.723400000308175,
+          "p95": 58.947000001353445
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4792.214299999614,
+            318.6805999994249,
+            312.10769999961485,
+            322.46350000059465,
+            285.2982000003976
+          ],
+          "median": 318.6805999994249,
+          "p95": 4792.214299999614
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0022999993234407157,
+            0.0021000014385208488,
+            0.0027999994927085936,
+            0.002599999788799323,
+            0.0021000014385208488
+          ],
+          "median": 0.0022999993234407157,
+          "p95": 0.0027999994927085936
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            402653184.0,
+            402653184.0,
+            402653184.0,
+            402653184.0,
+            402653184.0
+          ],
+          "median": 402653184.0,
+          "p95": 402653184.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4987.665200000265,
+            4858.244099999865,
+            5143.563699999504,
+            5106.880400000591,
+            4897.760599998946
+          ],
+          "median": 4987.665200000265,
+          "p95": 5143.563699999504
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1723,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 26,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1954
+          },
+          "query_point": {
+            "drjit_kernel_launches": 248,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 248
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 248,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 248
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 248,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 248
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "2000000-1-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 2000000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            86.50119999947492,
+            96.81390000150714,
+            110.87819999920612,
+            103.53940000095463,
+            88.77329999995709
+          ],
+          "median": 96.81390000150714,
+          "p95": 110.87819999920612
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            5255.924799999775,
+            733.4823000001052,
+            681.1589000008098,
+            698.2845000002271,
+            725.0469000009616
+          ],
+          "median": 725.0469000009616,
+          "p95": 5255.924799999775
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.008400000297115184,
+            0.002599999788799323,
+            0.0024000000848900527,
+            0.002099999619531445,
+            0.002200000380980782
+          ],
+          "median": 0.0024000000848900527,
+          "p95": 0.008400000297115184
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            1386217472.0,
+            1386217472.0,
+            1386217472.0,
+            1386217472.0,
+            1386217472.0
+          ],
+          "median": 1386217472.0,
+          "p95": 1386217472.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            5250.333399999363,
+            5163.262100000793,
+            5271.538300001339,
+            5194.5844999991095,
+            5204.855800000587
+          ],
+          "median": 5204.855800000587,
+          "p95": 5271.538300001339
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1725,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1935
+          },
+          "query_point": {
+            "drjit_kernel_launches": 447,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 447
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 447,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 447
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 447,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 447
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-256-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 256,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            8.946500000092783,
+            14.928699998563388,
+            10.930399999779183,
+            10.404099999504979,
+            8.821899999020388
+          ],
+          "median": 10.404099999504979,
+          "p95": 14.928699998563388
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4679.10590000065,
+            137.8310000000056,
+            131.65660000049684,
+            118.88480000015988,
+            123.89239999902202
+          ],
+          "median": 131.65660000049684,
+          "p95": 4679.10590000065
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0015000005078036338,
+            0.0013999997463542968,
+            0.0013999997463542968,
+            0.0015999994502635673,
+            0.0017000002117129043
+          ],
+          "median": 0.0015000005078036338,
+          "p95": 0.0017000002117129043
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4590.557900000931,
+            4743.520899999567,
+            4969.595500000651,
+            4783.700800000588,
+            4719.76899999936
+          ],
+          "median": 4743.520899999567,
+          "p95": 4969.595500000651
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 122,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 122
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 131,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 131
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 125,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 125
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 1.475214958190918e-06,
+        "vjp_max_rel_error": 1.475214958190918e-06,
+        "jvp_max_abs_error": 1.4603137969970703e-06,
+        "jvp_max_rel_error": 1.4603137969970703e-06
+      }
+    },
+    {
+      "case_id": "1000-4096-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 4096,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            10.456399999384303,
+            12.111000000004424,
+            8.56019999991986,
+            9.886300000289339,
+            8.99070000014035
+          ],
+          "median": 9.886300000289339,
+          "p95": 12.111000000004424
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4759.43720000032,
+            141.33100000071863,
+            179.40289999933157,
+            142.13870000094175,
+            135.5837999999494
+          ],
+          "median": 142.13870000094175,
+          "p95": 4759.43720000032
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0025000008463393897,
+            0.0017000002117129043,
+            0.0013000008038943633,
+            0.0013000008038943633,
+            0.0013999997463542968
+          ],
+          "median": 0.0013999997463542968,
+          "p95": 0.0025000008463393897
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4839.354699999603,
+            4458.649199999854,
+            4519.107399999484,
+            4485.301699998672,
+            4450.969599998643
+          ],
+          "median": 4485.301699998672,
+          "p95": 4839.354699999603
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 122,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 122
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 131,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 131
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 125,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 125
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 6.191432476043701e-06,
+        "vjp_max_rel_error": 6.191432476043701e-06,
+        "jvp_max_abs_error": 6.191432476043701e-06,
+        "jvp_max_rel_error": 6.191432476043701e-06
+      }
+    },
+    {
+      "case_id": "1000-65536-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 65536,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            8.679900000061025,
+            11.863899999298155,
+            11.247399999774643,
+            10.650000000168802,
+            14.153099999020924
+          ],
+          "median": 11.247399999774643,
+          "p95": 14.153099999020924
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4465.8490999991045,
+            151.26930000042194,
+            149.16309999898658,
+            157.31740000046557,
+            153.04380000088713
+          ],
+          "median": 153.04380000088713,
+          "p95": 4465.8490999991045
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0017999991541728377,
+            0.0027999994927085936,
+            0.0017000002117129043,
+            0.0024000000848900527,
+            0.0022999993234407157
+          ],
+          "median": 0.0022999993234407157,
+          "p95": 0.0027999994927085936
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            379584512.0,
+            379584512.0,
+            379584512.0,
+            379584512.0,
+            379584512.0
+          ],
+          "median": 379584512.0,
+          "p95": 379584512.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4641.933099999733,
+            4654.645299999174,
+            4666.718300000866,
+            4587.456200000815,
+            4592.936900000495
+          ],
+          "median": 4641.933099999733,
+          "p95": 4666.718300000866
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 183,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 183
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 197,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 197
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 189,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 189
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 5.103647708892822e-06,
+        "vjp_max_rel_error": 5.103647708892822e-06,
+        "jvp_max_abs_error": 5.088746547698975e-06,
+        "jvp_max_rel_error": 5.088746547698975e-06
+      }
+    },
+    {
+      "case_id": "1000-1000000-point-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1000000,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            48.96589999952994,
+            49.19200000040291,
+            49.09540000153356,
+            50.44149999957881,
+            48.828799999682815
+          ],
+          "median": 49.09540000153356,
+          "p95": 50.44149999957881
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4523.347199999989,
+            140.05610000094748,
+            139.5386000003782,
+            130.51400000040303,
+            138.07269999961136
+          ],
+          "median": 139.5386000003782,
+          "p95": 4523.347199999989
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.002200000380980782,
+            0.0021999985619913787,
+            0.0018999999156221747,
+            0.0022999993234407157,
+            0.002200000380980782
+          ],
+          "median": 0.002200000380980782,
+          "p95": 0.0022999993234407157
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            1050673152.0,
+            1050673152.0,
+            1050673152.0,
+            1050673152.0,
+            1050673152.0
+          ],
+          "median": 1050673152.0,
+          "p95": 1050673152.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4831.181900000956,
+            4792.3766000003525,
+            4964.2904000011185,
+            4859.710799999448,
+            4752.859799998987
+          ],
+          "median": 4831.181900000956,
+          "p95": 4964.2904000011185
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 183,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 183
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 197,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 197
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 189,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 189
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 5.073845386505127e-06,
+        "vjp_max_rel_error": 5.073845386505127e-06,
+        "jvp_max_abs_error": 5.081295967102051e-06,
+        "jvp_max_rel_error": 5.081295967102051e-06
+      }
+    },
+    {
+      "case_id": "1000-1-finite_ray-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "finite_ray",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            14.632799999162671,
+            15.523699999903329,
+            14.300700000603683,
+            14.910599998984253,
+            14.17340000080003
+          ],
+          "median": 14.632799999162671,
+          "p95": 15.523699999903329
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4494.477600001119,
+            125.31699999999546,
+            121.71540000053938,
+            142.00660000096832,
+            118.0886999991344
+          ],
+          "median": 125.31699999999546,
+          "p95": 4494.477600001119
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0018999999156221747,
+            0.0011000010999850929,
+            0.0017000002117129043,
+            0.0018000009731622413,
+            0.0015000005078036338
+          ],
+          "median": 0.0017000002117129043,
+          "p95": 0.0018999999156221747
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4558.9868999995815,
+            4548.427100000481,
+            4551.393200001257,
+            4554.240200001004,
+            4598.357199998645
+          ],
+          "median": 4554.240200001004,
+          "p95": 4598.357199998645
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-infinite_ray-1-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "infinite_ray",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            12.828900000386056,
+            15.768399998705718,
+            12.828700000682147,
+            13.284999999086722,
+            15.584700000545126
+          ],
+          "median": 13.284999999086722,
+          "p95": 15.768399998705718
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4802.235799999835,
+            137.85420000021986,
+            149.8334000007162,
+            137.22989999951096,
+            131.27329999952053
+          ],
+          "median": 137.85420000021986,
+          "p95": 4802.235799999835
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0018999999156221747,
+            0.0024000000848900527,
+            0.0012000000424450263,
+            0.0018999999156221747,
+            0.0015999994502635673
+          ],
+          "median": 0.0018999999156221747,
+          "p95": 0.0024000000848900527
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4580.018200000268,
+            4516.614500000287,
+            4459.730700000364,
+            4521.125400000528,
+            4581.491000000824
+          ],
+          "median": 4521.125400000528,
+          "p95": 4581.491000000824
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-4-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 4,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            10.705699998652562,
+            10.023400000136462,
+            9.649499999795808,
+            13.989600000059,
+            11.366000000634813
+          ],
+          "median": 10.705699998652562,
+          "p95": 13.989600000059
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4405.456599999525,
+            117.05169999913778,
+            131.64970000070753,
+            121.42459999995481,
+            160.59190000123635
+          ],
+          "median": 131.64970000070753,
+          "p95": 4405.456599999525
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0015999994502635673,
+            0.0013999997463542968,
+            0.0012000000424450263,
+            0.0013999997463542968,
+            0.0015999994502635673
+          ],
+          "median": 0.0013999997463542968,
+          "p95": 0.0015999994502635673
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4549.106100001154,
+            4663.236399999732,
+            4555.744899998899,
+            4527.003999999579,
+            4647.820500000307
+          ],
+          "median": 4555.744899998899,
+          "p95": 4663.236399999732
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 52,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 52
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 1.4901161193847656e-08,
+        "vjp_max_rel_error": 1.4901161193847656e-08,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-8-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 8,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            22.84440000039467,
+            18.448099999659462,
+            21.050199999081087,
+            17.796999998608953,
+            18.23109999895678
+          ],
+          "median": 18.448099999659462,
+          "p95": 22.84440000039467
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4528.746799998771,
+            145.44730000125128,
+            147.94939999956114,
+            142.26940000116883,
+            139.02740000048652
+          ],
+          "median": 145.44730000125128,
+          "p95": 4528.746799998771
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0020000006770715117,
+            0.001999998858082108,
+            0.002099999619531445,
+            0.0015000005078036338,
+            0.0014999986888142303
+          ],
+          "median": 0.001999998858082108,
+          "p95": 0.002099999619531445
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4823.9520999995875,
+            4758.240099999966,
+            4787.820600000487,
+            4786.383699998623,
+            4700.928499998554
+          ],
+          "median": 4786.383699998623,
+          "p95": 4823.9520999995875
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 76,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 76
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 1.4901161193847656e-08,
+        "vjp_max_rel_error": 1.4901161193847656e-08,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-16-static-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 16,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            37.40490000018326,
+            37.70590000021912,
+            42.88000000087777,
+            39.22750000128872,
+            39.596200000232784
+          ],
+          "median": 39.22750000128872,
+          "p95": 42.88000000087777
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4595.574799999667,
+            188.6341999997967,
+            158.0340000000433,
+            187.12609999965935,
+            137.18129999870143
+          ],
+          "median": 187.12609999965935,
+          "p95": 4595.574799999667
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0020000006770715117,
+            0.0015999994502635673,
+            0.0020000006770715117,
+            0.0018000009731622413,
+            0.0015000005078036338
+          ],
+          "median": 0.0018000009731622413,
+          "p95": 0.0020000006770715117
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4811.428299999534,
+            4747.983300001579,
+            4798.327999998946,
+            4820.650499999829,
+            4838.559499999974
+          ],
+          "median": 4811.428299999534,
+          "p95": 4838.559499999974
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 123,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 123
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 1.4901161193847656e-08,
+        "vjp_max_rel_error": 1.4901161193847656e-08,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-full_refit-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "full_refit",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            8.302700000058394,
+            8.694800000739633,
+            8.78779999948165,
+            10.642900000675581,
+            8.527299998604576
+          ],
+          "median": 8.694800000739633,
+          "p95": 10.642900000675581
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4614.233599999352,
+            181.6080000007787,
+            147.8463000003103,
+            148.5530000009021,
+            144.79229999960808
+          ],
+          "median": 148.5530000009021,
+          "p95": 4614.233599999352
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            4107.713800000056,
+            77.99950000116951,
+            58.11679999897024,
+            87.68030000101135,
+            79.89199999974517
+          ],
+          "median": 79.89199999974517,
+          "p95": 4107.713800000056
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0
+          ],
+          "median": 257949696.0,
+          "p95": 257949696.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4623.931699999957,
+            4682.442999999694,
+            4660.034399999859,
+            4684.284200000548,
+            4622.364400000151
+          ],
+          "median": 4660.034399999859,
+          "p95": 4684.284200000548
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1712,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1822
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 1414,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1515
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-dirty_refit_1pct-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "dirty_refit_1pct",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            7.9902999987098156,
+            9.652400000049965,
+            9.6415000007255,
+            8.467400000881753,
+            8.540400000129011
+          ],
+          "median": 8.540400000129011,
+          "p95": 9.652400000049965
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4611.758999999438,
+            131.12879999971483,
+            124.20000000020082,
+            146.67220000046655,
+            127.66219999866735
+          ],
+          "median": 131.12879999971483,
+          "p95": 4611.758999999438
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            38.178200000402285,
+            0.8328000003530178,
+            0.8232000000134576,
+            0.8462999994662823,
+            0.8077000002231216
+          ],
+          "median": 0.8328000003530178,
+          "p95": 38.178200000402285
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0
+          ],
+          "median": 257949696.0,
+          "p95": 257949696.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4701.53879999998,
+            4591.645700000299,
+            4781.366700000945,
+            4654.8913000006,
+            4629.208299998936
+          ],
+          "median": 4654.8913000006,
+          "p95": 4781.366700000945
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1821
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 15,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 21,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 2,
+            "total_observed_launches": 38
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-dirty_refit_10pct-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "dirty_refit_10pct",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            11.414599999625352,
+            8.422599999903468,
+            9.791300000870251,
+            8.284999999887077,
+            8.651000000099884
+          ],
+          "median": 8.651000000099884,
+          "p95": 11.414599999625352
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4609.849700000268,
+            121.81600000076287,
+            130.30149999940477,
+            122.36010000015085,
+            127.64099999913014
+          ],
+          "median": 127.64099999913014,
+          "p95": 4609.849700000268
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            452.761599999576,
+            7.6454999998532,
+            6.988200000705547,
+            6.131100000857259,
+            6.197900000188383
+          ],
+          "median": 6.988200000705547,
+          "p95": 452.761599999576
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0
+          ],
+          "median": 257949696.0,
+          "p95": 257949696.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4832.398900000044,
+            4587.562500000786,
+            4628.006400000231,
+            4665.52159999992,
+            4910.705100000996
+          ],
+          "median": 4665.52159999992,
+          "p95": 4910.705100000996
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1821
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 150,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 30,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 11,
+            "total_observed_launches": 191
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-dirty_refit_100pct-sparse-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "dirty_refit_100pct",
+        "mask": "sparse",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            8.170200000677141,
+            11.508400000820984,
+            8.474399999613524,
+            8.573900000556023,
+            9.725800000524032
+          ],
+          "median": 8.573900000556023,
+          "p95": 11.508400000820984
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4588.7776999989,
+            151.43569999963802,
+            163.01500000008673,
+            155.11569999944186,
+            150.66050000132236
+          ],
+          "median": 155.11569999944186,
+          "p95": 4588.7776999989
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            4492.441399999734,
+            70.70780000140076,
+            89.02300000045216,
+            77.48050000009243,
+            85.22140000059153
+          ],
+          "median": 85.22140000059153,
+          "p95": 4492.441399999734
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0,
+            257949696.0
+          ],
+          "median": 257949696.0,
+          "p95": 257949696.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4642.128299999968,
+            4725.9374000004755,
+            4734.010899999703,
+            4660.918600000514,
+            4713.240600000063
+          ],
+          "median": 4713.240600000063,
+          "p95": 4734.010899999703
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1821
+          },
+          "query_point": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 43,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 43
+          },
+          "refit": {
+            "drjit_kernel_launches": 1504,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 120,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 101,
+            "total_observed_launches": 1725
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-static-dense-grid",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "dense",
+        "distribution": "grid"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            5.309000000124797,
+            7.165000000895816,
+            4.812999999558087,
+            4.831300000660121,
+            5.270800000289455
+          ],
+          "median": 5.270800000289455,
+          "p95": 7.165000000895816
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4631.591499999558,
+            136.51980000031472,
+            138.5281999992003,
+            130.09380000039528,
+            123.92950000139535
+          ],
+          "median": 136.51980000031472,
+          "p95": 4631.591499999558
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0017000002117129043,
+            0.0015999994502635673,
+            0.0012000000424450263,
+            0.0013999997463542968,
+            0.00540000110049732
+          ],
+          "median": 0.0015999994502635673,
+          "p95": 0.00540000110049732
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4728.424200000518,
+            4633.6238000003505,
+            4630.24630000109,
+            4850.513100000171,
+            4637.63149999977
+          ],
+          "median": 4637.63149999977,
+          "p95": 4850.513100000171
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 25,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 25
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 25,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 25
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 25,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 25
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-static-sparse-random",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "random"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            7.780799998727161,
+            10.628099998939433,
+            7.713599999988219,
+            8.27459999891289,
+            7.747300000119139
+          ],
+          "median": 7.780799998727161,
+          "p95": 10.628099998939433
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4620.587600000363,
+            162.72140000000945,
+            212.34189999995579,
+            141.94880000104604,
+            146.98219999991124
+          ],
+          "median": 162.72140000000945,
+          "p95": 4620.587600000363
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0017999991541728377,
+            0.0014999986888142303,
+            0.0013000008038943633,
+            0.0013000008038943633,
+            0.0013000008038943633
+          ],
+          "median": 0.0013000008038943633,
+          "p95": 0.0017999991541728377
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4671.930500000599,
+            4648.7920999989,
+            4698.108000000502,
+            4676.565499999924,
+            4634.068499999557
+          ],
+          "median": 4671.930500000599,
+          "p95": 4698.108000000502
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1713,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1923
+          },
+          "query_point": {
+            "drjit_kernel_launches": 41,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 41
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 41,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 41
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 41,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 41
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 0.0,
+        "vjp_max_rel_error": 0.0,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    },
+    {
+      "case_id": "1000-1-point-1-static-sparse-long_thin",
+      "dimensions": {
+        "edge_count": 1000,
+        "query_count": 1,
+        "query_kind": "point",
+        "top_k": 1,
+        "update_mode": "static",
+        "mask": "sparse",
+        "distribution": "long_thin"
+      },
+      "performance": {
+        "hot_query_ms": {
+          "unit": "ms",
+          "samples": [
+            6.0207000005902955,
+            4.358900001534494,
+            5.296699999234988,
+            4.698900000221329,
+            4.260499999872991
+          ],
+          "median": 4.698900000221329,
+          "p95": 6.0207000005902955
+        },
+        "build_ms": {
+          "unit": "ms",
+          "samples": [
+            4733.874999999898,
+            172.85120000087772,
+            133.5997000005591,
+            148.09250000143948,
+            139.35639999908744
+          ],
+          "median": 148.09250000143948,
+          "p95": 4733.874999999898
+        },
+        "refit_ms": {
+          "unit": "ms",
+          "samples": [
+            0.0026999987312592566,
+            0.0013999997463542968,
+            0.0013999997463542968,
+            0.0014000015653437003,
+            0.0012999989849049598
+          ],
+          "median": 0.0013999997463542968,
+          "p95": 0.0026999987312592566
+        },
+        "peak_device_memory_bytes": {
+          "unit": "bytes",
+          "samples": [
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0,
+            346030080.0
+          ],
+          "median": 346030080.0,
+          "p95": 346030080.0
+        },
+        "cold_create_ms": {
+          "unit": "ms",
+          "samples": [
+            4652.037300000302,
+            4439.475600000151,
+            4509.029500000906,
+            4513.575599999967,
+            4519.556100000045
+          ],
+          "median": 4513.575599999967,
+          "p95": 4652.037300000302
+        }
+      },
+      "launch_audit": {
+        "method": "independent_stable_audit",
+        "timing_isolated": true,
+        "runs": 1,
+        "sampling": "single_deterministic_pass_not_timing_sample",
+        "state": "fresh_scene_build_warm_queries_and_refit",
+        "stages": {
+          "build": {
+            "drjit_kernel_launches": 1711,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 5,
+            "native_cub_launches": 4,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 201,
+            "total_observed_launches": 1921
+          },
+          "query_point": {
+            "drjit_kernel_launches": 23,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 23
+          },
+          "query_finite_ray": {
+            "drjit_kernel_launches": 23,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 23
+          },
+          "query_infinite_ray": {
+            "drjit_kernel_launches": 23,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 23
+          },
+          "refit": {
+            "drjit_kernel_launches": 0,
+            "drjit_optix_launches": 0,
+            "native_cuda_kernel_launches": 0,
+            "native_cub_launches": 0,
+            "native_optix_launches": 0,
+            "native_optix_accel_operations": 0,
+            "total_observed_launches": 0
+          }
+        }
+      },
+      "correctness": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      "ad": {
+        "vjp_max_abs_error": 1.4901161193847656e-08,
+        "vjp_max_rel_error": 1.4901161193847656e-08,
+        "jvp_max_abs_error": 0.0,
+        "jvp_max_rel_error": 0.0
+      }
+    }
+  ]
+}

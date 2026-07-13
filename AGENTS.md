@@ -91,5 +91,5 @@ RayD is not a full renderer and intentionally does not include:
 ## Tests
 
 ```bash
-python -m unittest tests.drjit.test_geometry -v
+python -m unittest backends.drjit.tests.drjit.test_geometry -v
 ```
