@@ -834,6 +834,140 @@ extern "C" int64_t rayd_torch_native_trace_reflections_forward(
     return kOutputCount;
 }
 
+extern "C" int64_t rayd_torch_native_trace_reflections_forward_tape(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_forward_tape received null ") + name);
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 9;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_forward_tape output capacity is too small");
+    std::vector<at::Tensor> result = trace_reflections_forward_native_impl(
+        scene_handle,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        required(ray_tmax, "ray_tmax"),
+        active,
+        max_bounces,
+        true,
+        true);
+    if (static_cast<int64_t>(result.size()) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_forward_tape returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = std::move(result[static_cast<size_t>(i)]);
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_trace_reflections_backward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_hit_points,
+    const at::Tensor *tape_normals,
+    const at::Tensor *image_sources,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_image_sources,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_backward received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 4;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_backward output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    ReflectionBackwardOutputs out = reflection_chain_backward_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        ray_tmax_storage,
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_hit_points, "tape_hit_points"),
+        required(tape_normals, "tape_normals"),
+        required(image_sources, "image_sources"),
+        maybe(grad_t),
+        maybe(grad_image_sources));
+    outputs[0] = out.grad_vertices;
+    outputs[1] = out.grad_ray_o;
+    outputs[2] = out.grad_ray_d;
+    outputs[3] = out.grad_ray_tmax;
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_trace_reflections_jvp(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_hit_points,
+    const at::Tensor *tape_normals,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    const at::Tensor *image_sources,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_jvp received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 2;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_reflections_jvp output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    ReflectionJvpOutputs out = reflection_chain_jvp_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_hit_points, "tape_hit_points"),
+        required(tape_normals, "tape_normals"),
+        maybe(tangent_vertices),
+        maybe(tangent_ray_o),
+        maybe(tangent_ray_d),
+        required(image_sources, "image_sources"));
+    outputs[0] = out.tangent_t;
+    outputs[1] = out.tangent_image_sources;
+    return kOutputCount;
+}
+
 py::tuple trace_reflections_backward_op(
     int64_t scene_handle,
     at::Tensor ray_o,
@@ -968,16 +1102,16 @@ py::tuple trace_reflections_jvp_optional_op(
     return py::make_tuple(out.tangent_t, out.tangent_image_sources);
 }
 
-py::tuple trace_refl_epc_field_forward_op(
+std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(
     int64_t scene_handle,
-    at::Tensor source,
-    at::Tensor receiver,
-    py::object active_obj,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor *active_ptr,
     int64_t max_bounces) {
     require_vec3f(source, "source");
     require_vec3f(receiver, "receiver");
     require_same_batch(source, receiver, "trace_refl_epc_field");
-    at::Tensor active = optional_active_from_py(active_obj, source.size(0), "active");
+    at::Tensor active = optional_active_from_tensor(active_ptr, source.size(0), "active");
     at::Tensor active_ctx = active.defined() ? active : at::empty({0}, source.options().dtype(at::kBool));
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
@@ -995,7 +1129,7 @@ py::tuple trace_refl_epc_field_forward_op(
     at::Tensor tape_prim_id = at::empty({ray_count}, iopts);
     at::Tensor tape_barycentric = at::empty({ray_count, 3}, fopts);
     if (ray_count == 0) {
-        return py::make_tuple(
+        return {
             field_real,
             field_imag,
             path_length,
@@ -1003,7 +1137,7 @@ py::tuple trace_refl_epc_field_forward_op(
             resolved_first,
             tape_prim_id,
             tape_barycentric,
-            active_ctx);
+            active_ctx};
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
@@ -1160,7 +1294,7 @@ py::tuple trace_refl_epc_field_forward_op(
     field_params.out_first_trace_prim_id = tape_prim_id.data_ptr<int>();
     reflection_epc_field_gpu(field_params);
 
-    return py::make_tuple(
+    return {
         field_real,
         field_imag,
         path_length,
@@ -1168,7 +1302,23 @@ py::tuple trace_refl_epc_field_forward_op(
         resolved_first,
         tape_prim_id,
         tape_barycentric,
-        active_ctx);
+        active_ctx};
+}
+
+py::tuple trace_refl_epc_field_forward_op(
+    int64_t scene_handle,
+    at::Tensor source,
+    at::Tensor receiver,
+    py::object active_obj,
+    int64_t max_bounces) {
+    at::Tensor active_storage;
+    const at::Tensor *active_ptr = optional_tensor(active_obj, active_storage);
+    return tensor_vector_to_tuple(trace_refl_epc_field_forward_native_impl(
+        scene_handle,
+        source,
+        receiver,
+        active_ptr,
+        max_bounces));
 }
 
 std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
@@ -2078,6 +2228,133 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
         throw std::runtime_error("rayd_torch_native_reflection_epc_paths_forward returned an unexpected output count");
     for (int64_t i = 0; i < kOutputCount; ++i)
         outputs[i] = std::move(result[static_cast<size_t>(i)]);
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_trace_refl_epc_field_forward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_trace_refl_epc_field_forward received null ") + name);
+        return *tensor;
+    };
+    constexpr int64_t kOutputCount = 8;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_refl_epc_field_forward output capacity is too small");
+    std::vector<at::Tensor> result = trace_refl_epc_field_forward_native_impl(
+        scene_handle,
+        required(source, "source"),
+        required(receiver, "receiver"),
+        active,
+        max_bounces);
+    if (static_cast<int64_t>(result.size()) != kOutputCount)
+        throw std::runtime_error("rayd_torch_native_trace_refl_epc_field_forward returned an unexpected output count");
+    for (int64_t i = 0; i < kOutputCount; ++i)
+        outputs[i] = std::move(result[static_cast<size_t>(i)]);
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_refl_epc_backward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_t,
+    const at::Tensor *grad_field_real,
+    const at::Tensor *grad_field_imag,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_refl_epc_backward received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 3;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_refl_epc_backward output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    ReflEpcBackwardOutputs out = refl_epc_backward_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(source, "source"),
+        required(receiver, "receiver"),
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_t, "tape_t"),
+        maybe(grad_field_real),
+        maybe(grad_field_imag),
+        maybe(grad_path_length),
+        need_grad_vertices,
+        need_grad_source,
+        need_grad_receiver);
+    outputs[0] = out.grad_vertices;
+    outputs[1] = out.grad_source;
+    outputs[2] = out.grad_receiver;
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_refl_epc_jvp(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_t,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_refl_epc_jvp received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 3;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_refl_epc_jvp output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    ReflEpcJvpOutputs out = refl_epc_jvp_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(source, "source"),
+        required(receiver, "receiver"),
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_t, "tape_t"),
+        maybe(tangent_vertices),
+        maybe(tangent_source),
+        maybe(tangent_receiver));
+    outputs[0] = out.tangent_field_real;
+    outputs[1] = out.tangent_field_imag;
+    outputs[2] = out.tangent_path_length;
     return kOutputCount;
 }
 

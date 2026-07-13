@@ -711,6 +711,117 @@ extern "C" int64_t rayd_torch_native_intersect_forward(
     return kOutputCount;
 }
 
+extern "C" int64_t rayd_torch_native_intersect_backward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_p,
+    const at::Tensor *grad_n,
+    const at::Tensor *grad_geo_n,
+    const at::Tensor *grad_uv,
+    const at::Tensor *grad_barycentric,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_intersect_backward received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 4;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_intersect_backward output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    IntersectBackwardOutputs out = intersect_backward_optional_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        ray_tmax_storage,
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        maybe(grad_t),
+        maybe(grad_p),
+        maybe(grad_n),
+        maybe(grad_geo_n),
+        maybe(grad_uv),
+        maybe(grad_barycentric),
+        need_grad_vertices,
+        need_grad_ray_o,
+        need_grad_ray_d,
+        need_grad_ray_tmax);
+    outputs[0] = out.grad_vertices;
+    outputs[1] = out.grad_ray_o;
+    outputs[2] = out.grad_ray_d;
+    outputs[3] = out.grad_ray_tmax;
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_intersect_jvp(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    int64_t flags,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_intersect_jvp received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 6;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_intersect_jvp output capacity is too small");
+    SceneCache &scene = get_scene(scene_handle);
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    IntersectJvpOutputs out = intersect_jvp_optional_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        required(ray_o, "ray_o"),
+        required(ray_d, "ray_d"),
+        active_storage,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        maybe(tangent_vertices),
+        maybe(tangent_ray_o),
+        maybe(tangent_ray_d),
+        flags);
+    outputs[0] = out.tangent_t;
+    outputs[1] = out.tangent_p;
+    outputs[2] = out.tangent_n;
+    outputs[3] = out.tangent_geo_n;
+    outputs[4] = out.tangent_uv;
+    outputs[5] = out.tangent_barycentric;
+    return kOutputCount;
+}
+
 at::Tensor intersect_forward_t_op(
     int64_t scene_handle,
     at::Tensor ray_o,

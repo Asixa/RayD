@@ -51,6 +51,47 @@ extern "C" void rayd_torch_native_visibility_forward(
     at::Tensor *blocker_prim,
     at::Tensor *tape_t);
 
+// Differentiable-geometry companions (fixed-winner contract). The tape
+// tensors (prim ids, barycentrics, hit points, normals) are detached winner
+// records produced by the matching forward; backward/jvp entry points
+// recompute continuous quantities from them and never differentiate the
+// discrete winner selection itself.
+
+extern "C" int64_t rayd_torch_native_intersect_backward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_p,
+    const at::Tensor *grad_n,
+    const at::Tensor *grad_geo_n,
+    const at::Tensor *grad_uv,
+    const at::Tensor *grad_barycentric,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_intersect_jvp(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    int64_t flags,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
 extern "C" int64_t rayd_torch_native_trace_reflections_forward(
     int64_t scene_handle,
     const at::Tensor *ray_o,
@@ -58,6 +99,95 @@ extern "C" int64_t rayd_torch_native_trace_reflections_forward(
     const at::Tensor *ray_tmax,
     const at::Tensor *active,
     int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+// Tape-emitting variant of the reflection chain forward. Emits the nine
+// tensors of the internal AD forward: valid, t, image_sources, prim_ids,
+// tape_prim_id (alias of prim_ids), tape_barycentric, tape_hit_points,
+// tape_normals, active_ctx.
+extern "C" int64_t rayd_torch_native_trace_reflections_forward_tape(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_trace_reflections_backward(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_hit_points,
+    const at::Tensor *tape_normals,
+    const at::Tensor *image_sources,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_image_sources,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_trace_reflections_jvp(
+    int64_t scene_handle,
+    const at::Tensor *ray_o,
+    const at::Tensor *ray_d,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_hit_points,
+    const at::Tensor *tape_normals,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    const at::Tensor *image_sources,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+// Single-winner EPC reflection field forward. Emits field_real, field_imag,
+// path_length, valid, resolved_prim_id, tape_prim_id, tape_barycentric,
+// active_ctx. path_length doubles as tape_t for the backward/jvp companions.
+extern "C" int64_t rayd_torch_native_trace_refl_epc_field_forward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    int64_t max_bounces,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_refl_epc_backward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_t,
+    const at::Tensor *grad_field_real,
+    const at::Tensor *grad_field_imag,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_refl_epc_jvp(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *active,
+    const at::Tensor *tape_prim_id,
+    const at::Tensor *tape_barycentric,
+    const at::Tensor *tape_t,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver,
     at::Tensor *outputs,
     int64_t output_capacity);
 
