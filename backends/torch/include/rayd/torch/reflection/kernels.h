@@ -125,4 +125,67 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
     const at::Tensor *tangent_source,
     const at::Tensor *tangent_receiver);
 
+// Fixed-winner geometry companions of the reflection EPC path export
+// (direct-plane mode). The winner face sequence, validity and bounce counts
+// are frozen discovery records; the kernels re-solve the pure-geometry chain
+// (shared/reflection/epc_chain.h) from exactly the plane inputs the forward
+// consumed and differentiate only its continuous outputs, chaining each
+// bounce's plane cotangents to the winner triangle's vertices. No OptiX.
+
+struct ReflEpcPathsBackwardOutputs {
+    at::Tensor grad_vertices;
+    at::Tensor grad_source;
+    at::Tensor grad_receiver;
+};
+
+ReflEpcPathsBackwardOutputs reflection_epc_paths_backward_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &sequence,
+    const at::Tensor &plane_points,
+    const at::Tensor &plane_normals,
+    const at::Tensor &valid,
+    const at::Tensor &bounce_count,
+    const at::Tensor *grad_points,
+    const at::Tensor *grad_normals,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver);
+
+struct ReflEpcPathsJvpOutputs {
+    at::Tensor tangent_points;
+    at::Tensor tangent_normals;
+    at::Tensor tangent_path_length;
+};
+
+ReflEpcPathsJvpOutputs reflection_epc_paths_jvp_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &sequence,
+    const at::Tensor &plane_points,
+    const at::Tensor &plane_normals,
+    const at::Tensor &valid,
+    const at::Tensor &bounce_count,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver);
+
+// Adjoint / tangent of the scene's unit face-normal table
+// normalize(cross(v1 - v0, v2 - v0)) with respect to the global vertex table.
+
+at::Tensor scene_face_normals_backward_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &grad_face_normals);
+
+at::Tensor scene_face_normals_jvp_cuda(
+    const at::Tensor &vertices,
+    const at::Tensor &faces,
+    const at::Tensor &tangent_vertices);
+
 } // namespace rayd::torch_backend

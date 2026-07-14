@@ -255,6 +255,64 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
     at::Tensor *outputs,
     int64_t output_capacity);
 
+// Fixed-winner geometry companions of the reflection EPC path export
+// (direct-plane mode). `sequence` is the frozen winner face sequence and
+// `plane_points` / `plane_normals` are exactly the direct-plane arrays the
+// matching forward consumed; `valid` / `bounce_count` are frozen discovery
+// records. The entries differentiate only the continuous chain geometry (the
+// mirror loop, the plane intersections and the path length) and chain each
+// bounce's plane cotangents to the winner triangle's vertices, so no OptiX is
+// involved. Gradients/tangents may be strided; null gradient/tangent inputs
+// are treated as zero and invalid rows contribute nothing.
+
+extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *sequence,
+    const at::Tensor *plane_points,
+    const at::Tensor *plane_normals,
+    const at::Tensor *valid,
+    const at::Tensor *bounce_count,
+    const at::Tensor *grad_points,
+    const at::Tensor *grad_normals,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *sequence,
+    const at::Tensor *plane_points,
+    const at::Tensor *plane_normals,
+    const at::Tensor *valid,
+    const at::Tensor *bounce_count,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+// Adjoint / tangent of the scene's unit face-normal table
+// normalize(cross(v1 - v0, v2 - v0)) with respect to the global vertex table.
+
+extern "C" int64_t rayd_torch_native_scene_face_normals_backward(
+    int64_t scene_handle,
+    const at::Tensor *grad_face_normals,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
+extern "C" int64_t rayd_torch_native_scene_face_normals_jvp(
+    int64_t scene_handle,
+    const at::Tensor *tangent_vertices,
+    at::Tensor *outputs,
+    int64_t output_capacity);
+
 extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
     int64_t scene_handle,
     const at::Tensor *tx_pos,

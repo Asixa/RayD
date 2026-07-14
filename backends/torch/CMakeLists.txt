@@ -537,6 +537,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/dedup.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu
         src/torch_ext/reflection/epc_field.cu
+        src/torch_ext/reflection/epc_geometry_ad.cu
         src/torch_ext/reflection/accum_reduce.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu

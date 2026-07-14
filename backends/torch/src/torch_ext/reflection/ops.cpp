@@ -206,6 +206,58 @@ void require_optional_tangent_vertices(
             std::string(name) + " must match the scene global vertex table.");
 }
 
+// Shape/dtype checks for the reflection EPC paths geometry companions. The
+// winner sequence and the plane arrays are required to be the contiguous
+// tensors the paths forward consumed; gradients/tangents may be strided views
+// (the kernels consume explicit strides).
+
+int64_t require_epc_paths_frozen_winner(
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &sequence,
+    const at::Tensor &plane_points,
+    const at::Tensor &plane_normals,
+    const at::Tensor &valid,
+    const at::Tensor &bounce_count) {
+    require_vec3f(source, "source");
+    require_vec3f(receiver, "receiver");
+    const int64_t ray_count = source.size(0);
+    require_ray_batch(receiver, ray_count, "receiver");
+    require_cuda(sequence, "sequence");
+    require_contiguous(sequence, "sequence");
+    require_dtype(sequence, at::kInt, "sequence");
+    require_rank(sequence, 2, "sequence");
+    require_ray_batch(sequence, ray_count, "sequence");
+    const int64_t bounce_width = sequence.size(1);
+    if (bounce_width < 1)
+        throw std::runtime_error("sequence must cover at least one bounce.");
+    if (bounce_width > ReflEpcMaxBounces)
+        throw std::runtime_error("sequence bounce count exceeds ReflEpcMaxBounces.");
+    require_chain_tape_vec3(plane_points, ray_count, bounce_width, "plane_points");
+    require_chain_tape_vec3(plane_normals, ray_count, bounce_width, "plane_normals");
+    require_mask(valid, "valid");
+    require_ray_batch(valid, ray_count, "valid");
+    require_flat_i32(bounce_count, "bounce_count");
+    require_ray_batch(bounce_count, ray_count, "bounce_count");
+    return ray_count;
+}
+
+void require_optional_chain_grad_vec3(
+    const at::Tensor *grad,
+    int64_t ray_count,
+    int64_t bounce_count,
+    const char *name) {
+    if (grad == nullptr)
+        return;
+    require_cuda(*grad, name);
+    require_dtype(*grad, at::kFloat, name);
+    require_rank(*grad, 3, name);
+    require_ray_batch(*grad, ray_count, name);
+    if (grad->size(1) != bounce_count)
+        throw std::runtime_error(std::string(name) + " must match the sequence bounce count.");
+    require_last_dim(*grad, 3, name);
+}
+
 void require_epc_tape(
     const at::Tensor &tape_prim_id,
     const at::Tensor &tape_barycentric,
@@ -2416,6 +2468,189 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
         throw std::runtime_error("rayd_torch_native_reflection_epc_paths_forward returned an unexpected output count");
     for (int64_t i = 0; i < kOutputCount; ++i)
         outputs[i] = std::move(result[static_cast<size_t>(i)]);
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *sequence,
+    const at::Tensor *plane_points,
+    const at::Tensor *plane_normals,
+    const at::Tensor *valid,
+    const at::Tensor *bounce_count,
+    const at::Tensor *grad_points,
+    const at::Tensor *grad_normals,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_reflection_epc_paths_backward received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 3;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_epc_paths_backward output capacity is too small");
+    const at::Tensor &source_checked = required(source, "source");
+    const at::Tensor &receiver_checked = required(receiver, "receiver");
+    const at::Tensor &sequence_checked = required(sequence, "sequence");
+    const at::Tensor &plane_points_checked = required(plane_points, "plane_points");
+    const at::Tensor &plane_normals_checked = required(plane_normals, "plane_normals");
+    const at::Tensor &valid_checked = required(valid, "valid");
+    const at::Tensor &bounce_count_checked = required(bounce_count, "bounce_count");
+    const int64_t ray_count = require_epc_paths_frozen_winner(
+        source_checked,
+        receiver_checked,
+        sequence_checked,
+        plane_points_checked,
+        plane_normals_checked,
+        valid_checked,
+        bounce_count_checked);
+    const int64_t bounce_width = sequence_checked.size(1);
+    require_optional_chain_grad_vec3(
+        maybe(grad_points), ray_count, bounce_width, "grad_points");
+    require_optional_chain_grad_vec3(
+        maybe(grad_normals), ray_count, bounce_width, "grad_normals");
+    require_optional_grad_vec(
+        maybe(grad_path_length), ray_count, 0, "grad_path_length");
+    SceneCache &scene = get_scene(scene_handle);
+    ReflEpcPathsBackwardOutputs out = reflection_epc_paths_backward_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        source_checked,
+        receiver_checked,
+        sequence_checked,
+        plane_points_checked,
+        plane_normals_checked,
+        valid_checked,
+        bounce_count_checked,
+        maybe(grad_points),
+        maybe(grad_normals),
+        maybe(grad_path_length),
+        need_grad_vertices,
+        need_grad_source,
+        need_grad_receiver);
+    outputs[0] = out.grad_vertices;
+    outputs[1] = out.grad_source;
+    outputs[2] = out.grad_receiver;
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
+    int64_t scene_handle,
+    const at::Tensor *source,
+    const at::Tensor *receiver,
+    const at::Tensor *sequence,
+    const at::Tensor *plane_points,
+    const at::Tensor *plane_normals,
+    const at::Tensor *valid,
+    const at::Tensor *bounce_count,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
+        if (tensor == nullptr)
+            throw std::runtime_error(std::string("rayd_torch_native_reflection_epc_paths_jvp received null ") + name);
+        return *tensor;
+    };
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    constexpr int64_t kOutputCount = 3;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_reflection_epc_paths_jvp output capacity is too small");
+    const at::Tensor &source_checked = required(source, "source");
+    const at::Tensor &receiver_checked = required(receiver, "receiver");
+    const at::Tensor &sequence_checked = required(sequence, "sequence");
+    const at::Tensor &plane_points_checked = required(plane_points, "plane_points");
+    const at::Tensor &plane_normals_checked = required(plane_normals, "plane_normals");
+    const at::Tensor &valid_checked = required(valid, "valid");
+    const at::Tensor &bounce_count_checked = required(bounce_count, "bounce_count");
+    const int64_t ray_count = require_epc_paths_frozen_winner(
+        source_checked,
+        receiver_checked,
+        sequence_checked,
+        plane_points_checked,
+        plane_normals_checked,
+        valid_checked,
+        bounce_count_checked);
+    SceneCache &scene = get_scene(scene_handle);
+    require_optional_tangent_vertices(
+        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad_vec(
+        maybe(tangent_source), ray_count, 3, "tangent_source");
+    require_optional_grad_vec(
+        maybe(tangent_receiver), ray_count, 3, "tangent_receiver");
+    ReflEpcPathsJvpOutputs out = reflection_epc_paths_jvp_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        source_checked,
+        receiver_checked,
+        sequence_checked,
+        plane_points_checked,
+        plane_normals_checked,
+        valid_checked,
+        bounce_count_checked,
+        maybe(tangent_vertices),
+        maybe(tangent_source),
+        maybe(tangent_receiver));
+    outputs[0] = out.tangent_points;
+    outputs[1] = out.tangent_normals;
+    outputs[2] = out.tangent_path_length;
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_scene_face_normals_backward(
+    int64_t scene_handle,
+    const at::Tensor *grad_face_normals,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    constexpr int64_t kOutputCount = 1;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_scene_face_normals_backward output capacity is too small");
+    if (grad_face_normals == nullptr)
+        throw std::runtime_error("rayd_torch_native_scene_face_normals_backward received null grad_face_normals");
+    SceneCache &scene = get_scene(scene_handle);
+    require_cuda(*grad_face_normals, "grad_face_normals");
+    require_dtype(*grad_face_normals, at::kFloat, "grad_face_normals");
+    require_rank(*grad_face_normals, 2, "grad_face_normals");
+    require_last_dim(*grad_face_normals, 3, "grad_face_normals");
+    if (grad_face_normals->size(0) != scene.global_faces.size(0))
+        throw std::runtime_error("grad_face_normals must match the scene global face table.");
+    outputs[0] = scene_face_normals_backward_cuda(
+        scene.global_vertices, scene.global_faces, *grad_face_normals);
+    return kOutputCount;
+}
+
+extern "C" int64_t rayd_torch_native_scene_face_normals_jvp(
+    int64_t scene_handle,
+    const at::Tensor *tangent_vertices,
+    at::Tensor *outputs,
+    int64_t output_capacity) {
+    constexpr int64_t kOutputCount = 1;
+    if (outputs == nullptr || output_capacity < kOutputCount)
+        throw std::runtime_error("rayd_torch_native_scene_face_normals_jvp output capacity is too small");
+    if (tangent_vertices == nullptr)
+        throw std::runtime_error("rayd_torch_native_scene_face_normals_jvp received null tangent_vertices");
+    SceneCache &scene = get_scene(scene_handle);
+    require_optional_tangent_vertices(
+        tangent_vertices, scene.global_vertices, "tangent_vertices");
+    outputs[0] = scene_face_normals_jvp_cuda(
+        scene.global_vertices, scene.global_faces, *tangent_vertices);
     return kOutputCount;
 }
 
