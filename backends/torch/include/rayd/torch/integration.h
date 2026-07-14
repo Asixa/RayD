@@ -56,6 +56,17 @@ extern "C" void rayd_torch_native_visibility_forward(
 // records produced by the matching forward; backward/jvp entry points
 // recompute continuous quantities from them and never differentiate the
 // discrete winner selection itself.
+//
+// All backward/jvp entries validate their inputs host-side before any kernel
+// launch: per-tensor dtype/device/rank checks, cross-tensor ray-batch and
+// bounce-count consistency, gradient/tangent shapes against their primals,
+// and vertex tangents against the scene's global vertex table. Violations
+// throw std::runtime_error. Empty-tape semantics differ by direction:
+// rayd_torch_native_intersect_backward accepts a defined-but-empty (numel 0)
+// tape_barycentric and recomputes barycentrics on the fly (width-0 path),
+// while rayd_torch_native_intersect_jvp has no recompute path and rejects an
+// empty barycentric tape for a nonzero ray batch. The reflection-chain and
+// EPC companions require full tapes in both directions.
 
 extern "C" int64_t rayd_torch_native_intersect_backward(
     int64_t scene_handle,

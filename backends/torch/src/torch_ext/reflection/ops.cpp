@@ -80,6 +80,150 @@ void require_vec3f_strided(const at::Tensor &tensor, const char *name) {
     require_last_dim(tensor, 3, name);
 }
 
+// Host-side validation for the differentiable C ABI entry points
+// (rayd_torch_native_trace_reflections_backward / _jvp and
+// rayd_torch_native_refl_epc_backward / _jvp). These run off the hot
+// forward path; the existing forward entries are untouched.
+
+void require_ray_batch(const at::Tensor &tensor, int64_t ray_count, const char *name) {
+    if (tensor.size(0) != ray_count)
+        throw std::runtime_error(std::string(name) + " must match the ray batch size.");
+}
+
+void require_optional_active(const at::Tensor *active, int64_t ray_count) {
+    if (active == nullptr || !active->defined())
+        return;
+    require_mask(*active, "active");
+    if (active->numel() != 0 && active->size(0) != ray_count)
+        throw std::runtime_error("active must be empty or match the ray batch size.");
+}
+
+void require_chain_tape_prim_id(const at::Tensor &tape_prim_id, int64_t ray_count) {
+    require_cuda(tape_prim_id, "tape_prim_id");
+    require_contiguous(tape_prim_id, "tape_prim_id");
+    require_dtype(tape_prim_id, at::kInt, "tape_prim_id");
+    require_rank(tape_prim_id, 2, "tape_prim_id");
+    require_ray_batch(tape_prim_id, ray_count, "tape_prim_id");
+    if (tape_prim_id.size(1) < 1)
+        throw std::runtime_error("tape_prim_id must cover at least one bounce.");
+}
+
+void require_chain_tape_vec3(
+    const at::Tensor &tensor,
+    int64_t ray_count,
+    int64_t bounce_count,
+    const char *name) {
+    require_cuda(tensor, name);
+    require_contiguous(tensor, name);
+    require_dtype(tensor, at::kFloat, name);
+    require_rank(tensor, 3, name);
+    require_ray_batch(tensor, ray_count, name);
+    if (tensor.size(1) != bounce_count)
+        throw std::runtime_error(std::string(name) + " must match the tape bounce count.");
+    require_last_dim(tensor, 3, name);
+}
+
+void require_chain_tape_barycentric(
+    const at::Tensor &tape_barycentric,
+    int64_t ray_count,
+    int64_t bounce_count) {
+    require_cuda(tape_barycentric, "tape_barycentric");
+    require_contiguous(tape_barycentric, "tape_barycentric");
+    require_dtype(tape_barycentric, at::kFloat, "tape_barycentric");
+    require_rank(tape_barycentric, 3, "tape_barycentric");
+    require_ray_batch(tape_barycentric, ray_count, "tape_barycentric");
+    if (tape_barycentric.size(1) != bounce_count)
+        throw std::runtime_error("tape_barycentric must match the tape bounce count.");
+    if (tape_barycentric.size(2) != 2 && tape_barycentric.size(2) != 3)
+        throw std::runtime_error("tape_barycentric last dimension must be 2 or 3.");
+}
+
+// Gradients and tangents may be strided views (the kernels consume explicit
+// strides), so contiguity is deliberately not required for them.
+void require_optional_grad_vec(
+    const at::Tensor *grad,
+    int64_t ray_count,
+    int64_t width,
+    const char *name) {
+    if (grad == nullptr)
+        return;
+    require_cuda(*grad, name);
+    require_dtype(*grad, at::kFloat, name);
+    if (width == 0) {
+        require_rank(*grad, 1, name);
+    } else {
+        require_rank(*grad, 2, name);
+        require_last_dim(*grad, width, name);
+    }
+    require_ray_batch(*grad, ray_count, name);
+}
+
+void require_optional_chain_grad_t(
+    const at::Tensor *grad,
+    int64_t ray_count,
+    int64_t bounce_count) {
+    if (grad == nullptr)
+        return;
+    require_cuda(*grad, "grad_t");
+    require_dtype(*grad, at::kFloat, "grad_t");
+    if (grad->dim() == 1) {
+        require_ray_batch(*grad, ray_count, "grad_t");
+        return;
+    }
+    require_rank(*grad, 2, "grad_t");
+    require_ray_batch(*grad, ray_count, "grad_t");
+    if (grad->size(1) != bounce_count)
+        throw std::runtime_error("grad_t must match the tape bounce count.");
+}
+
+void require_optional_chain_grad_image_sources(
+    const at::Tensor *grad,
+    int64_t ray_count,
+    int64_t bounce_count) {
+    if (grad == nullptr)
+        return;
+    require_cuda(*grad, "grad_image_sources");
+    require_dtype(*grad, at::kFloat, "grad_image_sources");
+    require_rank(*grad, 3, "grad_image_sources");
+    require_ray_batch(*grad, ray_count, "grad_image_sources");
+    if (grad->size(1) != bounce_count)
+        throw std::runtime_error("grad_image_sources must match the tape bounce count.");
+    require_last_dim(*grad, 3, "grad_image_sources");
+}
+
+void require_optional_tangent_vertices(
+    const at::Tensor *tangent,
+    const at::Tensor &global_vertices,
+    const char *name) {
+    if (tangent == nullptr)
+        return;
+    require_cuda(*tangent, name);
+    require_dtype(*tangent, at::kFloat, name);
+    require_rank(*tangent, 2, name);
+    require_last_dim(*tangent, 3, name);
+    if (tangent->size(0) != global_vertices.size(0))
+        throw std::runtime_error(
+            std::string(name) + " must match the scene global vertex table.");
+}
+
+void require_epc_tape(
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_t,
+    int64_t ray_count) {
+    require_flat_i32(tape_prim_id, "tape_prim_id");
+    require_ray_batch(tape_prim_id, ray_count, "tape_prim_id");
+    require_cuda(tape_barycentric, "tape_barycentric");
+    require_contiguous(tape_barycentric, "tape_barycentric");
+    require_dtype(tape_barycentric, at::kFloat, "tape_barycentric");
+    require_rank(tape_barycentric, 2, "tape_barycentric");
+    require_ray_batch(tape_barycentric, ray_count, "tape_barycentric");
+    if (ray_count > 0 && tape_barycentric.size(1) != 2 && tape_barycentric.size(1) != 3)
+        throw std::runtime_error("tape_barycentric last dimension must be 2 or 3.");
+    require_flat_f32(tape_t, "tape_t");
+    require_ray_batch(tape_t, ray_count, "tape_t");
+}
+
 void require_state_width(const at::Tensor &tensor, int64_t state_count, const char *name) {
     if (tensor.size(0) < state_count)
         throw std::runtime_error(std::string(name) + " must cover state_count.");
@@ -895,21 +1039,43 @@ extern "C" int64_t rayd_torch_native_trace_reflections_backward(
     constexpr int64_t kOutputCount = 4;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_trace_reflections_backward output capacity is too small");
+    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
+    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
+    require_vec3f(ray_o_checked, "ray_o");
+    require_vec3f(ray_d_checked, "ray_d");
+    const int64_t ray_count = ray_o_checked.size(0);
+    require_ray_batch(ray_d_checked, ray_count, "ray_d");
+    if (ray_tmax != nullptr && ray_tmax->defined())
+        require_ray_tmax(*ray_tmax, ray_count, "trace_reflections_backward");
+    require_optional_active(active, ray_count);
+    const at::Tensor &tape_prim_id_checked = required(tape_prim_id, "tape_prim_id");
+    require_chain_tape_prim_id(tape_prim_id_checked, ray_count);
+    const int64_t bounce_count = tape_prim_id_checked.size(1);
+    require_chain_tape_barycentric(
+        required(tape_barycentric, "tape_barycentric"), ray_count, bounce_count);
+    require_chain_tape_vec3(
+        required(tape_hit_points, "tape_hit_points"), ray_count, bounce_count, "tape_hit_points");
+    require_chain_tape_vec3(
+        required(tape_normals, "tape_normals"), ray_count, bounce_count, "tape_normals");
+    require_chain_tape_vec3(
+        required(image_sources, "image_sources"), ray_count, bounce_count, "image_sources");
+    require_optional_chain_grad_t(maybe(grad_t), ray_count, bounce_count);
+    require_optional_chain_grad_image_sources(maybe(grad_image_sources), ray_count, bounce_count);
     SceneCache &scene = get_scene(scene_handle);
     at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     ReflectionBackwardOutputs out = reflection_chain_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(ray_o, "ray_o"),
-        required(ray_d, "ray_d"),
+        ray_o_checked,
+        ray_d_checked,
         ray_tmax_storage,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_hit_points, "tape_hit_points"),
-        required(tape_normals, "tape_normals"),
-        required(image_sources, "image_sources"),
+        tape_prim_id_checked,
+        *tape_barycentric,
+        *tape_hit_points,
+        *tape_normals,
+        *image_sources,
         maybe(grad_t),
         maybe(grad_image_sources));
     outputs[0] = out.grad_vertices;
@@ -947,22 +1113,44 @@ extern "C" int64_t rayd_torch_native_trace_reflections_jvp(
     constexpr int64_t kOutputCount = 2;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_trace_reflections_jvp output capacity is too small");
+    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
+    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
+    require_vec3f(ray_o_checked, "ray_o");
+    require_vec3f(ray_d_checked, "ray_d");
+    const int64_t ray_count = ray_o_checked.size(0);
+    require_ray_batch(ray_d_checked, ray_count, "ray_d");
+    require_optional_active(active, ray_count);
+    const at::Tensor &tape_prim_id_checked = required(tape_prim_id, "tape_prim_id");
+    require_chain_tape_prim_id(tape_prim_id_checked, ray_count);
+    const int64_t bounce_count = tape_prim_id_checked.size(1);
+    require_chain_tape_barycentric(
+        required(tape_barycentric, "tape_barycentric"), ray_count, bounce_count);
+    require_chain_tape_vec3(
+        required(tape_hit_points, "tape_hit_points"), ray_count, bounce_count, "tape_hit_points");
+    require_chain_tape_vec3(
+        required(tape_normals, "tape_normals"), ray_count, bounce_count, "tape_normals");
+    require_chain_tape_vec3(
+        required(image_sources, "image_sources"), ray_count, bounce_count, "image_sources");
     SceneCache &scene = get_scene(scene_handle);
+    require_optional_tangent_vertices(
+        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad_vec(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
+    require_optional_grad_vec(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     ReflectionJvpOutputs out = reflection_chain_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(ray_o, "ray_o"),
-        required(ray_d, "ray_d"),
+        ray_o_checked,
+        ray_d_checked,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_hit_points, "tape_hit_points"),
-        required(tape_normals, "tape_normals"),
+        tape_prim_id_checked,
+        *tape_barycentric,
+        *tape_hit_points,
+        *tape_normals,
         maybe(tangent_vertices),
         maybe(tangent_ray_o),
         maybe(tangent_ray_d),
-        required(image_sources, "image_sources"));
+        *image_sources);
     outputs[0] = out.tangent_t;
     outputs[1] = out.tangent_image_sources;
     return kOutputCount;
@@ -2289,17 +2477,32 @@ extern "C" int64_t rayd_torch_native_refl_epc_backward(
     constexpr int64_t kOutputCount = 3;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_refl_epc_backward output capacity is too small");
+    const at::Tensor &source_checked = required(source, "source");
+    const at::Tensor &receiver_checked = required(receiver, "receiver");
+    require_vec3f(source_checked, "source");
+    require_vec3f(receiver_checked, "receiver");
+    const int64_t ray_count = source_checked.size(0);
+    require_ray_batch(receiver_checked, ray_count, "receiver");
+    require_optional_active(active, ray_count);
+    require_epc_tape(
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_t, "tape_t"),
+        ray_count);
+    require_optional_grad_vec(maybe(grad_field_real), ray_count, 0, "grad_field_real");
+    require_optional_grad_vec(maybe(grad_field_imag), ray_count, 0, "grad_field_imag");
+    require_optional_grad_vec(maybe(grad_path_length), ray_count, 0, "grad_path_length");
     SceneCache &scene = get_scene(scene_handle);
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     ReflEpcBackwardOutputs out = refl_epc_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(source, "source"),
-        required(receiver, "receiver"),
+        source_checked,
+        receiver_checked,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_t, "tape_t"),
+        *tape_prim_id,
+        *tape_barycentric,
+        *tape_t,
         maybe(grad_field_real),
         maybe(grad_field_imag),
         maybe(grad_path_length),
@@ -2338,17 +2541,33 @@ extern "C" int64_t rayd_torch_native_refl_epc_jvp(
     constexpr int64_t kOutputCount = 3;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_refl_epc_jvp output capacity is too small");
+    const at::Tensor &source_checked = required(source, "source");
+    const at::Tensor &receiver_checked = required(receiver, "receiver");
+    require_vec3f(source_checked, "source");
+    require_vec3f(receiver_checked, "receiver");
+    const int64_t ray_count = source_checked.size(0);
+    require_ray_batch(receiver_checked, ray_count, "receiver");
+    require_optional_active(active, ray_count);
+    require_epc_tape(
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_t, "tape_t"),
+        ray_count);
     SceneCache &scene = get_scene(scene_handle);
+    require_optional_tangent_vertices(
+        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad_vec(maybe(tangent_source), ray_count, 3, "tangent_source");
+    require_optional_grad_vec(maybe(tangent_receiver), ray_count, 3, "tangent_receiver");
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     ReflEpcJvpOutputs out = refl_epc_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(source, "source"),
-        required(receiver, "receiver"),
+        source_checked,
+        receiver_checked,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_t, "tape_t"),
+        *tape_prim_id,
+        *tape_barycentric,
+        *tape_t,
         maybe(tangent_vertices),
         maybe(tangent_source),
         maybe(tangent_receiver));

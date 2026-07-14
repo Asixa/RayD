@@ -168,6 +168,85 @@ void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
         throw std::runtime_error("ray_tmax must be empty or match the ray batch size.");
 }
 
+// Host-side validation for the differentiable C ABI entry points
+// (rayd_torch_native_intersect_backward / _jvp). These run off the hot
+// forward path; the existing forward entries are untouched.
+
+void require_ray_batch(const at::Tensor &tensor, int64_t ray_count, const char *name) {
+    if (tensor.size(0) != ray_count)
+        throw std::runtime_error(std::string(name) + " must match the ray batch size.");
+}
+
+void require_optional_active(const at::Tensor *active, int64_t ray_count) {
+    if (active == nullptr || !active->defined())
+        return;
+    require_mask(*active, "active");
+    if (active->numel() != 0 && active->size(0) != ray_count)
+        throw std::runtime_error("active must be empty or match the ray batch size.");
+}
+
+void require_tape_prim_id_1d(const at::Tensor &tape_prim_id, int64_t ray_count) {
+    require_cuda(tape_prim_id, "tape_prim_id");
+    require_contiguous(tape_prim_id, "tape_prim_id");
+    require_dtype(tape_prim_id, at::kInt, "tape_prim_id");
+    require_rank(tape_prim_id, 1, "tape_prim_id");
+    require_ray_batch(tape_prim_id, ray_count, "tape_prim_id");
+}
+
+void require_tape_barycentric_2d(
+    const at::Tensor &tape_barycentric,
+    int64_t ray_count,
+    bool allow_empty) {
+    require_cuda(tape_barycentric, "tape_barycentric");
+    require_contiguous(tape_barycentric, "tape_barycentric");
+    require_dtype(tape_barycentric, at::kFloat, "tape_barycentric");
+    require_rank(tape_barycentric, 2, "tape_barycentric");
+    if (tape_barycentric.numel() == 0) {
+        if (allow_empty)
+            return;
+        throw std::runtime_error(
+            "tape_barycentric must be a non-empty winner tape for a nonzero ray batch.");
+    }
+    require_ray_batch(tape_barycentric, ray_count, "tape_barycentric");
+    if (tape_barycentric.size(1) != 2 && tape_barycentric.size(1) != 3)
+        throw std::runtime_error("tape_barycentric last dimension must be 2 or 3.");
+}
+
+// Gradients and tangents may be strided views (the kernels consume explicit
+// strides), so contiguity is deliberately not required for them.
+void require_optional_grad(
+    const at::Tensor *grad,
+    int64_t ray_count,
+    int64_t width,
+    const char *name) {
+    if (grad == nullptr)
+        return;
+    require_cuda(*grad, name);
+    require_dtype(*grad, at::kFloat, name);
+    if (width == 0) {
+        require_rank(*grad, 1, name);
+    } else {
+        require_rank(*grad, 2, name);
+        require_last_dim(*grad, width, name);
+    }
+    require_ray_batch(*grad, ray_count, name);
+}
+
+void require_optional_tangent_vertices(
+    const at::Tensor *tangent,
+    const at::Tensor &global_vertices,
+    const char *name) {
+    if (tangent == nullptr)
+        return;
+    require_cuda(*tangent, name);
+    require_dtype(*tangent, at::kFloat, name);
+    require_rank(*tangent, 2, name);
+    require_last_dim(*tangent, 3, name);
+    if (tangent->size(0) != global_vertices.size(0))
+        throw std::runtime_error(
+            std::string(name) + " must match the scene global vertex table.");
+}
+
 class IntersectAdFunction : public torch::autograd::Function<IntersectAdFunction> {
   public:
     static torch::autograd::variable_list forward(
@@ -744,18 +823,37 @@ extern "C" int64_t rayd_torch_native_intersect_backward(
     constexpr int64_t kOutputCount = 4;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_intersect_backward output capacity is too small");
+    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
+    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
+    require_vec3f(ray_o_checked, "ray_o");
+    require_vec3f(ray_d_checked, "ray_d");
+    const int64_t ray_count = ray_o_checked.size(0);
+    require_ray_batch(ray_d_checked, ray_count, "ray_d");
+    if (ray_tmax != nullptr && ray_tmax->defined())
+        require_ray_tmax(*ray_tmax, ray_count);
+    require_optional_active(active, ray_count);
+    require_tape_prim_id_1d(required(tape_prim_id, "tape_prim_id"), ray_count);
+    // An empty barycentric tape selects the backward width-0 recompute path.
+    require_tape_barycentric_2d(
+        required(tape_barycentric, "tape_barycentric"), ray_count, /*allow_empty=*/true);
+    require_optional_grad(maybe(grad_t), ray_count, 0, "grad_t");
+    require_optional_grad(maybe(grad_p), ray_count, 3, "grad_p");
+    require_optional_grad(maybe(grad_n), ray_count, 3, "grad_n");
+    require_optional_grad(maybe(grad_geo_n), ray_count, 3, "grad_geo_n");
+    require_optional_grad(maybe(grad_uv), ray_count, 2, "grad_uv");
+    require_optional_grad(maybe(grad_barycentric), ray_count, 3, "grad_barycentric");
     SceneCache &scene = get_scene(scene_handle);
     at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     IntersectBackwardOutputs out = intersect_backward_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(ray_o, "ray_o"),
-        required(ray_d, "ray_d"),
+        ray_o_checked,
+        ray_d_checked,
         ray_tmax_storage,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
+        *tape_prim_id,
+        *tape_barycentric,
         maybe(grad_t),
         maybe(grad_p),
         maybe(grad_n),
@@ -799,16 +897,35 @@ extern "C" int64_t rayd_torch_native_intersect_jvp(
     constexpr int64_t kOutputCount = 6;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_intersect_jvp output capacity is too small");
+    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
+    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
+    require_vec3f(ray_o_checked, "ray_o");
+    require_vec3f(ray_d_checked, "ray_d");
+    const int64_t ray_count = ray_o_checked.size(0);
+    require_ray_batch(ray_d_checked, ray_count, "ray_d");
+    require_optional_active(active, ray_count);
+    require_tape_prim_id_1d(required(tape_prim_id, "tape_prim_id"), ray_count);
+    // Unlike backward, the jvp kernel has no width-0 recompute path, so a
+    // defined-but-empty barycentric tape is rejected for a nonzero ray batch
+    // (see rayd/torch/integration.h).
+    require_tape_barycentric_2d(
+        required(tape_barycentric, "tape_barycentric"),
+        ray_count,
+        /*allow_empty=*/ray_count == 0);
     SceneCache &scene = get_scene(scene_handle);
+    require_optional_tangent_vertices(
+        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
+    require_optional_grad(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     IntersectJvpOutputs out = intersect_jvp_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
-        required(ray_o, "ray_o"),
-        required(ray_d, "ray_d"),
+        ray_o_checked,
+        ray_d_checked,
         active_storage,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
+        *tape_prim_id,
+        *tape_barycentric,
         maybe(tangent_vertices),
         maybe(tangent_ray_o),
         maybe(tangent_ray_d),
