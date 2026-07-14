@@ -239,10 +239,76 @@ struct EpcChain {
     int bounces;
 };
 
+RAYD_SHARED_EPC_INLINE bool epc_is_finite(math::Vec3f v) {
+#if defined(__CUDACC__)
+    return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
+#else
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+#endif
+}
+
+// Back-trace of an already-mirrored specular chain plus its path length: walk
+// from the receiver, intersect each plane in reverse, then sum the B + 1 free
+// segments. Shared verbatim by the discovery raygen and solve_epc_chain so the
+// geometry has one implementation. ``unit_normals`` must already be unit;
+// ``image_sources`` has bounces + 1 entries with image_sources[b + 1] the source
+// mirrored through planes 0..b. ``t_out`` / ``denominator_out`` are optional
+// outputs the adjoint reuses. Returns false on the same parallel / range /
+// non-finite guards intersect_line_plane takes in the discovery kernel.
+template <int MaxBounces>
+RAYD_SHARED_EPC_INLINE bool epc_backtrace_and_length(
+    const math::Vec3f *plane_points,
+    const math::Vec3f *unit_normals,
+    const math::Vec3f *image_sources,
+    int bounces,
+    math::Vec3f source,
+    math::Vec3f receiver,
+    math::Vec3f *hits,
+    float *t_out,
+    float *denominator_out,
+    float &path_length) {
+    math::Vec3f endpoint = receiver;
+    for (int bounce = bounces - 1; bounce >= 0; --bounce) {
+        const math::Vec3f start = image_sources[bounce + 1];
+        const math::Vec3f unit_normal = unit_normals[bounce];
+        const math::Vec3f span = math::subtract(endpoint, start);
+        const float denominator = math::dot(span, unit_normal);
+        if (fabsf(denominator) <= kEpcChainParallelTolerance) {
+            return false;
+        }
+        const float t = math::dot(
+            math::subtract(plane_points[bounce], start), unit_normal) / denominator;
+        if (t < -kEpcChainSegmentTolerance || t > 1.0f + kEpcChainSegmentTolerance) {
+            return false;
+        }
+        const math::Vec3f point = math::add(start, math::scale(span, t));
+        if (!epc_is_finite(point)) {
+            return false;
+        }
+        if (t_out != nullptr) {
+            t_out[bounce] = t;
+        }
+        if (denominator_out != nullptr) {
+            denominator_out[bounce] = denominator;
+        }
+        hits[bounce] = point;
+        endpoint = point;
+    }
+
+    float length = 0.0f;
+    for (int segment = 0; segment <= bounces; ++segment) {
+        const math::Vec3f start = segment == 0 ? source : hits[segment - 1];
+        const math::Vec3f end = segment == bounces ? receiver : hits[segment];
+        length += sqrtf(math::squared_norm(math::subtract(end, start)));
+    }
+    path_length = length;
+    return true;
+}
+
 // Solves the specular chain for an already-selected plane sequence. Mirrors the
 // discovery kernel exactly: mirror the source through each plane in order, then
-// walk back from the receiver intersecting each plane, then sum the segments.
-// Returns false on the same degenerate guards the discovery kernel takes.
+// back-trace and sum via the shared epc_backtrace_and_length. Returns false on
+// the same degenerate guards the discovery kernel takes.
 template <int MaxBounces>
 RAYD_SHARED_EPC_INLINE bool solve_epc_chain(
     const math::Vec3f *plane_points,
@@ -266,37 +332,9 @@ RAYD_SHARED_EPC_INLINE bool solve_epc_chain(
         chain.image[bounce + 1] = reflect_point_across_plane(
             chain.image[bounce], plane_points[bounce], unit_normal);
     }
-
-    math::Vec3f endpoint = receiver;
-    for (int bounce = bounces - 1; bounce >= 0; --bounce) {
-        const math::Vec3f start = chain.image[bounce + 1];
-        const math::Vec3f unit_normal = chain.unit_normal[bounce];
-        const math::Vec3f span = math::subtract(endpoint, start);
-        const float denominator = math::dot(span, unit_normal);
-        if (fabsf(denominator) <= kEpcChainParallelTolerance) {
-            return false;
-        }
-        const float t = math::dot(
-            math::subtract(plane_points[bounce], start), unit_normal) / denominator;
-        if (t < -kEpcChainSegmentTolerance || t > 1.0f + kEpcChainSegmentTolerance) {
-            return false;
-        }
-        chain.t[bounce] = t;
-        chain.denominator[bounce] = denominator;
-        chain.hit[bounce] = math::add(start, math::scale(span, t));
-        endpoint = chain.hit[bounce];
-    }
-
-    float path_length = 0.0f;
-    for (int segment = 0; segment <= bounces; ++segment) {
-        const math::Vec3f start =
-            segment == 0 ? source : chain.hit[segment - 1];
-        const math::Vec3f end =
-            segment == bounces ? receiver : chain.hit[segment];
-        path_length += sqrtf(math::squared_norm(math::subtract(end, start)));
-    }
-    chain.path_length = path_length;
-    return true;
+    return epc_backtrace_and_length<MaxBounces>(
+        plane_points, chain.unit_normal, chain.image, bounces, source, receiver,
+        chain.hit, chain.t, chain.denominator, chain.path_length);
 }
 
 // Reverse mode of solve_epc_chain. Cotangents of the hits, of the unit normals

@@ -7,6 +7,7 @@
 #include <rayd/shared/contracts.h>
 #include <rayd/shared/optix/device_hit.h>
 #include <rayd/shared/reflection/reflection_geometry.h>
+#include <rayd/shared/reflection/epc_chain.h>
 
 namespace rayd::shared::optix {
 
@@ -611,38 +612,60 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
         return;
     }
 
-    float3 endpoint = receiver;
-    bool valid = true;
-    for (int bounce = B - 1; bounce >= 0; --bounce) {
-        float3 point;
-        valid = valid &&
-                intersect_line_plane(image_sources[bounce + 1],
-                                     endpoint,
-                                     plane_points[bounce],
-                                     plane_normals[bounce],
-                                     point);
-        int resolved_prim = -1;
-        if (valid && has_surface_groups() && surface_group_ids[bounce] >= 0) {
-            valid = point_inside_surface_group(surface_group_ids[bounce],
-                                               point,
-                                               resolved_prim);
-        } else if (valid) {
-            const int expected_prim = expected_prim_for_bounce(base + bounce);
-            const int containment_prim =
-                expected_prim >= 0 ? expected_prim : trace_prim_ids[bounce];
-            valid = point_inside_triangle(containment_prim, point);
-            resolved_prim = valid ? containment_prim : -1;
-        }
-        resolved_prim_ids[bounce] = resolved_prim;
-        reflection_points[bounce] = point;
-        endpoint = point;
+    // Shared fixed-winner back-trace and path length (reflection/epc_chain.h):
+    // one implementation feeds both this discovery kernel and the geometry
+    // adjoint, so the two cannot drift. The planes and image sources were built
+    // per discovery mode above; the geometry from here on is mode-independent.
+    math::Vec3f shared_plane_points[ReflEpcMaxBounces];
+    math::Vec3f shared_plane_normals[ReflEpcMaxBounces];
+    math::Vec3f shared_image_sources[ReflEpcMaxBounces + 1];
+    for (int bounce = 0; bounce < B; ++bounce) {
+        shared_plane_points[bounce] = to_shared(plane_points[bounce]);
+        shared_plane_normals[bounce] = to_shared(plane_normals[bounce]);
     }
-    if (!valid) {
+    for (int bounce = 0; bounce <= B; ++bounce) {
+        shared_image_sources[bounce] = to_shared(image_sources[bounce]);
+    }
+    math::Vec3f shared_hits[ReflEpcMaxBounces];
+    float path_length = 0.f;
+    if (!reflection::epc_backtrace_and_length<ReflEpcMaxBounces>(
+            shared_plane_points, shared_plane_normals, shared_image_sources, B,
+            to_shared(origin), to_shared(receiver), shared_hits,
+            nullptr, nullptr, path_length)) {
         store_invalid(ray_index, bounce_count, -1, -1, -1);
         return;
     }
+    for (int bounce = 0; bounce < B; ++bounce) {
+        reflection_points[bounce] = from_shared(shared_hits[bounce]);
+    }
 
-    float path_length = 0.f;
+    // Freeze which primitive each interaction lands in (the discrete winner):
+    // the back-trace above is pure geometry, containment is the discovery
+    // decision, so they are separated. resolved_prim_ids feeds the visibility
+    // ignore lists below and must be fully populated before them.
+    for (int bounce = B - 1; bounce >= 0; --bounce) {
+        const float3 point = reflection_points[bounce];
+        int resolved_prim = -1;
+        bool inside;
+        if (has_surface_groups() && surface_group_ids[bounce] >= 0) {
+            inside = point_inside_surface_group(surface_group_ids[bounce],
+                                                point,
+                                                resolved_prim);
+        } else {
+            const int expected_prim = expected_prim_for_bounce(base + bounce);
+            const int containment_prim =
+                expected_prim >= 0 ? expected_prim : trace_prim_ids[bounce];
+            inside = point_inside_triangle(containment_prim, point);
+            resolved_prim = inside ? containment_prim : -1;
+        }
+        resolved_prim_ids[bounce] = resolved_prim;
+        if (!inside) {
+            store_invalid(ray_index, bounce_count, -1, -1, -1);
+            return;
+        }
+    }
+
+    bool valid = true;
     int first_blocked_segment = -1;
     int first_blocked_prim = -1;
     int first_blocked_group = -1;
@@ -651,7 +674,6 @@ static __forceinline__ __device__ void run_reflection_epc_raygen() {
     for (int segment = 0; segment <= B; ++segment) {
         const float3 start = segment == 0 ? origin : reflection_points[segment - 1];
         const float3 end = segment == B ? receiver : reflection_points[segment];
-        path_length += length3(end - start);
 
         const bool ignore_surface_group =
             params.visibility_ignore_mode == ReflEpcVisibilityIgnoreSurfaceGroup &&
