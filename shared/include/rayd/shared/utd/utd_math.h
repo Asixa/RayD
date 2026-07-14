@@ -1,223 +1,149 @@
-﻿#pragma once
+#pragma once
 
 #include <rayd/shared/utd/utd_types.h>
+
+// The UTD math below is templated on the scalar type T (float | Dual). The
+// float instantiation is the production forward, operation-for-operation
+// identical to the pre-template implementation (the scalar shims in
+// utd_types.h forward to the same CRT/CUDA builtins). The Dual instantiation
+// IS the derivative: seeding one input tangent turns the same forward pass
+// into an exact JVP (pair_vector_output_jvp below), and seeded probes give
+// the reverse mode (pair_vector_output_vjp). Discrete branches compare primal
+// values only, so both instantiations always follow the same control flow
+// (fixed-winner contract).
 
 namespace rayd::shared::utd {
 
 // ===================================================================
 // Safe length / normalize
 // ===================================================================
-UTD_DINLINE float safe_length(float3a v) {
-    return sqrtf(fmaxf(f3_dot(v,v), 0.f));
+template <typename T>
+UTD_DINLINE T safe_length(Vec3T<T> v) {
+    return sqrtf(fmaxf(f3_dot(v,v), T(0.f)));
 }
 
-UTD_DINLINE float3a safe_normalize(float3a v, float3a fallback) {
-    float n = safe_length(v);
-    if (n > UTD_SMALL_EPS) return f3_div(v, n + UTD_EPS);
-    float fn = safe_length(fallback);
-    return f3_div(fallback, fn + UTD_EPS);
+template <typename T>
+UTD_DINLINE Vec3T<T> safe_normalize(Vec3T<T> v, Vec3T<T> fallback) {
+    T n = safe_length(v);
+    if (n > UTD_SMALL_EPS) return f3_div(v, n + T(UTD_EPS));
+    T fn = safe_length(fallback);
+    return f3_div(fallback, fn + T(UTD_EPS));
 }
 
-UTD_DINLINE float safe_acos(float v) {
-    float c = fminf(fmaxf(v, -1.f), 1.f);
-    float s = sqrtf(fmaxf(1.f - c*c, 0.f));
+template <typename T>
+UTD_DINLINE T safe_acos(T v) {
+    T c = fminf(fmaxf(v, T(-1.f)), T(1.f));
+    T s = sqrtf(fmaxf(T(1.f) - c*c, T(0.f)));
     return atan2f(s, c);
 }
 
-UTD_DINLINE float cot_val(float v) {
-    float s, c;
-#ifdef __CUDACC__
+template <typename T>
+UTD_DINLINE T cot_val(T v) {
+    T s, c;
     sincosf(v, &s, &c);
-#else
-    s = sinf(v);
-    c = cosf(v);
-#endif
-    float d = (fabsf(s) < UTD_SMALL_EPS)
-        ? ((s + UTD_SMALL_EPS) >= 0.f ? UTD_SMALL_EPS : -UTD_SMALL_EPS)
+    T d = (fabsf(s) < UTD_SMALL_EPS)
+        ? T((scalar_value(s) + UTD_SMALL_EPS) >= 0.f ? UTD_SMALL_EPS : -UTD_SMALL_EPS)
         : s;
-    float r = c / d;
-    return isfinite(r) ? r : 0.f;
+    T r = c / d;
+    return isfinite(r) ? r : T(0.f);
 }
 
 // ===================================================================
 // Wedge geometry helpers
 // ===================================================================
-UTD_DINLINE float3a project_to_wedge_plane(float3a v, float3a e) {
+template <typename T>
+UTD_DINLINE Vec3T<T> project_to_wedge_plane(Vec3T<T> v, Vec3T<T> e) {
     return f3_sub(v, f3_mul(e, f3_dot(v,e)));
 }
 
-UTD_DINLINE float3a rotate_vector_around_axis(float3a v, float3a axis, float angle) {
-    float s, c;
-#ifdef __CUDACC__
+template <typename T>
+UTD_DINLINE Vec3T<T> rotate_vector_around_axis(Vec3T<T> v, Vec3T<T> axis, T angle) {
+    T s, c;
     sincosf(angle, &s, &c);
-#else
-    s = sinf(angle);
-    c = cosf(angle);
-#endif
-    float3a term0 = f3_mul(v, c);
-    float3a term1 = f3_mul(f3_cross(axis, v), s);
-    float3a term2 = f3_mul(axis, f3_dot(axis, v) * (1.f - c));
+    Vec3T<T> term0 = f3_mul(v, c);
+    Vec3T<T> term1 = f3_mul(f3_cross(axis, v), s);
+    Vec3T<T> term2 = f3_mul(axis, f3_dot(axis, v) * (T(1.f) - c));
     return f3_add(f3_add(term0, term1), term2);
 }
 
-UTD_DINLINE float3a normalize_in_wedge_plane(float3a v, float3a e) {
-    return safe_normalize(project_to_wedge_plane(v,e), make_f3(1,0,0));
+template <typename T>
+UTD_DINLINE Vec3T<T> normalize_in_wedge_plane(Vec3T<T> v, Vec3T<T> e) {
+    return safe_normalize(project_to_wedge_plane(v,e), v3_const<T>(1,0,0));
 }
 
-UTD_DINLINE float3a stable_perp_basis(float3a rayDir, float3a preferred) {
-    float3a proj = f3_sub(preferred, f3_mul(rayDir, f3_dot(preferred, rayDir)));
-    float3a altAxis = (fabsf(rayDir.z) < 0.9f) ? make_f3(0,0,1) : make_f3(0,1,0);
-    float3a altProj = f3_sub(altAxis, f3_mul(rayDir, f3_dot(altAxis, rayDir)));
+template <typename T>
+UTD_DINLINE Vec3T<T> stable_perp_basis(Vec3T<T> rayDir, Vec3T<T> preferred) {
+    Vec3T<T> proj = f3_sub(preferred, f3_mul(rayDir, f3_dot(preferred, rayDir)));
+    Vec3T<T> altAxis = (fabsf(rayDir.z) < 0.9f) ? v3_const<T>(0,0,1) : v3_const<T>(0,1,0);
+    Vec3T<T> altProj = f3_sub(altAxis, f3_mul(rayDir, f3_dot(altAxis, rayDir)));
     return safe_normalize(proj, altProj);
 }
 
-UTD_DINLINE Basis3 basis_from_first_vector(float3a rayDir, float3a firstVec, float3a fallback) {
-    float3a rayHat = safe_normalize(rayDir, make_f3(0,0,1));
-    float3a uVec = f3_sub(firstVec, f3_mul(rayHat, f3_dot(firstVec, rayHat)));
-    float3a uHat = safe_normalize(uVec, fallback);
-    float3a vFallback = stable_perp_basis(rayHat, make_f3(0,1,0));
-    float3a vHat = safe_normalize(f3_cross(rayHat, uHat), vFallback);
+template <typename T>
+UTD_DINLINE Basis3T<T> basis_from_first_vector(Vec3T<T> rayDir, Vec3T<T> firstVec, Vec3T<T> fallback) {
+    Vec3T<T> rayHat = safe_normalize(rayDir, v3_const<T>(0,0,1));
+    Vec3T<T> uVec = f3_sub(firstVec, f3_mul(rayHat, f3_dot(firstVec, rayHat)));
+    Vec3T<T> uHat = safe_normalize(uVec, fallback);
+    Vec3T<T> vFallback = stable_perp_basis(rayHat, v3_const<T>(0,1,0));
+    Vec3T<T> vHat = safe_normalize(f3_cross(rayHat, uHat), vFallback);
     return {uHat, vHat, rayHat};
 }
 
-UTD_DINLINE Basis3 diffraction_edge_basis(float3a rayDir, float3a edgeDir, bool outgoing) {
-    float3a rayHat = safe_normalize(rayDir, make_f3(0,0,1));
-    float3a edgeHat = safe_normalize(edgeDir, make_f3(0,0,1));
-    float3a phiHat = f3_cross(rayHat, edgeHat);
+template <typename T>
+UTD_DINLINE Basis3T<T> diffraction_edge_basis(Vec3T<T> rayDir, Vec3T<T> edgeDir, bool outgoing) {
+    Vec3T<T> rayHat = safe_normalize(rayDir, v3_const<T>(0,0,1));
+    Vec3T<T> edgeHat = safe_normalize(edgeDir, v3_const<T>(0,0,1));
+    Vec3T<T> phiHat = f3_cross(rayHat, edgeHat);
     if (outgoing) phiHat = f3_neg(phiHat);
-    float3a fallback = stable_perp_basis(rayHat, edgeHat);
+    Vec3T<T> fallback = stable_perp_basis(rayHat, edgeHat);
     return basis_from_first_vector(rayHat, phiHat, fallback);
 }
 
-UTD_DINLINE JonesOperator jop_in_basis(JonesOperator op,
-    Basis3 srcIn, Basis3 srcOut, Basis3 dstIn, Basis3 dstOut)
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> jop_in_basis(JonesOperatorT<T> op,
+    Basis3T<T> srcIn, Basis3T<T> srcOut, Basis3T<T> dstIn, Basis3T<T> dstOut)
 {
-    Jones2 unitU = {cplx(1,0), cplx_zero()};
-    Jones2 unitV = {cplx_zero(), cplx(1,0)};
-    Complex3 fieldU = vector_from_jones(unitU, dstIn);
-    Jones2 srcU = jones_from_vector(fieldU, srcIn);
-    Jones2 srcOutU = apply_jop(srcU, op);
-    Jones2 mappedU = jones_from_vector(vector_from_jones(srcOutU, srcOut), dstOut);
-    Complex3 fieldV = vector_from_jones(unitV, dstIn);
-    Jones2 srcV = jones_from_vector(fieldV, srcIn);
-    Jones2 srcOutV = apply_jop(srcV, op);
-    Jones2 mappedV = jones_from_vector(vector_from_jones(srcOutV, srcOut), dstOut);
+    Jones2T<T> unitU = {c_const<T>(1,0), cplx_zero<T>()};
+    Jones2T<T> unitV = {cplx_zero<T>(), c_const<T>(1,0)};
+    Complex3T<T> fieldU = vector_from_jones(unitU, dstIn);
+    Jones2T<T> srcU = jones_from_vector(fieldU, srcIn);
+    Jones2T<T> srcOutU = apply_jop(srcU, op);
+    Jones2T<T> mappedU = jones_from_vector(vector_from_jones(srcOutU, srcOut), dstOut);
+    Complex3T<T> fieldV = vector_from_jones(unitV, dstIn);
+    Jones2T<T> srcV = jones_from_vector(fieldV, srcIn);
+    Jones2T<T> srcOutV = apply_jop(srcV, op);
+    Jones2T<T> mappedV = jones_from_vector(vector_from_jones(srcOutV, srcOut), dstOut);
     return {mappedU.u, mappedV.u, mappedU.v, mappedV.v};
 }
 
-UTD_DINLINE Basis3 basis_zero() {
-    return {f3_zero(), f3_zero(), f3_zero()};
-}
-
-UTD_DINLINE void basis_accum(Basis3& dst, Basis3 src) {
-    dst.u = f3_add(dst.u, src.u);
-    dst.v = f3_add(dst.v, src.v);
-    dst.k = f3_add(dst.k, src.k);
-}
-
-UTD_DINLINE void adj_jop_in_basis(
-    JonesOperator op,
-    Basis3 srcIn,
-    Basis3 srcOut,
-    Basis3 dstIn,
-    Basis3 dstOut,
-    JonesOperator gO,
-    JonesOperator& gOp,
-    Basis3& gSrcIn,
-    Basis3& gSrcOut,
-    Basis3& gDstIn,
-    Basis3& gDstOut)
-{
-    Jones2 unitU = {cplx(1, 0), cplx_zero()};
-    Jones2 unitV = {cplx_zero(), cplx(1, 0)};
-
-    Complex3 fieldU = vector_from_jones(unitU, dstIn);
-    Jones2 srcU = jones_from_vector(fieldU, srcIn);
-    Jones2 srcOutU = apply_jop(srcU, op);
-    Complex3 outFieldU = vector_from_jones(srcOutU, srcOut);
-    Jones2 mappedU = jones_from_vector(outFieldU, dstOut);
-
-    Complex3 fieldV = vector_from_jones(unitV, dstIn);
-    Jones2 srcV = jones_from_vector(fieldV, srcIn);
-    Jones2 srcOutV = apply_jop(srcV, op);
-    Complex3 outFieldV = vector_from_jones(srcOutV, srcOut);
-    Jones2 mappedV = jones_from_vector(outFieldV, dstOut);
-
-    (void) mappedU;
-    (void) mappedV;
-
-    Jones2 gMappedU = {gO.m00, gO.m10};
-    Jones2 gMappedV = {gO.m01, gO.m11};
-
-    Complex3 gOutFieldU = c3_zero();
-    Basis3 gDstOutLocal = basis_zero();
-    adj_jones_from_vector(outFieldU, dstOut, gMappedU, gOutFieldU, gDstOutLocal);
-    basis_accum(gDstOut, gDstOutLocal);
-
-    Jones2 gSrcOutU = jones_zero();
-    Basis3 gSrcOutLocal = basis_zero();
-    adj_vector_from_jones(srcOutU, srcOut, gOutFieldU, gSrcOutU, gSrcOutLocal);
-    basis_accum(gSrcOut, gSrcOutLocal);
-
-    Jones2 gSrcU = jones_zero();
-    adj_apply_jop(srcU, op, gSrcOutU, gSrcU, gOp);
-
-    Complex3 gFieldU = c3_zero();
-    Basis3 gSrcInLocal = basis_zero();
-    adj_jones_from_vector(fieldU, srcIn, gSrcU, gFieldU, gSrcInLocal);
-    basis_accum(gSrcIn, gSrcInLocal);
-
-    Jones2 gUnitU = jones_zero();
-    Basis3 gDstInLocal = basis_zero();
-    adj_vector_from_jones(unitU, dstIn, gFieldU, gUnitU, gDstInLocal);
-    basis_accum(gDstIn, gDstInLocal);
-    (void) gUnitU;
-
-    Complex3 gOutFieldV = c3_zero();
-    gDstOutLocal = basis_zero();
-    adj_jones_from_vector(outFieldV, dstOut, gMappedV, gOutFieldV, gDstOutLocal);
-    basis_accum(gDstOut, gDstOutLocal);
-
-    Jones2 gSrcOutV = jones_zero();
-    gSrcOutLocal = basis_zero();
-    adj_vector_from_jones(srcOutV, srcOut, gOutFieldV, gSrcOutV, gSrcOutLocal);
-    basis_accum(gSrcOut, gSrcOutLocal);
-
-    Jones2 gSrcV = jones_zero();
-    adj_apply_jop(srcV, op, gSrcOutV, gSrcV, gOp);
-
-    Complex3 gFieldV = c3_zero();
-    gSrcInLocal = basis_zero();
-    adj_jones_from_vector(fieldV, srcIn, gSrcV, gFieldV, gSrcInLocal);
-    basis_accum(gSrcIn, gSrcInLocal);
-
-    Jones2 gUnitV = jones_zero();
-    gDstInLocal = basis_zero();
-    adj_vector_from_jones(unitV, dstIn, gFieldV, gUnitV, gDstInLocal);
-    basis_accum(gDstIn, gDstInLocal);
-    (void) gUnitV;
+template <typename T = float>
+UTD_DINLINE Basis3T<T> basis_zero() {
+    return {f3_zero<T>(), f3_zero<T>(), f3_zero<T>()};
 }
 
 // ===================================================================
 // Exterior region / pole safety
 // ===================================================================
-UTD_DINLINE bool wedge_exterior_mask(float3a dirFromEdge, float3a edgeDir,
-                                     float3a n0, float3a nn) {
-    float3a dp = project_to_wedge_plane(dirFromEdge, edgeDir);
-    float sd0 = f3_dot(dp, n0);
-    float sdn = f3_dot(dp, nn);
+template <typename T>
+UTD_DINLINE bool wedge_exterior_mask(Vec3T<T> dirFromEdge, Vec3T<T> edgeDir,
+                                     Vec3T<T> n0, Vec3T<T> nn) {
+    Vec3T<T> dp = project_to_wedge_plane(dirFromEdge, edgeDir);
+    T sd0 = f3_dot(dp, n0);
+    T sdn = f3_dot(dp, nn);
     return (safe_length(dp) > UTD_SMALL_EPS) &&
            ((sd0 >= -UTD_SMALL_EPS) || (sdn >= -UTD_SMALL_EPS));
 }
 
-UTD_DINLINE float distance_to_cot_pole(float v) {
-    float np = roundf(v / UTD_PI) * UTD_PI;
+template <typename T>
+UTD_DINLINE T distance_to_cot_pole(T v) {
+    T np = roundf(v / UTD_PI) * UTD_PI;
     return fabsf(v - np);
 }
 
-UTD_DINLINE bool cot_pole_safe_mask(float phi, float phiP, float n, float guard) {
-    float twoN = 2.f * n;
-    float args[4] = {
+template <typename T>
+UTD_DINLINE bool cot_pole_safe_mask(T phi, T phiP, T n, float guard) {
+    T twoN = 2.f * n;
+    T args[4] = {
         (UTD_PI + phi - phiP) / twoN,
         (UTD_PI - phi + phiP) / twoN,
         (UTD_PI + phi + phiP) / twoN,
@@ -228,22 +154,24 @@ UTD_DINLINE bool cot_pole_safe_mask(float phi, float phiP, float n, float guard)
     return true;
 }
 
-UTD_DINLINE bool slope_safe_mask(float phi, float phiP, float n, float step) {
-    float npi = n * UTD_PI;
-    bool interior = (phi >= step) && (phi <= npi-step) &&
-                    (phiP >= step) && (phiP <= npi-step);
-    float guard = step / (2.f * n);
-    return interior && cot_pole_safe_mask(phi, phiP, n, guard);
+template <typename T>
+UTD_DINLINE bool slope_safe_mask(T phi, T phiP, T n, float step) {
+    T npi = n * UTD_PI;
+    bool interior = (phi >= step) && (phi <= npi-T(step)) &&
+                    (phiP >= step) && (phiP <= npi-T(step));
+    T guard = step / (2.f * n);
+    return interior && cot_pole_safe_mask(phi, phiP, n, scalar_value(guard));
 }
 
 // ===================================================================
 // Boersma Fresnel integral with 1st and 2nd derivatives
 // ===================================================================
-UTD_DINLINE void poly12(float x,
+template <typename T>
+UTD_DINLINE void poly12(T x,
     float c0, float c1, float c2, float c3,
     float c4, float c5, float c6, float c7,
     float c8, float c9, float c10, float c11,
-    float& val, float& fst, float& snd)
+    T& val, T& fst, T& snd)
 {
     val = c11; fst = 0.f; snd = 0.f;
     #define POLY_STEP(ci) snd = snd*x + 2.f*fst; fst = fst*x + val; val = val*x + ci;
@@ -253,71 +181,67 @@ UTD_DINLINE void poly12(float x,
     #undef POLY_STEP
 }
 
-UTD_DINLINE void fresnel_boersma(float x, Complex& val, Complex& fst, Complex& snd) {
+template <typename T>
+UTD_DINLINE void fresnel_boersma(T x, ComplexT<T>& val, ComplexT<T>& fst, ComplexT<T>& snd) {
     const float SE = 1.0e-12f;
     bool xPos = x >= 0.f;
-    float xA = fabsf(x);
-    float safeX = fmaxf(xA, SE);
+    T xA = fabsf(x);
+    T safeX = fmaxf(xA, T(SE));
     bool cond = xA < 4.f;
 
-    float argS = 0.25f * xA;
-    float argL = 4.f / safeX;
-    float a1S = 0.25f, a2S = 0.f;
-    float a1L = -4.f/(safeX*safeX);
-    float a2L = 8.f/(safeX*safeX*safeX);
+    T argS = 0.25f * xA;
+    T argL = 4.f / safeX;
+    T a1S = T(0.25f), a2S = T(0.f);
+    T a1L = -4.f/(safeX*safeX);
+    T a2L = 8.f/(safeX*safeX*safeX);
 
-    float rS, rS1, rS2;
+    T rS, rS1, rS2;
     poly12(argS, +1.595769140f,-0.000001702f,-6.808568854f,-0.000576361f,
            +6.920691902f,-0.016898657f,-3.050485660f,-0.075752419f,
            +0.850663781f,-0.025639041f,-0.150230960f,+0.034404779f, rS,rS1,rS2);
-    float iS,iS1,iS2;
+    T iS,iS1,iS2;
     poly12(argS, -0.000000033f,+4.255387524f,-0.000092810f,-7.780020400f,
            -0.009520895f,+5.075161298f,-0.138341947f,-1.363729124f,
            -0.403349276f,+0.702222016f,-0.216195929f,+0.019547031f, iS,iS1,iS2);
-    float rL,rL1,rL2;
+    T rL,rL1,rL2;
     poly12(argL, +0.000000000f,-0.024933975f,+0.000003936f,+0.005770956f,
            +0.000689892f,-0.009497136f,+0.011948809f,-0.006748873f,
            +0.000246420f,+0.002102967f,-0.001217930f,+0.000233939f, rL,rL1,rL2);
-    float iL,iL1,iL2;
+    T iL,iL1,iL2;
     poly12(argL, +0.199471140f,+0.000000023f,-0.009351341f,+0.000023006f,
            +0.004851466f,+0.001903218f,-0.017122914f,+0.029064067f,
            -0.027928955f,+0.016497308f,-0.005598515f,+0.000838386f, iL,iL1,iL2);
 
-    float rC  = cond ? rS : rL;
-    float iC  = cond ? iS : iL;
-    float rC1 = cond ? rS1*a1S : rL1*a1L;
-    float iC1 = cond ? iS1*a1S : iL1*a1L;
-    float rC2 = cond ? rS2*a1S*a1S : rL2*a1L*a1L + rL1*a2L;
-    float iC2 = cond ? iS2*a1S*a1S : iL2*a1L*a1L + iL1*a2L;
+    T rC  = cond ? rS : rL;
+    T iC  = cond ? iS : iL;
+    T rC1 = cond ? rS1*a1S : rL1*a1L;
+    T iC1 = cond ? iS1*a1S : iL1*a1L;
+    T rC2 = cond ? rS2*a1S*a1S : rL2*a1L*a1L + rL1*a2L;
+    T iC2 = cond ? iS2*a1S*a1S : iL2*a1L*a1L + iL1*a2L;
 
-    float arg = cond ? argS : argL;
-    float a1  = cond ? a1S : a1L;
-    float a2  = cond ? a2S : a2L;
-    float argSafe = fmaxf(arg, SE);
-    float aSqrt  = sqrtf(argSafe);
-    float aSqrt1 = 0.5f*a1/aSqrt;
-    float aSqrt2 = 0.5f*a2/aSqrt - 0.25f*a1*a1/(argSafe*aSqrt);
+    T arg = cond ? argS : argL;
+    T a1  = cond ? a1S : a1L;
+    T a2  = cond ? a2S : a2L;
+    T argSafe = fmaxf(arg, T(SE));
+    T aSqrt  = sqrtf(argSafe);
+    T aSqrt1 = 0.5f*a1/aSqrt;
+    T aSqrt2 = 0.5f*a2/aSqrt - 0.25f*a1*a1/(argSafe*aSqrt);
 
-    float rP  = rC*aSqrt;
-    float rP1 = rC1*aSqrt + rC*aSqrt1;
-    float rP2 = rC2*aSqrt + 2.f*rC1*aSqrt1 + rC*aSqrt2;
-    float iP  = -iC*aSqrt;
-    float iP1 = -(iC1*aSqrt + iC*aSqrt1);
-    float iP2 = -(iC2*aSqrt + 2.f*iC1*aSqrt1 + iC*aSqrt2);
+    T rP  = rC*aSqrt;
+    T rP1 = rC1*aSqrt + rC*aSqrt1;
+    T rP2 = rC2*aSqrt + 2.f*rC1*aSqrt1 + rC*aSqrt2;
+    T iP  = -iC*aSqrt;
+    T iP1 = -(iC1*aSqrt + iC*aSqrt1);
+    T iP2 = -(iC2*aSqrt + 2.f*iC1*aSqrt1 + iC*aSqrt2);
 
-    float sinX, cosX;
-#ifdef __CUDACC__
+    T sinX, cosX;
     sincosf(xA, &sinX, &cosX);
-#else
-    sinX = sinf(xA);
-    cosX = cosf(xA);
-#endif
-    float vR = cosX*rP - sinX*iP;
-    float vI = cosX*iP + sinX*rP;
-    float f1R = cosX*(rP1-iP) - sinX*(rP+iP1);
-    float f1I = cosX*(iP1+rP) + sinX*(rP1-iP);
-    float f2R = cosX*(rP2-rP-2.f*iP1) - sinX*(2.f*rP1-iP+iP2);
-    float f2I = cosX*(iP2+2.f*rP1-iP) + sinX*(rP2-rP-2.f*iP1);
+    T vR = cosX*rP - sinX*iP;
+    T vI = cosX*iP + sinX*rP;
+    T f1R = cosX*(rP1-iP) - sinX*(rP+iP1);
+    T f1I = cosX*(iP1+rP) + sinX*(rP1-iP);
+    T f2R = cosX*(rP2-rP-2.f*iP1) - sinX*(2.f*rP1-iP+iP2);
+    T f2I = cosX*(iP2+2.f*rP1-iP) + sinX*(rP2-rP-2.f*iP1);
 
     if (!cond) { vR += 0.5f; vI += 0.5f; }
 
@@ -326,56 +250,60 @@ UTD_DINLINE void fresnel_boersma(float x, Complex& val, Complex& fst, Complex& s
     snd = cplx(xPos ? f2R : -f2R, xPos ? f2I : -f2I);
 }
 
-UTD_DINLINE float first_order_diffraction_parameter(
-    float3a sourcePos,
-    float3a targetPos,
-    float3a edgeOrigin,
-    float3a edgeDir)
+template <typename T>
+UTD_DINLINE T first_order_diffraction_parameter(
+    Vec3T<T> sourcePos,
+    Vec3T<T> targetPos,
+    Vec3T<T> edgeOrigin,
+    Vec3T<T> edgeDir)
 {
-    float3a zeta = safe_normalize(edgeDir, make_f3(0.f, 0.f, 1.f));
-    float3a targetOffset = f3_sub(targetPos, edgeOrigin);
-    float3a sourceOffset = f3_sub(sourcePos, edgeOrigin);
-    float3a targetProjection = f3_mul(zeta, f3_dot(targetOffset, zeta));
-    float3a sourceProjection = f3_mul(zeta, f3_dot(sourceOffset, zeta));
-    float3a targetRadial = f3_sub(targetOffset, targetProjection);
-    float3a sourceRadial = f3_sub(sourceOffset, sourceProjection);
-    float targetRadialNorm = safe_length(targetRadial);
-    float sourceRadialNorm = safe_length(sourceRadial);
-    float3a v1 = f3_div(targetRadial, fmaxf(targetRadialNorm, UTD_SMALL_EPS));
-    float3a v2 = f3_div(sourceRadial, fmaxf(sourceRadialNorm, UTD_SMALL_EPS));
-    float theta = UTD_PI - safe_acos(f3_dot(v1, v2));
-    float3a rotationAxis = f3_cross(sourceRadial, targetRadial);
-    float rotationAxisNorm = safe_length(rotationAxis);
+    Vec3T<T> zeta = safe_normalize(edgeDir, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> targetOffset = f3_sub(targetPos, edgeOrigin);
+    Vec3T<T> sourceOffset = f3_sub(sourcePos, edgeOrigin);
+    Vec3T<T> targetProjection = f3_mul(zeta, f3_dot(targetOffset, zeta));
+    Vec3T<T> sourceProjection = f3_mul(zeta, f3_dot(sourceOffset, zeta));
+    Vec3T<T> targetRadial = f3_sub(targetOffset, targetProjection);
+    Vec3T<T> sourceRadial = f3_sub(sourceOffset, sourceProjection);
+    T targetRadialNorm = safe_length(targetRadial);
+    T sourceRadialNorm = safe_length(sourceRadial);
+    Vec3T<T> v1 = f3_div(targetRadial, fmaxf(targetRadialNorm, T(UTD_SMALL_EPS)));
+    Vec3T<T> v2 = f3_div(sourceRadial, fmaxf(sourceRadialNorm, T(UTD_SMALL_EPS)));
+    T theta = UTD_PI - safe_acos(f3_dot(v1, v2));
+    Vec3T<T> rotationAxis = f3_cross(sourceRadial, targetRadial);
+    T rotationAxisNorm = safe_length(rotationAxis);
     rotationAxis = rotationAxisNorm > UTD_SMALL_EPS
-        ? f3_div(rotationAxis, rotationAxisNorm + UTD_EPS)
+        ? f3_div(rotationAxis, rotationAxisNorm + T(UTD_EPS))
         : zeta;
-    float3a coplanarTarget = rotate_vector_around_axis(targetOffset, rotationAxis, theta);
-    float3a sourceToTarget = f3_sub(coplanarTarget, sourceOffset);
-    float sourceToTargetNorm = safe_length(sourceToTarget);
-    float3a u0 = f3_div(sourceToTarget, fmaxf(sourceToTargetNorm, UTD_SMALL_EPS));
-    float3a u1 = f3_cross(sourceOffset, u0);
-    float3a u2 = f3_cross(zeta, u0);
-    float u2Norm = safe_length(u2);
-    float sign = f3_dot(u1, u2) >= 0.f ? 1.f : -1.f;
-    return sign * safe_length(u1) / fmaxf(u2Norm, UTD_SMALL_EPS);
+    Vec3T<T> coplanarTarget = rotate_vector_around_axis(targetOffset, rotationAxis, theta);
+    Vec3T<T> sourceToTarget = f3_sub(coplanarTarget, sourceOffset);
+    T sourceToTargetNorm = safe_length(sourceToTarget);
+    Vec3T<T> u0 = f3_div(sourceToTarget, fmaxf(sourceToTargetNorm, T(UTD_SMALL_EPS)));
+    Vec3T<T> u1 = f3_cross(sourceOffset, u0);
+    Vec3T<T> u2 = f3_cross(zeta, u0);
+    T u2Norm = safe_length(u2);
+    T sign = T(scalar_value(f3_dot(u1, u2)) >= 0.f ? 1.f : -1.f);
+    return sign * safe_length(u1) / fmaxf(u2Norm, T(UTD_SMALL_EPS));
 }
 
-struct FiniteEdgePointSelection {
-    float3a point;
-    float edgeLineMin;
-    float edgeLineMax;
+template <typename T>
+struct FiniteEdgePointSelectionT {
+    Vec3T<T> point;
+    T edgeLineMin;
+    T edgeLineMax;
     bool valid;
     bool inside;
 };
+using FiniteEdgePointSelection = FiniteEdgePointSelectionT<float>;
 
-UTD_DINLINE FiniteEdgePointSelection finite_edge_diffraction_point(
-    PairInputs state,
-    float3a targetPos)
+template <typename T>
+UTD_DINLINE FiniteEdgePointSelectionT<T> finite_edge_diffraction_point(
+    PairInputsT<T> state,
+    Vec3T<T> targetPos)
 {
-    float3a edgeHat = safe_normalize(state.edgeDir, make_f3(0.f, 0.f, 1.f));
-    float3a edgeOrigin = f3_add(state.edgePos, f3_mul(edgeHat, state.edgeLineMin));
-    float edgeLength = state.edgeLineMax - state.edgeLineMin;
-    float parameter = first_order_diffraction_parameter(
+    Vec3T<T> edgeHat = safe_normalize(state.edgeDir, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> edgeOrigin = f3_add(state.edgePos, f3_mul(edgeHat, state.edgeLineMin));
+    T edgeLength = state.edgeLineMax - state.edgeLineMin;
+    T parameter = first_order_diffraction_parameter(
         state.sourcePos,
         targetPos,
         edgeOrigin,
@@ -392,9 +320,10 @@ UTD_DINLINE FiniteEdgePointSelection finite_edge_diffraction_point(
     };
 }
 
-UTD_DINLINE PairInputs pair_state_at_stationary_point(
-    PairInputs state,
-    float3a targetPos,
+template <typename T>
+UTD_DINLINE PairInputsT<T> pair_state_at_stationary_point(
+    PairInputsT<T> state,
+    Vec3T<T> targetPos,
     bool& selected,
     bool& inside,
     bool& valid)
@@ -405,7 +334,7 @@ UTD_DINLINE PairInputs pair_state_at_stationary_point(
     if (state.selectStationaryPoint <= 0.5f) {
         return state;
     }
-    FiniteEdgePointSelection point = finite_edge_diffraction_point(state, targetPos);
+    FiniteEdgePointSelectionT<T> point = finite_edge_diffraction_point(state, targetPos);
     if (!point.valid) {
         valid = false;
         return state;
@@ -418,30 +347,33 @@ UTD_DINLINE PairInputs pair_state_at_stationary_point(
     return state;
 }
 
-UTD_DINLINE Complex direct_source_field(float3a sourcePos, float3a targetPos, float k) {
-    float distance = safe_length(f3_sub(targetPos, sourcePos)) + UTD_EPS;
-    float fspl = 1.f / (2.f * fmaxf(k, UTD_SMALL_EPS) * distance);
+template <typename T>
+UTD_DINLINE ComplexT<T> direct_source_field(Vec3T<T> sourcePos, Vec3T<T> targetPos, T k) {
+    T distance = safe_length(f3_sub(targetPos, sourcePos)) + T(UTD_EPS);
+    T fspl = 1.f / (2.f * fmaxf(k, T(UTD_SMALL_EPS)) * distance);
     return cplx_mul_real(cplx_exp_phase(-k * distance), fspl);
 }
 
-UTD_DINLINE Complex3 direct_source_vector(
-    float3a sourcePos,
-    float3a targetPos,
-    float k,
-    MaterialParams mat)
+template <typename T>
+UTD_DINLINE Complex3T<T> direct_source_vector(
+    Vec3T<T> sourcePos,
+    Vec3T<T> targetPos,
+    T k,
+    MaterialParamsT<T> mat)
 {
-    float3a rayDir = safe_normalize(f3_sub(targetPos, sourcePos), make_f3(0.f, 0.f, 1.f));
-    float3a txPol = make_f3(mat.txPolX, mat.txPolY, mat.txPolZ);
-    float3a polDir = stable_perp_basis(rayDir, txPol);
+    Vec3T<T> rayDir = safe_normalize(f3_sub(targetPos, sourcePos), v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> txPol = {mat.txPolX, mat.txPolY, mat.txPolZ};
+    Vec3T<T> polDir = stable_perp_basis(rayDir, txPol);
     return cplx_scale_real(polDir, direct_source_field(sourcePos, targetPos, k));
 }
 
-UTD_DINLINE float poly12_value(float x,
+template <typename T>
+UTD_DINLINE T poly12_value(T x,
     float c0, float c1, float c2, float c3,
     float c4, float c5, float c6, float c7,
     float c8, float c9, float c10, float c11)
 {
-    float val = c11;
+    T val = T(c11);
     val = val * x + c10;
     val = val * x + c9;
     val = val * x + c8;
@@ -456,37 +388,33 @@ UTD_DINLINE float poly12_value(float x,
     return val;
 }
 
-UTD_DINLINE Complex fresnel_boersma_value(float x) {
+template <typename T>
+UTD_DINLINE ComplexT<T> fresnel_boersma_value(T x) {
     bool xPos = x > 0.f;
-    float xA = fabsf(x);
+    T xA = fabsf(x);
     bool cond = xA < 4.f;
-    float arg = cond ? (0.25f * xA) : (4.f / xA);
-    float root = sqrtf(arg);
+    T arg = cond ? (0.25f * xA) : (4.f / xA);
+    T root = sqrtf(arg);
 
-    float rS = poly12_value(arg, +1.595769140f,-0.000001702f,-6.808568854f,-0.000576361f,
+    T rS = poly12_value(arg, +1.595769140f,-0.000001702f,-6.808568854f,-0.000576361f,
         +6.920691902f,-0.016898657f,-3.050485660f,-0.075752419f,
         +0.850663781f,-0.025639041f,-0.150230960f,+0.034404779f);
-    float iS = poly12_value(arg, -0.000000033f,+4.255387524f,-0.000092810f,-7.780020400f,
+    T iS = poly12_value(arg, -0.000000033f,+4.255387524f,-0.000092810f,-7.780020400f,
         -0.009520895f,+5.075161298f,-0.138341947f,-1.363729124f,
         -0.403349276f,+0.702222016f,-0.216195929f,+0.019547031f);
-    float rL = poly12_value(arg, +0.000000000f,-0.024933975f,+0.000003936f,+0.005770956f,
+    T rL = poly12_value(arg, +0.000000000f,-0.024933975f,+0.000003936f,+0.005770956f,
         +0.000689892f,-0.009497136f,+0.011948809f,-0.006748873f,
         +0.000246420f,+0.002102967f,-0.001217930f,+0.000233939f);
-    float iL = poly12_value(arg, +0.199471140f,+0.000000023f,-0.009351341f,+0.000023006f,
+    T iL = poly12_value(arg, +0.199471140f,+0.000000023f,-0.009351341f,+0.000023006f,
         +0.004851466f,+0.001903218f,-0.017122914f,+0.029064067f,
         -0.027928955f,+0.016497308f,-0.005598515f,+0.000838386f);
 
-    float rP = (cond ? rS : rL) * root;
-    float iP = -(cond ? iS : iL) * root;
-    float sinX, cosX;
-#ifdef __CUDACC__
+    T rP = (cond ? rS : rL) * root;
+    T iP = -(cond ? iS : iL) * root;
+    T sinX, cosX;
     sincosf(xA, &sinX, &cosX);
-#else
-    sinX = sinf(xA);
-    cosX = cosf(xA);
-#endif
-    float vR = cosX * rP - sinX * iP;
-    float vI = cosX * iP + sinX * rP;
+    T vR = cosX * rP - sinX * iP;
+    T vI = cosX * iP + sinX * rP;
     if (!cond) { vR += 0.5f; vI += 0.5f; }
     return cplx(xPos ? vR : -vR, xPos ? vI : -vI);
 }
@@ -494,21 +422,22 @@ UTD_DINLINE Complex fresnel_boersma_value(float x) {
 // ===================================================================
 // UTD transition function f(x) with 1st and 2nd derivatives
 // ===================================================================
-UTD_DINLINE void f_utd_with_derivatives(float x, Complex& val, Complex& fst, Complex& snd) {
-    float sx = fmaxf(x, UTD_SMALL_EPS);
-    Complex fV, fF, fS;
+template <typename T>
+UTD_DINLINE void f_utd_with_derivatives(T x, ComplexT<T>& val, ComplexT<T>& fst, ComplexT<T>& snd) {
+    T sx = fmaxf(x, T(UTD_SMALL_EPS));
+    ComplexT<T> fV, fF, fS;
     fresnel_boersma(x, fV, fF, fS);
-    Complex fcV = cplx_conj(fV), fcF = cplx_conj(fF), fcS = cplx_conj(fS);
+    ComplexT<T> fcV = cplx_conj(fV), fcF = cplx_conj(fF), fcS = cplx_conj(fS);
 
-    float pf  = sqrtf(UTD_PI*sx*0.5f);
-    float pf1 = 0.5f*pf/sx;
-    float pf2 = -0.25f*pf/(sx*sx);
-    Complex ph  = cplx_exp_phase(x);
-    Complex ph1 = cplx_mul(cplx(0,1), ph);
-    Complex ph2 = cplx(-ph.re, -ph.im);
-    Complex br  = cplx_sub(cplx(1,1), cplx_mul(cplx(0,2), fcV));
-    Complex br1 = cplx_mul(cplx(0,-2), fcF);
-    Complex br2 = cplx_mul(cplx(0,-2), fcS);
+    T pf  = sqrtf(UTD_PI*sx*0.5f);
+    T pf1 = 0.5f*pf/sx;
+    T pf2 = -0.25f*pf/(sx*sx);
+    ComplexT<T> ph  = cplx_exp_phase(x);
+    ComplexT<T> ph1 = cplx_mul(c_const<T>(0,1), ph);
+    ComplexT<T> ph2 = cplx(-ph.re, -ph.im);
+    ComplexT<T> br  = cplx_sub(c_const<T>(1,1), cplx_mul(c_const<T>(0,2), fcV));
+    ComplexT<T> br1 = cplx_mul(c_const<T>(0,-2), fcF);
+    ComplexT<T> br2 = cplx_mul(c_const<T>(0,-2), fcS);
 
     val = cplx_mul_real(cplx_mul(ph, br), pf);
     fst = cplx_add(cplx_add(
@@ -528,62 +457,66 @@ UTD_DINLINE void f_utd_with_derivatives(float x, Complex& val, Complex& fst, Com
         cplx_mul_real(cplx_mul(ph, br2), pf)));
 }
 
-UTD_DINLINE Complex f_utd_value(float x) {
-    float sx = fmaxf(x, 0.0f);
-    Complex fV = fresnel_boersma_value(x);
-    Complex bracket = cplx_sub(cplx(1.0f, 1.0f), cplx_mul(cplx(0.0f, 2.0f), cplx_conj(fV)));
-    Complex phase = cplx_exp_phase(x);
-    float prefactor = sqrtf(UTD_PI * sx * 0.5f);
+template <typename T>
+UTD_DINLINE ComplexT<T> f_utd_value(T x) {
+    T sx = fmaxf(x, T(0.0f));
+    ComplexT<T> fV = fresnel_boersma_value(x);
+    ComplexT<T> bracket = cplx_sub(c_const<T>(1.0f, 1.0f), cplx_mul(c_const<T>(0.0f, 2.0f), cplx_conj(fV)));
+    ComplexT<T> phase = cplx_exp_phase(x);
+    T prefactor = sqrtf(UTD_PI * sx * 0.5f);
     return cplx_mul_real(cplx_mul(phase, bracket), prefactor);
 }
 
 // ===================================================================
 // Beta term values + assembly
 // ===================================================================
-UTD_DINLINE float shadow_a_threshold(float n) {
-    return 8.0e-12f * fmaxf(n * n, 1.0f);
+template <typename T>
+UTD_DINLINE T shadow_a_threshold(T n) {
+    return 8.0e-12f * fmaxf(n * n, T(1.0f));
 }
 
-UTD_DINLINE Complex cot_transition_product_value(
-    float cotV,
-    Complex transition,
-    float x,
-    float x1,
-    float kL,
-    float n,
+template <typename T>
+UTD_DINLINE ComplexT<T> cot_transition_product_value(
+    T cotV,
+    ComplexT<T> transition,
+    T x,
+    T x1,
+    T kL,
+    T n,
     float cotSign)
 {
-    Complex raw = cplx_mul_real(transition, cotV);
-    float safeKL = fabsf(kL) > UTD_EPS ? kL : 0.0f;
-    float a = safeKL != 0.0f ? fmaxf(x / safeKL, 0.0f) : 0.0f;
-    float a1 = safeKL != 0.0f ? x1 / safeKL : 0.0f;
-    float threshold = shadow_a_threshold(n);
+    ComplexT<T> raw = cplx_mul_real(transition, cotV);
+    T safeKL = fabsf(kL) > UTD_EPS ? kL : T(0.0f);
+    T a = safeKL != 0.0f ? fmaxf(x / safeKL, T(0.0f)) : T(0.0f);
+    T a1 = safeKL != 0.0f ? x1 / safeKL : T(0.0f);
+    T threshold = shadow_a_threshold(n);
     if (a > threshold) {
         return raw;
     }
 
     float fallbackSign = cotV >= 0.0f ? 1.0f : -1.0f;
     float a1Sign = a1 >= 0.0f ? 1.0f : -1.0f;
-    float limitSign = fabsf(a1) > UTD_SMALL_EPS ? cotSign * a1Sign : fallbackSign;
-    float limitScale = limitSign * n * sqrtf(UTD_PI * fmaxf(kL, 0.0f));
-    Complex limit = cplx(limitScale, limitScale);
-    float blend = fminf(1.0f, a / fmaxf(threshold, 1.0e-20f));
+    float limitSign = fabsf(scalar_value(a1)) > UTD_SMALL_EPS ? cotSign * a1Sign : fallbackSign;
+    T limitScale = limitSign * n * sqrtf(UTD_PI * fmaxf(kL, T(0.0f)));
+    ComplexT<T> limit = cplx(limitScale, limitScale);
+    T blend = fminf(T(1.0f), a / fmaxf(threshold, T(1.0e-20f)));
     return cplx_add(limit, cplx_mul_real(cplx_sub(raw, limit), blend));
 }
 
-UTD_DINLINE void beta_term_values(float beta, float n, float kL, float cotSign,
-    bool plusBranch, float& cotV, float& c1, float& c2,
-    float& xo, float& x1, float& x2)
+template <typename T>
+UTD_DINLINE void beta_term_values(T beta, T n, T kL, float cotSign,
+    bool plusBranch, T& cotV, T& c1, T& c2,
+    T& xo, T& x1, T& x2)
 {
-    float twoN = 2.f*n;
-    float twoNPi = 2.f*n*UTD_PI;
-    float ri = plusBranch ? roundf((beta+UTD_PI)/twoNPi) : roundf((beta-UTD_PI)/twoNPi);
-    float po = twoNPi*ri - beta;
-    float chp = cosf(0.5f*po);
-    float a = 2.f*chp*chp;
-    float a1v = sinf(po);
-    float a2v = 1.f-a;
-    float ca = (UTD_PI + cotSign*beta)/twoN;
+    T twoN = 2.f*n;
+    T twoNPi = 2.f*n*UTD_PI;
+    T ri = plusBranch ? roundf((beta+UTD_PI)/twoNPi) : roundf((beta-UTD_PI)/twoNPi);
+    T po = twoNPi*ri - beta;
+    T chp = cosf(0.5f*po);
+    T a = 2.f*chp*chp;
+    T a1v = sinf(po);
+    T a2v = 1.f-a;
+    T ca = (UTD_PI + cotSign*beta)/twoN;
     cotV = cot_val(ca);
     c1 = -(cotSign/twoN)*(1.f + cotV*cotV);
     c2 = 0.5f*cotV*(1.f + cotV*cotV)/(n*n);
@@ -592,12 +525,13 @@ UTD_DINLINE void beta_term_values(float beta, float n, float kL, float cotSign,
     x2 = kL*a2v;
 }
 
-UTD_DINLINE void assemble_beta_term(float cotV, float c1, float c2,
-    float x, float x1, float x2, float kL, float n, float cotSign,
-    Complex tr, Complex tr1, Complex tr2,
-    Complex& val, Complex& fst, Complex& snd)
+template <typename T>
+UTD_DINLINE void assemble_beta_term(T cotV, T c1, T c2,
+    T x, T x1, T x2, T kL, T n, float cotSign,
+    ComplexT<T> tr, ComplexT<T> tr1, ComplexT<T> tr2,
+    ComplexT<T>& val, ComplexT<T>& fst, ComplexT<T>& snd)
 {
-    Complex forwardTransition = f_utd_value(x);
+    ComplexT<T> forwardTransition = f_utd_value(x);
     val = cot_transition_product_value(cotV, forwardTransition, x, x1, kL, n, cotSign);
     fst = cplx_add(cplx_mul_real(tr, c1), cplx_mul_real(tr1, cotV*x1));
     snd = cplx_add(
@@ -608,9 +542,10 @@ UTD_DINLINE void assemble_beta_term(float cotV, float c1, float c2,
 // ===================================================================
 // Diffraction beta groups (2D / 3D)
 // ===================================================================
-UTD_DINLINE float endpoint_unpaired_direct_beta(float beta, float n) {
-    float period = fmaxf(2.f * n * UTD_PI, UTD_SMALL_EPS);
-    float centered = beta - period * floorf((beta + 0.5f * period) / period);
+template <typename T>
+UTD_DINLINE T endpoint_unpaired_direct_beta(T beta, T n) {
+    T period = fmaxf(2.f * n * UTD_PI, T(UTD_SMALL_EPS));
+    T centered = beta - period * floorf((beta + 0.5f * period) / period);
     if (centered > UTD_PI) {
         return 2.f * UTD_PI - centered;
     }
@@ -620,23 +555,24 @@ UTD_DINLINE float endpoint_unpaired_direct_beta(float beta, float n) {
     return centered;
 }
 
-UTD_DINLINE void diffraction_beta_groups_from_betas(float dP, float sP2, float n, float k,
-    float s, float sP, Complex r0, Complex rn,
-    Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k,
+    T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
+    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
-    float l = s*sP/(s+sP+UTD_EPS);
-    float kL = k*l;
-    factor = cplx_mul_real(cplx_exp_phase(-0.25f*UTD_PI),
-                           -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+UTD_EPS)));
-    float cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
+    T l = s*sP/(s+sP+T(UTD_EPS));
+    T kL = k*l;
+    factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
+                           -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))));
+    T cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
     beta_term_values(dP, n, kL, +1.f, true,  cv[0],c1[0],c2[0],xv[0],x1[0],x2[0]);
     beta_term_values(dP, n, kL, -1.f, false, cv[1],c1[1],c2[1],xv[1],x1[1],x2[1]);
     beta_term_values(sP2,n, kL, +1.f, true,  cv[2],c1[2],c2[2],xv[2],x1[2],x2[2]);
     beta_term_values(sP2,n, kL, -1.f, false, cv[3],c1[3],c2[3],xv[3],x1[3],x2[3]);
-    Complex tr[4],tr1[4],tr2[4];
+    ComplexT<T> tr[4],tr1[4],tr2[4];
     for (int i=0;i<4;++i) f_utd_with_derivatives(xv[i],tr[i],tr1[i],tr2[i]);
-    Complex tv[4],tf[4],ts[4];
+    ComplexT<T> tv[4],tf[4],ts[4];
     for (int i=0;i<4;++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1[i],c2[i],xv[i],x1[i],x2[i],kL,n,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
@@ -649,42 +585,45 @@ UTD_DINLINE void diffraction_beta_groups_from_betas(float dP, float sP2, float n
     sG2 = cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3]));
 }
 
-UTD_DINLINE void diffraction_beta_groups(float phi, float phiP, float n, float k,
-    float s, float sP, Complex r0, Complex rn,
-    Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups(T phi, T phiP, T n, T k,
+    T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
+    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
     diffraction_beta_groups_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
                                        r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2);
 }
 
-UTD_DINLINE void diffraction_beta_groups_with_direct_beta(float phi, float phiP,
-    float directBeta, float n, float k, float s, float sP, Complex r0, Complex rn,
-    Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups_with_direct_beta(T phi, T phiP,
+    T directBeta, T n, T k, T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
+    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
     diffraction_beta_groups_from_betas(directBeta, phi + phiP, n, k, s, sP,
                                        r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2);
 }
 
-UTD_DINLINE void diffraction_beta_groups_3d_from_betas(float dP, float sP2, float n, float k,
-    float s, float sP, float sinBeta0, Complex r0, Complex rn,
-    Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k,
+    T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
+    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
-    float sb = fmaxf(sinBeta0, UTD_SMALL_EPS);
-    float l = s*sP/(s+sP+UTD_EPS)*sb*sb;
-    float kL = k*l;
-    factor = cplx_mul_real(cplx_exp_phase(-0.25f*UTD_PI),
-                           -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+UTD_EPS)*sb));
-    float cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
+    T sb = fmaxf(sinBeta0, T(UTD_SMALL_EPS));
+    T l = s*sP/(s+sP+T(UTD_EPS))*sb*sb;
+    T kL = k*l;
+    factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
+                           -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))*sb));
+    T cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
     beta_term_values(dP, n, kL, +1.f, true,  cv[0],c1[0],c2[0],xv[0],x1[0],x2[0]);
     beta_term_values(dP, n, kL, -1.f, false, cv[1],c1[1],c2[1],xv[1],x1[1],x2[1]);
     beta_term_values(sP2,n, kL, +1.f, true,  cv[2],c1[2],c2[2],xv[2],x1[2],x2[2]);
     beta_term_values(sP2,n, kL, -1.f, false, cv[3],c1[3],c2[3],xv[3],x1[3],x2[3]);
-    Complex tr[4],tr1[4],tr2[4];
+    ComplexT<T> tr[4],tr1[4],tr2[4];
     for (int i=0;i<4;++i) f_utd_with_derivatives(xv[i],tr[i],tr1[i],tr2[i]);
-    Complex tv[4],tf[4],ts[4];
+    ComplexT<T> tv[4],tf[4],ts[4];
     for (int i=0;i<4;++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1[i],c2[i],xv[i],x1[i],x2[i],kL,n,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
@@ -697,20 +636,22 @@ UTD_DINLINE void diffraction_beta_groups_3d_from_betas(float dP, float sP2, floa
     sG2 = cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3]));
 }
 
-UTD_DINLINE void diffraction_beta_groups_3d(float phi, float phiP, float n, float k,
-    float s, float sP, float sinBeta0, Complex r0, Complex rn,
-    Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups_3d(T phi, T phiP, T n, T k,
+    T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
+    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
     diffraction_beta_groups_3d_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
                                           sinBeta0, r0, rn, factor, dG, dG1,
                                           sG, sG1, dG2, sG2);
 }
 
-UTD_DINLINE void diffraction_beta_groups_3d_with_direct_beta(float phi, float phiP,
-    float directBeta, float n, float k, float s, float sP, float sinBeta0,
-    Complex r0, Complex rn, Complex& factor, Complex& dG, Complex& dG1,
-    Complex& sG, Complex& sG1, Complex& dG2, Complex& sG2)
+template <typename T>
+UTD_DINLINE void diffraction_beta_groups_3d_with_direct_beta(T phi, T phiP,
+    T directBeta, T n, T k, T s, T sP, T sinBeta0,
+    ComplexT<T> r0, ComplexT<T> rn, ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
 {
     diffraction_beta_groups_3d_from_betas(directBeta, phi + phiP, n, k, s, sP,
                                           sinBeta0, r0, rn, factor, dG, dG1,
@@ -720,113 +661,126 @@ UTD_DINLINE void diffraction_beta_groups_3d_with_direct_beta(float phi, float ph
 // ===================================================================
 // Diffraction coefficients (2D / 3D)
 // ===================================================================
-UTD_DINLINE Complex diff_coeff_2d(float phi, float phiP, float n, float k,
-                                   float s, float sP, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_2d(T phi, T phiP, T n, T k,
+                                   T s, T sP, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
     diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
-UTD_DINLINE Complex diff_coeff_2d_endpoint_continued(float phi, float phiP,
-    float n, float k, float s, float sP, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
-    float directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_2d_endpoint_continued(T phi, T phiP,
+    T n, T k, T s, T sP, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
+    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
     diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,n,k,s,sP,r0,rn,
                                              fac,dG,dG1,sG,sG1,dG2,sG2);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
-UTD_DINLINE Complex diff_coeff_3d(float phi, float phiP, float n, float k,
-    float s, float sP, float sb, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_3d(T phi, T phiP, T n, T k,
+    T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
     diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
-UTD_DINLINE Complex diff_coeff_3d_endpoint_continued(float phi, float phiP,
-    float n, float k, float s, float sP, float sb, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
-    float directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_3d_endpoint_continued(T phi, T phiP,
+    T n, T k, T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
+    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
     diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,n,k,s,sP,sb,
                                                 r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
-UTD_DINLINE Complex diff_coeff_2d_angle_deriv(float phi, float phiP, float n, float k,
-    float s, float sP, bool wrtPhi, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_2d_angle_deriv(T phi, T phiP, T n, T k,
+    T s, T sP, bool wrtPhi, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
     diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
-    Complex combined = wrtPhi ? cplx_add(dG1,sG1)
+    ComplexT<T> combined = wrtPhi ? cplx_add(dG1,sG1)
                               : cplx_add(cplx_mul_real(dG1,-1.f), sG1);
     return cplx_mul(fac, combined);
 }
 
-UTD_DINLINE Complex diff_coeff_3d_angle_deriv(float phi, float phiP, float n, float k,
-    float s, float sP, float sb, bool wrtPhi, Complex r0, Complex rn) {
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
+template <typename T>
+UTD_DINLINE ComplexT<T> diff_coeff_3d_angle_deriv(T phi, T phiP, T n, T k,
+    T s, T sP, T sb, bool wrtPhi, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
     diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
-    Complex combined = wrtPhi ? cplx_add(dG1,sG1)
+    ComplexT<T> combined = wrtPhi ? cplx_add(dG1,sG1)
                               : cplx_add(cplx_mul_real(dG1,-1.f), sG1);
     return cplx_mul(fac, combined);
 }
 
-UTD_DINLINE Complex slope_diff_2d(float phi, float phiP, float n, float k,
-                                  float s, float sP, Complex r0, Complex rn) {
-    Complex d = diff_coeff_2d_angle_deriv(phi,phiP,n,k,s,sP,false,r0,rn);
-    return cplx_div_real(cplx_mul(cplx(0,-1), d), k);
+template <typename T>
+UTD_DINLINE ComplexT<T> slope_diff_2d(T phi, T phiP, T n, T k,
+                                  T s, T sP, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> d = diff_coeff_2d_angle_deriv(phi,phiP,n,k,s,sP,false,r0,rn);
+    return cplx_div_real(cplx_mul(c_const<T>(0,-1), d), k);
 }
 
-UTD_DINLINE Complex slope_diff_3d(float phi, float phiP, float n, float k,
-    float s, float sP, float sb, Complex r0, Complex rn) {
-    Complex d = diff_coeff_3d_angle_deriv(phi,phiP,n,k,s,sP,sb,false,r0,rn);
-    return cplx_div_real(cplx_mul(cplx(0,-1), d), k);
+template <typename T>
+UTD_DINLINE ComplexT<T> slope_diff_3d(T phi, T phiP, T n, T k,
+    T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn) {
+    ComplexT<T> d = diff_coeff_3d_angle_deriv(phi,phiP,n,k,s,sP,sb,false,r0,rn);
+    return cplx_div_real(cplx_mul(c_const<T>(0,-1), d), k);
 }
 
 // ===================================================================
 // Edge angle computation
 // ===================================================================
-UTD_DINLINE float oriented_angle_positive(float y, float x) {
-    float a = atan2f(y, x);
-    return a < 0.f ? a + UTD_TWO_PI : a;
+template <typename T>
+UTD_DINLINE T oriented_angle_positive(T y, T x) {
+    T a = atan2f(y, x);
+    return a < 0.f ? a + T(UTD_TWO_PI) : a;
 }
 
-UTD_DINLINE void compute_edge_angles(float3a srcPos, float3a edgePos, float3a edgeDir,
-    float3a n0, float3a tgtPos,
-    float& phi, float& phiP, float& s, float& sP)
+template <typename T>
+UTD_DINLINE void compute_edge_angles(Vec3T<T> srcPos, Vec3T<T> edgePos, Vec3T<T> edgeDir,
+    Vec3T<T> n0, Vec3T<T> tgtPos,
+    T& phi, T& phiP, T& s, T& sP)
 {
-    float3a srcToEdge = f3_sub(edgePos, srcPos);
-    float3a srcProj = project_to_wedge_plane(srcToEdge, edgeDir);
-    sP = safe_length(srcProj) + UTD_EPS;
-    float3a toHat = safe_normalize(f3_cross(n0, edgeDir), make_f3(0,1,0));
-    float3a kiProj = f3_div(srcProj, sP);
-    float signP = ((-f3_dot(kiProj, n0)) >= 0.f ? 1.f : -1.f);
+    Vec3T<T> srcToEdge = f3_sub(edgePos, srcPos);
+    Vec3T<T> srcProj = project_to_wedge_plane(srcToEdge, edgeDir);
+    sP = safe_length(srcProj) + T(UTD_EPS);
+    Vec3T<T> toHat = safe_normalize(f3_cross(n0, edgeDir), v3_const<T>(0,1,0));
+    Vec3T<T> kiProj = f3_div(srcProj, sP);
+    float signP = (scalar_value(-f3_dot(kiProj, n0)) >= 0.f ? 1.f : -1.f);
     phiP = UTD_PI - safe_acos(-f3_dot(kiProj, toHat));
     phiP = phiP * (-signP) + UTD_PI;
 
-    float3a edgeToTgt = f3_sub(tgtPos, edgePos);
-    float3a tgtProj = project_to_wedge_plane(edgeToTgt, edgeDir);
-    s = safe_length(tgtProj) + UTD_EPS;
-    float3a koProj = f3_div(tgtProj, s);
-    float signPhi = (f3_dot(koProj, n0) >= 0.f ? 1.f : -1.f);
+    Vec3T<T> edgeToTgt = f3_sub(tgtPos, edgePos);
+    Vec3T<T> tgtProj = project_to_wedge_plane(edgeToTgt, edgeDir);
+    s = safe_length(tgtProj) + T(UTD_EPS);
+    Vec3T<T> koProj = f3_div(tgtProj, s);
+    float signPhi = (scalar_value(f3_dot(koProj, n0)) >= 0.f ? 1.f : -1.f);
     phi = UTD_PI - safe_acos(f3_dot(koProj, toHat));
     phi = phi * (-signPhi) + UTD_PI;
 }
 
-UTD_DINLINE void compute_edge_geometry_3d(float3a srcPos, float3a edgePos, float3a edgeDir,
-    float3a n0, float3a tgtPos,
-    float& phi, float& phiP, float& s, float& sP, float& sinBeta0)
+template <typename T>
+UTD_DINLINE void compute_edge_geometry_3d(Vec3T<T> srcPos, Vec3T<T> edgePos, Vec3T<T> edgeDir,
+    Vec3T<T> n0, Vec3T<T> tgtPos,
+    T& phi, T& phiP, T& s, T& sP, T& sinBeta0)
 {
-    float sProj, sPProj;
+    T sProj, sPProj;
     compute_edge_angles(srcPos, edgePos, edgeDir, n0, tgtPos, phi, phiP, sProj, sPProj);
-    float3a srcToEdge = f3_sub(edgePos, srcPos);
-    float3a edgeToTgt = f3_sub(tgtPos, edgePos);
-    sP = safe_length(srcToEdge) + UTD_EPS;
-    s  = safe_length(edgeToTgt) + UTD_EPS;
-    float sbP = fminf(fmaxf(sPProj/sP, UTD_SMALL_EPS), 1.f);
-    float sb  = fminf(fmaxf(sProj/s,  UTD_SMALL_EPS), 1.f);
-    sinBeta0 = sqrtf(fmaxf(sb*sbP, UTD_SMALL_EPS));
+    Vec3T<T> srcToEdge = f3_sub(edgePos, srcPos);
+    Vec3T<T> edgeToTgt = f3_sub(tgtPos, edgePos);
+    sP = safe_length(srcToEdge) + T(UTD_EPS);
+    s  = safe_length(edgeToTgt) + T(UTD_EPS);
+    T sbP = fminf(fmaxf(sPProj/sP, T(UTD_SMALL_EPS)), T(1.f));
+    T sb  = fminf(fmaxf(sProj/s,  T(UTD_SMALL_EPS)), T(1.f));
+    sinBeta0 = sqrtf(fmaxf(sb*sbP, T(UTD_SMALL_EPS)));
 }
 
+// Float-only reverse-mode leaves kept for channel_native's hand-written field
+// companions (plan 07 AD-1/AD-2).
 UTD_DINLINE void adj_normalize_branch(float3a v, float3a gO, float3a& gV) {
     float vn = safe_length(v);
     if (vn <= UTD_SMALL_EPS) return;
@@ -843,22 +797,6 @@ UTD_DINLINE void adj_safe_normalize(float3a v, float3a fallback, float3a gO,
     } else {
         adj_normalize_branch(fallback, gO, gFallback);
     }
-}
-
-UTD_DINLINE void adj_project_to_wedge_plane(float3a v, float3a e, float3a gO,
-                                            float3a& gV, float3a& gE) {
-    float ve = f3_dot(v, e);
-    gV = f3_add(gV, gO);
-    gE = f3_sub(gE, f3_mul(gO, ve));
-    float gVe = -f3_dot(gO, e);
-    gV = f3_add(gV, f3_mul(e, gVe));
-    gE = f3_add(gE, f3_mul(v, gVe));
-}
-
-UTD_DINLINE void adj_safe_acos(float v, float gO, float& gV) {
-    if (v <= -1.f || v >= 1.f) return;
-    float denom = sqrtf(fmaxf(1.f - v * v, 0.f) + UTD_SMALL_EPS);
-    gV += -gO / denom;
 }
 
 UTD_DINLINE void adj_stable_perp_basis(float3a rayDir, float3a preferred, float3a gO,
@@ -884,201 +822,22 @@ UTD_DINLINE void adj_stable_perp_basis(float3a rayDir, float3a preferred, float3
     gRayDir = f3_add(gRayDir, f3_mul(altAxis, gAltDot));
 }
 
-UTD_DINLINE void adj_basis_from_first_vector(float3a rayDir, float3a firstVec, float3a fallback,
-                                             Basis3 gO,
-                                             float3a& gRayDir, float3a& gFirstVec, float3a& gFallback) {
-    float3a rayHat = safe_normalize(rayDir, make_f3(0,0,1));
-    float firstDot = f3_dot(firstVec, rayHat);
-    float3a uVec = f3_sub(firstVec, f3_mul(rayHat, firstDot));
-    float3a uHat = safe_normalize(uVec, fallback);
-    float3a vFallback = stable_perp_basis(rayHat, make_f3(0,1,0));
-    float3a vBase = f3_cross(rayHat, uHat);
-    float3a vHat = safe_normalize(vBase, vFallback);
-
-    float3a gRayHat = gO.k;
-    float3a gUHat = gO.u;
-    float3a gVBase = f3_zero();
-    float3a gVFallback = f3_zero();
-    adj_safe_normalize(vBase, vFallback, gO.v, gVBase, gVFallback);
-
-    gRayHat = f3_add(gRayHat, f3_cross(uHat, gVBase));
-    gUHat = f3_add(gUHat, f3_cross(gVBase, rayHat));
-    adj_stable_perp_basis(rayHat, make_f3(0,1,0), gVFallback, gRayHat, gFallback);
-
-    float3a gUVec = f3_zero();
-    adj_safe_normalize(uVec, fallback, gUHat, gUVec, gFallback);
-
-    gFirstVec = f3_add(gFirstVec, gUVec);
-    gRayHat = f3_sub(gRayHat, f3_mul(gUVec, firstDot));
-    float gFirstDot = -f3_dot(gUVec, rayHat);
-    gFirstVec = f3_add(gFirstVec, f3_mul(rayHat, gFirstDot));
-    gRayHat = f3_add(gRayHat, f3_mul(firstVec, gFirstDot));
-
-    float3a gRayFallback = f3_zero();
-    adj_safe_normalize(rayDir, make_f3(0,0,1), gRayHat, gRayDir, gRayFallback);
-}
-
-UTD_DINLINE void adj_diffraction_edge_basis(float3a rayDir, float3a edgeDir, bool outgoing,
-                                            Basis3 gO,
-                                            float3a& gRayDir, float3a& gEdgeDir) {
-    float3a rayHat = safe_normalize(rayDir, make_f3(0,0,1));
-    float3a edgeHat = safe_normalize(edgeDir, make_f3(0,0,1));
-    float3a phiHat = f3_cross(rayHat, edgeHat);
-    if (outgoing) phiHat = f3_neg(phiHat);
-    float3a fallback = stable_perp_basis(rayHat, edgeHat);
-
-    float3a gRayHat = f3_zero();
-    float3a gEdgeHat = f3_zero();
-    float3a gPhiHat = f3_zero();
-    float3a gFallback = f3_zero();
-    adj_basis_from_first_vector(rayHat, phiHat, fallback, gO, gRayHat, gPhiHat, gFallback);
-    adj_stable_perp_basis(rayHat, edgeHat, gFallback, gRayHat, gEdgeHat);
-
-    if (outgoing) gPhiHat = f3_neg(gPhiHat);
-    gRayHat = f3_add(gRayHat, f3_cross(edgeHat, gPhiHat));
-    gEdgeHat = f3_add(gEdgeHat, f3_cross(gPhiHat, rayHat));
-
-    float3a gRayFallback = f3_zero();
-    float3a gEdgeFallback = f3_zero();
-    adj_safe_normalize(rayDir, make_f3(0,0,1), gRayHat, gRayDir, gRayFallback);
-    adj_safe_normalize(edgeDir, make_f3(0,0,1), gEdgeHat, gEdgeDir, gEdgeFallback);
-}
-
-UTD_DINLINE void adj_compute_edge_geometry_3d(
-    float3a srcPos, float3a edgePos, float3a edgeDir, float3a n0, float3a tgtPos,
-    float gPhi, float gPhiP, float gS, float gSP, float gSinBeta0,
-    float3a& gSrcPos, float3a& gEdgePos, float3a& gEdgeDir, float3a& gN0, float3a& gTgtPos)
-{
-    float3a srcToEdge = f3_sub(edgePos, srcPos);
-    float3a srcProj = project_to_wedge_plane(srcToEdge, edgeDir);
-    float sPProj = safe_length(srcProj) + UTD_EPS;
-    float3a toHatBase = f3_cross(n0, edgeDir);
-    float3a toHat = safe_normalize(toHatBase, make_f3(0,1,0));
-    float3a kiProj = f3_div(srcProj, sPProj);
-    float signP = ((-f3_dot(kiProj, n0)) >= 0.f ? 1.f : -1.f);
-    float cPhiP = -f3_dot(kiProj, toHat);
-    float basePhiP = UTD_PI - safe_acos(cPhiP);
-    float phiP = basePhiP * (-signP) + UTD_PI;
-    (void) phiP;
-
-    float3a edgeToTgt = f3_sub(tgtPos, edgePos);
-    float3a tgtProj = project_to_wedge_plane(edgeToTgt, edgeDir);
-    float sProj = safe_length(tgtProj) + UTD_EPS;
-    float3a koProj = f3_div(tgtProj, sProj);
-    float signPhi = (f3_dot(koProj, n0) >= 0.f ? 1.f : -1.f);
-    float cPhi = f3_dot(koProj, toHat);
-    float basePhi = UTD_PI - safe_acos(cPhi);
-    float phi = basePhi * (-signPhi) + UTD_PI;
-    (void) phi;
-
-    float sPFullNorm = safe_length(srcToEdge);
-    float sFullNorm = safe_length(edgeToTgt);
-    float sPFull = sPFullNorm + UTD_EPS;
-    float sFull = sFullNorm + UTD_EPS;
-    float sbPUnclamped = sPProj / sPFull;
-    float sbUnclamped = sProj / sFull;
-    float sbP = fminf(fmaxf(sbPUnclamped, UTD_SMALL_EPS), 1.f);
-    float sb = fminf(fmaxf(sbUnclamped, UTD_SMALL_EPS), 1.f);
-    float sbProd = sb * sbP;
-
-    float gSb = 0.f;
-    float gSbP = 0.f;
-    if (sbProd > UTD_SMALL_EPS) {
-        float denom = sqrtf(sbProd);
-        float gProd = 0.5f * gSinBeta0 / fmaxf(denom, UTD_SMALL_EPS);
-        gSb += gProd * sbP;
-        gSbP += gProd * sb;
-    }
-
-    float gSProj = 0.f;
-    float gSPProj = 0.f;
-    float gSFull = gS;
-    float gSPFull = gSP;
-    if (sbUnclamped > UTD_SMALL_EPS && sbUnclamped < 1.f) {
-        gSProj += gSb / sFull;
-        gSFull -= gSb * sProj / (sFull * sFull);
-    }
-    if (sbPUnclamped > UTD_SMALL_EPS && sbPUnclamped < 1.f) {
-        gSPProj += gSbP / sPFull;
-        gSPFull -= gSbP * sPProj / (sPFull * sPFull);
-    }
-
-    float3a gSrcToEdge = f3_zero();
-    float3a gEdgeToTgt = f3_zero();
-    if (sPFullNorm > UTD_SMALL_EPS) {
-        gSrcToEdge = f3_add(gSrcToEdge, f3_mul(srcToEdge, gSPFull / sPFullNorm));
-    }
-    if (sFullNorm > UTD_SMALL_EPS) {
-        gEdgeToTgt = f3_add(gEdgeToTgt, f3_mul(edgeToTgt, gSFull / sFullNorm));
-    }
-
-    float gBasePhi = -signPhi * gPhi;
-    float gBasePhiP = -signP * gPhiP;
-    float gCPhi = 0.f;
-    float gCPhiP = 0.f;
-    gCPhi += (gBasePhi / sqrtf(fmaxf(1.f - cPhi * cPhi, 0.f) + UTD_SMALL_EPS));
-    gCPhiP += (gBasePhiP / sqrtf(fmaxf(1.f - cPhiP * cPhiP, 0.f) + UTD_SMALL_EPS));
-
-    float3a gKoProj = f3_zero();
-    float3a gKiProj = f3_zero();
-    float3a gToHat = f3_zero();
-    gKoProj = f3_add(gKoProj, f3_mul(toHat, gCPhi));
-    gToHat = f3_add(gToHat, f3_mul(koProj, gCPhi));
-    gKiProj = f3_sub(gKiProj, f3_mul(toHat, gCPhiP));
-    gToHat = f3_sub(gToHat, f3_mul(kiProj, gCPhiP));
-
-    float gKoNorm = -f3_dot(gKoProj, tgtProj) / (sProj * sProj);
-    float gKiNorm = -f3_dot(gKiProj, srcProj) / (sPProj * sPProj);
-    gSProj += gKoNorm;
-    gSPProj += gKiNorm;
-
-    float3a gTgtProj = f3_div(gKoProj, sProj);
-    float3a gSrcProj = f3_div(gKiProj, sPProj);
-    float srcProjNorm = safe_length(srcProj);
-    float tgtProjNorm = safe_length(tgtProj);
-    if (srcProjNorm > UTD_SMALL_EPS) {
-        gSrcProj = f3_add(gSrcProj, f3_mul(srcProj, gSPProj / srcProjNorm));
-    }
-    if (tgtProjNorm > UTD_SMALL_EPS) {
-        gTgtProj = f3_add(gTgtProj, f3_mul(tgtProj, gSProj / tgtProjNorm));
-    }
-
-    float3a gToHatBase = f3_zero();
-    float3a gToHatFallback = f3_zero();
-    adj_safe_normalize(toHatBase, make_f3(0,1,0), gToHat, gToHatBase, gToHatFallback);
-    (void) gToHatFallback;
-    gN0 = f3_add(gN0, f3_cross(edgeDir, gToHatBase));
-    gEdgeDir = f3_add(gEdgeDir, f3_cross(gToHatBase, n0));
-
-    float3a gSrcProjVec = f3_zero();
-    float3a gTgtProjVec = f3_zero();
-    adj_project_to_wedge_plane(srcToEdge, edgeDir, gSrcProj, gSrcProjVec, gEdgeDir);
-    adj_project_to_wedge_plane(edgeToTgt, edgeDir, gTgtProj, gTgtProjVec, gEdgeDir);
-
-    gSrcToEdge = f3_add(gSrcToEdge, gSrcProjVec);
-    gEdgeToTgt = f3_add(gEdgeToTgt, gTgtProjVec);
-
-    gEdgePos = f3_add(gEdgePos, gSrcToEdge);
-    gSrcPos = f3_sub(gSrcPos, gSrcToEdge);
-    gTgtPos = f3_add(gTgtPos, gEdgeToTgt);
-    gEdgePos = f3_sub(gEdgePos, gEdgeToTgt);
-}
-
 // ===================================================================
 // Complex sqrt for Fresnel
 // ===================================================================
-UTD_DINLINE Complex cplx_sqrt(Complex z) {
-    float x = z.re, y = z.im;
-    float r = sqrtf(x*x + y*y);
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_sqrt(ComplexT<T> z) {
+    T x = z.re, y = z.im;
+    T r = sqrtf(x*x + y*y);
     bool nz = r > 0.f;
     bool xnn = x >= 0.f;
-    float rMag = sqrtf((xnn && nz) ? 0.5f*(r+x) : 0.f);
-    float iMag = sqrtf((!xnn && nz) ? 0.5f*(r-x) : 0.f);
-    float srMag = rMag > 0.f ? rMag : 1.f;
-    float siMag = iMag > 0.f ? iMag : 1.f;
-    float rPart = xnn ? rMag : fabsf(y)/(2.f*siMag);
-    float iPart = xnn ? y/(2.f*srMag) : (y < 0.f ? -iMag : iMag);
-    return cplx(nz ? rPart : 0.f, nz ? iPart : 0.f);
+    T rMag = sqrtf((xnn && nz) ? T(0.5f)*(r+x) : T(0.f));
+    T iMag = sqrtf((!xnn && nz) ? T(0.5f)*(r-x) : T(0.f));
+    T srMag = rMag > 0.f ? rMag : T(1.f);
+    T siMag = iMag > 0.f ? iMag : T(1.f);
+    T rPart = xnn ? rMag : fabsf(y)/(2.f*siMag);
+    T iPart = xnn ? y/(2.f*srMag) : (y < 0.f ? -iMag : iMag);
+    return cplx(nz ? rPart : T(0.f), nz ? iPart : T(0.f));
 }
 
 UTD_DINLINE void adj_cplx_sqrt(Complex z, Complex gO, Complex& gZ) {
@@ -1093,159 +852,49 @@ UTD_DINLINE void adj_cplx_sqrt(Complex z, Complex gO, Complex& gZ) {
 // ===================================================================
 // Fresnel reflection
 // ===================================================================
-UTD_DINLINE void fresnel_reflection_face(float cosTheta, float etaR, float muR, float sigma,
-    float omega, Complex& rTE, Complex& rTM)
+template <typename T>
+UTD_DINLINE void fresnel_reflection_face(T cosTheta, T etaR, T muR, T sigma,
+    T omega, ComplexT<T>& rTE, ComplexT<T>& rTM)
 {
-    float ct = fminf(fmaxf(cosTheta, UTD_SMALL_EPS), 1.f);
-    float sinSq = 1.f - ct*ct;
-    float so = fmaxf(omega, UTD_SMALL_EPS);
-    Complex eta = cplx(etaR, -sigma/(so*UTD_EPSILON_0));
-    Complex mu = cplx(muR, 0.f);
-    Complex a = cplx_sqrt(cplx_sub(cplx_mul(mu, eta), cplx(sinSq, 0)));
-    Complex muCt = cplx_mul_real(mu, ct);
+    T ct = fminf(fmaxf(cosTheta, T(UTD_SMALL_EPS)), T(1.f));
+    T sinSq = 1.f - ct*ct;
+    T so = fmaxf(omega, T(UTD_SMALL_EPS));
+    ComplexT<T> eta = cplx(etaR, -sigma/(so*UTD_EPSILON_0));
+    ComplexT<T> mu = cplx(muR, T(0.f));
+    ComplexT<T> a = cplx_sqrt(cplx_sub(cplx_mul(mu, eta), cplx(sinSq, T(0))));
+    ComplexT<T> muCt = cplx_mul_real(mu, ct);
     rTE = cplx_div(cplx_sub(muCt, a), cplx_add(muCt, a));
     rTM = cplx_div(cplx_sub(cplx_mul_real(eta,ct), a),
                    cplx_add(cplx_mul_real(eta,ct), a));
 }
 
-UTD_DINLINE void adj_fresnel_reflection_face(
-    float cosTheta,
-    float etaR,
-    float muR,
-    float sigma,
-    float omega,
-    Complex gRTE,
-    Complex gRTM,
-    float& gCosTheta,
-    float& gEtaR,
-    float& gMuR,
-    float& gSigma)
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> face_reflection_operator(FaceMaterialParamsT<T> fm,
+    T cosTheta, Vec3T<T> normal, Vec3T<T> inHat, Vec3T<T> outHat,
+    Basis3T<T> inEdgeBasis, Basis3T<T> outEdgeBasis, T omega)
 {
-    float ct = fminf(fmaxf(cosTheta, UTD_SMALL_EPS), 1.f);
-    float sinSq = 1.f - ct * ct;
-    float so = fmaxf(omega, UTD_SMALL_EPS);
-    Complex eta = cplx(etaR, -sigma / (so * UTD_EPSILON_0));
-    Complex mu = cplx(muR, 0.f);
-    Complex muEta = cplx_mul(mu, eta);
-    Complex tmp = cplx_sub(muEta, cplx(sinSq, 0.f));
-    Complex a = cplx_sqrt(tmp);
-
-    Complex muCt = cplx_mul_real(mu, ct);
-    Complex numTE = cplx_sub(muCt, a);
-    Complex denTE = cplx_add(muCt, a);
-    Complex etaCt = cplx_mul_real(eta, ct);
-    Complex numTM = cplx_sub(etaCt, a);
-    Complex denTM = cplx_add(etaCt, a);
-
-    Complex gNumTE = cplx_zero();
-    Complex gDenTE = cplx_zero();
-    adj_cplx_div(numTE, denTE, gRTE, gNumTE, gDenTE);
-    Complex gMuCt = cplx_add(gNumTE, gDenTE);
-    Complex gA = cplx_sub(gDenTE, gNumTE);
-
-    Complex gNumTM = cplx_zero();
-    Complex gDenTM = cplx_zero();
-    adj_cplx_div(numTM, denTM, gRTM, gNumTM, gDenTM);
-    Complex gEtaCt = cplx_add(gNumTM, gDenTM);
-    Complex gEta = cplx_zero();
-    gA = cplx_add(gA, cplx_sub(gDenTM, gNumTM));
-
-    Complex gMu = cplx_zero();
-    float gCt = 0.f;
-    adj_cplx_mul_real(mu, ct, gMuCt, gMu, gCt);
-    adj_cplx_mul_real(eta, ct, gEtaCt, gEta, gCt);
-
-    Complex gTmp = cplx_zero();
-    adj_cplx_sqrt(tmp, gA, gTmp);
-    adj_cplx_mul(mu, eta, gTmp, gMu, gEta);
-    float gSinSq = -gTmp.re;
-    gCt += -2.f * ct * gSinSq;
-
-    if (cosTheta > UTD_SMALL_EPS && cosTheta < 1.f)
-        gCosTheta += gCt;
-    gEtaR += gEta.re;
-    gMuR += gMu.re;
-    gSigma += -gEta.im / (so * UTD_EPSILON_0);
-}
-
-UTD_DINLINE void adj_face_operator_in_basis(
-    JonesOperator localOp,
-    float3a normal,
-    float3a inHat,
-    float3a outHat,
-    Basis3 inEdgeBasis,
-    Basis3 outEdgeBasis,
-    JonesOperator gO,
-    JonesOperator& gLocalOp,
-    float3a& gNormal,
-    float3a& gInHat,
-    float3a& gOutHat,
-    Basis3& gInEdgeBasis,
-    Basis3& gOutEdgeBasis)
-{
-    float3a faceSIn = f3_cross(normal, inHat);
-    float3a faceSOutRaw = f3_cross(normal, outHat);
-    float3a fallbackIn = stable_perp_basis(inHat, make_f3(0, 0, 1));
-    Basis3 fIn = basis_from_first_vector(inHat, faceSIn, fallbackIn);
-    float3a fallbackOut = stable_perp_basis(outHat, faceSIn);
-    float faceSOutSign = f3_dot(faceSOutRaw, fallbackOut) < 0.0f ? -1.0f : 1.0f;
-    float3a faceSOut = f3_mul(faceSOutRaw, faceSOutSign);
-    Basis3 fOut = basis_from_first_vector(outHat, faceSOut, fallbackOut);
-
-    Basis3 gFIn = basis_zero();
-    Basis3 gFOut = basis_zero();
-    Basis3 gInEdgeLocal = basis_zero();
-    Basis3 gOutEdgeLocal = basis_zero();
-    adj_jop_in_basis(localOp, fIn, fOut, inEdgeBasis, outEdgeBasis, gO, gLocalOp, gFIn, gFOut, gInEdgeLocal, gOutEdgeLocal);
-    basis_accum(gInEdgeBasis, gInEdgeLocal);
-    basis_accum(gOutEdgeBasis, gOutEdgeLocal);
-
-    float3a gFaceSIn = f3_zero();
-    float3a gFallbackIn = f3_zero();
-    adj_basis_from_first_vector(inHat, faceSIn, fallbackIn, gFIn, gInHat, gFaceSIn, gFallbackIn);
-    float3a gPreferredIn = f3_zero();
-    adj_stable_perp_basis(inHat, make_f3(0, 0, 1), gFallbackIn, gInHat, gPreferredIn);
-
-    float3a gFaceSOut = f3_zero();
-    float3a gFallbackOut = f3_zero();
-    adj_basis_from_first_vector(outHat, faceSOut, fallbackOut, gFOut, gOutHat, gFaceSOut, gFallbackOut);
-    gFaceSOut = f3_mul(gFaceSOut, faceSOutSign);
-    float3a gFaceSInFromFallback = f3_zero();
-    adj_stable_perp_basis(outHat, faceSIn, gFallbackOut, gOutHat, gFaceSInFromFallback);
-    gFaceSIn = f3_add(gFaceSIn, gFaceSInFromFallback);
-
-    gNormal = f3_add(gNormal, f3_cross(inHat, gFaceSIn));
-    gInHat = f3_add(gInHat, f3_cross(gFaceSIn, normal));
-    gNormal = f3_add(gNormal, f3_cross(outHat, gFaceSOut));
-    gOutHat = f3_add(gOutHat, f3_cross(gFaceSOut, normal));
-    (void) gPreferredIn;
-}
-
-UTD_DINLINE JonesOperator face_reflection_operator(FaceMaterialParams fm,
-    float cosTheta, float3a normal, float3a inHat, float3a outHat,
-    Basis3 inEdgeBasis, Basis3 outEdgeBasis, float omega)
-{
-    Complex gain = cplx(fm.gain, 0);
+    ComplexT<T> gain = cplx(fm.gain, T(0));
     bool useFr = fm.useFresnel > 0.5f;
-    Complex rTE, rTM;
+    ComplexT<T> rTE, rTM;
     fresnel_reflection_face(cosTheta, fm.etaR, fm.muR, fm.sigma, omega, rTE, rTM);
-    JonesOperator diagOp = useFr
-        ? JonesOperator{cplx_mul(gain,rTE), cplx_zero(), cplx_zero(), cplx_mul(gain,rTM)}
-        : JonesOperator{cplx(-fm.gain,0), cplx_zero(), cplx_zero(), cplx(-fm.gain,0)};
-    float3a faceSIn = f3_cross(normal, inHat);
-    float3a faceSOutRaw = f3_cross(normal, outHat);
-    float3a fallbackOut = stable_perp_basis(outHat, faceSIn);
-    float3a faceSOut = f3_dot(faceSOutRaw, fallbackOut) < 0.0f
+    JonesOperatorT<T> diagOp = useFr
+        ? JonesOperatorT<T>{cplx_mul(gain,rTE), cplx_zero<T>(), cplx_zero<T>(), cplx_mul(gain,rTM)}
+        : JonesOperatorT<T>{cplx(-fm.gain,T(0)), cplx_zero<T>(), cplx_zero<T>(), cplx(-fm.gain,T(0))};
+    Vec3T<T> faceSIn = f3_cross(normal, inHat);
+    Vec3T<T> faceSOutRaw = f3_cross(normal, outHat);
+    Vec3T<T> fallbackOut = stable_perp_basis(outHat, faceSIn);
+    Vec3T<T> faceSOut = f3_dot(faceSOutRaw, fallbackOut) < 0.0f
         ? f3_neg(faceSOutRaw)
         : faceSOutRaw;
-    Basis3 fIn  = basis_from_first_vector(inHat,  faceSIn, stable_perp_basis(inHat,  make_f3(0,0,1)));
-    Basis3 fOut = basis_from_first_vector(outHat, faceSOut, fallbackOut);
+    Basis3T<T> fIn  = basis_from_first_vector(inHat,  faceSIn, stable_perp_basis(inHat,  v3_const<T>(0,0,1)));
+    Basis3T<T> fOut = basis_from_first_vector(outHat, faceSOut, fallbackOut);
     return jop_in_basis(diagOp, fIn, fOut, inEdgeBasis, outEdgeBasis);
 }
 
-UTD_DINLINE JonesOperator fallback_face_operator(JonesOperator stored,
-    float3a normal, float3a inHat, float3a outHat,
-    Basis3 inEdgeBasis, Basis3 outEdgeBasis)
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> fallback_face_operator(JonesOperatorT<T> stored,
+    Vec3T<T> normal, Vec3T<T> inHat, Vec3T<T> outHat,
+    Basis3T<T> inEdgeBasis, Basis3T<T> outEdgeBasis)
 {
     (void) normal;
     (void) inHat;
@@ -1258,104 +907,19 @@ UTD_DINLINE JonesOperator fallback_face_operator(JonesOperator stored,
     return stored;
 }
 
-UTD_DINLINE void adj_face_reflection_operator(
-    FaceMaterialParams fm,
-    float cosTheta,
-    float3a normal,
-    float3a inHat,
-    float3a outHat,
-    Basis3 inEdgeBasis,
-    Basis3 outEdgeBasis,
-    float omega,
-    JonesOperator gO,
-    float& gCosTheta,
-    float3a& gNormal,
-    float3a& gInHat,
-    float3a& gOutHat,
-    Basis3& gInEdgeBasis,
-    Basis3& gOutEdgeBasis,
-    FaceMaterialParams& gFm)
-{
-    Complex gain = cplx(fm.gain, 0.f);
-    bool useFr = fm.useFresnel > 0.5f;
-    Complex rTE, rTM;
-    fresnel_reflection_face(cosTheta, fm.etaR, fm.muR, fm.sigma, omega, rTE, rTM);
-    JonesOperator diagOp = useFr
-        ? JonesOperator{cplx_mul(gain, rTE), cplx_zero(), cplx_zero(), cplx_mul(gain, rTM)}
-        : JonesOperator{cplx(-fm.gain, 0.f), cplx_zero(), cplx_zero(), cplx(-fm.gain, 0.f)};
-
-    JonesOperator gDiagOp = jop_zero();
-    adj_face_operator_in_basis(diagOp, normal, inHat, outHat, inEdgeBasis, outEdgeBasis, gO, gDiagOp, gNormal, gInHat, gOutHat, gInEdgeBasis, gOutEdgeBasis);
-
-    if (!useFr) {
-        gFm.gain += -(gDiagOp.m00.re + gDiagOp.m11.re);
-        return;
-    }
-
-    Complex gGain0 = cplx_zero();
-    Complex gRTE = cplx_zero();
-    Complex gRTM = cplx_zero();
-    adj_cplx_mul(gain, rTE, gDiagOp.m00, gGain0, gRTE);
-    Complex gGain1 = cplx_zero();
-    adj_cplx_mul(gain, rTM, gDiagOp.m11, gGain1, gRTM);
-    Complex gGain = cplx_add(gGain0, gGain1);
-    gFm.gain += gGain.re;
-    adj_fresnel_reflection_face(
-        cosTheta,
-        fm.etaR,
-        fm.muR,
-        fm.sigma,
-        omega,
-        gRTE,
-        gRTM,
-        gCosTheta,
-        gFm.etaR,
-        gFm.muR,
-        gFm.sigma
-    );
-}
-
-UTD_DINLINE void adj_fallback_face_operator(
-    JonesOperator stored,
-    float3a normal,
-    float3a inHat,
-    float3a outHat,
-    Basis3 inEdgeBasis,
-    Basis3 outEdgeBasis,
-    JonesOperator gO,
-    JonesOperator& gStored,
-    float3a& gNormal,
-    float3a& gInHat,
-    float3a& gOutHat,
-    Basis3& gInEdgeBasis,
-    Basis3& gOutEdgeBasis)
-{
-    (void) stored;
-    (void) normal;
-    (void) inHat;
-    (void) outHat;
-    (void) inEdgeBasis;
-    (void) outEdgeBasis;
-    (void) gNormal;
-    (void) gInHat;
-    (void) gOutHat;
-    (void) gInEdgeBasis;
-    (void) gOutEdgeBasis;
-    gStored = jop_add(gStored, gO);
-}
-
 // ===================================================================
 // Operator term computation (3D / 2D)
 // ===================================================================
-UTD_DINLINE DiffractionOperatorTerms compute_op_terms_3d(float phi, float phiP,
-    float wedgeN, float k, float s, float sP, float sinBeta0)
+template <typename T>
+UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d(T phi, T phiP,
+    T wedgeN, T k, T s, T sP, T sinBeta0)
 {
-    Complex z = cplx_zero(), one = cplx(1,0);
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
+    ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
     diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
-    Complex fac0,dF0,dF01,sF0,sF01,dF02,sF02;
+    ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
     diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
-    Complex fac1,dF1,dF11,sF1,sF11,dF12,sF12;
+    ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
     diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
     return {
         cplx_mul(fac, dG),
@@ -1367,16 +931,17 @@ UTD_DINLINE DiffractionOperatorTerms compute_op_terms_3d(float phi, float phiP,
     };
 }
 
-UTD_DINLINE DiffractionOperatorTerms compute_op_terms_3d_endpoint_continued(float phi, float phiP,
-    float wedgeN, float k, float s, float sP, float sinBeta0)
+template <typename T>
+UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d_endpoint_continued(T phi, T phiP,
+    T wedgeN, T k, T s, T sP, T sinBeta0)
 {
-    Complex z = cplx_zero(), one = cplx(1,0);
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
-    float directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
+    ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
+    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
     diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
-    Complex fac0,dF0,dF01,sF0,sF01,dF02,sF02;
+    ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
     diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
-    Complex fac1,dF1,dF11,sF1,sF11,dF12,sF12;
+    ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
     diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
     return {
         cplx_mul(fac, dG),
@@ -1388,30 +953,31 @@ UTD_DINLINE DiffractionOperatorTerms compute_op_terms_3d_endpoint_continued(floa
     };
 }
 
-UTD_DINLINE DiffractionOperatorTerms compute_op_terms_2d(float phi, float phiP,
-    float wedgeN, float k, float s, float sP)
+template <typename T>
+UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP,
+    T wedgeN, T k, T s, T sP)
 {
-    float l = s*sP/(s+sP+UTD_EPS);
-    float kL = k*l;
-    float dPhi = phi - phiP;
-    float sPhi = phi + phiP;
+    T l = s*sP/(s+sP+T(UTD_EPS));
+    T kL = k*l;
+    T dPhi = phi - phiP;
+    T sPhi = phi + phiP;
     // Build beta term caches inline
-    float cv[4],c1v[4],c2v[4],xv[4],x1v[4],x2v[4];
+    T cv[4],c1v[4],c2v[4],xv[4],x1v[4],x2v[4];
     beta_term_values(dPhi, wedgeN, kL, +1.f, true,  cv[0],c1v[0],c2v[0],xv[0],x1v[0],x2v[0]);
     beta_term_values(dPhi, wedgeN, kL, -1.f, false, cv[1],c1v[1],c2v[1],xv[1],x1v[1],x2v[1]);
     beta_term_values(sPhi, wedgeN, kL, +1.f, true,  cv[2],c1v[2],c2v[2],xv[2],x1v[2],x2v[2]);
     beta_term_values(sPhi, wedgeN, kL, -1.f, false, cv[3],c1v[3],c2v[3],xv[3],x1v[3],x2v[3]);
-    Complex tr[4],tr1[4],tr2[4];
+    ComplexT<T> tr[4],tr1[4],tr2[4];
     for (int i=0;i<4;++i) f_utd_with_derivatives(xv[i],tr[i],tr1[i],tr2[i]);
-    Complex tv[4],tf[4],ts[4];
+    ComplexT<T> tv[4],tf[4],ts[4];
     for (int i=0;i<4;++i) {
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1v[i],c2v[i],xv[i],x1v[i],x2v[i],kL,wedgeN,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
     }
-    Complex factor = cplx_mul_real(cplx_exp_phase(-0.25f*UTD_PI),
-                     -1.f/(2.f*wedgeN*sqrtf(UTD_TWO_PI*k+UTD_EPS)));
-    Complex difV = cplx_add(tv[0],tv[1]);
-    Complex difF = cplx_add(tf[0],tf[1]);
+    ComplexT<T> factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
+                     -1.f/(2.f*wedgeN*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))));
+    ComplexT<T> difV = cplx_add(tv[0],tv[1]);
+    ComplexT<T> difF = cplx_add(tf[0],tf[1]);
     return {
         cplx_mul(factor, difV),
         cplx_mul(factor, tv[3]),
@@ -1422,16 +988,17 @@ UTD_DINLINE DiffractionOperatorTerms compute_op_terms_2d(float phi, float phiP,
     };
 }
 
-UTD_DINLINE DiffractionOperatorTerms compute_op_terms_2d_endpoint_continued(float phi, float phiP,
-    float wedgeN, float k, float s, float sP)
+template <typename T>
+UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d_endpoint_continued(T phi, T phiP,
+    T wedgeN, T k, T s, T sP)
 {
-    Complex z = cplx_zero(), one = cplx(1,0);
-    Complex fac,dG,dG1,sG,sG1,dG2,sG2;
-    float directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
+    ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
+    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
+    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
     diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
-    Complex fac0,dF0,dF01,sF0,sF01,dF02,sF02;
+    ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
     diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
-    Complex fac1,dF1,dF11,sF1,sF11,dF12,sF12;
+    ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
     diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
     return {
         cplx_mul(fac, dG),
@@ -1443,209 +1010,15 @@ UTD_DINLINE DiffractionOperatorTerms compute_op_terms_2d_endpoint_continued(floa
     };
 }
 
-UTD_DINLINE void adj_compute_op_terms_3d_direct(
-    float phi, float phiP, float wedgeN, float k, float s, float sP, float sinBeta0,
-    Complex gDirect, Complex gFace0, Complex gFace1,
-    float& gPhi, float& gPhiP, float& gWedgeN, float& gS, float& gSP, float& gSinBeta0)
-{
-    float sb = fmaxf(sinBeta0, UTD_SMALL_EPS);
-    float den = s + sP + UTD_EPS;
-    float frac = s * sP / den;
-    float l = frac * sb * sb;
-    float kL = k * l;
-    float dP = phi - phiP;
-    float sP2 = phi + phiP;
-
-    Complex factorPhase = cplx_exp_phase(-0.25f * UTD_PI);
-    float factorScale = -1.f / (2.f * wedgeN * sqrtf(UTD_TWO_PI * k + UTD_EPS) * sb);
-    Complex factor = cplx_mul_real(factorPhase, factorScale);
-
-    Complex tv[4];
-    Complex tr[4];
-    Complex tr1[4];
-    float cotV[4];
-    float a[4];
-    float betaVals[4];
-    float cotSigns[4];
-    float riVals[4];
-    for (int i = 0; i < 4; ++i) {
-        bool plusBranch = (i == 0) || (i == 2);
-        float beta = (i < 2) ? dP : sP2;
-        float cotSign = plusBranch ? +1.f : -1.f;
-        betaVals[i] = beta;
-        cotSigns[i] = cotSign;
-
-        float twoNPi = 2.f * wedgeN * UTD_PI;
-        float ri = plusBranch
-            ? roundf((beta + UTD_PI) / twoNPi)
-            : roundf((beta - UTD_PI) / twoNPi);
-        riVals[i] = ri;
-
-        float po = twoNPi * ri - beta;
-        float chp = cosf(0.5f * po);
-        a[i] = 2.f * chp * chp;
-        float c1Dummy, c2Dummy, x0Dummy, x1Dummy, x2Dummy;
-        beta_term_values(beta, wedgeN, kL, cotSign, plusBranch, cotV[i], c1Dummy, c2Dummy, x0Dummy, x1Dummy, x2Dummy);
-        Complex tr2Dummy;
-        f_utd_with_derivatives(x0Dummy, tr[i], tr1[i], tr2Dummy);
-        tv[i] = cplx_mul_real(tr[i], cotV[i]);
-    }
-
-    Complex gFactor = cplx_zero();
-    Complex gTv[4] = {cplx_zero(), cplx_zero(), cplx_zero(), cplx_zero()};
-    Complex directSum = cplx_add(tv[0], tv[1]);
-    Complex gDirectSum = cplx_zero();
-    adj_cplx_mul(factor, directSum, gDirect, gFactor, gDirectSum);
-    gTv[0] = cplx_add(gTv[0], gDirectSum);
-    gTv[1] = cplx_add(gTv[1], gDirectSum);
-    adj_cplx_mul(factor, tv[3], gFace0, gFactor, gTv[3]);
-    adj_cplx_mul(factor, tv[2], gFace1, gFactor, gTv[2]);
-
-    float gFactorScale = cplx_adj_dot(gFactor, factorPhase);
-    gWedgeN += -gFactorScale * factorScale / wedgeN;
-    gSinBeta0 += -gFactorScale * factorScale / sb;
-
-    float gKL = 0.f;
-    for (int i = 0; i < 4; ++i) {
-        float beta = betaVals[i];
-        float cotSign = cotSigns[i];
-        float ri = riVals[i];
-        float twoN = 2.f * wedgeN;
-        float po = 2.f * wedgeN * UTD_PI * ri - beta;
-        float a1 = sinf(po);
-        float cotDerivArg = -(1.f + cotV[i] * cotV[i]);
-
-        Complex gTr = cplx_zero();
-        float gCot = 0.f;
-        adj_cplx_mul_real(tr[i], cotV[i], gTv[i], gTr, gCot);
-        float gX = cplx_adj_dot(gTr, tr1[i]);
-        gKL += gX * a[i];
-        float gA = gX * kL;
-
-        float gPo = -gA * a1;
-        float gBetaLocal = gCot * cotDerivArg * cotSign / twoN - gPo;
-        float gNLocal = gCot * cotDerivArg * (-(UTD_PI + cotSign * beta) / (2.f * wedgeN * wedgeN));
-        gNLocal += gPo * (2.f * UTD_PI * ri);
-        gWedgeN += gNLocal;
-        if (i < 2) {
-            gPhi += gBetaLocal;
-            gPhiP -= gBetaLocal;
-        } else {
-            gPhi += gBetaLocal;
-            gPhiP += gBetaLocal;
-        }
-    }
-
-    float gL = gKL * k;
-    float sbSq = sb * sb;
-    gSinBeta0 += gL * (2.f * sb * frac);
-    gS += gL * sbSq * (sP * (sP + UTD_EPS) / (den * den));
-    gSP += gL * sbSq * (s * (s + UTD_EPS) / (den * den));
-}
-
-UTD_DINLINE void adj_compute_op_terms_2d_direct(
-    float phi, float phiP, float wedgeN, float k, float s, float sP,
-    Complex gDirect, Complex gFace0, Complex gFace1,
-    float& gPhi, float& gPhiP, float& gWedgeN, float& gS, float& gSP)
-{
-    float den = s + sP + UTD_EPS;
-    float frac = s * sP / den;
-    float kL = k * frac;
-    float dP = phi - phiP;
-    float sP2 = phi + phiP;
-
-    Complex factorPhase = cplx_exp_phase(-0.25f * UTD_PI);
-    float factorScale = -1.f / (2.f * wedgeN * sqrtf(UTD_TWO_PI * k + UTD_EPS));
-    Complex factor = cplx_mul_real(factorPhase, factorScale);
-
-    Complex tv[4];
-    Complex tr[4];
-    Complex tr1[4];
-    float cotV[4];
-    float a[4];
-    float betaVals[4];
-    float cotSigns[4];
-    float riVals[4];
-    for (int i = 0; i < 4; ++i) {
-        bool plusBranch = (i == 0) || (i == 2);
-        float beta = (i < 2) ? dP : sP2;
-        float cotSign = plusBranch ? +1.f : -1.f;
-        betaVals[i] = beta;
-        cotSigns[i] = cotSign;
-
-        float twoNPi = 2.f * wedgeN * UTD_PI;
-        float ri = plusBranch
-            ? roundf((beta + UTD_PI) / twoNPi)
-            : roundf((beta - UTD_PI) / twoNPi);
-        riVals[i] = ri;
-
-        float po = twoNPi * ri - beta;
-        float chp = cosf(0.5f * po);
-        a[i] = 2.f * chp * chp;
-        float c1Dummy, c2Dummy, x0Dummy, x1Dummy, x2Dummy;
-        beta_term_values(beta, wedgeN, kL, cotSign, plusBranch, cotV[i], c1Dummy, c2Dummy, x0Dummy, x1Dummy, x2Dummy);
-        Complex tr2Dummy;
-        f_utd_with_derivatives(kL * a[i], tr[i], tr1[i], tr2Dummy);
-        tv[i] = cplx_mul_real(tr[i], cotV[i]);
-    }
-
-    Complex gFactor = cplx_zero();
-    Complex gTv[4] = {cplx_zero(), cplx_zero(), cplx_zero(), cplx_zero()};
-    Complex directSum = cplx_add(tv[0], tv[1]);
-    Complex gDirectSum = cplx_zero();
-    adj_cplx_mul(factor, directSum, gDirect, gFactor, gDirectSum);
-    gTv[0] = cplx_add(gTv[0], gDirectSum);
-    gTv[1] = cplx_add(gTv[1], gDirectSum);
-    adj_cplx_mul(factor, tv[3], gFace0, gFactor, gTv[3]);
-    adj_cplx_mul(factor, tv[2], gFace1, gFactor, gTv[2]);
-
-    float gFactorScale = cplx_adj_dot(gFactor, factorPhase);
-    gWedgeN += -gFactorScale * factorScale / wedgeN;
-
-    float gKL = 0.f;
-    for (int i = 0; i < 4; ++i) {
-        float beta = betaVals[i];
-        float cotSign = cotSigns[i];
-        float ri = riVals[i];
-        float twoN = 2.f * wedgeN;
-        float po = 2.f * wedgeN * UTD_PI * ri - beta;
-        float a1 = sinf(po);
-        float cotDerivArg = -(1.f + cotV[i] * cotV[i]);
-
-        Complex gTr = cplx_zero();
-        float gCot = 0.f;
-        adj_cplx_mul_real(tr[i], cotV[i], gTv[i], gTr, gCot);
-        float gX = cplx_adj_dot(gTr, tr1[i]);
-        gKL += gX * a[i];
-        float gA = gX * kL;
-
-        float gPo = -gA * a1;
-        float gBetaLocal = gCot * cotDerivArg * cotSign / twoN - gPo;
-        float gNLocal = gCot * cotDerivArg * (-(UTD_PI + cotSign * beta) / (2.f * wedgeN * wedgeN));
-        gNLocal += gPo * (2.f * UTD_PI * ri);
-        gWedgeN += gNLocal;
-        if (i < 2) {
-            gPhi += gBetaLocal;
-            gPhiP -= gBetaLocal;
-        } else {
-            gPhi += gBetaLocal;
-            gPhiP += gBetaLocal;
-        }
-    }
-
-    float gFrac = gKL * k;
-    gS += gFrac * (sP * (sP + UTD_EPS) / (den * den));
-    gSP += gFrac * (s * (s + UTD_EPS) / (den * den));
-}
-
 // ===================================================================
 // Assemble diffraction operator (Jones) from terms
 // ===================================================================
-UTD_DINLINE JonesOperator assemble_diff_operator(Complex free_term,
-    Complex face0_term, Complex face1_term,
-    JonesOperator face0Op, JonesOperator face1Op)
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> assemble_diff_operator(ComplexT<T> free_term,
+    ComplexT<T> face0_term, ComplexT<T> face1_term,
+    JonesOperatorT<T> face0Op, JonesOperatorT<T> face1Op)
 {
-    JonesOperator total = jop_scale(jop_identity(), free_term);
+    JonesOperatorT<T> total = jop_scale(jop_identity<T>(), free_term);
     total = jop_add(total, jop_scale(face0Op, face0_term));
     total = jop_add(total, jop_scale(face1Op, face1_term));
     return total;
@@ -1654,54 +1027,56 @@ UTD_DINLINE JonesOperator assemble_diff_operator(Complex free_term,
 // ===================================================================
 // Scalar field terms (for computePairFieldTerms)
 // ===================================================================
-UTD_DINLINE Complex finite_wedge_truncation_factor_bounds(
-    PairInputs state,
-    float3a tgtPos,
-    float k,
-    float lineMin,
-    float lineMax,
+template <typename T>
+UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor_bounds(
+    PairInputsT<T> state,
+    Vec3T<T> tgtPos,
+    T k,
+    T lineMin,
+    T lineMax,
     bool stationaryAtOrigin)
 {
-    float3a edgeHat = safe_normalize(state.edgeDir, make_f3(0.f, 0.f, 1.f));
-    float3a edgePos = state.edgePos;
-    float3a sourcePos = state.sourcePos;
+    Vec3T<T> edgeHat = safe_normalize(state.edgeDir, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> edgePos = state.edgePos;
+    Vec3T<T> sourcePos = state.sourcePos;
 
-    float sourceAxial = f3_dot(f3_sub(sourcePos, edgePos), edgeHat);
-    float targetAxial = f3_dot(f3_sub(tgtPos, edgePos), edgeHat);
+    T sourceAxial = f3_dot(f3_sub(sourcePos, edgePos), edgeHat);
+    T targetAxial = f3_dot(f3_sub(tgtPos, edgePos), edgeHat);
 
-    float3a sourceToEdge = f3_sub(edgePos, sourcePos);
-    float3a edgeToTarget = f3_sub(tgtPos, edgePos);
-    float sPrimeProj = safe_length(project_to_wedge_plane(sourceToEdge, edgeHat)) + UTD_EPS;
-    float sProj = safe_length(project_to_wedge_plane(edgeToTarget, edgeHat)) + UTD_EPS;
+    Vec3T<T> sourceToEdge = f3_sub(edgePos, sourcePos);
+    Vec3T<T> edgeToTarget = f3_sub(tgtPos, edgePos);
+    T sPrimeProj = safe_length(project_to_wedge_plane(sourceToEdge, edgeHat)) + T(UTD_EPS);
+    T sProj = safe_length(project_to_wedge_plane(edgeToTarget, edgeHat)) + T(UTD_EPS);
 
-    float stationaryU = stationaryAtOrigin
-        ? 0.f
-        : (sPrimeProj * targetAxial + sProj * sourceAxial) / (sProj + sPrimeProj + UTD_EPS);
-    float sourceOffset = stationaryU - sourceAxial;
-    float targetOffset = targetAxial - stationaryU;
-    float sourceRange =
-        sqrtf(sPrimeProj * sPrimeProj + sourceOffset * sourceOffset + UTD_EPS);
-    float targetRange =
-        sqrtf(sProj * sProj + targetOffset * targetOffset + UTD_EPS);
-    float curvature =
-        sPrimeProj * sPrimeProj / (sourceRange * sourceRange * sourceRange + UTD_EPS)
-        + sProj * sProj / (targetRange * targetRange * targetRange + UTD_EPS);
-    float scale = sqrtf(fmaxf(k * curvature, UTD_EPS) / UTD_PI);
+    T stationaryU = stationaryAtOrigin
+        ? T(0.f)
+        : (sPrimeProj * targetAxial + sProj * sourceAxial) / (sProj + sPrimeProj + T(UTD_EPS));
+    T sourceOffset = stationaryU - sourceAxial;
+    T targetOffset = targetAxial - stationaryU;
+    T sourceRange =
+        sqrtf(sPrimeProj * sPrimeProj + sourceOffset * sourceOffset + T(UTD_EPS));
+    T targetRange =
+        sqrtf(sProj * sProj + targetOffset * targetOffset + T(UTD_EPS));
+    T curvature =
+        sPrimeProj * sPrimeProj / (sourceRange * sourceRange * sourceRange + T(UTD_EPS))
+        + sProj * sProj / (targetRange * targetRange * targetRange + T(UTD_EPS));
+    T scale = sqrtf(fmaxf(k * curvature, T(UTD_EPS)) / UTD_PI);
 
-    Complex fMin, fMin1, fMin2;
-    Complex fMax, fMax1, fMax2;
+    ComplexT<T> fMin, fMin1, fMin2;
+    ComplexT<T> fMax, fMax1, fMax2;
     fresnel_boersma(scale * (lineMin - stationaryU), fMin, fMin1, fMin2);
     fresnel_boersma(scale * (lineMax - stationaryU), fMax, fMax1, fMax2);
-    Complex delta = cplx_sub(fMax, fMin);
-    return cplx_mul(cplx(0.5f, 0.5f), cplx_conj(delta));
+    ComplexT<T> delta = cplx_sub(fMax, fMin);
+    return cplx_mul(c_const<T>(0.5f, 0.5f), cplx_conj(delta));
 }
 
-UTD_DINLINE Complex finite_wedge_truncation_factor_bounds(
-    PairInputs state,
-    float3a tgtPos,
-    float k,
-    float lineMin,
-    float lineMax)
+template <typename T>
+UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor_bounds(
+    PairInputsT<T> state,
+    Vec3T<T> tgtPos,
+    T k,
+    T lineMin,
+    T lineMax)
 {
     return finite_wedge_truncation_factor_bounds(
         state,
@@ -1713,7 +1088,8 @@ UTD_DINLINE Complex finite_wedge_truncation_factor_bounds(
     );
 }
 
-UTD_DINLINE Complex finite_wedge_truncation_factor(PairInputs state, float3a tgtPos, float k) {
+template <typename T>
+UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor(PairInputsT<T> state, Vec3T<T> tgtPos, T k) {
     return finite_wedge_truncation_factor_bounds(
         state,
         tgtPos,
@@ -1723,22 +1099,23 @@ UTD_DINLINE Complex finite_wedge_truncation_factor(PairInputs state, float3a tgt
     );
 }
 
-UTD_DINLINE Complex finite_wedge_stationary_completion_factor(
-    PairInputs state,
-    float3a tgtPos,
-    float k,
+template <typename T>
+UTD_DINLINE ComplexT<T> finite_wedge_stationary_completion_factor(
+    PairInputsT<T> state,
+    Vec3T<T> tgtPos,
+    T k,
     bool inside)
 {
     if (inside) {
-        return cplx(1.f, 0.f);
+        return c_const<T>(1.f, 0.f);
     }
-    float edgeLength = state.edgeLineMax - state.edgeLineMin;
-    float outsideDistance = fmaxf(fmaxf(state.edgeLineMin, -state.edgeLineMax), 0.f);
-    float wavelength = (2.f * UTD_PI) / fmaxf(k, UTD_SMALL_EPS);
-    float taperLength = fminf(0.25f * edgeLength, fmaxf(0.5f * wavelength, UTD_EPS));
-    float endpointU = fmaxf(outsideDistance / fmaxf(taperLength, UTD_EPS), 0.f);
-    float endpointWeight = expf(-endpointU * endpointU);
-    Complex raw = finite_wedge_truncation_factor_bounds(
+    T edgeLength = state.edgeLineMax - state.edgeLineMin;
+    T outsideDistance = fmaxf(fmaxf(state.edgeLineMin, -state.edgeLineMax), T(0.f));
+    T wavelength = (2.f * UTD_PI) / fmaxf(k, T(UTD_SMALL_EPS));
+    T taperLength = fminf(0.25f * edgeLength, fmaxf(0.5f * wavelength, T(UTD_EPS)));
+    T endpointU = fmaxf(outsideDistance / fmaxf(taperLength, T(UTD_EPS)), T(0.f));
+    T endpointWeight = expf(-endpointU * endpointU);
+    ComplexT<T> raw = finite_wedge_truncation_factor_bounds(
         state,
         tgtPos,
         k,
@@ -1746,22 +1123,23 @@ UTD_DINLINE Complex finite_wedge_stationary_completion_factor(
         state.edgeLineMax,
         true
     );
-    Complex boundary = state.edgeLineMin >= 0.f
-        ? finite_wedge_truncation_factor_bounds(state, tgtPos, k, 0.f, edgeLength, true)
-        : finite_wedge_truncation_factor_bounds(state, tgtPos, k, -edgeLength, 0.f, true);
-    float boundaryPower = cplx_abs_sqr(boundary);
+    ComplexT<T> boundary = state.edgeLineMin >= 0.f
+        ? finite_wedge_truncation_factor_bounds(state, tgtPos, k, T(0.f), edgeLength, true)
+        : finite_wedge_truncation_factor_bounds(state, tgtPos, k, -edgeLength, T(0.f), true);
+    T boundaryPower = cplx_abs_sqr(boundary);
     if (boundaryPower <= UTD_EPS) {
         return cplx_mul_real(raw, endpointWeight);
     }
     return cplx_mul_real(cplx_div(raw, boundary), endpointWeight);
 }
 
-UTD_DINLINE void compute_pair_field_terms(PairInputs state, float3a tgtPos, float k,
-    MaterialParams mat, bool& geomValid, Complex& field,
-    Complex& directGain, Complex& derivativeGain)
+template <typename T>
+UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos, T k,
+    MaterialParamsT<T> mat, bool& geomValid, ComplexT<T>& field,
+    ComplexT<T>& directGain, ComplexT<T>& derivativeGain)
 {
     geomValid = false;
-    field = cplx_zero(); directGain = cplx_zero(); derivativeGain = cplx_zero();
+    field = cplx_zero<T>(); directGain = cplx_zero<T>(); derivativeGain = cplx_zero<T>();
 
     bool selectedStationary = false;
     bool selectedInside = false;
@@ -1777,46 +1155,46 @@ UTD_DINLINE void compute_pair_field_terms(PairInputs state, float3a tgtPos, floa
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
     bool tgtExt = wedge_exterior_mask(f3_sub(tgtPos, state.edgePos), state.edgeDir, state.n0, state.nn);
-    float phi,phiP,s,sP,sb;
+    T phi,phiP,s,sP,sb;
     compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi,phiP,s,sP,sb);
 
     geomValid = srcExt && (sP > UTD_MIN_DISTANCE) && (s > UTD_MIN_DISTANCE);
     if (!geomValid) return;
 
-    Complex r0 = state.r0, rn = state.rn;
-    float w = state.wedgeN;
+    ComplexT<T> r0 = state.r0, rn = state.rn;
+    T w = state.wedgeN;
     bool poleSafe = cot_pole_safe_mask(phi,phiP,w,1.0e-6f);
-    float safePhi  = poleSafe ? phi  : 0.5f*w*UTD_PI;
-    float safePhiP = poleSafe ? phiP : 0.5f*w*UTD_PI;
+    T safePhi  = poleSafe ? phi  : T(0.5f)*w*UTD_PI;
+    T safePhiP = poleSafe ? phiP : T(0.5f)*w*UTD_PI;
     bool slopeSafe = slope_safe_mask(safePhi,safePhiP,w,UTD_SLOPE_STEP);
     bool useFace = (state.face0Material.present > 0.5f) || (state.face1Material.present > 0.5f);
     bool endpointContinuation = selectedStationary && !tgtExt;
-    Complex d = endpointContinuation
+    ComplexT<T> d = endpointContinuation
         ? (useFace ? diff_coeff_3d_endpoint_continued(phi,phiP,w,k,s,sP,sb,r0,rn)
                    : diff_coeff_2d_endpoint_continued(phi,phiP,w,k,s,sP,r0,rn))
         : (useFace ? diff_coeff_3d(phi,phiP,w,k,s,sP,sb,r0,rn)
                    : diff_coeff_2d(phi,phiP,w,k,s,sP,r0,rn));
     if (!poleSafe) { d.re = d.re; d.im = d.im; } // detach (no AD in CUDA anyway)
-    Complex dSlope = cplx_zero();
+    ComplexT<T> dSlope = cplx_zero<T>();
     bool hasSlope = (cplx_abs_sqr(state.incidentNormalDerivative) > 1.0e-24f) && slopeSafe;
     if (hasSlope) {
         dSlope = useFace ? slope_diff_3d(safePhi,safePhiP,w,k,s,sP,sb,r0,rn)
                          : slope_diff_2d(safePhi,safePhiP,w,k,s,sP,r0,rn);
     }
-    float ls = sqrtf(sP/(s*(s+sP)+UTD_EPS));
-    Complex phase = cplx_exp_phase(-k*s);
+    T ls = sqrtf(sP/(s*(s+sP)+T(UTD_EPS)));
+    ComplexT<T> phase = cplx_exp_phase(-k*s);
     directGain = cplx_mul_real(cplx_mul(d,phase), ls);
     derivativeGain = cplx_mul_real(cplx_mul(dSlope,phase), ls);
-    Complex finiteFactor = selectedStationary
+    ComplexT<T> finiteFactor = selectedStationary
         ? finite_wedge_stationary_completion_factor(state, tgtPos, k, selectedInside)
         : finite_wedge_truncation_factor(state, tgtPos, k);
     directGain = cplx_mul(directGain, finiteFactor);
     derivativeGain = cplx_mul(derivativeGain, finiteFactor);
-    Complex incidentField = selectedStationary
+    ComplexT<T> incidentField = selectedStationary
         ? direct_source_field(state.sourcePos, state.edgePos, k)
         : state.incidentField;
-    Complex incidentNormalDerivative = selectedStationary
-        ? cplx_zero()
+    ComplexT<T> incidentNormalDerivative = selectedStationary
+        ? cplx_zero<T>()
         : state.incidentNormalDerivative;
     field = cplx_add(cplx_mul(incidentField, directGain),
                      cplx_mul(incidentNormalDerivative, derivativeGain));
@@ -1825,40 +1203,42 @@ UTD_DINLINE void compute_pair_field_terms(PairInputs state, float3a tgtPos, floa
 // ===================================================================
 // Vector field contribution (mega-kernel core)
 // ===================================================================
-UTD_DINLINE Complex3 c3_scale_real(Complex3 value, float scale) {
-    Complex s = cplx(scale, 0.0f);
+template <typename T>
+UTD_DINLINE Complex3T<T> c3_scale_real(Complex3T<T> value, T scale) {
+    ComplexT<T> s = cplx(scale, T(0.0f));
     return c3_scale(value, s);
 }
 
-UTD_DINLINE Complex3 compute_pair_vector_at_angles(
-    PairInputs state,
-    float3a tgtPos,
-    float k,
-    MaterialParams mat,
-    float phi,
-    float phiP,
-    float s,
-    float sP,
-    float sb,
-    Basis3 inEB,
-    Basis3 outEB,
-    Complex finiteFactor,
+template <typename T>
+UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
+    PairInputsT<T> state,
+    Vec3T<T> tgtPos,
+    T k,
+    MaterialParamsT<T> mat,
+    T phi,
+    T phiP,
+    T s,
+    T sP,
+    T sb,
+    Basis3T<T> inEB,
+    Basis3T<T> outEB,
+    ComplexT<T> finiteFactor,
     bool endpointContinuation)
 {
     bool selectedStationary = state.selectStationaryPoint > 0.5f;
-    Complex3 incidentVector = selectedStationary
+    Complex3T<T> incidentVector = selectedStationary
         ? direct_source_vector(state.sourcePos, state.edgePos, k, mat)
         : vector_from_jones(state.incidentJones, state.incidentBasis);
-    Complex3 incidentDerivativeVector = selectedStationary
-        ? c3_zero()
+    Complex3T<T> incidentDerivativeVector = selectedStationary
+        ? c3_zero<T>()
         : vector_from_jones(state.incidentDerivativeJones, state.incidentBasis);
-    Jones2 incJE  = jones_from_vector(incidentVector, inEB);
-    Jones2 incDJE = jones_from_vector(incidentDerivativeVector, inEB);
+    Jones2T<T> incJE  = jones_from_vector(incidentVector, inEB);
+    Jones2T<T> incDJE = jones_from_vector(incidentDerivativeVector, inEB);
     bool poleSafe = cot_pole_safe_mask(phi, phiP, state.wedgeN, 1.0e-6f);
-    float safePhi = poleSafe ? phi : 0.5f * state.wedgeN * UTD_PI;
-    float safePhiP = poleSafe ? phiP : 0.5f * state.wedgeN * UTD_PI;
+    T safePhi = poleSafe ? phi : T(0.5f) * state.wedgeN * UTD_PI;
+    T safePhiP = poleSafe ? phiP : T(0.5f) * state.wedgeN * UTD_PI;
     bool slopeSafe = slope_safe_mask(safePhi, safePhiP, state.wedgeN, UTD_SLOPE_STEP);
-    float derivativePower = cplx_abs_sqr(incDJE.u) + cplx_abs_sqr(incDJE.v);
+    T derivativePower = cplx_abs_sqr(incDJE.u) + cplx_abs_sqr(incDJE.v);
     bool hasSlope = (derivativePower > 1.0e-24f) && slopeSafe;
 
     bool useFace = (state.face0Material.present > 0.5f) || (state.face1Material.present > 0.5f);
@@ -1866,57 +1246,58 @@ UTD_DINLINE Complex3 compute_pair_vector_at_angles(
     bool f1HasMat = state.face1Material.present > 0.5f;
     bool useStoredFaceOps = mat.omega <= 0.f;
 
-    JonesOperator f0Op = (f0HasMat && !useStoredFaceOps)
+    JonesOperatorT<T> f0Op = (f0HasMat && !useStoredFaceOps)
         ? face_reflection_operator(state.face0Material,
-            fminf(fmaxf(fabsf(sinf(phiP)), 1.0e-6f), 1.f),
+            fminf(fmaxf(fabsf(sinf(phiP)), T(1.0e-6f)), T(1.f)),
             state.n0, inEB.k, outEB.k, inEB, outEB, mat.omega)
         : fallback_face_operator(state.face0Operator, state.n0, inEB.k, outEB.k, inEB, outEB);
-    JonesOperator f1Op = (f1HasMat && !useStoredFaceOps)
+    JonesOperatorT<T> f1Op = (f1HasMat && !useStoredFaceOps)
         ? face_reflection_operator(state.face1Material,
-            fminf(fmaxf(fabsf(sinf(state.wedgeN*UTD_PI - phi)), 1.0e-6f), 1.f),
+            fminf(fmaxf(fabsf(sinf(state.wedgeN*UTD_PI - phi)), T(1.0e-6f)), T(1.f)),
             state.nn, inEB.k, outEB.k, inEB, outEB, mat.omega)
         : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
 
-    DiffractionOperatorTerms terms = endpointContinuation
+    DiffractionOperatorTermsT<T> terms = endpointContinuation
         ? (useFace
             ? compute_op_terms_3d_endpoint_continued(phi,phiP,state.wedgeN,k,s,sP,sb)
             : compute_op_terms_2d_endpoint_continued(phi,phiP,state.wedgeN,k,s,sP))
         : (useFace
             ? compute_op_terms_3d(phi,phiP,state.wedgeN,k,s,sP,sb)
             : compute_op_terms_2d(phi,phiP,state.wedgeN,k,s,sP));
-    DiffractionOperatorTerms slopeTerms = endpointContinuation
+    DiffractionOperatorTermsT<T> slopeTerms = endpointContinuation
         ? (useFace
             ? compute_op_terms_3d_endpoint_continued(safePhi,safePhiP,state.wedgeN,k,s,sP,sb)
             : compute_op_terms_2d_endpoint_continued(safePhi,safePhiP,state.wedgeN,k,s,sP))
         : (useFace
             ? compute_op_terms_3d(safePhi,safePhiP,state.wedgeN,k,s,sP,sb)
             : compute_op_terms_2d(safePhi,safePhiP,state.wedgeN,k,s,sP));
-    JonesOperator directOp = assemble_diff_operator(
+    JonesOperatorT<T> directOp = assemble_diff_operator(
         cplx_mul_real(terms.direct, -1.f),
         terms.face0,
         terms.face1,
         f0Op,
         f1Op
     );
-    Complex slopeFactor = cplx(0, -1.f/k);
-    JonesOperator slopeOp = hasSlope
+    ComplexT<T> slopeFactor = cplx(T(0), -1.f/k);
+    JonesOperatorT<T> slopeOp = hasSlope
         ? assemble_diff_operator(
             cplx_mul(slopeFactor, cplx_mul_real(slopeTerms.directDphiPrime, -1.f)),
             cplx_mul(slopeFactor, slopeTerms.face0DphiPrime),
             cplx_mul(slopeFactor, slopeTerms.face1DphiPrime),
             f0Op, f1Op)
-        : jop_zero();
+        : jop_zero<T>();
 
-    Jones2 slopeFieldJ = hasSlope ? apply_jop(incDJE, slopeOp) : jones_zero();
-    Jones2 fieldJ = jones_add(apply_jop(incJE, directOp), slopeFieldJ);
+    Jones2T<T> slopeFieldJ = hasSlope ? apply_jop(incDJE, slopeOp) : jones_zero<T>();
+    Jones2T<T> fieldJ = jones_add(apply_jop(incJE, directOp), slopeFieldJ);
     fieldJ = jones_scale(fieldJ, finiteFactor);
-    float ls = sqrtf(sP/(s*(s+sP)+UTD_EPS));
-    Complex scale = cplx_mul_real(cplx_exp_phase(-k*s), ls);
+    T ls = sqrtf(sP/(s*(s+sP)+T(UTD_EPS)));
+    ComplexT<T> scale = cplx_mul_real(cplx_exp_phase(-k*s), ls);
     return c3_scale(vector_from_jones(fieldJ, outEB), scale);
 }
 
-UTD_DINLINE Complex3 compute_pair_vector_contribution_no_completion(PairInputs state, float3a tgtPos,
-    float k, MaterialParams mat)
+template <typename T>
+UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInputsT<T> state, Vec3T<T> tgtPos,
+    T k, MaterialParamsT<T> mat)
 {
     bool selectedStationary = false;
     bool selectedInside = false;
@@ -1928,17 +1309,17 @@ UTD_DINLINE Complex3 compute_pair_vector_contribution_no_completion(PairInputs s
         selectedInside,
         selectedValid
     );
-    if (!selectedValid) return c3_zero();
+    if (!selectedValid) return c3_zero<T>();
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
-    float phi,phiP,s,sP,sb;
+    T phi,phiP,s,sP,sb;
     compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi,phiP,s,sP,sb);
     bool geomValid = srcExt && (sP > UTD_MIN_DISTANCE) && (s > UTD_MIN_DISTANCE);
-    if (!geomValid) return c3_zero();
+    if (!geomValid) return c3_zero<T>();
 
-    Basis3 inEB  = diffraction_edge_basis(f3_sub(state.edgePos, state.sourcePos), state.edgeDir, false);
-    Basis3 outEB = diffraction_edge_basis(f3_sub(tgtPos, state.edgePos), state.edgeDir, true);
-    Complex finiteFactor = selectedStationary
+    Basis3T<T> inEB  = diffraction_edge_basis(f3_sub(state.edgePos, state.sourcePos), state.edgeDir, false);
+    Basis3T<T> outEB = diffraction_edge_basis(f3_sub(tgtPos, state.edgePos), state.edgeDir, true);
+    ComplexT<T> finiteFactor = selectedStationary
         ? finite_wedge_stationary_completion_factor(state, tgtPos, k, selectedInside)
         : finite_wedge_truncation_factor(state, tgtPos, k);
     bool tgtExt = wedge_exterior_mask(f3_sub(tgtPos, state.edgePos), state.edgeDir, state.n0, state.nn);
@@ -1948,553 +1329,248 @@ UTD_DINLINE Complex3 compute_pair_vector_contribution_no_completion(PairInputs s
         endpointContinuation);
 }
 
-UTD_DINLINE Complex3 compute_pair_vector_contribution(PairInputs state, float3a tgtPos,
-    float k, MaterialParams mat)
+template <typename T>
+UTD_DINLINE Complex3T<T> compute_pair_vector_contribution(PairInputsT<T> state, Vec3T<T> tgtPos,
+    T k, MaterialParamsT<T> mat)
 {
     return compute_pair_vector_contribution_no_completion(state, tgtPos, k, mat);
 }
 
 // ===================================================================
-// Vector-output VJP for one source-edge/receiver pair
+// Full pair contribution (scalar field + vector field)
 // ===================================================================
+template <typename T>
+UTD_DINLINE PairOutputsT<T> compute_pair_contribution(PairInputsT<T> state, Vec3T<T> tgtPos,
+    T k, MaterialParamsT<T> mat)
+{
+    PairOutputsT<T> out;
+    out.field = cplx_zero<T>(); out.vectorField = c3_zero<T>();
+    bool gv; ComplexT<T> dg, dvg;
+    compute_pair_field_terms(state, tgtPos, k, mat, gv, out.field, dg, dvg);
+    out.vectorField = compute_pair_vector_contribution(state, tgtPos, k, mat);
+    return out;
+}
+
+// ===================================================================
+// Exact pair-vector JVP and VJP (plan 07 AD-4).
+//
+// The JVP seeds every continuous input with its tangent and runs the SAME
+// templated forward once with Dual scalars -- no second implementation of
+// the physics, no finite differences. k and mat.omega carry independent
+// tangents; a frequency derivative chains both (dk = 2*pi/c * df,
+// domega = 2*pi * df).
+//
+// The VJP contracts the output cotangent against one seeded JVP per input
+// scalar (complex-linear inputs need a single probe each). It is a reference
+// implementation: kernels that only need a subset of gradients should run
+// their own seeded probes instead.
+// ===================================================================
+UTD_DINLINE Complex3 pair_vector_output_jvp(
+    const PairInputs& pi,
+    const PairInputsGrad& tangentState,
+    float3a tgt,
+    float3a tangentTgt,
+    float k,
+    float tangentK,
+    const MaterialParams& mat,
+    float tangentOmega)
+{
+    const PairInputsT<Dual> state = pair_inputs_seed(pi, tangentState);
+    const Vec3T<Dual> target = dual_seed(tgt, tangentTgt);
+    const MaterialParamsT<Dual> material = material_params_seed(mat, tangentOmega);
+    const Complex3T<Dual> out = compute_pair_vector_contribution(
+        state, target, Dual(k, tangentK), material);
+    return dual_tangent(out);
+}
+
+namespace detail {
+
+UTD_DINLINE float pair_vjp_contract(Complex3 vecGrad, Complex3 tangent) {
+    return cplx_adj_dot(vecGrad.x, tangent.x) +
+           cplx_adj_dot(vecGrad.y, tangent.y) +
+           cplx_adj_dot(vecGrad.z, tangent.z);
+}
+
+// Gradient of a complex-linear input from a single (1, 0) probe: the probe
+// tangent is the complex column a, and the real-pair gradient is
+// (dot(g, a), dot(g, i*a)) -- the adj_cplx_mul contraction.
+UTD_DINLINE Complex pair_vjp_complex_linear(Complex3 vecGrad, Complex3 probe) {
+    const Complex3 rotated = {
+        cplx(-probe.x.im, probe.x.re),
+        cplx(-probe.y.im, probe.y.re),
+        cplx(-probe.z.im, probe.z.re)};
+    return cplx(pair_vjp_contract(vecGrad, probe),
+                pair_vjp_contract(vecGrad, rotated));
+}
+
+}  // namespace detail
+
 UTD_DINLINE void pair_vector_output_vjp(
-    PairInputs pi,
+    const PairInputs& pi,
     float3a tgt,
     float k,
-    MaterialParams mat,
+    const MaterialParams& mat,
     Complex3 vecGrad,
     PairInputsGrad& sg,
-    float3a& gTgt)
+    float3a& gTgt,
+    float& gK,
+    float& gOmega)
 {
     if (!c3_grad_any_nonzero(vecGrad))
         return;
 
-    bool srcExt = wedge_exterior_mask(f3_sub(pi.sourcePos, pi.edgePos), pi.edgeDir, pi.n0, pi.nn);
-    float phi, phiP, s, sP, sb;
-    compute_edge_geometry_3d(pi.sourcePos, pi.edgePos, pi.edgeDir, pi.n0, tgt, phi, phiP, s, sP, sb);
-    bool geomValid = srcExt && (sP > UTD_MIN_DISTANCE) && (s > UTD_MIN_DISTANCE);
-    if (!geomValid)
-        return;
+    const float3a zero3 = f3_zero();
+    PairInputsGrad seed = pig_zero();
 
-    Basis3 inEB  = diffraction_edge_basis(f3_sub(pi.edgePos, pi.sourcePos), pi.edgeDir, false);
-    Basis3 outEB = diffraction_edge_basis(f3_sub(tgt, pi.edgePos), pi.edgeDir, true);
-    Complex3 incidentVector = vector_from_jones(pi.incidentJones, pi.incidentBasis);
-    Complex3 incidentDerivativeVector =
-        vector_from_jones(pi.incidentDerivativeJones, pi.incidentBasis);
-    Jones2 incJE  = jones_from_vector(incidentVector, inEB);
-    Jones2 incDJE = jones_from_vector(incidentDerivativeVector, inEB);
-    bool poleSafe = cot_pole_safe_mask(phi, phiP, pi.wedgeN, 1.0e-6f);
-    float safePhi = poleSafe ? phi : 0.5f * pi.wedgeN * UTD_PI;
-    float safePhiP = poleSafe ? phiP : 0.5f * pi.wedgeN * UTD_PI;
-    bool slopeSafe = slope_safe_mask(safePhi, safePhiP, pi.wedgeN, UTD_SLOPE_STEP);
-    float derivativePower = cplx_abs_sqr(incDJE.u) + cplx_abs_sqr(incDJE.v);
-    bool hasSlope = (derivativePower > 1.0e-24f) && slopeSafe;
-
-    bool useFace = (pi.face0Material.present > 0.5f) || (pi.face1Material.present > 0.5f);
-    bool f0HasMat = pi.face0Material.present > 0.5f;
-    bool f1HasMat = pi.face1Material.present > 0.5f;
-    bool useStoredFaceOps = mat.omega <= 0.f;
-
-    JonesOperator f0Op = (f0HasMat && !useStoredFaceOps)
-        ? face_reflection_operator(
-            pi.face0Material,
-            fminf(fmaxf(fabsf(sinf(phiP)), 1.0e-6f), 1.f),
-            pi.n0,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            mat.omega
-        )
-        : fallback_face_operator(pi.face0Operator, pi.n0, inEB.k, outEB.k, inEB, outEB);
-    JonesOperator f1Op = (f1HasMat && !useStoredFaceOps)
-        ? face_reflection_operator(
-            pi.face1Material,
-            fminf(fmaxf(fabsf(sinf(pi.wedgeN * UTD_PI - phi)), 1.0e-6f), 1.f),
-            pi.nn,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            mat.omega
-        )
-        : fallback_face_operator(pi.face1Operator, pi.nn, inEB.k, outEB.k, inEB, outEB);
-
-    DiffractionOperatorTerms terms = useFace
-        ? compute_op_terms_3d(phi, phiP, pi.wedgeN, k, s, sP, sb)
-        : compute_op_terms_2d(phi, phiP, pi.wedgeN, k, s, sP);
-    DiffractionOperatorTerms slopeTerms = useFace
-        ? compute_op_terms_3d(safePhi, safePhiP, pi.wedgeN, k, s, sP, sb)
-        : compute_op_terms_2d(safePhi, safePhiP, pi.wedgeN, k, s, sP);
-    JonesOperator directOp = assemble_diff_operator(
-        cplx_mul_real(terms.direct, -1.f),
-        terms.face0,
-        terms.face1,
-        f0Op,
-        f1Op
-    );
-    Complex slopeFactor = cplx(0.f, -1.f / k);
-    JonesOperator slopeOp = hasSlope
-        ? assemble_diff_operator(
-            cplx_mul(slopeFactor, cplx_mul_real(slopeTerms.directDphiPrime, -1.f)),
-            cplx_mul(slopeFactor, slopeTerms.face0DphiPrime),
-            cplx_mul(slopeFactor, slopeTerms.face1DphiPrime),
-            f0Op,
-            f1Op
-        )
-        : jop_zero();
-
-    Jones2 directFieldJ = apply_jop(incJE, directOp);
-    Jones2 slopeFieldJ = hasSlope ? apply_jop(incDJE, slopeOp) : jones_zero();
-    Jones2 fieldJ = jones_add(directFieldJ, slopeFieldJ);
-    Complex finiteFactor = finite_wedge_truncation_factor(pi, tgt, k);
-    Jones2 scaledFieldJ = jones_scale(fieldJ, finiteFactor);
-    float ls = sqrtf(sP / (s * (s + sP) + UTD_EPS));
-    Complex phase = cplx_exp_phase(-k * s);
-    Complex scale = cplx_mul_real(phase, ls);
-    Complex3 transport = vector_from_jones(scaledFieldJ, outEB);
-
-    Complex3 gTransport = c3_zero();
-    Complex gScale = cplx_zero();
-    adj_c3_scale(transport, scale, vecGrad, gTransport, gScale);
-
-    Jones2 gScaledFieldJ = jones_zero();
-    Basis3 gOutEB = {f3_zero(), f3_zero(), f3_zero()};
-    adj_vector_from_jones(scaledFieldJ, outEB, gTransport, gScaledFieldJ, gOutEB);
-
-    Jones2 gFieldJ = jones_zero();
-    Complex gFiniteFactor = cplx_zero();
-    adj_jones_scale(fieldJ, finiteFactor, gScaledFieldJ, gFieldJ, gFiniteFactor);
-    (void) gFiniteFactor;
-
-    Jones2 gDirectFieldJ = jones_zero();
-    Jones2 gSlopeFieldJ = jones_zero();
-    adj_jones_add(gFieldJ, gDirectFieldJ, gSlopeFieldJ);
-
-    Jones2 gIncJE = jones_zero();
-    Jones2 gIncDJE = jones_zero();
-    JonesOperator gDirectOp = jop_zero();
-    JonesOperator gSlopeOp = jop_zero();
-    adj_apply_jop(incJE, directOp, gDirectFieldJ, gIncJE, gDirectOp);
-    if (hasSlope) {
-        adj_apply_jop(incDJE, slopeOp, gSlopeFieldJ, gIncDJE, gSlopeOp);
-    }
-
-    Basis3 gInEB = {f3_zero(), f3_zero(), f3_zero()};
-    Complex3 gIncidentVector = c3_zero();
-    Complex3 gIncidentDerivativeVector = c3_zero();
-    adj_jones_from_vector(incidentVector, inEB, gIncJE, gIncidentVector, gInEB);
-    adj_jones_from_vector(incidentDerivativeVector, inEB, gIncDJE, gIncidentDerivativeVector, gInEB);
-    Basis3 gIncidentBasis = basis_zero();
-    adj_vector_from_jones(pi.incidentJones, pi.incidentBasis, gIncidentVector, sg.incidentJones, gIncidentBasis);
-    adj_vector_from_jones(
-        pi.incidentDerivativeJones,
-        pi.incidentBasis,
-        gIncidentDerivativeVector,
-        sg.incidentDerivativeJones,
-        gIncidentBasis
-    );
-    basis_accum(sg.incidentBasis, gIncidentBasis);
-
-    Complex gDirectTerm = cplx_zero();
-    Complex gFace0Term = cplx_zero();
-    Complex gFace1Term = cplx_zero();
-    JonesOperator gFace0Op = jop_zero();
-    JonesOperator gFace1Op = jop_zero();
-    adj_assemble_diff_operator(
-        cplx_mul_real(terms.direct, -1.f),
-        terms.face0,
-        terms.face1,
-        f0Op,
-        f1Op,
-        gDirectOp,
-        gDirectTerm,
-        gFace0Term,
-        gFace1Term,
-        gFace0Op,
-        gFace1Op
-    );
-    Complex slopeDirectCoeff = cplx_mul(slopeFactor, cplx_mul_real(slopeTerms.directDphiPrime, -1.f));
-    Complex slopeFace0Coeff = cplx_mul(slopeFactor, slopeTerms.face0DphiPrime);
-    Complex slopeFace1Coeff = cplx_mul(slopeFactor, slopeTerms.face1DphiPrime);
-    Complex gSlopeDirectIgnored = cplx_zero();
-    Complex gSlopeFace0Ignored = cplx_zero();
-    Complex gSlopeFace1Ignored = cplx_zero();
-    JonesOperator gSlopeFace0Op = jop_zero();
-    JonesOperator gSlopeFace1Op = jop_zero();
-    if (hasSlope) {
-        adj_assemble_diff_operator(
-            slopeDirectCoeff,
-            slopeFace0Coeff,
-            slopeFace1Coeff,
-            f0Op,
-            f1Op,
-            gSlopeOp,
-            gSlopeDirectIgnored,
-            gSlopeFace0Ignored,
-            gSlopeFace1Ignored,
-            gSlopeFace0Op,
-            gSlopeFace1Op
-        );
-        gFace0Op = jop_add(gFace0Op, gSlopeFace0Op);
-        gFace1Op = jop_add(gFace1Op, gSlopeFace1Op);
-    }
-    (void) gSlopeDirectIgnored;
-    (void) gSlopeFace0Ignored;
-    (void) gSlopeFace1Ignored;
-
-    float gPhi = 0.f;
-    float gPhiP = 0.f;
-    float gWedgeN = 0.f;
-    float gTermsS = 0.f;
-    float gTermsSP = 0.f;
-    float gTermsSb = 0.f;
-    Complex gRawDirect = cplx_mul_real(gDirectTerm, -1.f);
-    if (useFace) {
-        adj_compute_op_terms_3d_direct(
-            phi,
-            phiP,
-            pi.wedgeN,
-            k,
-            s,
-            sP,
-            sb,
-            gRawDirect,
-            gFace0Term,
-            gFace1Term,
-            gPhi,
-            gPhiP,
-            gWedgeN,
-            gTermsS,
-            gTermsSP,
-            gTermsSb
-        );
-    } else {
-        adj_compute_op_terms_2d_direct(
-            phi,
-            phiP,
-            pi.wedgeN,
-            k,
-            s,
-            sP,
-            gRawDirect,
-            gFace0Term,
-            gFace1Term,
-            gPhi,
-            gPhiP,
-            gWedgeN,
-            gTermsS,
-            gTermsSP
-        );
-    }
-
-    float gS = 0.f;
-    float gSP = 0.f;
-    float gSb = gTermsSb;
-    sg.wedgeN += gWedgeN;
-    Complex gPhase = cplx_zero();
-    float gLs = 0.f;
-    adj_cplx_mul_real(phase, ls, gScale, gPhase, gLs);
-    Complex dPhaseDs = cplx_mul(phase, cplx(0.f, -k));
-    gS += cplx_adj_dot(gPhase, dPhaseDs);
-
-    float den = s * (s + sP) + UTD_EPS;
-    float den2 = den * den;
-    if (ls > UTD_SMALL_EPS) {
-        float dLsDs = -0.5f * sP * (2.f * s + sP) / (ls * den2);
-        float dLsDSP = 0.5f * (s * s + UTD_EPS) / (ls * den2);
-        gS += gLs * dLsDs;
-        gSP += gLs * dLsDSP;
-    }
-    gS += gTermsS;
-    gSP += gTermsSP;
-
-    float3a gFace0Normal = f3_zero();
-    float3a gFace1Normal = f3_zero();
-    float3a gFace0InHat = f3_zero();
-    float3a gFace1InHat = f3_zero();
-    float3a gFace0OutHat = f3_zero();
-    float3a gFace1OutHat = f3_zero();
-    Basis3 gFace0InEdgeBasis = basis_zero();
-    Basis3 gFace1InEdgeBasis = basis_zero();
-    Basis3 gFace0OutEdgeBasis = basis_zero();
-    Basis3 gFace1OutEdgeBasis = basis_zero();
-    float gCosTheta0 = 0.f;
-    float gCosTheta1 = 0.f;
-    float rawCosTheta0 = fabsf(sinf(phiP));
-    float theta1 = pi.wedgeN * UTD_PI - phi;
-    float rawCosTheta1 = fabsf(sinf(theta1));
-    if (f0HasMat && !useStoredFaceOps) {
-        adj_face_reflection_operator(
-            pi.face0Material,
-            fminf(fmaxf(rawCosTheta0, 1.0e-6f), 1.f),
-            pi.n0,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            mat.omega,
-            gFace0Op,
-            gCosTheta0,
-            gFace0Normal,
-            gFace0InHat,
-            gFace0OutHat,
-            gFace0InEdgeBasis,
-            gFace0OutEdgeBasis,
-            sg.face0Material
-        );
-    } else {
-        adj_fallback_face_operator(
-            pi.face0Operator,
-            pi.n0,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            gFace0Op,
-            sg.face0Operator,
-            gFace0Normal,
-            gFace0InHat,
-            gFace0OutHat,
-            gFace0InEdgeBasis,
-            gFace0OutEdgeBasis
-        );
-    }
-    if (f1HasMat && !useStoredFaceOps) {
-        adj_face_reflection_operator(
-            pi.face1Material,
-            fminf(fmaxf(rawCosTheta1, 1.0e-6f), 1.f),
-            pi.nn,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            mat.omega,
-            gFace1Op,
-            gCosTheta1,
-            gFace1Normal,
-            gFace1InHat,
-            gFace1OutHat,
-            gFace1InEdgeBasis,
-            gFace1OutEdgeBasis,
-            sg.face1Material
-        );
-    } else {
-        adj_fallback_face_operator(
-            pi.face1Operator,
-            pi.nn,
-            inEB.k,
-            outEB.k,
-            inEB,
-            outEB,
-            gFace1Op,
-            sg.face1Operator,
-            gFace1Normal,
-            gFace1InHat,
-            gFace1OutHat,
-            gFace1InEdgeBasis,
-            gFace1OutEdgeBasis
-        );
-    }
-    sg.n0 = f3_add(sg.n0, gFace0Normal);
-    sg.nn = f3_add(sg.nn, gFace1Normal);
-    gInEB.k = f3_add(gInEB.k, f3_add(gFace0InHat, gFace1InHat));
-    gOutEB.k = f3_add(gOutEB.k, f3_add(gFace0OutHat, gFace1OutHat));
-    basis_accum(gInEB, gFace0InEdgeBasis);
-    basis_accum(gInEB, gFace1InEdgeBasis);
-    basis_accum(gOutEB, gFace0OutEdgeBasis);
-    basis_accum(gOutEB, gFace1OutEdgeBasis);
-    if (rawCosTheta0 > 1.0e-6f && rawCosTheta0 < 1.f) {
-        float sinPhiP = sinf(phiP);
-        float signSinPhiP = sinPhiP >= 0.f ? 1.f : -1.f;
-        gPhiP += gCosTheta0 * signSinPhiP * cosf(phiP);
-    }
-    if (rawCosTheta1 > 1.0e-6f && rawCosTheta1 < 1.f) {
-        float sinTheta1 = sinf(theta1);
-        float signSinTheta1 = sinTheta1 >= 0.f ? 1.f : -1.f;
-        float gTheta1 = gCosTheta1 * signSinTheta1 * cosf(theta1);
-        gPhi -= gTheta1;
-        sg.wedgeN += UTD_PI * gTheta1;
-    }
-
-    float3a gInRayDir = f3_zero();
-    float3a gInEdgeDir = f3_zero();
-    adj_diffraction_edge_basis(
-        f3_sub(pi.edgePos, pi.sourcePos),
-        pi.edgeDir,
-        false,
-        gInEB,
-        gInRayDir,
-        gInEdgeDir
-    );
-    sg.edgePos = f3_add(sg.edgePos, gInRayDir);
-    sg.sourcePos = f3_sub(sg.sourcePos, gInRayDir);
-    sg.edgeDir = f3_add(sg.edgeDir, gInEdgeDir);
-
-    float3a gOutRayDir = f3_zero();
-    float3a gOutEdgeDir = f3_zero();
-    adj_diffraction_edge_basis(
-        f3_sub(tgt, pi.edgePos),
-        pi.edgeDir,
-        true,
-        gOutEB,
-        gOutRayDir,
-        gOutEdgeDir
-    );
-    gTgt = f3_add(gTgt, gOutRayDir);
-    sg.edgePos = f3_sub(sg.edgePos, gOutRayDir);
-    sg.edgeDir = f3_add(sg.edgeDir, gOutEdgeDir);
-
-    adj_compute_edge_geometry_3d(
-        pi.sourcePos,
-        pi.edgePos,
-        pi.edgeDir,
-        pi.n0,
-        tgt,
-        gPhi,
-        gPhiP,
-        gS,
-        gSP,
-        gSb,
-        sg.sourcePos,
-        sg.edgePos,
-        sg.edgeDir,
-        sg.n0,
-        gTgt
-    );
-}
-
-UTD_DINLINE Complex complex_add_scaled(Complex value, Complex tangent, float scale)
-{
-    return cplx_add(value, cplx_mul_real(tangent, scale));
-}
-
-UTD_DINLINE Complex3 complex3_add_scaled(Complex3 value, Complex3 tangent, float scale)
-{
-    return {
-        complex_add_scaled(value.x, tangent.x, scale),
-        complex_add_scaled(value.y, tangent.y, scale),
-        complex_add_scaled(value.z, tangent.z, scale)
+    // Real scalar seeds: one dual forward per component.
+    float* slots[] = {
+        &seed.sourcePos.x, &seed.sourcePos.y, &seed.sourcePos.z,
+        &seed.edgePos.x, &seed.edgePos.y, &seed.edgePos.z,
+        &seed.edgeDir.x, &seed.edgeDir.y, &seed.edgeDir.z,
+        &seed.n0.x, &seed.n0.y, &seed.n0.z,
+        &seed.nn.x, &seed.nn.y, &seed.nn.z,
+        &seed.wedgeN,
+        &seed.edgeLineMin, &seed.edgeLineMax,
+        &seed.incidentBasis.u.x, &seed.incidentBasis.u.y, &seed.incidentBasis.u.z,
+        &seed.incidentBasis.v.x, &seed.incidentBasis.v.y, &seed.incidentBasis.v.z,
+        &seed.incidentBasis.k.x, &seed.incidentBasis.k.y, &seed.incidentBasis.k.z,
     };
-}
-
-UTD_DINLINE Jones2 jones_add_scaled(Jones2 value, Jones2 tangent, float scale)
-{
-    return {
-        complex_add_scaled(value.u, tangent.u, scale),
-        complex_add_scaled(value.v, tangent.v, scale)
+    float* outputs[] = {
+        &sg.sourcePos.x, &sg.sourcePos.y, &sg.sourcePos.z,
+        &sg.edgePos.x, &sg.edgePos.y, &sg.edgePos.z,
+        &sg.edgeDir.x, &sg.edgeDir.y, &sg.edgeDir.z,
+        &sg.n0.x, &sg.n0.y, &sg.n0.z,
+        &sg.nn.x, &sg.nn.y, &sg.nn.z,
+        &sg.wedgeN,
+        &sg.edgeLineMin, &sg.edgeLineMax,
+        &sg.incidentBasis.u.x, &sg.incidentBasis.u.y, &sg.incidentBasis.u.z,
+        &sg.incidentBasis.v.x, &sg.incidentBasis.v.y, &sg.incidentBasis.v.z,
+        &sg.incidentBasis.k.x, &sg.incidentBasis.k.y, &sg.incidentBasis.k.z,
     };
-}
+    constexpr int kRealSlots = 27;
+    const bool stationary = pi.selectStationaryPoint > 0.5f;
+    for (int slot = 0; slot < kRealSlots; ++slot) {
+        // The incident basis is unused under stationary-point selection (the
+        // incident field is rebuilt from the source); skip the dead probes.
+        if (stationary && slot >= 18)
+            break;
+        *slots[slot] = 1.f;
+        const Complex3 tangent = pair_vector_output_jvp(
+            pi, seed, tgt, zero3, k, 0.f, mat, 0.f);
+        *slots[slot] = 0.f;
+        *outputs[slot] += detail::pair_vjp_contract(vecGrad, tangent);
+    }
 
-UTD_DINLINE JonesOperator jop_add_scaled(JonesOperator value, JonesOperator tangent, float scale)
-{
-    return {
-        complex_add_scaled(value.m00, tangent.m00, scale),
-        complex_add_scaled(value.m01, tangent.m01, scale),
-        complex_add_scaled(value.m10, tangent.m10, scale),
-        complex_add_scaled(value.m11, tangent.m11, scale)
-    };
-}
+    // Target position.
+    for (int axis = 0; axis < 3; ++axis) {
+        float3a tgtSeed = zero3;
+        (axis == 0 ? tgtSeed.x : axis == 1 ? tgtSeed.y : tgtSeed.z) = 1.f;
+        const Complex3 tangent = pair_vector_output_jvp(
+            pi, seed, tgt, tgtSeed, k, 0.f, mat, 0.f);
+        float& out = axis == 0 ? gTgt.x : axis == 1 ? gTgt.y : gTgt.z;
+        out += detail::pair_vjp_contract(vecGrad, tangent);
+    }
 
-UTD_DINLINE Basis3 basis_add_scaled(Basis3 value, Basis3 tangent, float scale)
-{
-    return {
-        f3_add(value.u, f3_mul(tangent.u, scale)),
-        f3_add(value.v, f3_mul(tangent.v, scale)),
-        f3_add(value.k, f3_mul(tangent.k, scale))
-    };
-}
+    // Wave number and face-operator angular frequency.
+    {
+        const Complex3 tangent = pair_vector_output_jvp(
+            pi, seed, tgt, zero3, k, 1.f, mat, 0.f);
+        gK += detail::pair_vjp_contract(vecGrad, tangent);
+    }
+    const bool storedOps = mat.omega <= 0.f;
+    if (!storedOps) {
+        const Complex3 tangent = pair_vector_output_jvp(
+            pi, seed, tgt, zero3, k, 0.f, mat, 1.f);
+        gOmega += detail::pair_vjp_contract(vecGrad, tangent);
+    }
 
-UTD_DINLINE FaceMaterialParams face_material_add_scaled(
-    FaceMaterialParams value,
-    FaceMaterialParams tangent,
-    float scale)
-{
-    return {
-        value.etaR + scale * tangent.etaR,
-        value.muR + scale * tangent.muR,
-        value.sigma + scale * tangent.sigma,
-        value.gain + scale * tangent.gain,
-        value.useFresnel,
-        value.present
-    };
-}
+    // Face materials (used only on the omega > 0 path with present faces).
+    const bool f0Mat = pi.face0Material.present > 0.5f && !storedOps;
+    const bool f1Mat = pi.face1Material.present > 0.5f && !storedOps;
+    if (f0Mat || f1Mat) {
+        float* materialSlots[] = {
+            &seed.face0Material.etaR, &seed.face0Material.sigma,
+            &seed.face0Material.gain, &seed.face0Material.muR,
+            &seed.face1Material.etaR, &seed.face1Material.sigma,
+            &seed.face1Material.gain, &seed.face1Material.muR,
+        };
+        float* materialOutputs[] = {
+            &sg.face0Material.etaR, &sg.face0Material.sigma,
+            &sg.face0Material.gain, &sg.face0Material.muR,
+            &sg.face1Material.etaR, &sg.face1Material.sigma,
+            &sg.face1Material.gain, &sg.face1Material.muR,
+        };
+        for (int slot = 0; slot < 8; ++slot) {
+            if ((slot < 4 && !f0Mat) || (slot >= 4 && !f1Mat))
+                continue;
+            *materialSlots[slot] = 1.f;
+            const Complex3 tangent = pair_vector_output_jvp(
+                pi, seed, tgt, zero3, k, 0.f, mat, 0.f);
+            *materialSlots[slot] = 0.f;
+            *materialOutputs[slot] += detail::pair_vjp_contract(vecGrad, tangent);
+        }
+    }
 
-UTD_DINLINE PairInputs pair_inputs_add_scaled(PairInputs value, PairInputsGrad tangent, float scale)
-{
-    PairInputs out = value;
-    out.edgePos = f3_add(value.edgePos, f3_mul(tangent.edgePos, scale));
-    out.edgeDir = f3_add(value.edgeDir, f3_mul(tangent.edgeDir, scale));
-    out.n0 = f3_add(value.n0, f3_mul(tangent.n0, scale));
-    out.nn = f3_add(value.nn, f3_mul(tangent.nn, scale));
-    out.wedgeN = value.wedgeN + scale * tangent.wedgeN;
-    out.sourcePos = f3_add(value.sourcePos, f3_mul(tangent.sourcePos, scale));
-    out.incidentField = complex_add_scaled(value.incidentField, tangent.incidentField, scale);
-    out.incidentNormalDerivative = complex_add_scaled(
-        value.incidentNormalDerivative,
-        tangent.incidentNormalDerivative,
-        scale);
-    out.r0 = complex_add_scaled(value.r0, tangent.r0, scale);
-    out.rn = complex_add_scaled(value.rn, tangent.rn, scale);
-    out.incidentVector = complex3_add_scaled(value.incidentVector, tangent.incidentVector, scale);
-    out.incidentDerivativeVector = complex3_add_scaled(
-        value.incidentDerivativeVector,
-        tangent.incidentDerivativeVector,
-        scale);
-    out.incidentJones = jones_add_scaled(value.incidentJones, tangent.incidentJones, scale);
-    out.incidentDerivativeJones = jones_add_scaled(
-        value.incidentDerivativeJones,
-        tangent.incidentDerivativeJones,
-        scale);
-    out.incidentBasis = basis_add_scaled(value.incidentBasis, tangent.incidentBasis, scale);
-    out.face0Operator = jop_add_scaled(value.face0Operator, tangent.face0Operator, scale);
-    out.face1Operator = jop_add_scaled(value.face1Operator, tangent.face1Operator, scale);
-    out.face0Material = face_material_add_scaled(
-        value.face0Material,
-        tangent.face0Material,
-        scale);
-    out.face1Material = face_material_add_scaled(
-        value.face1Material,
-        tangent.face1Material,
-        scale);
-    return out;
-}
-
-UTD_DINLINE Complex3 complex3_sub(Complex3 a, Complex3 b)
-{
-    return {cplx_sub(a.x, b.x), cplx_sub(a.y, b.y), cplx_sub(a.z, b.z)};
-}
-
-UTD_DINLINE Complex3 pair_vector_output_jvp_completion(
-    PairInputs pi,
-    PairInputsGrad tangentState,
-    float3a tgt,
-    float3a tangentTgt,
-    float k,
-    MaterialParams mat)
-{
-    constexpr float eps = 1.0e-3f;
-    PairInputs plusState = pair_inputs_add_scaled(pi, tangentState, eps);
-    PairInputs minusState = pair_inputs_add_scaled(pi, tangentState, -eps);
-    float3a plusTgt = f3_add(tgt, f3_mul(tangentTgt, eps));
-    float3a minusTgt = f3_add(tgt, f3_mul(tangentTgt, -eps));
-    Complex3 plusValue = compute_pair_vector_contribution(plusState, plusTgt, k, mat);
-    Complex3 minusValue = compute_pair_vector_contribution(minusState, minusTgt, k, mat);
-    return c3_scale_real(complex3_sub(plusValue, minusValue), 0.5f / eps);
-}
-
-// ===================================================================
-// Full pair contribution (scalar field + vector field)
-// ===================================================================
-UTD_DINLINE PairOutputs compute_pair_contribution(PairInputs state, float3a tgtPos,
-    float k, MaterialParams mat)
-{
-    PairOutputs out;
-    out.field = cplx_zero(); out.vectorField = c3_zero();
-    bool gv; Complex dg, dvg;
-    compute_pair_field_terms(state, tgtPos, k, mat, gv, out.field, dg, dvg);
-    out.vectorField = compute_pair_vector_contribution(state, tgtPos, k, mat);
-    return out;
+    // Complex-linear inputs: one probe per complex scalar. The stored face
+    // operators only act when the material path is off; the incident Jones
+    // vectors only act without stationary-point selection.
+    if (!f0Mat) {
+        Complex* opSeeds[] = {
+            &seed.face0Operator.m00, &seed.face0Operator.m01,
+            &seed.face0Operator.m10, &seed.face0Operator.m11};
+        Complex* opOutputs[] = {
+            &sg.face0Operator.m00, &sg.face0Operator.m01,
+            &sg.face0Operator.m10, &sg.face0Operator.m11};
+        for (int slot = 0; slot < 4; ++slot) {
+            *opSeeds[slot] = cplx(1.f, 0.f);
+            const Complex3 probe = pair_vector_output_jvp(
+                pi, seed, tgt, zero3, k, 0.f, mat, 0.f);
+            *opSeeds[slot] = cplx_zero();
+            *opOutputs[slot] = cplx_add(
+                *opOutputs[slot], detail::pair_vjp_complex_linear(vecGrad, probe));
+        }
+    }
+    if (!f1Mat) {
+        Complex* opSeeds[] = {
+            &seed.face1Operator.m00, &seed.face1Operator.m01,
+            &seed.face1Operator.m10, &seed.face1Operator.m11};
+        Complex* opOutputs[] = {
+            &sg.face1Operator.m00, &sg.face1Operator.m01,
+            &sg.face1Operator.m10, &sg.face1Operator.m11};
+        for (int slot = 0; slot < 4; ++slot) {
+            *opSeeds[slot] = cplx(1.f, 0.f);
+            const Complex3 probe = pair_vector_output_jvp(
+                pi, seed, tgt, zero3, k, 0.f, mat, 0.f);
+            *opSeeds[slot] = cplx_zero();
+            *opOutputs[slot] = cplx_add(
+                *opOutputs[slot], detail::pair_vjp_complex_linear(vecGrad, probe));
+        }
+    }
+    if (!stationary) {
+        Complex* jonesSeeds[] = {
+            &seed.incidentJones.u, &seed.incidentJones.v,
+            &seed.incidentDerivativeJones.u, &seed.incidentDerivativeJones.v};
+        Complex* jonesOutputs[] = {
+            &sg.incidentJones.u, &sg.incidentJones.v,
+            &sg.incidentDerivativeJones.u, &sg.incidentDerivativeJones.v};
+        const bool hasDerivative =
+            cplx_abs_sqr(pi.incidentDerivativeJones.u) +
+                cplx_abs_sqr(pi.incidentDerivativeJones.v) >
+            0.f;
+        for (int slot = 0; slot < 4; ++slot) {
+            // At an exactly-zero incident normal derivative the slope branch
+            // is gated off in a neighborhood of the primal, so the frozen
+            // gate's zero IS the fixed-topology derivative.
+            if (slot >= 2 && !hasDerivative)
+                continue;
+            *jonesSeeds[slot] = cplx(1.f, 0.f);
+            const Complex3 probe = pair_vector_output_jvp(
+                pi, seed, tgt, zero3, k, 0.f, mat, 0.f);
+            *jonesSeeds[slot] = cplx_zero();
+            *jonesOutputs[slot] = cplx_add(
+                *jonesOutputs[slot], detail::pair_vjp_complex_linear(vecGrad, probe));
+        }
+    }
 }
 
 } // namespace rayd::shared::utd

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <type_traits>
 
 #include <rayd/shared/contracts.h>
 
@@ -33,80 +34,221 @@ constexpr int OWNERSHIP_MIXED    = 1;
 constexpr int UTD_PAIR_VALID_FLAG = 1;
 
 // ---------------------------------------------------------------------------
-// Primitive types
+// Forward-mode dual scalar. The UTD math below is templated on the scalar
+// type; instantiating it with Dual turns the SAME forward implementation into
+// its exact directional derivative (plan 07 AD-4). All discrete branches
+// compare primal values only, so the dual pass follows the float pass's
+// branch decisions exactly (fixed-winner contract). Ties in fmaxf/fminf keep
+// the pass-through side (>= / <=), matching the AD-1 clamp-boundary
+// convention validated by the tests/ad oracle.
 // ---------------------------------------------------------------------------
-struct float3a {
-    float x, y, z;
+struct Dual {
+    float v;
+    float d;
+
+    Dual() = default;
+    UTD_DINLINE constexpr Dual(float value) : v(value), d(0.0f) {}
+    UTD_DINLINE constexpr Dual(float value, float tangent)
+        : v(value), d(tangent) {}
 };
 
-struct Complex {
-    float re, im;
-};
+UTD_DINLINE constexpr Dual operator+(Dual a, Dual b) {
+    return {a.v + b.v, a.d + b.d};
+}
+UTD_DINLINE constexpr Dual operator-(Dual a, Dual b) {
+    return {a.v - b.v, a.d - b.d};
+}
+UTD_DINLINE constexpr Dual operator-(Dual a) { return {-a.v, -a.d}; }
+UTD_DINLINE constexpr Dual operator*(Dual a, Dual b) {
+    return {a.v * b.v, a.d * b.v + a.v * b.d};
+}
+UTD_DINLINE Dual operator/(Dual a, Dual b) {
+    const float inv = 1.0f / b.v;
+    const float q = a.v * inv;
+    return {q, (a.d - q * b.d) * inv};
+}
+UTD_DINLINE Dual& operator+=(Dual& a, Dual b) { a = a + b; return a; }
+UTD_DINLINE Dual& operator-=(Dual& a, Dual b) { a = a - b; return a; }
+UTD_DINLINE Dual& operator*=(Dual& a, Dual b) { a = a * b; return a; }
+UTD_DINLINE Dual& operator/=(Dual& a, Dual b) { a = a / b; return a; }
+UTD_DINLINE constexpr bool operator<(Dual a, Dual b) { return a.v < b.v; }
+UTD_DINLINE constexpr bool operator>(Dual a, Dual b) { return a.v > b.v; }
+UTD_DINLINE constexpr bool operator<=(Dual a, Dual b) { return a.v <= b.v; }
+UTD_DINLINE constexpr bool operator>=(Dual a, Dual b) { return a.v >= b.v; }
+UTD_DINLINE constexpr bool operator==(Dual a, Dual b) { return a.v == b.v; }
+UTD_DINLINE constexpr bool operator!=(Dual a, Dual b) { return a.v != b.v; }
 
-struct Complex3 {
-    Complex x, y, z;
-};
+// Scalar math shims. The float overloads forward to the CRT/CUDA builtins so
+// the float instantiation of the templated math is operation-for-operation
+// identical to the pre-template code; the Dual overloads carry the tangent.
+// (They must exist because the Dual overloads in this namespace would
+// otherwise hide the global functions from unqualified calls.)
+UTD_DINLINE float sqrtf(float x) { return ::sqrtf(x); }
+UTD_DINLINE float fmaxf(float a, float b) { return ::fmaxf(a, b); }
+UTD_DINLINE float fminf(float a, float b) { return ::fminf(a, b); }
+UTD_DINLINE float fabsf(float x) { return ::fabsf(x); }
+UTD_DINLINE float sinf(float x) { return ::sinf(x); }
+UTD_DINLINE float cosf(float x) { return ::cosf(x); }
+UTD_DINLINE float expf(float x) { return ::expf(x); }
+UTD_DINLINE float atan2f(float y, float x) { return ::atan2f(y, x); }
+UTD_DINLINE float roundf(float x) { return ::roundf(x); }
+UTD_DINLINE float floorf(float x) { return ::floorf(x); }
+UTD_DINLINE bool isfinite(float x) { return ::isfinite(x); }
+#ifdef __CUDACC__
+UTD_DINLINE void sincosf(float x, float* s, float* c) { ::sincosf(x, s, c); }
+#else
+// Host fallback keeps the pre-template behavior (separate sinf/cosf calls).
+UTD_DINLINE void sincosf(float x, float* s, float* c) {
+    *s = ::sinf(x);
+    *c = ::cosf(x);
+}
+#endif
 
-struct Jones2 {
-    Complex u, v;
-};
+UTD_DINLINE Dual sqrtf(Dual x) {
+    const float r = ::sqrtf(x.v);
+    return {r, x.v > 0.0f ? 0.5f * x.d / r : 0.0f};
+}
+// Tie convention: the first (pass-through) operand wins at equality, which is
+// the >= / <= subgradient convention of plan 07 AD-1.
+UTD_DINLINE Dual fmaxf(Dual a, Dual b) { return a.v >= b.v ? a : b; }
+UTD_DINLINE Dual fminf(Dual a, Dual b) { return a.v <= b.v ? a : b; }
+UTD_DINLINE Dual fabsf(Dual x) {
+    if (x.v > 0.0f) return x;
+    if (x.v < 0.0f) return {-x.v, -x.d};
+    return {0.0f, 0.0f};
+}
+UTD_DINLINE Dual sinf(Dual x) { return {::sinf(x.v), ::cosf(x.v) * x.d}; }
+UTD_DINLINE Dual cosf(Dual x) { return {::cosf(x.v), -::sinf(x.v) * x.d}; }
+UTD_DINLINE Dual expf(Dual x) {
+    const float e = ::expf(x.v);
+    return {e, e * x.d};
+}
+UTD_DINLINE Dual atan2f(Dual y, Dual x) {
+    const float denom = x.v * x.v + y.v * y.v;
+    const float slope = denom > 0.0f ? 1.0f / denom : 0.0f;
+    return {::atan2f(y.v, x.v), (x.v * y.d - y.v * x.d) * slope};
+}
+UTD_DINLINE Dual roundf(Dual x) { return {::roundf(x.v), 0.0f}; }
+UTD_DINLINE Dual floorf(Dual x) { return {::floorf(x.v), 0.0f}; }
+UTD_DINLINE bool isfinite(Dual x) { return ::isfinite(x.v); }
+UTD_DINLINE void sincosf(Dual x, Dual* s, Dual* c) {
+    float sv;
+    float cv;
+#ifdef __CUDACC__
+    ::sincosf(x.v, &sv, &cv);
+#else
+    sv = ::sinf(x.v);
+    cv = ::cosf(x.v);
+#endif
+    *s = {sv, cv * x.d};
+    *c = {cv, -sv * x.d};
+}
 
-struct JonesOperator {
-    Complex m00, m01, m10, m11;
-};
+UTD_DINLINE constexpr float scalar_value(float x) { return x; }
+UTD_DINLINE constexpr float scalar_value(Dual x) { return x.v; }
+UTD_DINLINE constexpr float scalar_tangent(float) { return 0.0f; }
+UTD_DINLINE constexpr float scalar_tangent(Dual x) { return x.d; }
 
-struct Basis3 {
-    float3a u, v, k;
+// ---------------------------------------------------------------------------
+// Primitive types, templated on the scalar. The float aliases keep every
+// pre-existing consumer (RayD kernels, channel_native transport) compiling
+// and behaving exactly as before.
+// ---------------------------------------------------------------------------
+template <typename T>
+struct Vec3T {
+    T x, y, z;
 };
+using float3a = Vec3T<float>;
 
-struct FaceMaterialParams {
-    float etaR;
-    float muR;
-    float sigma;
-    float gain;
+template <typename T>
+struct ComplexT {
+    T re, im;
+};
+using Complex = ComplexT<float>;
+
+template <typename T>
+struct Complex3T {
+    ComplexT<T> x, y, z;
+};
+using Complex3 = Complex3T<float>;
+
+template <typename T>
+struct Jones2T {
+    ComplexT<T> u, v;
+};
+using Jones2 = Jones2T<float>;
+
+template <typename T>
+struct JonesOperatorT {
+    ComplexT<T> m00, m01, m10, m11;
+};
+using JonesOperator = JonesOperatorT<float>;
+
+template <typename T>
+struct Basis3T {
+    Vec3T<T> u, v, k;
+};
+using Basis3 = Basis3T<float>;
+
+// useFresnel / present are discrete flags and stay float in every
+// instantiation (frozen branches under the fixed-winner contract).
+template <typename T>
+struct FaceMaterialParamsT {
+    T etaR;
+    T muR;
+    T sigma;
+    T gain;
     float useFresnel;
     float present;
 };
+using FaceMaterialParams = FaceMaterialParamsT<float>;
 
-// Full state for a source-edge pair (SoA ??loaded per thread)
-struct PairInputs {
-    float3a edgePos;
-    float3a edgeDir;
-    float3a n0;
-    float3a nn;
-    float   wedgeN;
-    float   edgeLineMin;
-    float   edgeLineMax;
-    float3a sourcePos;
-    Complex incidentField;
-    Complex incidentNormalDerivative;
-    Complex r0;
-    Complex rn;
-    Complex3 incidentVector;
-    Complex3 incidentDerivativeVector;
-    Jones2  incidentJones;
-    Jones2  incidentDerivativeJones;
-    Basis3  incidentBasis;
-    JonesOperator face0Operator;
-    JonesOperator face1Operator;
-    FaceMaterialParams face0Material;
-    FaceMaterialParams face1Material;
+// Full state for a source-edge pair (SoA -> loaded per thread).
+// selectStationaryPoint is a discrete mode flag and stays float.
+template <typename T>
+struct PairInputsT {
+    Vec3T<T> edgePos;
+    Vec3T<T> edgeDir;
+    Vec3T<T> n0;
+    Vec3T<T> nn;
+    T       wedgeN;
+    T       edgeLineMin;
+    T       edgeLineMax;
+    Vec3T<T> sourcePos;
+    ComplexT<T> incidentField;
+    ComplexT<T> incidentNormalDerivative;
+    ComplexT<T> r0;
+    ComplexT<T> rn;
+    Complex3T<T> incidentVector;
+    Complex3T<T> incidentDerivativeVector;
+    Jones2T<T>  incidentJones;
+    Jones2T<T>  incidentDerivativeJones;
+    Basis3T<T>  incidentBasis;
+    JonesOperatorT<T> face0Operator;
+    JonesOperatorT<T> face1Operator;
+    FaceMaterialParamsT<T> face0Material;
+    FaceMaterialParamsT<T> face1Material;
     float   selectStationaryPoint;
 };
+using PairInputs = PairInputsT<float>;
 
-struct PairOutputs {
-    Complex  field;
-    Complex3 vectorField;
+template <typename T>
+struct PairOutputsT {
+    ComplexT<T>  field;
+    Complex3T<T> vectorField;
 };
+using PairOutputs = PairOutputsT<float>;
 
-struct DiffractionOperatorTerms {
-    Complex direct;
-    Complex face0;
-    Complex face1;
-    Complex directDphiPrime;
-    Complex face0DphiPrime;
-    Complex face1DphiPrime;
+template <typename T>
+struct DiffractionOperatorTermsT {
+    ComplexT<T> direct;
+    ComplexT<T> face0;
+    ComplexT<T> face1;
+    ComplexT<T> directDphiPrime;
+    ComplexT<T> face0DphiPrime;
+    ComplexT<T> face1DphiPrime;
 };
+using DiffractionOperatorTerms = DiffractionOperatorTermsT<float>;
 
 struct EdgeAngleCache {
     float3a sourceToEdge;
@@ -141,25 +283,31 @@ struct PairScalarInputs {
     Complex r0, rn;
 };
 
-struct MaterialParams {
+template <typename T>
+struct MaterialParamsT {
     int   useFresnel;
-    float etaR;
-    float muR;
-    float sigma;
-    float gain;
-    float omega;
-    float txPolX;
-    float txPolY;
-    float txPolZ;
+    T etaR;
+    T muR;
+    T sigma;
+    T gain;
+    T omega;
+    T txPolX;
+    T txPolY;
+    T txPolZ;
 };
+using MaterialParams = MaterialParamsT<float>;
 
-// Gradient accumulator for PairInputs (mirrors the differentiable fields)
+// Gradient / tangent accumulator for PairInputs (mirrors the continuous
+// fields). Serves both as the VJP output contract and as the tangent-seed
+// container for the dual-instantiated JVP.
 struct PairInputsGrad {
     float3a edgePos;
     float3a edgeDir;
     float3a n0;
     float3a nn;
     float   wedgeN;
+    float   edgeLineMin;
+    float   edgeLineMax;
     float3a sourcePos;
     Complex incidentField;
     Complex incidentNormalDerivative;
@@ -177,68 +325,142 @@ struct PairInputsGrad {
 };
 
 // ---------------------------------------------------------------------------
-// float3a inline helpers
+// Vec3 inline helpers
 // ---------------------------------------------------------------------------
 UTD_DINLINE float3a make_f3(float x, float y, float z) { return {x, y, z}; }
-UTD_DINLINE float3a f3_zero() { return {0.f, 0.f, 0.f}; }
-UTD_DINLINE float3a f3_add(float3a a, float3a b) { return {a.x+b.x, a.y+b.y, a.z+b.z}; }
-UTD_DINLINE float3a f3_sub(float3a a, float3a b) { return {a.x-b.x, a.y-b.y, a.z-b.z}; }
-UTD_DINLINE float3a f3_mul(float3a a, float s) { return {a.x*s, a.y*s, a.z*s}; }
-UTD_DINLINE float3a f3_neg(float3a a) { return {-a.x, -a.y, -a.z}; }
-UTD_DINLINE float f3_dot(float3a a, float3a b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-UTD_DINLINE float3a f3_cross(float3a a, float3a b) {
-    return {a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x};
+
+// Constant vector inside scalar-templated code (T must be spelled at the
+// call site because the arguments are plain float literals).
+template <typename T>
+UTD_DINLINE Vec3T<T> v3_const(float x, float y, float z) {
+    return {T(x), T(y), T(z)};
 }
-UTD_DINLINE float f3_len(float3a a) { return sqrtf(fmaxf(f3_dot(a,a), 0.f)); }
-UTD_DINLINE float3a f3_div(float3a a, float s) { return {a.x/s, a.y/s, a.z/s}; }
+
+template <typename T = float>
+UTD_DINLINE Vec3T<T> f3_zero() { return {T(0.0f), T(0.0f), T(0.0f)}; }
+
+template <typename T>
+UTD_DINLINE Vec3T<T> f3_add(Vec3T<T> a, Vec3T<T> b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
+template <typename T>
+UTD_DINLINE Vec3T<T> f3_sub(Vec3T<T> a, Vec3T<T> b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+template <typename T, typename S>
+UTD_DINLINE Vec3T<T> f3_mul(Vec3T<T> a, S s) {
+    const T scale = T(s);
+    return {a.x * scale, a.y * scale, a.z * scale};
+}
+template <typename T>
+UTD_DINLINE Vec3T<T> f3_neg(Vec3T<T> a) { return {-a.x, -a.y, -a.z}; }
+template <typename T>
+UTD_DINLINE T f3_dot(Vec3T<T> a, Vec3T<T> b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+template <typename T>
+UTD_DINLINE Vec3T<T> f3_cross(Vec3T<T> a, Vec3T<T> b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x};
+}
+template <typename T>
+UTD_DINLINE T f3_len(Vec3T<T> a) {
+    return sqrtf(fmaxf(f3_dot(a, a), T(0.0f)));
+}
+template <typename T, typename S>
+UTD_DINLINE Vec3T<T> f3_div(Vec3T<T> a, S s) {
+    const T scale = T(s);
+    return {a.x / scale, a.y / scale, a.z / scale};
+}
 
 // ---------------------------------------------------------------------------
 // Complex inline helpers
 // ---------------------------------------------------------------------------
+// Arithmetic literals (int/float) fall through to the float overload so
+// pre-template call sites like cplx(0, 1) keep building a float Complex.
+template <typename T, typename = std::enable_if_t<!std::is_arithmetic_v<T>>>
+UTD_DINLINE ComplexT<T> cplx(T re, T im) { return {re, im}; }
 UTD_DINLINE Complex cplx(float re, float im) { return {re, im}; }
-UTD_DINLINE Complex cplx_zero() { return {0.f, 0.f}; }
-UTD_DINLINE Complex cplx_add(Complex a, Complex b) { return {a.re+b.re, a.im+b.im}; }
-UTD_DINLINE Complex cplx_sub(Complex a, Complex b) { return {a.re-b.re, a.im-b.im}; }
-UTD_DINLINE Complex cplx_mul(Complex a, Complex b) {
-    return {a.re*b.re - a.im*b.im, a.re*b.im + a.im*b.re};
+
+// Constant complex inside scalar-templated code.
+template <typename T>
+UTD_DINLINE ComplexT<T> c_const(float re, float im) {
+    return {T(re), T(im)};
 }
-UTD_DINLINE Complex cplx_mul_real(Complex a, float b) { return {a.re*b, a.im*b}; }
-UTD_DINLINE Complex cplx_div_real(Complex a, float b) { return {a.re/b, a.im/b}; }
-UTD_DINLINE Complex cplx_div(Complex a, Complex b) {
-    float d = b.re*b.re + b.im*b.im + UTD_EPS;
-    return {(a.re*b.re + a.im*b.im)/d, (a.im*b.re - a.re*b.im)/d};
+
+template <typename T = float>
+UTD_DINLINE ComplexT<T> cplx_zero() { return {T(0.0f), T(0.0f)}; }
+
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_add(ComplexT<T> a, ComplexT<T> b) {
+    return {a.re + b.re, a.im + b.im};
 }
-UTD_DINLINE Complex cplx_conj(Complex a) { return {a.re, -a.im}; }
-UTD_DINLINE Complex cplx_exp_phase(float p) {
-#ifdef __CUDACC__
-    float s, c; sincosf(p, &s, &c);
-#else
-    float s = sinf(p), c = cosf(p);
-#endif
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_sub(ComplexT<T> a, ComplexT<T> b) {
+    return {a.re - b.re, a.im - b.im};
+}
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_mul(ComplexT<T> a, ComplexT<T> b) {
+    return {a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
+}
+template <typename T, typename S>
+UTD_DINLINE ComplexT<T> cplx_mul_real(ComplexT<T> a, S b) {
+    const T scale = T(b);
+    return {a.re * scale, a.im * scale};
+}
+template <typename T, typename S>
+UTD_DINLINE ComplexT<T> cplx_div_real(ComplexT<T> a, S b) {
+    const T scale = T(b);
+    return {a.re / scale, a.im / scale};
+}
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_div(ComplexT<T> a, ComplexT<T> b) {
+    const T d = b.re * b.re + b.im * b.im + T(UTD_EPS);
+    return {(a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d};
+}
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_conj(ComplexT<T> a) { return {a.re, -a.im}; }
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_exp_phase(T p) {
+    T s;
+    T c;
+    sincosf(p, &s, &c);
     return {c, s};
 }
-UTD_DINLINE float   cplx_abs_sqr(Complex a) { return a.re*a.re + a.im*a.im; }
-UTD_DINLINE float   cplx_adj_dot(Complex g, Complex v) { return g.re*v.re + g.im*v.im; }
-UTD_DINLINE bool    cplx_any_nonzero(Complex v) { return fabsf(v.re)>0.f || fabsf(v.im)>0.f; }
+template <typename T>
+UTD_DINLINE T cplx_abs_sqr(ComplexT<T> a) { return a.re * a.re + a.im * a.im; }
+UTD_DINLINE float cplx_adj_dot(Complex g, Complex v) {
+    return g.re * v.re + g.im * v.im;
+}
+UTD_DINLINE bool cplx_any_nonzero(Complex v) {
+    return fabsf(v.re) > 0.f || fabsf(v.im) > 0.f;
+}
 
 // ---------------------------------------------------------------------------
 // Complex3 inline helpers
 // ---------------------------------------------------------------------------
-UTD_DINLINE Complex3 c3_zero() { return {cplx_zero(), cplx_zero(), cplx_zero()}; }
-UTD_DINLINE Complex3 c3_add(Complex3 a, Complex3 b) {
-    return {cplx_add(a.x,b.x), cplx_add(a.y,b.y), cplx_add(a.z,b.z)};
+template <typename T = float>
+UTD_DINLINE Complex3T<T> c3_zero() {
+    return {cplx_zero<T>(), cplx_zero<T>(), cplx_zero<T>()};
 }
-UTD_DINLINE Complex3 c3_scale(Complex3 v, Complex c) {
-    return {cplx_mul(v.x,c), cplx_mul(v.y,c), cplx_mul(v.z,c)};
+template <typename T>
+UTD_DINLINE Complex3T<T> c3_add(Complex3T<T> a, Complex3T<T> b) {
+    return {cplx_add(a.x, b.x), cplx_add(a.y, b.y), cplx_add(a.z, b.z)};
 }
-UTD_DINLINE Complex cplx_dot_real(Complex3 v, float3a b) {
-    Complex s = cplx_zero();
+template <typename T>
+UTD_DINLINE Complex3T<T> c3_scale(Complex3T<T> v, ComplexT<T> c) {
+    return {cplx_mul(v.x, c), cplx_mul(v.y, c), cplx_mul(v.z, c)};
+}
+template <typename T>
+UTD_DINLINE ComplexT<T> cplx_dot_real(Complex3T<T> v, Vec3T<T> b) {
+    ComplexT<T> s = cplx_zero<T>();
     s = cplx_add(s, cplx_mul_real(v.x, b.x));
     s = cplx_add(s, cplx_mul_real(v.y, b.y));
     s = cplx_add(s, cplx_mul_real(v.z, b.z));
     return s;
 }
-UTD_DINLINE Complex3 cplx_scale_real(float3a b, Complex c) {
+template <typename T>
+UTD_DINLINE Complex3T<T> cplx_scale_real(Vec3T<T> b, ComplexT<T> c) {
     return {cplx_mul_real(c, b.x), cplx_mul_real(c, b.y), cplx_mul_real(c, b.z)};
 }
 UTD_DINLINE bool c3_grad_any_nonzero(Complex3 v) {
@@ -248,28 +470,47 @@ UTD_DINLINE bool c3_grad_any_nonzero(Complex3 v) {
 // ---------------------------------------------------------------------------
 // Jones inline helpers
 // ---------------------------------------------------------------------------
-UTD_DINLINE Jones2 jones_zero() { return {cplx_zero(), cplx_zero()}; }
-UTD_DINLINE Jones2 jones_add(Jones2 a, Jones2 b) { return {cplx_add(a.u,b.u), cplx_add(a.v,b.v)}; }
-UTD_DINLINE Jones2 jones_scale(Jones2 v, Complex c) { return {cplx_mul(v.u,c), cplx_mul(v.v,c)}; }
+template <typename T = float>
+UTD_DINLINE Jones2T<T> jones_zero() { return {cplx_zero<T>(), cplx_zero<T>()}; }
+template <typename T>
+UTD_DINLINE Jones2T<T> jones_add(Jones2T<T> a, Jones2T<T> b) {
+    return {cplx_add(a.u, b.u), cplx_add(a.v, b.v)};
+}
+template <typename T>
+UTD_DINLINE Jones2T<T> jones_scale(Jones2T<T> v, ComplexT<T> c) {
+    return {cplx_mul(v.u, c), cplx_mul(v.v, c)};
+}
 
-UTD_DINLINE JonesOperator jop_zero() { return {cplx_zero(),cplx_zero(),cplx_zero(),cplx_zero()}; }
-UTD_DINLINE JonesOperator jop_identity() { return {cplx(1,0),cplx_zero(),cplx_zero(),cplx(1,0)}; }
-UTD_DINLINE JonesOperator jop_add(JonesOperator a, JonesOperator b) {
-    return {cplx_add(a.m00,b.m00), cplx_add(a.m01,b.m01),
-            cplx_add(a.m10,b.m10), cplx_add(a.m11,b.m11)};
+template <typename T = float>
+UTD_DINLINE JonesOperatorT<T> jop_zero() {
+    return {cplx_zero<T>(), cplx_zero<T>(), cplx_zero<T>(), cplx_zero<T>()};
 }
-UTD_DINLINE JonesOperator jop_scale(JonesOperator v, Complex c) {
-    return {cplx_mul(v.m00,c), cplx_mul(v.m01,c),
-            cplx_mul(v.m10,c), cplx_mul(v.m11,c)};
+template <typename T = float>
+UTD_DINLINE JonesOperatorT<T> jop_identity() {
+    return {c_const<T>(1.f, 0.f), cplx_zero<T>(), cplx_zero<T>(),
+            c_const<T>(1.f, 0.f)};
 }
-UTD_DINLINE Jones2 apply_jop(Jones2 v, JonesOperator op) {
-    return {cplx_add(cplx_mul(op.m00,v.u), cplx_mul(op.m01,v.v)),
-            cplx_add(cplx_mul(op.m10,v.u), cplx_mul(op.m11,v.v))};
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> jop_add(JonesOperatorT<T> a, JonesOperatorT<T> b) {
+    return {cplx_add(a.m00, b.m00), cplx_add(a.m01, b.m01),
+            cplx_add(a.m10, b.m10), cplx_add(a.m11, b.m11)};
 }
-UTD_DINLINE Complex3 vector_from_jones(Jones2 v, Basis3 b) {
+template <typename T>
+UTD_DINLINE JonesOperatorT<T> jop_scale(JonesOperatorT<T> v, ComplexT<T> c) {
+    return {cplx_mul(v.m00, c), cplx_mul(v.m01, c),
+            cplx_mul(v.m10, c), cplx_mul(v.m11, c)};
+}
+template <typename T>
+UTD_DINLINE Jones2T<T> apply_jop(Jones2T<T> v, JonesOperatorT<T> op) {
+    return {cplx_add(cplx_mul(op.m00, v.u), cplx_mul(op.m01, v.v)),
+            cplx_add(cplx_mul(op.m10, v.u), cplx_mul(op.m11, v.v))};
+}
+template <typename T>
+UTD_DINLINE Complex3T<T> vector_from_jones(Jones2T<T> v, Basis3T<T> b) {
     return c3_add(cplx_scale_real(b.u, v.u), cplx_scale_real(b.v, v.v));
 }
-UTD_DINLINE Jones2 jones_from_vector(Complex3 v, Basis3 b) {
+template <typename T>
+UTD_DINLINE Jones2T<T> jones_from_vector(Complex3T<T> v, Basis3T<T> b) {
     return {cplx_dot_real(v, b.u), cplx_dot_real(v, b.v)};
 }
 
@@ -280,6 +521,7 @@ UTD_DINLINE PairInputsGrad pig_zero() {
     PairInputsGrad g{};
     g.edgePos = f3_zero(); g.edgeDir = f3_zero();
     g.n0 = f3_zero(); g.nn = f3_zero(); g.wedgeN = 0.f;
+    g.edgeLineMin = 0.f; g.edgeLineMax = 0.f;
     g.sourcePos = f3_zero();
     g.incidentField = cplx_zero(); g.incidentNormalDerivative = cplx_zero();
     g.r0 = cplx_zero(); g.rn = cplx_zero();
@@ -287,12 +529,114 @@ UTD_DINLINE PairInputsGrad pig_zero() {
     g.incidentJones = jones_zero(); g.incidentDerivativeJones = jones_zero();
     g.incidentBasis = {f3_zero(), f3_zero(), f3_zero()};
     g.face0Operator = jop_zero(); g.face1Operator = jop_zero();
-    g.face0Material = {0,0,0,0,0,0}; g.face1Material = {0,0,0,0,0,0};
+    g.face0Material = {0, 0, 0, 0, 0, 0}; g.face1Material = {0, 0, 0, 0, 0, 0};
     return g;
 }
 
 // ---------------------------------------------------------------------------
-// Adjoint helper macros for complex mul
+// Dual seeding helpers: value + tangent -> dual-typed structures. These are
+// what turns the templated forward into an exact JVP.
+// ---------------------------------------------------------------------------
+UTD_DINLINE Dual dual_seed(float value, float tangent) { return {value, tangent}; }
+UTD_DINLINE Vec3T<Dual> dual_seed(float3a value, float3a tangent) {
+    return {{value.x, tangent.x}, {value.y, tangent.y}, {value.z, tangent.z}};
+}
+UTD_DINLINE ComplexT<Dual> dual_seed(Complex value, Complex tangent) {
+    return {{value.re, tangent.re}, {value.im, tangent.im}};
+}
+UTD_DINLINE Complex3T<Dual> dual_seed(Complex3 value, Complex3 tangent) {
+    return {dual_seed(value.x, tangent.x), dual_seed(value.y, tangent.y),
+            dual_seed(value.z, tangent.z)};
+}
+UTD_DINLINE Jones2T<Dual> dual_seed(Jones2 value, Jones2 tangent) {
+    return {dual_seed(value.u, tangent.u), dual_seed(value.v, tangent.v)};
+}
+UTD_DINLINE JonesOperatorT<Dual> dual_seed(JonesOperator value, JonesOperator tangent) {
+    return {dual_seed(value.m00, tangent.m00), dual_seed(value.m01, tangent.m01),
+            dual_seed(value.m10, tangent.m10), dual_seed(value.m11, tangent.m11)};
+}
+UTD_DINLINE Basis3T<Dual> dual_seed(Basis3 value, Basis3 tangent) {
+    return {dual_seed(value.u, tangent.u), dual_seed(value.v, tangent.v),
+            dual_seed(value.k, tangent.k)};
+}
+UTD_DINLINE FaceMaterialParamsT<Dual> dual_seed(
+    FaceMaterialParams value, FaceMaterialParams tangent) {
+    return {{value.etaR, tangent.etaR},
+            {value.muR, tangent.muR},
+            {value.sigma, tangent.sigma},
+            {value.gain, tangent.gain},
+            value.useFresnel,
+            value.present};
+}
+UTD_DINLINE Complex dual_tangent(ComplexT<Dual> value) {
+    return {value.re.d, value.im.d};
+}
+UTD_DINLINE Complex3 dual_tangent(Complex3T<Dual> value) {
+    return {dual_tangent(value.x), dual_tangent(value.y), dual_tangent(value.z)};
+}
+UTD_DINLINE Complex dual_value(ComplexT<Dual> value) {
+    return {value.re.v, value.im.v};
+}
+UTD_DINLINE Complex3 dual_value(Complex3T<Dual> value) {
+    return {dual_value(value.x), dual_value(value.y), dual_value(value.z)};
+}
+UTD_DINLINE Vec3T<Dual> dual_const3(float3a value) {
+    return dual_seed(value, f3_zero());
+}
+
+// Seed the full pair state: every continuous field of the tangent enters the
+// dual instantiation; the discrete flags are copied.
+UTD_DINLINE PairInputsT<Dual> pair_inputs_seed(
+    const PairInputs& value, const PairInputsGrad& tangent) {
+    PairInputsT<Dual> out;
+    out.edgePos = dual_seed(value.edgePos, tangent.edgePos);
+    out.edgeDir = dual_seed(value.edgeDir, tangent.edgeDir);
+    out.n0 = dual_seed(value.n0, tangent.n0);
+    out.nn = dual_seed(value.nn, tangent.nn);
+    out.wedgeN = {value.wedgeN, tangent.wedgeN};
+    out.edgeLineMin = {value.edgeLineMin, tangent.edgeLineMin};
+    out.edgeLineMax = {value.edgeLineMax, tangent.edgeLineMax};
+    out.sourcePos = dual_seed(value.sourcePos, tangent.sourcePos);
+    out.incidentField = dual_seed(value.incidentField, tangent.incidentField);
+    out.incidentNormalDerivative = dual_seed(
+        value.incidentNormalDerivative, tangent.incidentNormalDerivative);
+    out.r0 = dual_seed(value.r0, tangent.r0);
+    out.rn = dual_seed(value.rn, tangent.rn);
+    out.incidentVector = dual_seed(value.incidentVector, tangent.incidentVector);
+    out.incidentDerivativeVector = dual_seed(
+        value.incidentDerivativeVector, tangent.incidentDerivativeVector);
+    out.incidentJones = dual_seed(value.incidentJones, tangent.incidentJones);
+    out.incidentDerivativeJones = dual_seed(
+        value.incidentDerivativeJones, tangent.incidentDerivativeJones);
+    out.incidentBasis = dual_seed(value.incidentBasis, tangent.incidentBasis);
+    out.face0Operator = dual_seed(value.face0Operator, tangent.face0Operator);
+    out.face1Operator = dual_seed(value.face1Operator, tangent.face1Operator);
+    out.face0Material = dual_seed(value.face0Material, tangent.face0Material);
+    out.face1Material = dual_seed(value.face1Material, tangent.face1Material);
+    out.selectStationaryPoint = value.selectStationaryPoint;
+    return out;
+}
+
+// Seed the shared material params: omega is the only continuous field the
+// pair math reads (the tx polarization is a frozen unit vector).
+UTD_DINLINE MaterialParamsT<Dual> material_params_seed(
+    const MaterialParams& value, float tangentOmega) {
+    MaterialParamsT<Dual> out;
+    out.useFresnel = value.useFresnel;
+    out.etaR = value.etaR;
+    out.muR = value.muR;
+    out.sigma = value.sigma;
+    out.gain = value.gain;
+    out.omega = {value.omega, tangentOmega};
+    out.txPolX = value.txPolX;
+    out.txPolY = value.txPolY;
+    out.txPolZ = value.txPolZ;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Adjoint helper macros for complex mul (float-only reverse-mode building
+// blocks; consumed by channel_native's field companions)
 // ---------------------------------------------------------------------------
 UTD_DINLINE void adj_cplx_mul(Complex a, Complex b, Complex gO,
                               Complex& gA, Complex& gB) {
@@ -306,14 +650,6 @@ UTD_DINLINE void adj_cplx_mul_real(Complex a, float b, Complex gO,
     gA.re += gO.re*b;
     gA.im += gO.im*b;
     gB += cplx_adj_dot(gO, a);
-}
-UTD_DINLINE void adj_cplx_div(Complex a, Complex b, Complex gO,
-                              Complex& gA, Complex& gB) {
-    Complex invB = cplx_div(cplx(1.f, 0.f), b);
-    Complex coeffB = cplx_mul_real(cplx_mul(a, cplx_mul(invB, invB)), -1.f);
-    gA = cplx_add(gA, cplx_div(gO, cplx_conj(b)));
-    gB.re += gO.re * coeffB.re + gO.im * coeffB.im;
-    gB.im += -gO.re * coeffB.im + gO.im * coeffB.re;
 }
 UTD_DINLINE void adj_cplx_scale_real(float3a basis, Complex coeff,
                                      Complex3 gO, float3a& gBasis, Complex& gCoeff) {
@@ -332,139 +668,6 @@ UTD_DINLINE void adj_cplx_dot_real(Complex3 v, float3a b, Complex gO,
     gB.y += cplx_adj_dot(gO, v.y);
     gB.z += cplx_adj_dot(gO, v.z);
 }
-UTD_DINLINE void adj_c3_scale(Complex3 v, Complex c, Complex3 gO,
-                              Complex3& gV, Complex& gC) {
-    Complex gVx=cplx_zero(), gCx=cplx_zero();
-    adj_cplx_mul(v.x, c, gO.x, gVx, gCx);
-    gV.x = cplx_add(gV.x, gVx); gC = cplx_add(gC, gCx);
-    Complex gVy=cplx_zero(), gCy=cplx_zero();
-    adj_cplx_mul(v.y, c, gO.y, gVy, gCy);
-    gV.y = cplx_add(gV.y, gVy); gC = cplx_add(gC, gCy);
-    Complex gVz=cplx_zero(), gCz=cplx_zero();
-    adj_cplx_mul(v.z, c, gO.z, gVz, gCz);
-    gV.z = cplx_add(gV.z, gVz); gC = cplx_add(gC, gCz);
-}
-
-UTD_DINLINE void adj_jones_add(Jones2 gO, Jones2& gA, Jones2& gB) {
-    gA.u = cplx_add(gA.u, gO.u);
-    gA.v = cplx_add(gA.v, gO.v);
-    gB.u = cplx_add(gB.u, gO.u);
-    gB.v = cplx_add(gB.v, gO.v);
-}
-
-UTD_DINLINE void adj_jones_scale(Jones2 v, Complex c, Jones2 gO,
-                                 Jones2& gV, Complex& gC) {
-    Complex gVu = cplx_zero(), gCu = cplx_zero();
-    adj_cplx_mul(v.u, c, gO.u, gVu, gCu);
-    gV.u = cplx_add(gV.u, gVu);
-    gC = cplx_add(gC, gCu);
-
-    Complex gVv = cplx_zero(), gCv = cplx_zero();
-    adj_cplx_mul(v.v, c, gO.v, gVv, gCv);
-    gV.v = cplx_add(gV.v, gVv);
-    gC = cplx_add(gC, gCv);
-}
-
-UTD_DINLINE void adj_apply_jop(Jones2 v, JonesOperator op, Jones2 gO,
-                               Jones2& gV, JonesOperator& gOp) {
-    Complex gVU = cplx_zero(), gVV = cplx_zero();
-
-    Complex gM00 = cplx_zero(), gM01 = cplx_zero();
-    adj_cplx_mul(op.m00, v.u, gO.u, gM00, gVU);
-    gOp.m00 = cplx_add(gOp.m00, gM00);
-    Complex gM01b = cplx_zero(), gVVb = cplx_zero();
-    adj_cplx_mul(op.m01, v.v, gO.u, gM01b, gVVb);
-    gOp.m01 = cplx_add(gOp.m01, gM01b);
-    gVV = cplx_add(gVV, gVVb);
-
-    Complex gM10 = cplx_zero(), gM11 = cplx_zero();
-    Complex gVUb = cplx_zero(), gVVc = cplx_zero();
-    adj_cplx_mul(op.m10, v.u, gO.v, gM10, gVUb);
-    adj_cplx_mul(op.m11, v.v, gO.v, gM11, gVVc);
-    gOp.m10 = cplx_add(gOp.m10, gM10);
-    gOp.m11 = cplx_add(gOp.m11, gM11);
-    gVU = cplx_add(gVU, gVUb);
-    gVV = cplx_add(gVV, gVVc);
-
-    gV.u = cplx_add(gV.u, gVU);
-    gV.v = cplx_add(gV.v, gVV);
-}
-
-UTD_DINLINE void adj_vector_from_jones(Jones2 v, Basis3 b, Complex3 gO,
-                                       Jones2& gV, Basis3& gB) {
-    Complex gCoeff = cplx_zero();
-    adj_cplx_scale_real(b.u, v.u, gO, gB.u, gCoeff);
-    gV.u = cplx_add(gV.u, gCoeff);
-    gCoeff = cplx_zero();
-    adj_cplx_scale_real(b.v, v.v, gO, gB.v, gCoeff);
-    gV.v = cplx_add(gV.v, gCoeff);
-}
-
-UTD_DINLINE void adj_jones_from_vector(Complex3 v, Basis3 b, Jones2 gO,
-                                       Complex3& gV, Basis3& gB) {
-    adj_cplx_dot_real(v, b.u, gO.u, gV, gB.u);
-    adj_cplx_dot_real(v, b.v, gO.v, gV, gB.v);
-}
-
-UTD_DINLINE void adj_jop_add(JonesOperator gO, JonesOperator& gA, JonesOperator& gB) {
-    gA.m00 = cplx_add(gA.m00, gO.m00);
-    gA.m01 = cplx_add(gA.m01, gO.m01);
-    gA.m10 = cplx_add(gA.m10, gO.m10);
-    gA.m11 = cplx_add(gA.m11, gO.m11);
-    gB.m00 = cplx_add(gB.m00, gO.m00);
-    gB.m01 = cplx_add(gB.m01, gO.m01);
-    gB.m10 = cplx_add(gB.m10, gO.m10);
-    gB.m11 = cplx_add(gB.m11, gO.m11);
-}
-
-UTD_DINLINE void adj_jop_scale(JonesOperator v, Complex c, JonesOperator gO,
-                               JonesOperator& gV, Complex& gC) {
-    Complex gElem = cplx_zero(), gCoeff = cplx_zero();
-    adj_cplx_mul(v.m00, c, gO.m00, gElem, gCoeff);
-    gV.m00 = cplx_add(gV.m00, gElem);
-    gC = cplx_add(gC, gCoeff);
-
-    gElem = cplx_zero(); gCoeff = cplx_zero();
-    adj_cplx_mul(v.m01, c, gO.m01, gElem, gCoeff);
-    gV.m01 = cplx_add(gV.m01, gElem);
-    gC = cplx_add(gC, gCoeff);
-
-    gElem = cplx_zero(); gCoeff = cplx_zero();
-    adj_cplx_mul(v.m10, c, gO.m10, gElem, gCoeff);
-    gV.m10 = cplx_add(gV.m10, gElem);
-    gC = cplx_add(gC, gCoeff);
-
-    gElem = cplx_zero(); gCoeff = cplx_zero();
-    adj_cplx_mul(v.m11, c, gO.m11, gElem, gCoeff);
-    gV.m11 = cplx_add(gV.m11, gElem);
-    gC = cplx_add(gC, gCoeff);
-}
-
-UTD_DINLINE void adj_assemble_diff_operator(
-    Complex freeTerm,
-    Complex face0Term,
-    Complex face1Term,
-    JonesOperator face0Op,
-    JonesOperator face1Op,
-    JonesOperator gO,
-    Complex& gFreeTerm,
-    Complex& gFace0Term,
-    Complex& gFace1Term,
-    JonesOperator& gFace0Op,
-    JonesOperator& gFace1Op)
-{
-    gFreeTerm = cplx_add(gFreeTerm, gO.m00);
-    gFreeTerm = cplx_add(gFreeTerm, gO.m11);
-
-    Complex gCoeff = cplx_zero();
-    adj_jop_scale(face0Op, face0Term, gO, gFace0Op, gCoeff);
-    gFace0Term = cplx_add(gFace0Term, gCoeff);
-
-    gCoeff = cplx_zero();
-    adj_jop_scale(face1Op, face1Term, gO, gFace1Op, gCoeff);
-    gFace1Term = cplx_add(gFace1Term, gCoeff);
-}
-
 } // namespace rayd::shared::utd
 
 // Temporary source-compatibility bridge for downstream code that included the
