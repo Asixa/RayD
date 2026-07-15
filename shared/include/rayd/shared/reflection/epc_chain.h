@@ -33,6 +33,16 @@ namespace rayd::shared::reflection {
 constexpr float kEpcChainParallelTolerance = 1.0e-7f;
 constexpr float kEpcChainSegmentTolerance = 1.0e-4f;
 constexpr float kEpcChainMinNorm = 1.0e-20f;
+// epc_normalize clamps the squared norm at this floor (bit-identical to the
+// discovery raygen's normalize3); its derivative below must branch on the
+// same comparison the forward takes.
+constexpr float kEpcChainNormalizeMinSquaredNorm = 1.0e-12f;
+// The consumers build the plane-normal / face-normal tables that the vertex
+// chaining below differentiates as raw / fmaxf(|raw|, kEpcFaceNormalMinNorm)
+// (channel_native's deterministic_normalize_vec3 with eps = 1e-6). This
+// constant mirrors that eps so the face-normal derivative takes the same
+// clamp branch as the table build; keep the two in sync.
+constexpr float kEpcFaceNormalMinNorm = 1.0e-6f;
 
 // Bit-identical to the discovery raygen's normalize3 (reflection_epc_device.cuh):
 // the adjoint re-solves the chain from the very inputs the forward consumed, so
@@ -41,7 +51,8 @@ constexpr float kEpcChainMinNorm = 1.0e-20f;
 // forward accepted. rsqrtf has no host counterpart, hence the guarded fallback;
 // only the device path has to match.
 RAYD_SHARED_EPC_INLINE math::Vec3f epc_normalize(math::Vec3f value) {
-    const float squared = fmaxf(math::squared_norm(value), 1.0e-12f);
+    const float squared =
+        fmaxf(math::squared_norm(value), kEpcChainNormalizeMinSquaredNorm);
 #if defined(__CUDACC__)
     return math::scale(value, rsqrtf(squared));
 #else
@@ -53,16 +64,39 @@ RAYD_SHARED_EPC_INLINE math::Vec3f epc_normalize(math::Vec3f value) {
 // Adjoint companions of the forward primitives.
 // --------------------------------------------------------------------------
 
-// unit = raw / |raw|. The Jacobian is the projection off `unit`, scaled by
-// 1/|raw|; it is idempotent, so re-normalizing an already-unit input (which the
-// discovery kernel does) leaves the adjoint unchanged.
+// Adjoint of epc_normalize. Above the clamp, unit = raw / |raw| and the
+// Jacobian is the projection off `unit`, scaled by 1/|raw|; it is idempotent,
+// so re-normalizing an already-unit input (which the discovery kernel does)
+// leaves the adjoint unchanged. At or below the clamp, the primal is the
+// constant-denominator scale v / sqrt(kEpcChainNormalizeMinSquaredNorm),
+// whose exact Jacobian is that same constant times the identity: the
+// cotangent passes through whole, with no projection and no 1/|raw| blow-up.
 RAYD_SHARED_EPC_INLINE math::Vec3f adj_normalize(
     math::Vec3f raw,
     math::Vec3f unit,
     math::Vec3f grad_unit) {
+    const float squared = math::squared_norm(raw);
+    if (squared <= kEpcChainNormalizeMinSquaredNorm) {
+        return math::scale(
+            grad_unit, 1.0f / sqrtf(kEpcChainNormalizeMinSquaredNorm));
+    }
+    const math::Vec3f tangential = math::subtract(
+        grad_unit, math::scale(unit, math::dot(grad_unit, unit)));
+    return math::scale(tangential, 1.0f / sqrtf(squared));
+}
+
+// Adjoint of the face-normal table normalize (see kEpcFaceNormalMinNorm):
+// unit = raw / fmaxf(|raw|, kEpcFaceNormalMinNorm). Above the clamp this is
+// the standard projection Jacobian scaled by 1/|raw|; at or below the clamp
+// the primal is the constant scale v / kEpcFaceNormalMinNorm, so the exact
+// Jacobian is the identity over the same frozen denominator.
+RAYD_SHARED_EPC_INLINE math::Vec3f adj_face_table_normalize(
+    math::Vec3f raw,
+    math::Vec3f unit,
+    math::Vec3f grad_unit) {
     const float norm = sqrtf(math::squared_norm(raw));
-    if (norm <= kEpcChainMinNorm) {
-        return math::make_vec3(0.0f, 0.0f, 0.0f);
+    if (norm <= kEpcFaceNormalMinNorm) {
+        return math::scale(grad_unit, 1.0f / kEpcFaceNormalMinNorm);
     }
     const math::Vec3f tangential = math::subtract(
         grad_unit, math::scale(unit, math::dot(grad_unit, unit)));
@@ -155,9 +189,11 @@ RAYD_SHARED_EPC_INLINE void adj_segment_length(
     grad_start = math::subtract(grad_start, direction);
 }
 
-// Unit face normal normalize(cross(v1 - v0, v2 - v0)); zero on the same
-// degenerate guard as adj_normalize, so the forward value, the tangent and
-// the adjoint all agree on which branch a degenerate triangle takes.
+// Unit face normal normalize(cross(v1 - v0, v2 - v0)), computed exactly as
+// the consumers build the face-normal table: the denominator is clamped at
+// kEpcFaceNormalMinNorm, so a sliver face yields the same short (non-unit)
+// vector the table stores, and the forward value, the tangent and the adjoint
+// all agree on which branch a degenerate triangle takes.
 RAYD_SHARED_EPC_INLINE math::Vec3f face_unit_normal(
     math::Vec3f v0,
     math::Vec3f v1,
@@ -165,10 +201,7 @@ RAYD_SHARED_EPC_INLINE math::Vec3f face_unit_normal(
     const math::Vec3f raw =
         math::cross(math::subtract(v1, v0), math::subtract(v2, v0));
     const float norm = sqrtf(math::squared_norm(raw));
-    if (norm <= kEpcChainMinNorm) {
-        return math::make_vec3(0.0f, 0.0f, 0.0f);
-    }
-    return math::scale(raw, 1.0f / norm);
+    return math::scale(raw, 1.0f / fmaxf(norm, kEpcFaceNormalMinNorm));
 }
 
 // The scene's face normal is normalize(cross(v1 - v0, v2 - v0)) and its anchor
@@ -186,7 +219,8 @@ RAYD_SHARED_EPC_INLINE void adj_face_normal(
     const math::Vec3f edge1 = math::subtract(v1, v0);
     const math::Vec3f edge2 = math::subtract(v2, v0);
     const math::Vec3f raw = math::cross(edge1, edge2);
-    const math::Vec3f grad_raw = adj_normalize(raw, unit_normal, grad_unit_normal);
+    const math::Vec3f grad_raw =
+        adj_face_table_normalize(raw, unit_normal, grad_unit_normal);
     // c = e1 x e2  =>  g_e1 = e2 x g_c, g_e2 = g_c x e1.
     const math::Vec3f grad_edge1 = math::cross(edge2, grad_raw);
     const math::Vec3f grad_edge2 = math::cross(grad_raw, edge1);
@@ -197,8 +231,8 @@ RAYD_SHARED_EPC_INLINE void adj_face_normal(
 
 // Forward-mode companion of adj_face_normal: the tangent of the unit face
 // normal under vertex tangents. The normalize Jacobian is symmetric, so the
-// shared adj_normalize serves both directions and the pair stays exactly
-// transposed.
+// shared adj_face_table_normalize serves both directions and the pair stays
+// exactly transposed.
 RAYD_SHARED_EPC_INLINE math::Vec3f jvp_face_normal(
     math::Vec3f v0,
     math::Vec3f v1,
@@ -210,14 +244,12 @@ RAYD_SHARED_EPC_INLINE math::Vec3f jvp_face_normal(
     const math::Vec3f edge2 = math::subtract(v2, v0);
     const math::Vec3f raw = math::cross(edge1, edge2);
     const float norm = sqrtf(math::squared_norm(raw));
-    if (norm <= kEpcChainMinNorm) {
-        return math::make_vec3(0.0f, 0.0f, 0.0f);
-    }
-    const math::Vec3f unit = math::scale(raw, 1.0f / norm);
+    const math::Vec3f unit =
+        math::scale(raw, 1.0f / fmaxf(norm, kEpcFaceNormalMinNorm));
     const math::Vec3f tangent_raw = math::add(
         math::cross(math::subtract(tangent_v1, tangent_v0), edge2),
         math::cross(edge1, math::subtract(tangent_v2, tangent_v0)));
-    return adj_normalize(raw, unit, tangent_raw);
+    return adj_face_table_normalize(raw, unit, tangent_raw);
 }
 
 // --------------------------------------------------------------------------
@@ -447,8 +479,8 @@ RAYD_SHARED_EPC_INLINE void adj_solve_epc_chain(
     // 4. The forward normalizes the incoming plane normal once and uses that unit
     //    vector everywhere (mirror, intersection, emitted normal), so every
     //    contribution to it is complete only here. The Jacobian scales by the
-    //    RAW normal's length, which is why the raw array is needed and not just
-    //    the unit vector the chain kept.
+    //    RAW normal's (clamped) length, which is why the raw array is needed
+    //    and not just the unit vector the chain kept.
     for (int bounce = 0; bounce < bounces; ++bounce) {
         grad_plane_normals[bounce] = adj_normalize(
             plane_normals[bounce],
