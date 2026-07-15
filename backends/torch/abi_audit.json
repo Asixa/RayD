@@ -97,7 +97,7 @@
     },
     "integration_h": {
       "contains_aten_tensor": true,
-      "extern_c_entry_count": 12,
+      "extern_c_entry_count": 21,
       "independent_stable_c_abi": false
     }
   },
@@ -137,6 +137,6 @@
       "intersection_valid"
     ]
   },
-  "source_sha256": "676255360a1b4ca901f68ad4ba10d4d771c8f084fb6627b3c9e782ad897fea0b",
+  "source_sha256": "a73f34d7b295ebe9d2e29d68ee5bd6055c0f6d17d61934d4dea53152d1cbb3e7",
   "version": 1
 }

@@ -159,49 +159,6 @@ extern "C" int64_t rayd_torch_native_trace_reflections_jvp(
     at::Tensor *outputs,
     int64_t output_capacity);
 
-// Single-winner EPC reflection field forward. Emits field_real, field_imag,
-// path_length, valid, resolved_prim_id, tape_prim_id, tape_barycentric,
-// active_ctx. path_length doubles as tape_t for the backward/jvp companions.
-extern "C" int64_t rayd_torch_native_trace_refl_epc_field_forward(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    int64_t max_bounces,
-    at::Tensor *outputs,
-    int64_t output_capacity);
-
-extern "C" int64_t rayd_torch_native_refl_epc_backward(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *tape_t,
-    const at::Tensor *grad_field_real,
-    const at::Tensor *grad_field_imag,
-    const at::Tensor *grad_path_length,
-    bool need_grad_vertices,
-    bool need_grad_source,
-    bool need_grad_receiver,
-    at::Tensor *outputs,
-    int64_t output_capacity);
-
-extern "C" int64_t rayd_torch_native_refl_epc_jvp(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *tape_t,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_source,
-    const at::Tensor *tangent_receiver,
-    at::Tensor *outputs,
-    int64_t output_capacity);
-
 extern "C" int64_t rayd_torch_native_reflection_accumulation_forward(
     int64_t scene_handle,
     const at::Tensor *ray_o,
@@ -299,7 +256,10 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
     int64_t output_capacity);
 
 // Adjoint / tangent of the scene's unit face-normal table
-// normalize(cross(v1 - v0, v2 - v0)) with respect to the global vertex table.
+// cross(v1 - v0, v2 - v0) / fmaxf(|cross|, 1e-6) with respect to the global
+// vertex table. The 1e-6 denominator clamp matches how the consumer builds
+// the table from the raw edge-record cross products (kEpcFaceNormalMinNorm
+// in shared/reflection/epc_chain.h).
 
 extern "C" int64_t rayd_torch_native_scene_face_normals_backward(
     int64_t scene_handle,

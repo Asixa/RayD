@@ -81,9 +81,9 @@ void require_vec3f_strided(const at::Tensor &tensor, const char *name) {
 }
 
 // Host-side validation for the differentiable C ABI entry points
-// (rayd_torch_native_trace_reflections_backward / _jvp and
-// rayd_torch_native_refl_epc_backward / _jvp). These run off the hot
-// forward path; the existing forward entries are untouched.
+// (rayd_torch_native_trace_reflections_backward / _jvp and the reflection
+// EPC path companions). These run off the hot forward path; the existing
+// forward entries are untouched.
 
 void require_ray_batch(const at::Tensor &tensor, int64_t ray_count, const char *name) {
     if (tensor.size(0) != ray_count)
@@ -256,24 +256,6 @@ void require_optional_chain_grad_vec3(
     if (grad->size(1) != bounce_count)
         throw std::runtime_error(std::string(name) + " must match the sequence bounce count.");
     require_last_dim(*grad, 3, name);
-}
-
-void require_epc_tape(
-    const at::Tensor &tape_prim_id,
-    const at::Tensor &tape_barycentric,
-    const at::Tensor &tape_t,
-    int64_t ray_count) {
-    require_flat_i32(tape_prim_id, "tape_prim_id");
-    require_ray_batch(tape_prim_id, ray_count, "tape_prim_id");
-    require_cuda(tape_barycentric, "tape_barycentric");
-    require_contiguous(tape_barycentric, "tape_barycentric");
-    require_dtype(tape_barycentric, at::kFloat, "tape_barycentric");
-    require_rank(tape_barycentric, 2, "tape_barycentric");
-    require_ray_batch(tape_barycentric, ray_count, "tape_barycentric");
-    if (ray_count > 0 && tape_barycentric.size(1) != 2 && tape_barycentric.size(1) != 3)
-        throw std::runtime_error("tape_barycentric last dimension must be 2 or 3.");
-    require_flat_f32(tape_t, "tape_t");
-    require_ray_batch(tape_t, ray_count, "tape_t");
 }
 
 void require_state_width(const at::Tensor &tensor, int64_t state_count, const char *name) {
@@ -2651,164 +2633,6 @@ extern "C" int64_t rayd_torch_native_scene_face_normals_jvp(
         tangent_vertices, scene.global_vertices, "tangent_vertices");
     outputs[0] = scene_face_normals_jvp_cuda(
         scene.global_vertices, scene.global_faces, *tangent_vertices);
-    return kOutputCount;
-}
-
-extern "C" int64_t rayd_torch_native_trace_refl_epc_field_forward(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    int64_t max_bounces,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
-        if (tensor == nullptr)
-            throw std::runtime_error(std::string("rayd_torch_native_trace_refl_epc_field_forward received null ") + name);
-        return *tensor;
-    };
-    constexpr int64_t kOutputCount = 8;
-    if (outputs == nullptr || output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_trace_refl_epc_field_forward output capacity is too small");
-    std::vector<at::Tensor> result = trace_refl_epc_field_forward_native_impl(
-        scene_handle,
-        required(source, "source"),
-        required(receiver, "receiver"),
-        active,
-        max_bounces);
-    if (static_cast<int64_t>(result.size()) != kOutputCount)
-        throw std::runtime_error("rayd_torch_native_trace_refl_epc_field_forward returned an unexpected output count");
-    for (int64_t i = 0; i < kOutputCount; ++i)
-        outputs[i] = std::move(result[static_cast<size_t>(i)]);
-    return kOutputCount;
-}
-
-extern "C" int64_t rayd_torch_native_refl_epc_backward(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *tape_t,
-    const at::Tensor *grad_field_real,
-    const at::Tensor *grad_field_imag,
-    const at::Tensor *grad_path_length,
-    bool need_grad_vertices,
-    bool need_grad_source,
-    bool need_grad_receiver,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
-        if (tensor == nullptr)
-            throw std::runtime_error(std::string("rayd_torch_native_refl_epc_backward received null ") + name);
-        return *tensor;
-    };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
-    constexpr int64_t kOutputCount = 3;
-    if (outputs == nullptr || output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_refl_epc_backward output capacity is too small");
-    const at::Tensor &source_checked = required(source, "source");
-    const at::Tensor &receiver_checked = required(receiver, "receiver");
-    require_vec3f(source_checked, "source");
-    require_vec3f(receiver_checked, "receiver");
-    const int64_t ray_count = source_checked.size(0);
-    require_ray_batch(receiver_checked, ray_count, "receiver");
-    require_optional_active(active, ray_count);
-    require_epc_tape(
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_t, "tape_t"),
-        ray_count);
-    require_optional_grad_vec(maybe(grad_field_real), ray_count, 0, "grad_field_real");
-    require_optional_grad_vec(maybe(grad_field_imag), ray_count, 0, "grad_field_imag");
-    require_optional_grad_vec(maybe(grad_path_length), ray_count, 0, "grad_path_length");
-    SceneCache &scene = get_scene(scene_handle);
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    ReflEpcBackwardOutputs out = refl_epc_backward_cuda(
-        scene.global_vertices,
-        scene.global_faces,
-        source_checked,
-        receiver_checked,
-        active_storage,
-        *tape_prim_id,
-        *tape_barycentric,
-        *tape_t,
-        maybe(grad_field_real),
-        maybe(grad_field_imag),
-        maybe(grad_path_length),
-        need_grad_vertices,
-        need_grad_source,
-        need_grad_receiver);
-    outputs[0] = out.grad_vertices;
-    outputs[1] = out.grad_source;
-    outputs[2] = out.grad_receiver;
-    return kOutputCount;
-}
-
-extern "C" int64_t rayd_torch_native_refl_epc_jvp(
-    int64_t scene_handle,
-    const at::Tensor *source,
-    const at::Tensor *receiver,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *tape_t,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_source,
-    const at::Tensor *tangent_receiver,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
-        if (tensor == nullptr)
-            throw std::runtime_error(std::string("rayd_torch_native_refl_epc_jvp received null ") + name);
-        return *tensor;
-    };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
-    constexpr int64_t kOutputCount = 3;
-    if (outputs == nullptr || output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_refl_epc_jvp output capacity is too small");
-    const at::Tensor &source_checked = required(source, "source");
-    const at::Tensor &receiver_checked = required(receiver, "receiver");
-    require_vec3f(source_checked, "source");
-    require_vec3f(receiver_checked, "receiver");
-    const int64_t ray_count = source_checked.size(0);
-    require_ray_batch(receiver_checked, ray_count, "receiver");
-    require_optional_active(active, ray_count);
-    require_epc_tape(
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        required(tape_t, "tape_t"),
-        ray_count);
-    SceneCache &scene = get_scene(scene_handle);
-    require_optional_tangent_vertices(
-        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
-    require_optional_grad_vec(maybe(tangent_source), ray_count, 3, "tangent_source");
-    require_optional_grad_vec(maybe(tangent_receiver), ray_count, 3, "tangent_receiver");
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    ReflEpcJvpOutputs out = refl_epc_jvp_cuda(
-        scene.global_vertices,
-        scene.global_faces,
-        source_checked,
-        receiver_checked,
-        active_storage,
-        *tape_prim_id,
-        *tape_barycentric,
-        *tape_t,
-        maybe(tangent_vertices),
-        maybe(tangent_source),
-        maybe(tangent_receiver));
-    outputs[0] = out.tangent_field_real;
-    outputs[1] = out.tangent_field_imag;
-    outputs[2] = out.tangent_path_length;
     return kOutputCount;
 }
 
