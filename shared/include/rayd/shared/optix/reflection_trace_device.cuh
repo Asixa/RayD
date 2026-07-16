@@ -6,6 +6,7 @@
 #include <rayd/shared/optix/device_hit.h>
 #include <rayd/shared/optix/reflection_trace_params.h>
 #include <rayd/shared/reflection/reflection_geometry.h>
+#include <rayd/shared/rt/numeric_policy.h>
 
 namespace rayd::shared::optix {
 
@@ -35,6 +36,12 @@ namespace reflection_trace_detail {
 constexpr float kTraceTMin = 1e-5f;
 constexpr float kTraceTMax = 1e8f;
 constexpr float kRayBias = 1e-5f;
+
+static_assert(kTraceTMin == ::rayd::shared::rt::kMultipathTraceTMin);
+static_assert(kTraceTMax == ::rayd::shared::rt::kTraceTMaxFinite);
+static_assert(kRayBias == ::rayd::shared::rt::kMultipathRayBias);
+// This family clears missed slots to kTraceTMax rather than +inf.
+static_assert(kTraceTMax == ::rayd::shared::rt::kReflectionTraceMissDistance);
 
 using HitPayload = TriangleHitPayload;
 

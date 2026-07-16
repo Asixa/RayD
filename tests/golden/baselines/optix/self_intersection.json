@@ -1,0 +1,122 @@
+{
+  "queries": {
+    "on_surface_against_normal": {
+      "continuous": {
+        "bary": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "p": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "t": [
+          Infinity
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          -1
+        ],
+        "local_prim_id": [
+          -1
+        ],
+        "prim_id": [
+          -1
+        ],
+        "shape_id": [
+          -1
+        ],
+        "valid": [
+          0
+        ]
+      },
+      "kind": "intersect"
+    },
+    "on_surface_along_normal": {
+      "continuous": {
+        "bary": [
+          [
+            0.5,
+            0.25,
+            0.25
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "p": [
+          [
+            0.25,
+            0.25,
+            0.5
+          ]
+        ],
+        "t": [
+          0.5
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          1
+        ],
+        "local_prim_id": [
+          1
+        ],
+        "prim_id": [
+          1
+        ],
+        "shape_id": [
+          0
+        ],
+        "valid": [
+          1
+        ]
+      },
+      "kind": "intersect"
+    }
+  }
+}

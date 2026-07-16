@@ -17,7 +17,7 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 class PublicApiManifestTests(unittest.TestCase):
     def test_manifest_matches_schema_enums_and_required_fields(self):
-        self.assertEqual(MANIFEST["version"], 1)
+        self.assertEqual(MANIFEST["version"], 2)
         self.assertEqual(
             set(SCHEMA["required"]),
             {
@@ -28,6 +28,7 @@ class PublicApiManifestTests(unittest.TestCase):
                 "apis",
                 "aliases",
                 "backends",
+                "trace",
             },
         )
         categories = {"core", "multipath", "surfel", "experimental"}
@@ -59,7 +60,9 @@ class PublicApiManifestTests(unittest.TestCase):
             self.assertEqual(entry["typing"], "complete")
 
     def test_runtime_modules_are_validated_copies_of_shared_manifest(self):
-        schema_hash = hashlib.sha256(MANIFEST_PATH.read_bytes()).hexdigest()
+        schema_hash = hashlib.sha256(
+            MANIFEST_PATH.read_bytes().replace(b"\r\n", b"\n")
+        ).hexdigest()
         for backend in ("drjit", "torch"):
             module_path = (
                 ROOT / "backends" / backend / "python" / "rayd" / backend / "_capabilities.py"
@@ -72,6 +75,7 @@ class PublicApiManifestTests(unittest.TestCase):
                 {key: value for key, value in flat.items() if key != "backend"},
                 MANIFEST["backends"][backend]["capabilities"],
             )
+            self.assertEqual(rich["version"], MANIFEST["version"])
             self.assertEqual(rich["schema_sha256"], schema_hash)
             self.assertEqual(rich["typing"], MANIFEST["backends"][backend]["typing"])
             self.assertEqual(rich["naming_conventions"], MANIFEST["naming_conventions"])
@@ -79,6 +83,19 @@ class PublicApiManifestTests(unittest.TestCase):
                 self.assertEqual(metadata["category"], MANIFEST["apis"][name]["category"])
                 self.assertEqual(metadata["stability"], MANIFEST["apis"][name]["stability"])
             self.assertEqual(rich["aliases"], MANIFEST["aliases"])
+            self.assertEqual(rich["trace"], MANIFEST["trace"])
+
+    def test_trace_axis_records_only_the_shipping_optix_backend(self):
+        trace = MANIFEST["trace"]
+        self.assertEqual(set(trace), {"backends", "integration_modes", "frontend_support"})
+        self.assertEqual(set(trace["backends"]), {"optix"})
+        self.assertEqual(trace["backends"]["optix"]["stability"], "stable")
+        self.assertTrue(trace["backends"]["optix"]["summary"])
+        self.assertEqual(trace["integration_modes"], ["jit_symbolic", "eager_native"])
+        self.assertEqual(trace["frontend_support"], {
+            "drjit": {"optix": ["jit_symbolic", "eager_native"]},
+            "torch": {"optix": ["eager_native"]},
+        })
 
     def test_hybrid_is_only_a_deprecated_compatibility_alias(self):
         aliases = MANIFEST["aliases"]["edge_bvh_backend"]

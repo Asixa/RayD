@@ -7,6 +7,7 @@
 
 #include <rayd/shared/optix/device_hit.h>
 #include <rayd/shared/optix/segment_visibility_params.h>
+#include <rayd/shared/rt/numeric_policy.h>
 
 namespace rayd::shared::optix {
 
@@ -22,6 +23,10 @@ namespace segment_visibility {
 constexpr float TraceTMin = 1e-5f;
 constexpr float RayBias = 1e-5f;
 constexpr float MinSegmentLength = 2e-5f;
+
+static_assert(TraceTMin == ::rayd::shared::rt::kMultipathTraceTMin);
+static_assert(RayBias == ::rayd::shared::rt::kMultipathRayBias);
+static_assert(MinSegmentLength == ::rayd::shared::rt::kMinSegmentLength);
 
 static __forceinline__ __device__ float3 add(float3 a, float3 b) {
     return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);

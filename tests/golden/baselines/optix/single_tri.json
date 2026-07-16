@@ -1,0 +1,240 @@
+{
+  "queries": {
+    "back_face_hit": {
+      "continuous": {
+        "bary": [
+          [
+            0.5,
+            0.25,
+            0.25
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "p": [
+          [
+            0.25,
+            0.25,
+            0.0
+          ]
+        ],
+        "t": [
+          1.0
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          0
+        ],
+        "local_prim_id": [
+          0
+        ],
+        "prim_id": [
+          0
+        ],
+        "shape_id": [
+          0
+        ],
+        "valid": [
+          1
+        ]
+      },
+      "kind": "intersect"
+    },
+    "front_face_hit": {
+      "continuous": {
+        "bary": [
+          [
+            0.5,
+            0.25,
+            0.25
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "p": [
+          [
+            0.25,
+            0.25,
+            0.0
+          ]
+        ],
+        "t": [
+          1.0
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          0
+        ],
+        "local_prim_id": [
+          0
+        ],
+        "prim_id": [
+          0
+        ],
+        "shape_id": [
+          0
+        ],
+        "valid": [
+          1
+        ]
+      },
+      "kind": "intersect"
+    },
+    "spatial_miss": {
+      "continuous": {
+        "bary": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "p": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "t": [
+          Infinity
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          -1
+        ],
+        "local_prim_id": [
+          -1
+        ],
+        "prim_id": [
+          -1
+        ],
+        "shape_id": [
+          -1
+        ],
+        "valid": [
+          0
+        ]
+      },
+      "kind": "intersect"
+    },
+    "tmax_miss": {
+      "continuous": {
+        "bary": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "p": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "t": [
+          Infinity
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "global_prim_id": [
+          -1
+        ],
+        "local_prim_id": [
+          -1
+        ],
+        "prim_id": [
+          -1
+        ],
+        "shape_id": [
+          -1
+        ],
+        "valid": [
+          0
+        ]
+      },
+      "kind": "intersect"
+    }
+  }
+}

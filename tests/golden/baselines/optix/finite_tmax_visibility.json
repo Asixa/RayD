@@ -1,0 +1,52 @@
+{
+  "queries": {
+    "pair_blocked_and_clear": {
+      "continuous": {},
+      "discrete": {
+        "visible_a": [
+          0
+        ],
+        "visible_b": [
+          1
+        ]
+      },
+      "kind": "visible_pair"
+    },
+    "segment_ends_before_surface": {
+      "continuous": {},
+      "discrete": {
+        "visible": [
+          1
+        ]
+      },
+      "kind": "visible"
+    },
+    "segment_through_surface": {
+      "continuous": {},
+      "discrete": {
+        "visible": [
+          0
+        ]
+      },
+      "kind": "visible"
+    },
+    "shadow_tmax_before_surface": {
+      "continuous": {},
+      "discrete": {
+        "hit": [
+          0
+        ]
+      },
+      "kind": "shadow_test"
+    },
+    "shadow_tmax_past_surface": {
+      "continuous": {},
+      "discrete": {
+        "hit": [
+          1
+        ]
+      },
+      "kind": "shadow_test"
+    }
+  }
+}

@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <optix.h>
 #include <optix_device.h>
+#include <rayd/shared/rt/numeric_policy.h>
 #include <rayd/shared/utd/utd_math.h>
 
 namespace rayd::shared::multipath::diffraction_accumulation {
@@ -42,6 +43,8 @@ template <typename Policy> struct DiffractionAccumulationDevice {
   static constexpr float kRayTMin = 1e-5f;
   static constexpr float kDfrRayBias = 1e-4f;
   static constexpr float kPi = 3.14159265358979323846f;
+
+  static_assert(kRayTMin == ::rayd::shared::rt::kMultipathTraceTMin);
 
   static __forceinline__ __device__ int
   sample_state_index_for_lane(unsigned int lane) {

@@ -3,7 +3,7 @@
   "$id": "https://rayd.dev/schemas/public_api.schema.json",
   "title": "RayD public API and capability manifest",
   "type": "object",
-  "required": ["version", "capability_keys", "stability_levels", "naming_conventions", "apis", "aliases", "backends"],
+  "required": ["version", "capability_keys", "stability_levels", "naming_conventions", "apis", "aliases", "backends", "trace"],
   "properties": {
     "version": {"type": "integer", "minimum": 1},
     "capability_keys": {
@@ -52,6 +52,41 @@
         },
         "additionalProperties": false
       }
+    },
+    "trace": {
+      "type": "object",
+      "required": ["backends", "integration_modes", "frontend_support"],
+      "properties": {
+        "backends": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["stability", "summary"],
+            "properties": {
+              "stability": {"enum": ["stable", "provisional", "experimental", "deprecated"]},
+              "summary": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "integration_modes": {
+          "type": "array",
+          "items": {"enum": ["jit_symbolic", "eager_native"]},
+          "uniqueItems": true
+        },
+        "frontend_support": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {"enum": ["jit_symbolic", "eager_native"]},
+              "uniqueItems": true
+            }
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

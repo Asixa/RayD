@@ -8,6 +8,7 @@
 #include <rayd/shared/optix/device_hit.h>
 #include <rayd/shared/reflection/reflection_geometry.h>
 #include <rayd/shared/reflection/epc_chain.h>
+#include <rayd/shared/rt/numeric_policy.h>
 
 namespace rayd::shared::optix {
 
@@ -25,6 +26,12 @@ constexpr float kTraceTMax = 1e8f;
 constexpr float kRayBias = rayd::shared::GeneralEpsilon;
 constexpr float kMinSegmentLength = 2e-5f;
 constexpr float kEpcTolerance = 1e-4f;
+
+static_assert(kTraceTMin == ::rayd::shared::rt::kMultipathTraceTMin);
+static_assert(kTraceTMax == ::rayd::shared::rt::kTraceTMaxFinite);
+static_assert(kRayBias == ::rayd::shared::rt::kMultipathRayBias);
+static_assert(kMinSegmentLength == ::rayd::shared::rt::kMinSegmentLength);
+static_assert(kEpcTolerance == ::rayd::shared::rt::kEpcBarycentricSlack);
 constexpr unsigned int kInvalidPrim = rayd::shared::InvalidUnsignedId;
 constexpr unsigned int kTraceModeReflection = 0u;
 constexpr unsigned int kTraceModeVisibility = 1u;
