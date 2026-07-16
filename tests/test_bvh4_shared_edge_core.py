@@ -12,6 +12,15 @@ CONTRACT_HEADERS = (
     "bvh_query.h",
     "edge_distance.h",
 )
+# P3 Stage A extracted the primitive-agnostic machinery into shared/bvh/. The
+# raw-pointer/caller-owned and enqueue-only contracts now also cover the core.
+BVH_CORE_INCLUDE_DIR = ROOT / "shared" / "include" / "rayd" / "shared" / "bvh"
+BVH_CORE_SOURCE_DIR = ROOT / "shared" / "src" / "bvh"
+BVH_CORE_HEADERS = (
+    "topology.h",
+    "build.h",
+    "refit.h",
+)
 
 
 class BVH4SharedEdgeCoreTests(unittest.TestCase):
@@ -67,7 +76,6 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
         self.assertIn("launch_ray_edge_distances_async", self.sources["edge_distance.h"])
 
     def test_shared_build_source_is_backend_neutral_and_enqueue_only(self):
-        source = (SOURCE_DIR / "bvh_build.cu").read_text(encoding="utf-8")
         forbidden = (
             "cudaMalloc",
             "cudaFree",
@@ -79,22 +87,31 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
             "drjit",
             "nanobind",
         )
-        for token in forbidden:
-            self.assertNotIn(token, source)
-        self.assertIn("params.stream", source)
+        for path in (
+            SOURCE_DIR / "bvh_build.cu",
+            BVH_CORE_SOURCE_DIR / "build.cu",
+        ):
+            source = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                self.assertNotIn(token, source)
+            self.assertIn("params.stream", source)
 
     def test_storage_is_raw_pointer_count_and_caller_owned(self):
+        combined = self.combined + "\n" + "\n".join(
+            (BVH_CORE_INCLUDE_DIR / name).read_text(encoding="utf-8")
+            for name in BVH_CORE_HEADERS
+        )
         pointer_fields = re.findall(
             r"(?:const\s+)?(?:float|void|std::int32_t)\s*\*\w+",
-            self.combined,
+            combined,
         )
         count_fields = re.findall(
             r"std::size_t\s+(?:count|\w+_count|capacity|\w+_stride|size_bytes)",
-            self.combined,
+            combined,
         )
         self.assertGreaterEqual(len(pointer_fields), 20)
         self.assertGreaterEqual(len(count_fields), 12)
-        self.assertGreaterEqual(self.combined.lower().count("caller-owned"), 6)
+        self.assertGreaterEqual(combined.lower().count("caller-owned"), 6)
 
     def test_every_contract_struct_has_layout_assertions(self):
         struct_names = re.findall(r"^struct\s+(\w+)\s*\{", self.combined, re.MULTILINE)

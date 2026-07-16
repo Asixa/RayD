@@ -51,8 +51,10 @@ class BVH1RemovalTests(unittest.TestCase):
         self.assertIn("`hybrid` is a deprecated compatibility alias", agent_guide)
 
     def test_atomic_bottom_up_builds_publish_before_arrival(self):
+        # P3 Stage A moved the primitive-agnostic build kernels into the shared
+        # BVH core; the atomic publish-before-arrival invariant is pinned there.
         source = (
-            ROOT / "shared" / "src" / "edge" / "bvh_build.cu"
+            ROOT / "shared" / "src" / "bvh" / "build.cu"
         ).read_text(encoding="utf-8")
         kernels = {
             "finalize_leaves_and_bounds_kernel": (

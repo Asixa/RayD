@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
+#include <rayd/shared/bvh/traversal_common.cuh>
 #include <rayd/shared/edge/edge_distance_math.h>
 #include <rayd/shared/math/vec3.h>
 
@@ -227,26 +228,10 @@ __device__ __forceinline__ void initialize_output(const EdgeQueryOutputView &out
     }
 }
 
-__device__ __forceinline__ bool stack_push(const BvhTraversalScratchView &scratch,
-                                            std::size_t query,
-                                            std::size_t depth,
-                                            int node) {
-    if (scratch.node_indices == nullptr || depth >= scratch.stack_depth) {
-        return false;
-    }
-    const std::size_t slot = depth * scratch.query_stride + query;
-    if (query >= scratch.query_stride || slot >= scratch.capacity) {
-        return false;
-    }
-    scratch.node_indices[slot] = node;
-    return true;
-}
-
-__device__ __forceinline__ int stack_load(const BvhTraversalScratchView &scratch,
-                                           std::size_t query,
-                                           std::size_t depth_index) {
-    return scratch.node_indices[depth_index * scratch.query_stride + query];
-}
+// The depth-major stack push/load helpers and the near/far tie-break are shared
+// with any BVH consumer via <rayd/shared/bvh/traversal_common.cuh>; the edge
+// query calls bvh::stack_push / bvh::stack_load / bvh::near_child_is_left so the
+// coalesced indexing and traversal order stay bitwise identical.
 
 template <int TopKCapacity, bool RayQuery, typename Params>
 __global__ void bvh_query_kernel(Params params) {
@@ -335,7 +320,7 @@ __global__ void bvh_query_kernel(Params params) {
         if (params.topology.node_active_count != nullptr &&
             params.topology.node_active_count[current] == 0) {
             current = stack_size > 0
-                ? stack_load(params.scratch, query, --stack_size)
+                ? bvh::stack_load(params.scratch, query, --stack_size)
                 : -1;
             continue;
         }
@@ -344,7 +329,7 @@ __global__ void bvh_query_kernel(Params params) {
         const math::Vec3f upper = load_bound_max(params.node_bounds, current);
         if (query_bound_squared(geometry, lower, upper) > distances[k - 1]) {
             current = stack_size > 0
-                ? stack_load(params.scratch, query, --stack_size)
+                ? bvh::stack_load(params.scratch, query, --stack_size)
                 : -1;
             continue;
         }
@@ -379,7 +364,7 @@ __global__ void bvh_query_kernel(Params params) {
                     query_parameters);
             }
             current = stack_size > 0
-                ? stack_load(params.scratch, query, --stack_size)
+                ? bvh::stack_load(params.scratch, query, --stack_size)
                 : -1;
             continue;
         }
@@ -407,11 +392,11 @@ __global__ void bvh_query_kernel(Params params) {
         const bool visit_left = left_active && left_bound <= distances[k - 1];
         const bool visit_right = right_active && right_bound <= distances[k - 1];
         if (visit_left && visit_right) {
-            const bool left_first = left_bound < right_bound ||
-                                    (left_bound == right_bound && left < right);
+            const bool left_first =
+                bvh::near_child_is_left(left_bound, right_bound, left, right);
             const int near_child = left_first ? left : right;
             const int far_child = left_first ? right : left;
-            if (!stack_push(params.scratch, query, stack_size, far_child)) {
+            if (!bvh::stack_push(params.scratch, query, stack_size, far_child)) {
                 overflow = true;
                 break;
             }
@@ -423,7 +408,7 @@ __global__ void bvh_query_kernel(Params params) {
             current = right;
         } else {
             current = stack_size > 0
-                ? stack_load(params.scratch, query, --stack_size)
+                ? bvh::stack_load(params.scratch, query, --stack_size)
                 : -1;
         }
     }

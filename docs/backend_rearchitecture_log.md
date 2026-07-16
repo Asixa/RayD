@@ -216,3 +216,113 @@ constructing any Scene.
    (`const OptixSceneSelection scenes = select_optix_scenes();`) are textually
    unchanged; `Scene::select_optix_scenes()` remains a private method that
    delegates to the backend.
+
+## P3 Stage A — extract the generic BVH core into shared/bvh/
+
+Behavior-preserving extraction of the primitive-agnostic BVH machinery out of the
+edge BVH (plan doc §15 P3 deliverable 1, §8.1). Zero behavior change: identical
+kernels, identical launch sequences, identical results.
+
+### What moved where
+
+- **`shared/include/rayd/shared/bvh/topology.h`** (new, namespace `rayd::shared::bvh`):
+  the generic `BvhFloat3`/`BvhBounds3`, `AabbSoAView`/`MutableAabbSoAView`, the raw
+  and compact topology views (with the literal `left_child[node] = -leaf_begin - 1`
+  leaf-encoding contract), `DeviceScratchView`, all eight treelet/leaf/stack/top-k
+  constants, and POD asserts (`RAYD_SHARED_BVH_ASSERT_POD`). This is now the single
+  home of these definitions.
+- **`shared/include/rayd/shared/bvh/build.h`** and **`refit.h`** (new): the seven
+  generic build param structs + launcher decls, and the three refit param structs +
+  launcher decls, all parameterized on `AabbSoAView`/topology rather than `EdgeSoAView`.
+- **`shared/src/bvh/build.cu`** (new, namespace `rayd::shared::bvh`): the ten generic
+  kernels (Morton, Karras radix tree, leaf/bounds finalize, SAH leaf/internal costs,
+  treelet DP optimizer, dirty-ancestor mark, dirty-level compact, internal-node refit)
+  and their ten launchers. The device code is byte-for-byte identical to the previous
+  `shared/src/edge/bvh_build.cu` (verified by per-function diff against `HEAD`).
+- **`shared/include/rayd/shared/bvh/traversal_common.cuh`** (new): the depth-major
+  `stack_push`/`stack_load` helpers (templated on the scratch view) and the near/far
+  tie-break `near_child_is_left`, shared for any BVH consumer.
+- **`shared/include/rayd/shared/bvh/host_topology.h`** (new, header-only, pure C++, no
+  Dr.Jit/Torch types): the primitive-agnostic host algorithms `compute_subtree_leaf_count`,
+  `compute_subtree_primitive_count`, `compute_node_height`, `collect_subtree_primitives`,
+  and the `HostCompactedBvh<Vec3>` / `emit_compacted_preorder<Vec3>` compaction, templated
+  on the caller's scalar vector type so bounds are copied byte-identically.
+
+### Edge layer keeps only edge-specific parts and delegates
+
+- `shared/edge/bvh_types.h` now includes `bvh/topology.h` and re-exports every generic
+  name via `using bvh::...` (types + constants), keeping `struct EdgeSoAView` as the only
+  edge-specific definition. All `rayd::shared::edge::` names still resolve unchanged.
+- `shared/edge/bvh_build.h` keeps the edge `PrimitiveBoundsParams` (+ launcher) and the
+  `BvhBuildParams`/`BvhRefitSelection`/`BvhRefitParams` contract structs (they carry
+  `EdgeSoAView`), re-exports the ten generic param structs, and declares thin edge
+  forwarding launchers.
+- `shared/edge/bvh_build.cu` keeps only the edge `compute_primitive_bounds` kernel and
+  defines ten thin forwarders (`shared::edge::launch_* -> shared::bvh::launch_*`). The
+  generic kernels exist exactly once, in the core.
+- `shared/edge/bvh_query.cu` now includes `bvh/traversal_common.cuh` and calls
+  `bvh::stack_push`/`bvh::stack_load`/`bvh::near_child_is_left` (local copies deleted);
+  the query kernels are otherwise unchanged.
+- `backends/drjit/src/edge/scene_edge.cpp` deletes its local copies of the four subtree/
+  height utilities and the compaction/`CompactedEdgeBVH`, and now calls the shared
+  `bvh::` host algorithms (`CompactedEdgeBVH = bvh::HostCompactedBvh<ScalarVector3f>`). The
+  dead host treelet optimizer and dead `build_preorder_mapping` were removed.
+
+### Deviations / scope decisions
+
+- **Torch left alone (as instructed).** Torch's `scene_cache.cpp::build_treelet_schedule`
+  is a structurally different iterative schedule (not byte-equivalent to the drjit host
+  optimizer), so it was not migrated. Torch native code was otherwise untouched; only its
+  CMakeLists source list gained `shared/src/bvh/build.cu` (and `backends/torch/abi_audit.json`
+  was regenerated because the audit hashes `CMakeLists.txt` — only its `source_sha256`
+  changed).
+- **Dead host treelet optimizer not extracted.** `rebuild_treelet_branch` /
+  `optimize_treelet_at_node` / `optimize_treelets_recursive` (and `build_preorder_mapping`)
+  had no live caller in `scene_edge.cpp` (GPU treelet path is used) and depend on Dr.Jit
+  `ScalarVector3f` + `require()`; they were removed rather than migrated. The device treelet
+  DP optimizer is fully shared in `bvh/build.cu`.
+- **`edge_bvh.obj` DEPENDS fix.** Aliasing the generic types under `bvh::` changes the
+  mangled names of the edge forwarders' signatures, so the `edge_bvh.cu` custom-command
+  object must recompile in lockstep. Its DEPENDS list gained the moved headers (both build
+  branches) so incremental/CI builds stay correct.
+
+### Build system
+
+`shared/src/bvh/build.cu` is compiled as a new object in both backends
+(`RAYD_SHARED_BVH_CORE_BUILD_OBJECT` in `backends/drjit/CMakeLists.txt`, and a new source
+entry in `backends/torch/CMakeLists.txt`), next to the existing `shared/src/edge/*` units.
+
+### Lockstep structure-test updates (equivalent-or-stronger pins on the new locations)
+
+- `tests/test_share5_edge_bvh_core.py`: topology struct defs / leaf-encoding comment /
+  treelet constants pinned in `bvh/topology.h` (plus edge re-export `using` checks); the
+  no-resources / `params.stream` and forbidden-strategy scans extended to `bvh/build.cu`
+  and the bvh core headers; the build-stage test now also asserts the generic launchers
+  live once in `bvh/build.cu` and the edge unit forwards to `bvh::`; the depth-major stack
+  indexing pin moved to `traversal_common.cuh` with a check that the query includes/uses it;
+  both-backends-compile check extended to `shared/src/bvh/build.cu`.
+- `tests/test_bvh4_shared_edge_core.py`: raw-pointer/caller-owned and enqueue-only contracts
+  extended to cover the bvh core headers and `bvh/build.cu`.
+- `tests/test_bvh1_removal.py`: the `finalize_leaves_and_bounds_kernel` atomic
+  publish-before-arrival invariant now pinned in `shared/src/bvh/build.cu`.
+
+### Verification (RTX 5080, sm_120, conda `witwin3`)
+
+- Device code byte-identical: per-function diff of every moved helper/kernel/launcher against
+  `HEAD` — 0 mismatches; the retained edge `compute_primitive_bounds` kernel/launcher identical.
+- Full suites green: `test_share5`/`test_bvh4`/`test_bvh1..3`/`test_edge_bvh_benchmark_*`,
+  drjit `test_geometry`/`test_golden_scenes`/`test_visibility_topk`/`test_trace_backend_gate`
+  (85 tests), drjit `tests.drjit.test_baseline`, and `unittest discover -s tests` (195 tests,
+  3 pre-existing skips) — all OK.
+- **Edge BVH gate — launch counts identical.** Pre vs post smoke: 330/330 launch-audit metric
+  comparisons `increase = 0`; 0 per-case launch-count mismatches across 11 cases (e.g. build
+  = 1921 launches pre and post). No launch-count regressions.
+- **Timing thresholds are noise-limited on the smoke profile, not a real regression.** The
+  pre-vs-post gate flags 8 timing failures (`build_ms`/`hot_query_ms`/`refit_ms`), but gating
+  the *byte-identical* post binary against itself (post-vs-postB and postB-vs-postC) flags
+  6-9 of the same timing metrics per run, with equal or larger deltas (e.g. build 132→162 ms
+  = +23 %, refit 1.09→1.61 ms = +48 %). `refit_ms` regresses on refit code this change does not
+  touch at all. Conclusion: the timing deltas are run-to-run measurement variance on this
+  desktop at the 3 %/5 % smoke thresholds; the deterministic launch-count invariant (the real
+  regression check) is identical, and the behavior suites confirm bit-identical edge-query
+  results.

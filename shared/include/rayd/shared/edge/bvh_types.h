@@ -4,34 +4,31 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <rayd/shared/bvh/topology.h>
+
 namespace rayd::shared::edge {
 
-/// Compact vector and bounds types used by caller-owned LBVH scratch buffers.
-struct BvhFloat3 {
-    float x;
-    float y;
-    float z;
-};
+// The primitive-agnostic BVH types, treelet constants, and the compact
+// leaf-encoding contract (`left_child[node] = -leaf_begin - 1`) now live in
+// <rayd/shared/bvh/topology.h>. They are re-exported here so every existing
+// rayd::shared::edge:: name keeps resolving. Only EdgeSoAView is edge-specific.
+using bvh::BvhFloat3;
+using bvh::BvhBounds3;
+using bvh::AabbSoAView;
+using bvh::MutableAabbSoAView;
+using bvh::RawBvhTopologyView;
+using bvh::MutableRawBvhTopologyView;
+using bvh::CompactBvhTopologyView;
+using bvh::DeviceScratchView;
 
-struct BvhBounds3 {
-    BvhFloat3 min;
-    BvhFloat3 max;
-};
-
-// Product treelet constants are shared so a second backend cannot silently
-// compile a different optimizer shape.
-inline constexpr std::int32_t kBvhTreeletMaxLeaves = 7;
-inline constexpr std::int32_t kBvhTreeletMinPrimitives = 65536;
-// The host-prepared GPU treelet pass is verified through 500k primitives. At
-// larger sizes, retain the valid LBVH instead of risking a non-transactional
-// topology rewrite; large-scene treelet support can be raised after a dedicated
-// coverage gate proves primitive preservation.
-inline constexpr std::int32_t kBvhTreeletMaxPrimitives = 500000;
-inline constexpr std::int32_t kBvhTreeletMinSubtreeLeaves = 32;
-inline constexpr float kBvhTreeletCostInflationRatio = 1e-4f;
-inline constexpr std::int32_t kBvhLeafSize = 4;
-inline constexpr std::int32_t kBvhTraversalStackDepth = 64;
-inline constexpr std::int32_t kBvhTopKMax = 16;
+using bvh::kBvhTreeletMaxLeaves;
+using bvh::kBvhTreeletMinPrimitives;
+using bvh::kBvhTreeletMaxPrimitives;
+using bvh::kBvhTreeletMinSubtreeLeaves;
+using bvh::kBvhTreeletCostInflationRatio;
+using bvh::kBvhLeafSize;
+using bvh::kBvhTraversalStackDepth;
+using bvh::kBvhTopKMax;
 
 /// Read-only structure-of-arrays view of edge segments stored as p0 + direction.
 struct EdgeSoAView {
@@ -44,85 +41,11 @@ struct EdgeSoAView {
     std::size_t count;
 };
 
-/// Read-only structure-of-arrays view of axis-aligned bounds.
-struct AabbSoAView {
-    const float *min_x;
-    const float *min_y;
-    const float *min_z;
-    const float *max_x;
-    const float *max_y;
-    const float *max_z;
-    std::size_t count;
-};
-
-/// Mutable structure-of-arrays view of caller-owned axis-aligned bounds.
-struct MutableAabbSoAView {
-    float *min_x;
-    float *min_y;
-    float *min_z;
-    float *max_x;
-    float *max_y;
-    float *max_z;
-    std::size_t count;
-};
-
-/// Read-only topology produced directly by the GPU LBVH builder.
-struct RawBvhTopologyView {
-    const std::int32_t *left_child;
-    const std::int32_t *right_child;
-    const std::int32_t *leaf_primitive;
-    const std::int32_t *is_leaf;
-    const std::int32_t *primitive_leaf_node;
-    std::size_t node_count;
-    std::size_t primitive_count;
-};
-
-/// Mutable caller-owned topology buffers for the GPU LBVH builder.
-struct MutableRawBvhTopologyView {
-    std::int32_t *left_child;
-    std::int32_t *right_child;
-    std::int32_t *leaf_primitive;
-    std::int32_t *is_leaf;
-    std::int32_t *primitive_leaf_node;
-    std::size_t node_count;
-    std::size_t primitive_count;
-};
-
-/// Read-only compacted preorder topology used by product traversal.
-/// Internal nodes store non-negative child indices. Leaves encode
-/// `left_child[node] = -leaf_begin - 1` and `right_child[node] = leaf_count`.
-struct CompactBvhTopologyView {
-    const std::int32_t *left_child;
-    const std::int32_t *right_child;
-    const std::int32_t *leaf_primitives;
-    /// Optional number of active primitives below each node. When present it
-    /// must be synchronized with the edge mask used by the query; pass null
-    /// while mask-derived counts are stale.
-    const std::int32_t *node_active_count;
-    std::size_t node_count;
-    std::size_t primitive_count;
-    std::size_t leaf_primitive_count;
-};
-
-/// Type-erased caller-owned temporary device storage.
-struct DeviceScratchView {
-    void *data;
-    std::size_t size_bytes;
-};
-
 #define RAYD_SHARED_EDGE_ASSERT_POD(Type)                                     \
     static_assert(std::is_standard_layout_v<Type>);                           \
     static_assert(std::is_trivially_copyable_v<Type>)
 
 RAYD_SHARED_EDGE_ASSERT_POD(EdgeSoAView);
-RAYD_SHARED_EDGE_ASSERT_POD(BvhFloat3);
-RAYD_SHARED_EDGE_ASSERT_POD(BvhBounds3);
-RAYD_SHARED_EDGE_ASSERT_POD(AabbSoAView);
-RAYD_SHARED_EDGE_ASSERT_POD(MutableAabbSoAView);
-RAYD_SHARED_EDGE_ASSERT_POD(RawBvhTopologyView);
-RAYD_SHARED_EDGE_ASSERT_POD(MutableRawBvhTopologyView);
-RAYD_SHARED_EDGE_ASSERT_POD(CompactBvhTopologyView);
-RAYD_SHARED_EDGE_ASSERT_POD(DeviceScratchView);
 
 #undef RAYD_SHARED_EDGE_ASSERT_POD
 
