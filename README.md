@@ -93,9 +93,9 @@ edges, visibility, and multipath query results.
 | --- | --- | --- |
 | Ray-mesh intersection | Yes | Yes |
 | Point/ray nearest edge | Yes | Yes |
-| Top-k nearest edges | Yes | No |
+| Top-k nearest edges | Yes | Yes |
 | Segment visibility | Yes | Yes |
-| Pair/chain/edge visibility helpers | Yes | Partial |
+| Pair/chain/edge visibility helpers | Yes | Yes |
 | Reflection tracing and accumulation | Yes | Yes |
 | EPC path and field queries | Yes | Yes |
 | Direct and chained diffraction | Yes | Yes |
@@ -124,19 +124,25 @@ overlap:
 - `scene.intersect(ray)`: closest differentiable ray-mesh hit
 - `scene.nearest_edge(query)`: nearest-edge point or ray query
 - `scene.trace_reflections(...)`: specular reflection chains
-- `scene.accumulate_reflections(...)`: reflected field/power accumulation
+- `scene.trace_refl_epc_field(...)`: complex reflected EPC fields
 - `scene.accum_dfr_direct(...)` / `scene.accum_dfr(...)`: diffraction
   accumulation
 - `scene.trace_dfr_paths(...)`: compact diffraction path export
-
-The Dr.Jit backend additionally exposes:
-
-- `scene.shadow_test(ray)`
 - `scene.nearest_edges(point, k)` for `k <= 16`
 - `scene.visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and
   `visible_edge(...)`
 - `scene.set_edge_mask(mask)` / `scene.edge_mask()`
+
+The Dr.Jit backend additionally exposes:
+
+- `scene.shadow_test(ray)`
+- `scene.trace_refl_epc(...)`: EPC path geometry
+- `scene.accumulate_reflections(...)`: reflected field/power accumulation
 - surfel intersection, compositing, and rendering primitives
+
+Torch reaches reflection accumulation and EPC path geometry through the
+dispatcher ops `torch.ops.rayd_torch.reflection_accumulation_forward` and
+`reflection_epc_paths_forward` rather than through `Scene` methods.
 
 ## Differentiation Contract
 
@@ -389,6 +395,13 @@ it is not a stable binary ABI across unrelated libtorch builds.
   bindings, C++/CUDA/OptiX implementation, and tests
 - [`shared/include`](shared/include): backend-neutral device contracts and UTD
   math
+- [`shared/src`](shared/src): shared edge BVH, multipath, and scene-packing CUDA
+  cores
+- [`shared/contracts`](shared/contracts): machine-readable public API,
+  operation, and path-exchange manifests
+- [`shared/benchmarks`](shared/benchmarks): benchmark schemas and recorded
+  baselines
+- [`scripts`](scripts): local build helpers (`build_local.cmd` / `.ps1`)
 - [`tests/packaging`](tests/packaging): distribution, namespace, and wheel-layout
   checks
 - [`docs`](docs): migration, validation, and OptiX pipeline notes

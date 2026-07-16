@@ -86,19 +86,20 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
 2. Confirm which native extension was loaded:
 
    ```python
-   import sys, rayd
-   print(rayd.__file__)
+   import sys, rayd.drjit
+   print(rayd.drjit.__file__)
+   print(rayd.drjit._C.__file__)
    print([(k, getattr(v, "__file__", None)) for k, v in sys.modules.items() if k.startswith("rayd")])
    ```
 
-   Editable installs can load `rayd/__init__.py` from the source tree while loading `rayd.rayd` from `site-packages`.
+   Since 0.6.0 `rayd` is a PEP 420 namespace package, so `rayd.__file__` is `None`; inspect `rayd.drjit` and its `_C` extension instead. Editable installs can load the backend package from the source tree while loading `rayd.drjit._C` from `site-packages`.
 
 3. Confirm the effective C++ build defines. For the verified fix, the build log should contain `RAYD_OPTIX_MODULE_OPT_LEVEL=0x2343`, `RAYD_OPTIX_EXCEPTION_FLAGS=0`, `RAYD_MULTIPATH_OPTIX_MODULE_OPT_LEVEL=0x2343`, and `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
 4. Read the OptiX stderr pipeline statistics. Treat them as risk diagnostics, not the final root cause.
-4. Count trace sites in the embedded PTX:
+5. Count trace sites in the embedded PTX:
 
    ```powershell
-   $ptx = Get-Content include\rayd\multipath\diffraction_paths_ptx.h -Raw
+   $ptx = Get-Content backends\drjit\include\rayd\multipath\diffraction_paths_ptx.h -Raw
    $entry = "__raygen__diffraction_paths_order1_target_export_primary"
    $start = $ptx.IndexOf(".visible .entry $entry")
    $next = $ptx.IndexOf(".visible .entry ", $start + 1)
@@ -107,28 +108,28 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
    ([regex]::Matches($body, "_optix_trace")).Count
    ```
 
-5. If a failing primary-only path has more than one trace site, consider staged launches only if that matches the operation contract.
-6. Reinstall the package and verify the actual `.pyd` size/timestamp under the target conda environment.
-7. Run the full cold-create matrix; do not accept a single warmed-process pass as proof.
+6. If a failing primary-only path has more than one trace site, consider staged launches only if that matches the operation contract.
+7. Reinstall the package and verify the actual `.pyd` size/timestamp under the target conda environment.
+8. Run the full cold-create matrix; do not accept a single warmed-process pass as proof.
 
 ## Regression Tests
 
 Run RayD tests:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_reflection_epc -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_optix_pipeline_cold_create -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_geometry.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.test_project_metadata -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.drjit.test_diffraction_accumulation -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover -v
+python -m unittest backends.drjit.tests.drjit.test_reflection_epc -v
+python -m unittest backends.drjit.tests.drjit.test_optix_pipeline_cold_create -v
+python -m unittest backends.drjit.tests.drjit.test_geometry.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
+python -m unittest backends.drjit.tests.test_project_metadata -v
+python -m unittest backends.drjit.tests.drjit.test_diffraction_accumulation -v
 ```
 
-Run channel endpoint repros:
+Run channel endpoint repros. These paths are **not in this repository**; run them from
+the downstream Channel repo checkout (see `docs/downstream-migration.md`):
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pytest tests\path\test_endpoint_api_contract.py -q --gpu
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pytest tests\path\test_example_path_solver_minimal.py tests\deterministic\test_reflection_rayd_epc_backend.py tests\deterministic\test_example_deterministic_radiomap_three_cubes.py -q --gpu
+python -m pytest tests\path\test_endpoint_api_contract.py -q --gpu
+python -m pytest tests\path\test_example_path_solver_minimal.py tests\deterministic\test_reflection_rayd_epc_backend.py tests\deterministic\test_example_deterministic_radiomap_three_cubes.py -q --gpu
 ```
 
 The 2026-05-26 verified state after the multipath exception-flag fix:

@@ -5,7 +5,7 @@ no functional changes. This document lists every old name and its replacement.
 
 ## 1. Naming convention flip (Python)
 
-The bare class name is now the **non-AD (detached)** variant 鈥?the common case.
+The bare class name is now the **non-AD (detached)** variant - the common case.
 The autodiff variant carries an **`AD`** suffix.
 
 ```python
@@ -14,10 +14,12 @@ ray = rd.RayDetached(...)         ray = rd.Ray(...)          # non-AD
 ray = rd.Ray(...)                 ray = rd.RayAD(...)        # autodiff
 ```
 
-This flip is **Python-only**. In C++, aliases keep their existing convention:
-the bare name is still the AD type and the detached type still carries a
-`Detached` suffix (e.g. C++ `Ray` = AD, `RayDetached` = non-AD). The foundational
-`Float` / `Vector*f` / `Matrix4f` aliases are unchanged.
+C++ follows the same convention. Each type `X` is defined as a template
+`XData<Float_>`; `XT<Detached>` selects the non-AD or AD `Float`, and `X` (non-AD)
+/ `XAD` (AD) are the two concrete instantiations (`include/rayd/rayd.h:23-30`).
+There is no `RayDetached` alias. The foundational `Float` / `Vector*f` /
+`Matrix4f` aliases follow the same rule: `Float` is non-AD and `FloatAD` is the
+autodiff variant (`include/rayd/types.h:25-26, 78-79, 87-88`).
 
 ## 2. Python class renames
 
@@ -143,7 +145,7 @@ METHOD = {
     "trace_reflection_epc_field_direct": "trace_refl_epc_field",
 }
 # NOTE: the AD bare names that simply gain an "AD" suffix (Ray->RayAD,
-# Intersection->IntersectionAD, etc.) are context-dependent 鈥?review those by hand.
+# Intersection->IntersectionAD, etc.) are context-dependent - review those by hand.
 ```
 
 ## 7. 2026-05-22 Dfr diffraction API

@@ -1,4 +1,13 @@
-# RayDN Native Gap Analysis
+# RayD Torch Native Gap Analysis
+
+> **Historical record, frozen 2026-06-12.** This document predates the 0.6.0
+> dual-backend monorepo and the F1-F5 phases. It uses the pre-rename names
+> "RayDN" / `raydn` for what is now `rayd.torch`, and "RayD" for what is now
+> `rayd.drjit`. For current capability state use `backend_capabilities()` or
+> `shared/contracts/public_api.json`; for what landed since, see `CHANGELOG.md`
+> and `docs/archived/rayd_improvement_execution_20260711.md`. Surfel is not discussed
+> below but is formally Dr.Jit-only by decision F5
+> (`docs/adr/0001-surfel-remains-drjit-only.md`).
 
 Status (2026-06-12): RayDN contains RayD-style OptiX PTX pipelines for scene
 intersection, edge query, reflection, and diffraction paths, plus Torch
@@ -45,18 +54,20 @@ performance validation remaining:
 
 ## RayD Multipath Kernel Coverage
 
-The corresponding RayD source files exist in `E:\Code\RayDi`. Reflection and
-diffraction forward kernels now have RayDN source ports, including:
+The corresponding Dr.Jit-backend source files now live under
+`backends/drjit/src/multipath/` (they were at `src/multipath/` when this record
+was written). Reflection and diffraction forward kernels have Torch source
+ports, including:
 
-- `E:\Code\RayDi\src\multipath\segment_visibility.cu`
-- `E:\Code\RayDi\src\multipath\reflection_trace.cu`
-- `E:\Code\RayDi\src\multipath\reflection_accumulation.cu`
-- `E:\Code\RayDi\src\multipath\reflection_dedup.cu`
-- `E:\Code\RayDi\src\multipath\reflection_epc.cu`
-- `E:\Code\RayDi\src\multipath\reflection_epc_field.cu`
-- `E:\Code\RayDi\src\multipath\diffraction_paths.cu`
-- `E:\Code\RayDi\src\multipath\diffraction_accumulation.cu`
-- `E:\Code\RayDi\src\multipath\diffraction_accumulation_ad.cu`
+- `backends/drjit/src/multipath/segment_visibility.cu`
+- `backends/drjit/src/multipath/reflection_trace.cu`
+- `backends/drjit/src/multipath/reflection_accumulation.cu`
+- `backends/drjit/src/multipath/reflection_dedup.cu`
+- `backends/drjit/src/multipath/reflection_epc.cu`
+- `backends/drjit/src/multipath/reflection_epc_field.cu`
+- `backends/drjit/src/multipath/diffraction_paths.cu`
+- `backends/drjit/src/multipath/diffraction_accumulation.cu`
+- `backends/drjit/src/multipath/diffraction_accumulation_ad.cu`
 
 These RayD files should remain the parity source of truth when extending the
 current ports.
@@ -66,7 +77,8 @@ current ports.
 Current status:
 
 - Same-script, same-data, same-batch RayD vs RayDN performance comparison
-  is implemented in `tests/benchmark_rayd_vs_raydn.py`.
+  is implemented in `backends/torch/tests/benchmark_rayd_backends.py` (named
+  `tests/benchmark_rayd_vs_raydn.py` when this record was written).
 - Current corrected same-script results cover both static-vs-static and
   dynamic-vs-dynamic runs. RayDN is faster for scene build, `intersect`,
   point `nearest_edge`, reflection trace, and direct diffraction accumulation

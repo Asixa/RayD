@@ -170,14 +170,14 @@ Naming rule: use `Dfr` for diffraction (`DfrStates`, `DfrAccum`, `accum_dfr_dire
 
 The chart below was generated on March 25, 2026 on an `NVIDIA GeForce RTX 5080` and `AMD Ryzen 7 9800X3D`, comparing RayD (`0.1.2`) against Mitsuba `3.8.0` with the `cuda_ad_rgb` variant.
 
-Raw benchmark data is stored in [`docs/performance_benchmark.json`](docs/performance_benchmark.json).
+Raw benchmark data is stored in [`docs/performance_benchmark.json`](../../docs/performance_benchmark.json).
 
 - RayD is consistently faster on static forward and static gradient workloads across all three scene sizes.
 - Dynamic reduced forward reaches parity or better from the medium scene onward, and dynamic full is effectively tied on the largest case.
 - On the largest `192x192` mesh / `384x384` ray benchmark, RayD vs Mitsuba average latency in milliseconds is: static full `0.162 vs 0.190`, static reduced `0.124 vs 0.224`, dynamic full `0.741 vs 0.740`, dynamic reduced `0.689 vs 0.714`, gradient static `0.411 vs 0.757`, gradient dynamic `1.324 vs 1.413`.
 - Correctness stayed aligned throughout the sweep: forward mismatch counts remained `0`, and the largest static gradient discrepancy was `9.54e-7`.
 
-![RayD vs Mitsuba performance benchmark](docs/performance_benchmark.png)
+![RayD vs Mitsuba performance benchmark](../../docs/performance_benchmark.png)
 
 ## Device Selection
 
@@ -195,7 +195,7 @@ Existing RayD scenes, OptiX pipelines, and BVHs should not be reused across devi
 
 RayD is a Python package with a C++/CUDA extension.
 
-You need Python `>=3.10`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.9.2`, and `scikit-build-core`.
+You need Python `>=3.10,<3.15`, CUDA Toolkit `>=11.0`, CMake, a C++17 compiler, `drjit==1.3.1`, `nanobind==2.9.2`, and `scikit-build-core`.
 
 On Windows, use Visual Studio 2022 with Desktop C++ tools. On Linux, use GCC or Clang with C++17 support.
 
@@ -223,7 +223,7 @@ python -m pip install --no-build-isolation -ve .
 
 ## Repository Layout
 
-- [`rayd/`](rayd): Python package and native extension loader
+- [`python/rayd/drjit/`](python/rayd/drjit): Python package and native extension loader
 - [`include/rayd/`](include/rayd): public C++ headers
 - [`include/rayd/edge/`](include/rayd/edge): edge-query data structures
 - [`include/rayd/multipath/`](include/rayd/multipath): multipath query result and option types
@@ -279,4 +279,4 @@ RayD is developed with reference to:
 
 ## License
 
-BSD 3-Clause. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](../../LICENSE).

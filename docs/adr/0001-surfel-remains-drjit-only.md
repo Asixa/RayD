@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-11
 - Decision ID: `F5-surfel-backend-scope`
-- Scope: Phase F5 of `docs/rayd_improvement_plan.md`
+- Scope: Phase F5 of `docs/archived/rayd_improvement_plan.md`
 
 ## Context
 

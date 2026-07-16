@@ -7,7 +7,7 @@ This document records the release-wheel compatibility contract shared by RayD an
 | Dimension | Release coverage |
 | --- | --- |
 | Host platforms | Linux x86-64 and Windows x86-64 |
-| GitHub runners | `ubuntu-22.04` and `windows-2022` |
+| GitHub runners | `ubuntu-22.04` and `windows-2022` for build/validate jobs; `ubuntu-latest` for the publish jobs |
 | Python | CPython 3.10, 3.11, 3.12, 3.13, and 3.14 |
 | CUDA build toolkit | CUDA 12.8 Update 1 on Windows; CUDA 12.8 latest update from the RHEL 8 repository in manylinux |
 | Native SASS | `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, `sm_120` |
@@ -40,7 +40,8 @@ The distribution workflow is `.github/workflows/pypi.yml`. Pushes, pull requests
 | `build-torch-linux` | CPython 3.10-3.14 through cibuildwheel | Build and repair five full `rayd-torch` wheels; audit `_C`, `_stable_ops`, external framework dependencies, and CUDA images |
 | `build-windows-wheels` | 2 backends x Python 3.10-3.14 on `windows-2022` | Build and audit ten `win_amd64` wheels |
 | `build-meta` | Python 3.12 on Ubuntu | Build and check the pure Python `rayd` wheel and sdist |
-| `publish-*` | published GitHub Releases only | Publish backend wheels first, then the meta distribution, using PyPI trusted publishing |
+| `validate-wheel-set` | Ubuntu, after all four build jobs | Validate the complete release artifact set via `tests.packaging.test_release_artifact_matrix`; gates every publish job |
+| `publish-*` | published GitHub Releases only, on `ubuntu-latest` | Publish backend wheels first, then the meta distribution, using PyPI trusted publishing |
 
 Both native backends keep `manylinux_2_28` rather than changing to the witwin `manylinux_2_35` tag. This is a stricter backward-compatibility target and matches the Dr.Jit and PyTorch 2.10/cu128 Linux wheels used by the builds.
 

@@ -84,7 +84,7 @@
     }
   },
   "historical_decision_baseline": {
-    "source": "docs/rayd_improvement_plan.md",
+    "source": "docs/archived/rayd_improvement_plan.md",
     "scene": "192x192 grid, 110976 edges, 65536 queries",
     "gpu_treelet": {
       "build_ms": 138.43,
