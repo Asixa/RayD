@@ -108,3 +108,111 @@ The plan remains authoritative for goals and gates; the facts below are authorit
 - [x] Capability manifest `trace` section + schema validator + EOL-normalized pins
 - [x] Golden scenes + OptiX baselines + determinism gate
 - [ ] Supervisor diff audit (done for native headers/contracts), native rebuild, full-suite gate, commit
+
+## P1 — OptiX adopted as a formal backend + `Scene::build()` decoupled
+
+### Design decisions
+
+- **`TraceBackend` is host-lifecycle only.** The abstract base
+  (`backends/drjit/include/rayd/trace/trace_backend.h`) carries just `kind()`,
+  `capabilities()`, `is_ready()` — three per-*batch* host virtuals. The POD batch
+  trace methods from doc §5 are deliberately **not** added yet (they are the
+  eager-axis P3 concern); adding them now would risk a virtual landing in a
+  per-ray loop. Per-ray work still reaches the concrete `OptixScene` through one
+  extra non-virtual pointer hop per batch (`Scene` → `OptixTraceBackend` →
+  `OptixScene`), never a virtual call. Verified by inspecting the call chain:
+  `Scene::intersect` → `optix_scene()` (non-virtual) → `optix_backend().primary()`
+  (non-virtual inline) → `OptixScene::intersect<Detached>()` (non-virtual
+  template); the only per-batch virtual is `Scene::is_ready()`'s
+  `trace_backend_->is_ready()`.
+- **Split static/dynamic scene logic sunk into `OptixTraceBackend`.** The three
+  `OptixScene` unique_ptrs, `split_active`, and the static/dynamic mesh-index
+  bookkeeping moved out of `Scene` into `OptixTraceBackend`
+  (`src/trace/optix_trace_backend.{h,cpp}`), along with `should_split_optix_scene`
+  / `active_optix_split_mode`. The build/sync bodies are a **verbatim** transplant
+  of the old `scene.cpp` blocks, so results stay bit-identical (confirmed by the
+  golden + baseline gates below).
+- **`Scene::build()`'s unconditional OptiX GAS build is gone.** A triangle trace
+  backend is constructed only when the resolved plan asks for one
+  (`triangle_kind_ == Optix`); `trace_backend='none'` (or auto-resolved None on an
+  OptiX-less machine) leaves `trace_backend_` null and builds only the edge BVH.
+  `build()` validates the plan first: `trace_backend='optix'` without OptiX raises
+  "OptiX driver library is unavailable"; an OptiX edge backend without OptiX raises
+  naming `edge_bvh_backend="drjit"` as the software alternative.
+- **Clean, non-throwing OptiX probe.** `optix_available()` (`optix.cpp`/`optix.h`)
+  is `noexcept`, never calls `jit_optix_context()`, and caches its result per
+  process. `Scene(trace_backend="auto")` resolves to Optix when available and to
+  None otherwise — capability discovery, not exception catching. It also does not
+  eagerly initialize the OptiX context, so `set_device(initialize_optix=...)`
+  semantics are unchanged.
+
+### RAYD_DISABLE_OPTIX kill-switch
+
+`optix_available()` returns false immediately when the environment variable
+`RAYD_DISABLE_OPTIX` is `1`/`true` (case-insensitive), before touching any driver
+library. This lets an OptiX-capable desktop exercise the OptiX-less paths (the P1
+key gate). It is honored process-wide and cached on first call, so set it before
+constructing any Scene.
+
+### Gate results (RTX 5080, sm_120, Windows 11, conda `witwin3`)
+
+- **Key gate (OptiX blocked):** with `RAYD_DISABLE_OPTIX=1`,
+  `rd.optix_available()` is False, `Scene(edge_bvh_backend="drjit")` builds and
+  answers `nearest_edge`/`nearest_edges` with discrete fields **bit-identical** to
+  `tests/golden/baselines/optix/edge_queries.json`; `capabilities()` reports
+  `trace_backend="none"`, `optix_available=False`; `intersect` raises a clear
+  "requires a triangle trace backend" error; `Scene(trace_backend="optix")` and
+  the default `Scene()` raise the expected build-time errors. New test:
+  `backends/drjit/tests/drjit/test_trace_backend_gate.py` (8 cases, all green).
+- **OptiX-available regression:** all green — `test_geometry`,
+  `test_golden_scenes`, `test_visibility_topk`, `test_reflection_epc`,
+  `test_reflection_accumulation`, `test_diffraction_accumulation`, `test_surfel`,
+  `test_optix_pipeline_cold_create` (158 tests), `tests.drjit.test_baseline`
+  (bit-identical, 2), workspace suite `tests/` (195 tests, 3 pre-existing CI
+  skips), and the new gate (8). No baseline drift.
+- **Perf (< 3% gate):** controlled A/B, both builds freshly compiled and measured
+  back-to-back on the same idle GPU (`p1_perf_probe.py`, 262144 rays, median of 12
+  process-medians):
+
+  | op | pre-P1 median (ms) | P1 median (ms) | Δ median |
+  | --- | ---: | ---: | ---: |
+  | intersect | 0.1630 | 0.1580 | **−3.0%** |
+  | shadow_test | 0.1625 | 0.1505 | **−7.4%** |
+  | visible | 0.0139 | 0.0135 | **−2.9%** |
+
+  P1 is at parity or slightly faster — comfortably inside the < 3% gate. Note the
+  pre-P1 median (0.1630) is itself ~10% above the P0-recorded single-run baseline
+  (0.1486): sub-ms kernels are boost-clock/scheduling noise dominated, and that
+  drift moves both builds equally, so the controlled A/B — not the raw vs-P0
+  numbers — is the valid comparison. Naive back-to-back P1-only runs transiently
+  showed +15–45% purely from that drift; the A/B removes it.
+
+### Deviations from the P1 spec
+
+1. **Windows OptiX probe needed the driver-store lookup.** The spec's Windows
+   recipe (`GetModuleHandleW` else `LoadLibraryW("nvoptix.dll")`) returns null on
+   this machine: `nvoptix.dll` lives in the NVIDIA driver store
+   (`C:\WINDOWS\System32\DriverStore\FileRepository\nvmdi.inf_...\nvoptix.dll`),
+   not on the DLL search path, so a bare load fails with ERROR_MOD_NOT_FOUND (126)
+   and the probe wrongly reported OptiX unavailable — which broke every default
+   scene build. Fixed by extending the Windows path with the OptiX SDK's
+   `optixLoadWindowsDll` algorithm: enumerate display adapters via cfgmgr32, read
+   each device's `OpenGLDriverName`, and load `nvoptix.dll` from that directory.
+   Added `cfgmgr32`/`advapi32` to the Windows link libs in `CMakeLists.txt`. The
+   Linux/Jetson path uses the spec's `dlopen("libnvoptix.so.1", ...)` recipe
+   unchanged (the actual P2 target).
+2. **rt/ host-safety test for `backend.h`.** `TraceBackendKind::Optix` lowercases
+   to the existing FORBIDDEN token "optix", so `backend.h` cannot be added to the
+   shared `test_headers_are_host_safe` list as-is. A dedicated
+   `test_backend_header_is_host_safe` checks the real host-safety tokens
+   (`__device__`/`__host__`/`float3`/`cuda_runtime`) plus a guard against
+   `#include`ing any optix/cuda/drjit header, while allowing the enum-enumerator
+   identifier. `test_trace_capabilities_struct_field_order` freezes the field
+   order.
+3. **`OptixSceneSelection` promoted to namespace scope.** It was a private nested
+   `Scene::OptixSceneSelection`; it now lives at `rayd::OptixSceneSelection` in
+   `optix_trace_backend.h` so the backend can return it. The ~13 call sites and
+   the `test_project_metadata` source anchor
+   (`const OptixSceneSelection scenes = select_optix_scenes();`) are textually
+   unchanged; `Scene::select_optix_scenes()` remains a private method that
+   delegates to the backend.

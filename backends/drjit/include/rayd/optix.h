@@ -347,6 +347,16 @@ struct OptixRuntimeInfo {
 /// Probe the active OptiX driver and report what resolved; initializes the OptiX API as a side effect.
 OptixRuntimeInfo query_optix_runtime_info();
 
+/// \brief Non-throwing capability probe: is a usable OptiX driver present on this system?
+///
+/// Unlike query_optix_runtime_info(), this never calls jit_optix_context() and never
+/// throws, so it is safe to call on machines without OptiX (for example Jetson). It
+/// loads the driver module (nvoptix.dll / libnvoptix.so.1), resolves
+/// optixQueryFunctionTable, and probes the target ABI. The result is cached per
+/// process. Setting the environment variable RAYD_DISABLE_OPTIX to "1"/"true"
+/// forces a false result (a test/deployment kill-switch).
+bool optix_available() noexcept;
+
 // Shared OptiX host helpers used by the multipath and edge pipelines.
 
 /// Throw std::runtime_error tagged with \p message when \p result is not OPTIX_SUCCESS.

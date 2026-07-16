@@ -14,43 +14,6 @@
 namespace rayd {
 
 namespace {
-/// Whether to split static and dynamic meshes into separate OptiX scenes (env RAYD_OPTIX_SPLIT_MODE).
-enum class OptixSplitMode {
-    Auto,
-    Off,
-    On
-};
-
-std::string normalize_optix_split_mode_value(const char *value) {
-    std::string normalized = value != nullptr ? std::string(value) : std::string();
-    std::transform(normalized.begin(),
-                   normalized.end(),
-                   normalized.begin(),
-                   [](unsigned char ch) -> char {
-                       return static_cast<char>(std::tolower(ch));
-                   });
-    return normalized;
-}
-
-OptixSplitMode active_optix_split_mode() {
-    static const OptixSplitMode value = []() {
-        const char *raw = std::getenv("RAYD_OPTIX_SPLIT_MODE");
-        const std::string normalized = normalize_optix_split_mode_value(raw);
-        if (normalized.empty() || normalized == "auto") {
-            return normalized.empty() ? OptixSplitMode::Off : OptixSplitMode::Auto;
-        }
-        if (normalized == "off" || normalized == "false" || normalized == "0") {
-            return OptixSplitMode::Off;
-        }
-        if (normalized == "on" || normalized == "true" || normalized == "1") {
-            return OptixSplitMode::On;
-        }
-        throw std::runtime_error(
-            "Invalid RAYD_OPTIX_SPLIT_MODE. Expected one of: auto, off, on.");
-    }();
-    return value;
-}
-
 std::string normalize_edge_backend_value(const std::string &value) {
     std::string normalized = value;
     std::transform(normalized.begin(),
@@ -116,23 +79,33 @@ bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {
     return backend == EdgeBVHBackend::Optix;
 }
 
-bool should_split_optix_scene(OptixSplitMode mode,
-                              int static_mesh_count,
-                              int dynamic_mesh_count) {
-    if (static_mesh_count == 0 || dynamic_mesh_count == 0) {
-        return false;
+/// Parse and resolve the trace_backend selector to a concrete kind. "auto"
+/// resolves to OptiX when the driver is available and to None otherwise; "optix"
+/// resolves to Optix (availability is enforced later, at build()); "none"
+/// resolves to None. "cuda"/"embree" are reserved for later phases.
+TraceBackendKind resolve_trace_backend_kind(const std::string &value) {
+    const std::string normalized = normalize_edge_backend_value(value);
+    if (normalized.empty() || normalized == "auto") {
+        return optix_available() ? TraceBackendKind::Optix : TraceBackendKind::None;
     }
-    if (mode == OptixSplitMode::On) {
-        return true;
+    if (normalized == "optix") {
+        return TraceBackendKind::Optix;
     }
-    if (mode == OptixSplitMode::Off) {
-        return false;
+    if (normalized == "none") {
+        return TraceBackendKind::None;
     }
-
-    // The measured mixed-scene query tax is still too large to justify enabling
-    // split mode automatically. Keep "on" available for calibration, but bias
-    // "auto" to the stable single-scene path until a better heuristic exists.
-    return false;
+    if (normalized == "cuda") {
+        throw std::runtime_error(
+            "trace_backend 'cuda' is not implemented yet "
+            "(planned: pure-CUDA in P3, Embree in P5)");
+    }
+    if (normalized == "embree") {
+        throw std::runtime_error(
+            "trace_backend 'embree' is not implemented yet "
+            "(planned: pure-CUDA in P3, Embree in P5)");
+    }
+    throw std::runtime_error(
+        "Invalid trace_backend. Expected one of: 'auto', 'optix', 'none'.");
 }
 
 template <bool Detached>
@@ -223,10 +196,8 @@ void Scene::reset_multipath_pipelines() {
     segment_chain_visibility_pipeline_.reset();
 }
 
-Scene::Scene(const std::string &edge_bvh_backend)
-    : optix_scene_(std::make_unique<OptixScene>()),
-      optix_static_scene_(std::make_unique<OptixScene>()),
-      optix_dynamic_scene_(std::make_unique<OptixScene>()),
+Scene::Scene(const std::string &edge_bvh_backend, const std::string &trace_backend)
+    : triangle_kind_(resolve_trace_backend_kind(trace_backend)),
       edge_bvh_(std::make_unique<SceneEdge>()),
       edge_optix_(std::make_unique<SceneEdgeOptix>()),
       edge_bvh_backend_(parse_edge_backend(edge_bvh_backend)) {}
@@ -267,10 +238,7 @@ int Scene::add_mesh(const Mesh &mesh, bool dynamic) {
     pending_edge_bvh_dirty_ranges_.clear();
     edge_bvh_dirty_ = false;
     mask_dirty_ = false;
-    optix_split_active_ = false;
-    optix_static_mesh_indices_.clear();
-    optix_dynamic_mesh_indices_.clear();
-    optix_dynamic_mesh_local_index_.clear();
+    trace_backend_.reset();
     reset_multipath_pipelines();
     return mesh_count_ - 1;
 }
@@ -452,6 +420,21 @@ void Scene::ensure_reflection_epc_geometry_ready() const {
 void Scene::build() {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::Build);
     require(!mesh_records_.empty(), "Scene::build(): missing meshes.");
+
+    // Validate the resolved backend plan before building any acceleration
+    // structure so an OptiX-less machine fails fast with a clear message rather
+    // than deep inside an OptiX call.
+    if (triangle_kind_ == TraceBackendKind::Optix && !optix_available()) {
+        throw std::runtime_error(
+            "trace_backend 'optix' requested but the OptiX driver library is "
+            "unavailable on this system");
+    }
+    if (edge_backend_builds_optix(edge_bvh_backend_) && !optix_available()) {
+        throw std::runtime_error(
+            "edge_bvh_backend='" + std::string(edge_backend_name(edge_bvh_backend_)) +
+            "' requires the OptiX driver library, which is unavailable on this "
+            "system; use edge_bvh_backend=\"drjit\" for a software edge backend");
+    }
 
     std::vector<int> face_offsets;
     face_offsets.reserve(mesh_records_.size() + 1);
@@ -681,52 +664,29 @@ void Scene::build() {
     }
     global_geometry_.face_normal = triangle_info_.face_normal;
 
-    int static_mesh_count = 0;
     int dynamic_mesh_count = 0;
     for (const SceneMeshRecord &record : mesh_records_) {
         if (record.dynamic) {
             ++dynamic_mesh_count;
-        } else {
-            ++static_mesh_count;
         }
     }
 
-    optix_split_active_ =
-        should_split_optix_scene(active_optix_split_mode(), static_mesh_count, dynamic_mesh_count);
-    optix_static_mesh_indices_.clear();
-    optix_dynamic_mesh_indices_.clear();
-    optix_dynamic_mesh_local_index_.assign(mesh_records_.size(), -1);
     reset_multipath_pipelines();
 
-    if (optix_split_active_) {
-        std::vector<OptixSceneMeshDesc> static_mesh_descs;
-        std::vector<OptixSceneMeshDesc> dynamic_mesh_descs;
-        static_mesh_descs.reserve(static_mesh_count);
-        dynamic_mesh_descs.reserve(dynamic_mesh_count);
-
-        for (size_t mesh_index = 0; mesh_index < mesh_records_.size(); ++mesh_index) {
-            if (mesh_records_[mesh_index].dynamic) {
-                optix_dynamic_mesh_local_index_[mesh_index] =
-                    static_cast<int>(dynamic_mesh_descs.size());
-                optix_dynamic_mesh_indices_.push_back(static_cast<int>(mesh_index));
-                dynamic_mesh_descs.push_back(mesh_descs[mesh_index]);
-            } else {
-                optix_static_mesh_indices_.push_back(static_cast<int>(mesh_index));
-                static_mesh_descs.push_back(mesh_descs[mesh_index]);
-            }
+    // The unconditional OptiX GAS build is gone: a triangle trace backend is
+    // constructed only when the resolved plan asks for one. Edge-only scenes
+    // (trace_backend='none') leave trace_backend_ null.
+    if (triangle_kind_ == TraceBackendKind::Optix) {
+        std::vector<bool> dynamic_flags;
+        dynamic_flags.reserve(mesh_records_.size());
+        for (const SceneMeshRecord &record : mesh_records_) {
+            dynamic_flags.push_back(record.dynamic);
         }
-
-        optix_scene_ = std::make_unique<OptixScene>();
-        optix_static_scene_ = std::make_unique<OptixScene>();
-        optix_dynamic_scene_ = std::make_unique<OptixScene>();
-        optix_scene_->build(mesh_descs);
-        optix_static_scene_->build(static_mesh_descs, optix_scene_.get());
-        optix_dynamic_scene_->build(dynamic_mesh_descs, optix_scene_.get());
+        auto optix_backend = std::make_unique<OptixTraceBackend>();
+        optix_backend->build(mesh_descs, dynamic_flags);
+        trace_backend_ = std::move(optix_backend);
     } else {
-        optix_scene_ = std::make_unique<OptixScene>();
-        optix_static_scene_ = std::make_unique<OptixScene>();
-        optix_dynamic_scene_ = std::make_unique<OptixScene>();
-        optix_scene_->build(mesh_descs);
+        trace_backend_.reset();
     }
     mask_dirty_ = false;
     edge_bvh_ = std::make_unique<SceneEdge>();
@@ -887,52 +847,17 @@ void Scene::sync() {
             Clock::now() - edge_refit_start).count();
     }
 
-    const auto optix_start = Clock::now();
-    if (optix_split_active_) {
-        if (!updates.empty()) {
-            optix_scene_->sync(mesh_descs, updates);
-        }
-
-        std::vector<OptixSceneMeshDesc> dynamic_mesh_descs;
-        dynamic_mesh_descs.reserve(optix_dynamic_mesh_indices_.size());
-        for (int mesh_index : optix_dynamic_mesh_indices_) {
-            dynamic_mesh_descs.push_back(mesh_descs[static_cast<size_t>(mesh_index)]);
-        }
-
-        std::vector<OptixSceneMeshUpdate> dynamic_updates;
-        dynamic_updates.reserve(updates.size());
-        for (const OptixSceneMeshUpdate &update : updates) {
-            const int dynamic_local_index =
-                optix_dynamic_mesh_local_index_[static_cast<size_t>(update.mesh_id)];
-            if (dynamic_local_index < 0) {
-                continue;
-            }
-            dynamic_updates.push_back(
-                { dynamic_local_index, update.vertices_dirty, update.transform_dirty });
-        }
-
-        if (!dynamic_updates.empty()) {
-            optix_dynamic_scene_->sync(dynamic_mesh_descs, dynamic_updates);
-        }
+    // The OptiX GAS/IAS refit runs only when a triangle trace backend exists;
+    // an edge-only scene (trace_backend='none') syncs its edge BVH above and
+    // skips this block entirely.
+    if (trace_backend_ != nullptr) {
+        const auto optix_start = Clock::now();
+        const OptixTraceSyncResult optix_result =
+            optix_backend().sync(mesh_descs, updates);
         last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - optix_start).count();
-        if (!updates.empty()) {
-            const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
-            last_sync_profile_.optix_gas_update_ms += optix_profile.gas_update_ms;
-            last_sync_profile_.optix_ias_update_ms += optix_profile.ias_update_ms;
-        }
-        if (!dynamic_updates.empty()) {
-            const OptixSyncProfile &optix_profile = optix_dynamic_scene_->last_sync_profile();
-            last_sync_profile_.optix_gas_update_ms += optix_profile.gas_update_ms;
-            last_sync_profile_.optix_ias_update_ms += optix_profile.ias_update_ms;
-        }
-    } else {
-        optix_scene_->sync(mesh_descs, updates);
-        last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
-            Clock::now() - optix_start).count();
-        const OptixSyncProfile &optix_profile = optix_scene_->last_sync_profile();
-        last_sync_profile_.optix_gas_update_ms = optix_profile.gas_update_ms;
-        last_sync_profile_.optix_ias_update_ms = optix_profile.ias_update_ms;
+        last_sync_profile_.optix_gas_update_ms = optix_result.gas_update_ms;
+        last_sync_profile_.optix_ias_update_ms = optix_result.ias_update_ms;
     }
     pending_updates_ = false;
     if (!updates.empty()) {
@@ -1053,12 +978,9 @@ VectoriT<2, true> Scene::edge_adjacent_faces(const Int &edge_id, bool global) co
 }
 
 bool Scene::is_ready() const {
-    const bool optix_ready =
-        optix_split_active_
-            ? (optix_scene_ != nullptr && optix_static_scene_ != nullptr &&
-               optix_dynamic_scene_ != nullptr && optix_scene_->is_ready() &&
-               optix_static_scene_->is_ready() && optix_dynamic_scene_->is_ready())
-            : (optix_scene_ != nullptr && optix_scene_->is_ready());
+    // With a triangle trace backend, defer to it; a built edge-only scene
+    // (no trace backend) reports ready so its edge queries can run.
+    const bool trace_ready = trace_backend_ != nullptr ? trace_backend_->is_ready() : true;
     bool edge_ready = true;
     if (edge_backend_builds_optix(edge_bvh_backend_)) {
         edge_ready &= edge_optix_ != nullptr && edge_optix_->is_ready();
@@ -1066,20 +988,28 @@ bool Scene::is_ready() const {
     if (edge_backend_builds_drjit(edge_bvh_backend_)) {
         edge_ready &= edge_bvh_ != nullptr && edge_bvh_->is_ready();
     }
-    return is_ready_ && edge_ready && optix_ready;
+    return is_ready_ && edge_ready && trace_ready;
 }
 
-Scene::OptixSceneSelection Scene::select_optix_scenes() const {
-    OptixSceneSelection selection;
-    selection.hitgroup_record_count = mesh_count_;
-    if (optix_split_active_) {
-        selection.primary = optix_static_scene_.get();
-        selection.secondary = optix_dynamic_scene_.get();
-        selection.split_mode = 1;
-    } else {
-        selection.primary = optix_scene_.get();
-    }
-    return selection;
+OptixTraceBackend &Scene::optix_backend() const {
+    require(trace_backend_ != nullptr,
+            "Scene: this operation requires a triangle trace backend, but the "
+            "scene was built with trace_backend='none' (or OptiX is unavailable).");
+    return *static_cast<OptixTraceBackend *>(trace_backend_.get());
+}
+
+OptixScene &Scene::optix_scene() const { return optix_backend().primary(); }
+
+OptixScene &Scene::optix_static_scene() const { return optix_backend().static_scene(); }
+
+OptixScene &Scene::optix_dynamic_scene() const { return optix_backend().dynamic_scene(); }
+
+bool Scene::optix_split_active() const {
+    return trace_backend_ != nullptr && optix_backend().split_active();
+}
+
+OptixSceneSelection Scene::select_optix_scenes() const {
+    return optix_backend().select_scenes();
 }
 
 template <bool Detached>

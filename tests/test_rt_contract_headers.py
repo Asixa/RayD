@@ -8,10 +8,18 @@ RT_DIR = ROOT / "shared" / "include" / "rayd" / "shared" / "rt"
 NUMERIC_POLICY = RT_DIR / "numeric_policy.h"
 HIT_TYPES = RT_DIR / "hit_types.h"
 RAY_TYPES = RT_DIR / "ray_types.h"
+BACKEND = RT_DIR / "backend.h"
 
 # rt/ headers are backend-neutral and host-safe: no backend, CUDA, or OptiX
 # tokens may leak in, otherwise a third backend cannot include them cleanly.
 FORBIDDEN_TOKENS = ("__device__", "__host__", "optix", "float3", "cuda_runtime")
+
+# backend.h names the trace backends, so the identifiers "Optix"/"Cuda" appear as
+# enum enumerators. Those are host-safe C++ identifiers, not backend dependencies,
+# so this header is checked against the dependency tokens only (device qualifiers,
+# CUDA vector types) plus a guard that it pulls in no CUDA/OptiX SDK header.
+BACKEND_FORBIDDEN_TOKENS = ("__device__", "__host__", "float3", "cuda_runtime")
+BACKEND_FORBIDDEN_INCLUDES = ("#include <optix", "#include <cuda", "#include <drjit")
 
 
 def struct_fields(header: str, struct_name: str) -> list[str]:
@@ -24,6 +32,7 @@ class RtContractHeaderTests(unittest.TestCase):
         self.assertTrue(NUMERIC_POLICY.is_file())
         self.assertTrue(HIT_TYPES.is_file())
         self.assertTrue(RAY_TYPES.is_file())
+        self.assertTrue(BACKEND.is_file())
 
     def test_headers_are_host_safe(self):
         for path in (NUMERIC_POLICY, HIT_TYPES, RAY_TYPES):
@@ -31,6 +40,38 @@ class RtContractHeaderTests(unittest.TestCase):
             for token in FORBIDDEN_TOKENS:
                 with self.subTest(header=path.name, token=token):
                     self.assertNotIn(token, lowered)
+
+    def test_backend_header_is_host_safe(self):
+        text = BACKEND.read_text(encoding="utf-8")
+        lowered = text.lower()
+        for token in BACKEND_FORBIDDEN_TOKENS:
+            with self.subTest(token=token):
+                self.assertNotIn(token, lowered)
+        for include in BACKEND_FORBIDDEN_INCLUDES:
+            with self.subTest(include=include):
+                self.assertNotIn(include, lowered)
+
+    def test_trace_capabilities_struct_field_order(self):
+        header = BACKEND.read_text(encoding="utf-8")
+        # Fields carry `= false` defaults, so read the name after the `bool` keyword.
+        match = re.search(r"struct TraceCapabilities\s*\{([^}]*)\}", header)
+        fields = re.findall(r"bool\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", match.group(1))
+        self.assertEqual(
+            fields,
+            [
+                "closest_hit",
+                "any_hit",
+                "first_blocker",
+                "ignore_primitives",
+                "instancing",
+                "refit",
+                "compaction",
+                "device_callable",
+                "jit_symbolic",
+                "fused_multipath",
+                "cpu",
+            ],
+        )
 
     def test_numeric_policy_struct_field_order(self):
         header = NUMERIC_POLICY.read_text(encoding="utf-8")

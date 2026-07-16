@@ -37,7 +37,9 @@ bool is_deprecated_combined_edge_backend(const std::string &value) {
 }
 
 /// Construct a Scene while preserving one release cycle for legacy backend aliases.
-void construct_scene(Scene *scene, const std::string &edge_bvh_backend) {
+void construct_scene(Scene *scene,
+                     const std::string &edge_bvh_backend,
+                     const std::string &trace_backend) {
     if (is_deprecated_combined_edge_backend(edge_bvh_backend) &&
         PyErr_WarnEx(PyExc_DeprecationWarning,
                      "edge_bvh_backend='hybrid' and its legacy aliases are deprecated; "
@@ -45,7 +47,7 @@ void construct_scene(Scene *scene, const std::string &edge_bvh_backend) {
                      2) < 0) {
         throw nb::python_error();
     }
-    new (scene) Scene(edge_bvh_backend);
+    new (scene) Scene(edge_bvh_backend, trace_backend);
 }
 
 /// Number of Dr.Jit-compatible CUDA devices; throws if none are available.
@@ -302,6 +304,13 @@ NB_MODULE(_C, m) {
           "Dr.Jit arrays that you intend to use with them. When "
           "initialize_optix=True, RayD also initializes the OptiX device "
           "context for the selected device.");
+    m.def("optix_available",
+          []() { return optix_available(); },
+          "Return True when a usable OptiX driver is present on this system.\n\n"
+          "This is a non-throwing capability probe (safe on machines without "
+          "OptiX). Set the environment variable RAYD_DISABLE_OPTIX=1 to force a "
+          "False result, which lets an OptiX-capable machine exercise the "
+          "OptiX-less code paths.");
     // Naming convention: the bare class name is the non-AD variant, which is the
     // common case; the autodiff variant carries an "AD" suffix (e.g. Ray / RayAD,
     // Intersection / IntersectionAD). The C++ aliases follow the same convention,
@@ -1757,7 +1766,9 @@ NB_MODULE(_C, m) {
 
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
-            .def("__init__", &construct_scene, "edge_bvh_backend"_a = "optix")
+            .def("__init__", &construct_scene,
+                 "edge_bvh_backend"_a = "optix",
+                 "trace_backend"_a = "auto")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
@@ -1775,6 +1786,41 @@ NB_MODULE(_C, m) {
             .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
             .def_prop_ro("edge_bvh_backend", &Scene::edge_bvh_backend)
+            .def("trace_backend_name",
+                 [](const Scene &scene) -> std::string {
+                     return scene.trace_backend_kind() == TraceBackendKind::Optix
+                                ? "optix"
+                                : "none";
+                 },
+                 "Canonical name of the resolved triangle trace backend "
+                 "('optix' or 'none').")
+            .def("capabilities",
+                 [](const Scene &scene) {
+                     const bool has_trace =
+                         scene.trace_backend_kind() == TraceBackendKind::Optix;
+                     nb::dict caps;
+                     caps["trace_backend"] = has_trace ? "optix" : "none";
+                     caps["optix_available"] = optix_available();
+                     caps["edge_backend"] = scene.edge_bvh_backend();
+                     nb::list integration;
+                     if (has_trace) {
+                         integration.append("jit_symbolic");
+                         integration.append("eager_native");
+                     }
+                     caps["integration"] = integration;
+                     caps["intersect"] = has_trace;
+                     caps["shadow_test"] = has_trace;
+                     caps["visibility"] = has_trace;
+                     caps["reflection_trace"] = has_trace;
+                     caps["reflection_accumulation"] = has_trace;
+                     caps["diffraction"] = has_trace;
+                     caps["epc"] = has_trace;
+                     caps["nearest_edge"] = true;
+                     return caps;
+                 },
+                 "Machine-readable capability map for this scene's resolved "
+                 "backend plan (trace backend, edge backend, integration modes, "
+                 "and per-operation availability).")
             .def("edge_bvh_stats", &Scene::edge_bvh_stats)
             .def("edge_topology", &Scene::edge_topology)
             .def("edge_mask", &Scene::edge_mask)

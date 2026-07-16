@@ -5410,14 +5410,14 @@ DfrCoherentUtdStatesT<Detached> Scene::build_dfr_coherent_tx_states(
 
         const Vector3f edge_dir = normalize_with_fallback(
             edges.edge_dir, Vector3f(Float(0.f), Float(0.f), Float(1.f)));
-        require(optix_scene_ != nullptr && optix_scene_->is_ready(),
+        require(trace_backend_ != nullptr && optix_scene().is_ready(),
                 "Scene::build_dfr_coherent_tx_states(): OptiX scene is not ready.");
         ensure_pipeline(segment_visibility_pipeline_,
-                        optix_scene_->context(),
+                        optix_scene().context(),
                         mesh_count_,
                         segment_visibility_pipeline_config());
         const SegmentVisibility visibility_result =
-            trace_segment_visibility_native<true>(*optix_scene_,
+            trace_segment_visibility_native<true>(optix_scene(),
                                                   *segment_visibility_pipeline_,
                                                   face_offsets_,
                                                   mesh_count_,
@@ -5631,7 +5631,7 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
                         static_cast<int>(slices(prev_states.adjacent_face0)) >= prev_count &&
                         static_cast<int>(slices(prev_states.adjacent_face1)) >= prev_count,
                     "Scene::build_dfr_coherent_higher_candidates(): visibility filtering requires edge positions and adjacent faces.");
-            require(optix_scene_ != nullptr && optix_scene_->is_ready(),
+            require(trace_backend_ != nullptr && optix_scene().is_ready(),
                     "Scene::build_dfr_coherent_higher_candidates(): OptiX scene is not ready.");
             const UInt safe_local_edge = UInt(select(valid, local_edge_idx, Int(0)));
             const Vector3f next_edge_pos = gather<Vector3f>(edges.edge_pos, safe_local_edge, valid);
@@ -5646,11 +5646,11 @@ DfrCoherentCandidatePairsT<Detached> Scene::build_dfr_coherent_higher_candidates
                 next_adjacent_face1,
                 probe_lane_count);
             ensure_pipeline(segment_visibility_pipeline_,
-                            optix_scene_->context(),
+                            optix_scene().context(),
                             mesh_count_,
                             segment_visibility_pipeline_config());
             const SegmentVisibility visibility_result =
-                trace_segment_visibility_native<true>(*optix_scene_,
+                trace_segment_visibility_native<true>(optix_scene(),
                                                       *segment_visibility_pipeline_,
                                                       face_offsets_,
                                                       mesh_count_,
@@ -7019,15 +7019,15 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
 
-    const bool symbolic_optix_query = optix_split_active_ && uses_symbolic_optix_query_path();
-    if (!optix_split_active_ || symbolic_optix_query) {
-        return optix_scene_->template shadow_test<Detached>(ray, active);
+    const bool symbolic_optix_query = optix_split_active() && uses_symbolic_optix_query_path();
+    if (!optix_split_active() || symbolic_optix_query) {
+        return optix_scene().template shadow_test<Detached>(ray, active);
     }
 
     const MaskT<Detached> static_hit =
-        optix_static_scene_->template shadow_test<Detached>(ray, active);
+        optix_static_scene().template shadow_test<Detached>(ray, active);
     const MaskT<Detached> dynamic_hit =
-        optix_dynamic_scene_->template shadow_test<Detached>(ray, active);
+        optix_dynamic_scene().template shadow_test<Detached>(ray, active);
     return static_hit || dynamic_hit;
 }
 
@@ -7073,14 +7073,14 @@ SegmentVisibilityT<Detached> Scene::visible(
 
     if (use_jit_trace_visibility_path(ignore_k)) {
         return trace_segment_visibility_jit_no_ignore<Detached>(
-            *optix_scene_, start_detached, end_detached, active_detached);
+            optix_scene(), start_detached, end_detached, active_detached);
     }
 
-    ensure_pipeline(segment_visibility_pipeline_, optix_scene_->context(),
+    ensure_pipeline(segment_visibility_pipeline_, optix_scene().context(),
                     mesh_count_, segment_visibility_pipeline_config());
 
     return trace_segment_visibility_native<Detached>(
-        *optix_scene_,
+        optix_scene(),
         *segment_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
@@ -7141,18 +7141,18 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
 
     if (use_jit_trace_visibility_path(ignore_k)) {
         return trace_segment_pair_visibility_jit_no_ignore<Detached>(
-            *optix_scene_,
+            optix_scene(),
             start_detached,
             end_a_detached,
             end_b_detached,
             active_detached);
     }
 
-    ensure_pipeline(segment_pair_visibility_pipeline_, optix_scene_->context(),
+    ensure_pipeline(segment_pair_visibility_pipeline_, optix_scene().context(),
                     mesh_count_, segment_pair_visibility_pipeline_config());
 
     return trace_segment_pair_visibility_native<Detached>(
-        *optix_scene_,
+        optix_scene(),
         *segment_pair_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
@@ -7231,7 +7231,7 @@ AxialEdgeVisibilityT<Detached> Scene::visible_edge(
 
     if (active_trace_visibility_backend() != TraceVisibilityBackend::Native) {
         return trace_axial_edge_visibility_jit<Detached>(
-            *optix_scene_,
+            optix_scene(),
             source_detached,
             edge_pos_detached,
             edge_dir_detached,
@@ -7241,10 +7241,10 @@ AxialEdgeVisibilityT<Detached> Scene::visible_edge(
             active_detached);
     }
 
-    ensure_pipeline(axial_edge_visibility_pipeline_, optix_scene_->context(),
+    ensure_pipeline(axial_edge_visibility_pipeline_, optix_scene().context(),
                     mesh_count_, axial_edge_visibility_pipeline_config());
     return trace_axial_edge_visibility_native<Detached>(
-        *optix_scene_,
+        optix_scene(),
         *axial_edge_visibility_pipeline_,
         face_offsets_,
         mesh_count_,
@@ -7312,7 +7312,7 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
 
     if (use_jit_visibility) {
         return trace_segment_chain_visibility_jit_no_ignore<Detached>(
-            *optix_scene_,
+            optix_scene(),
             points_detached,
             chain_length,
             chain_count,
@@ -7321,11 +7321,11 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
             active_detached);
     }
 
-    ensure_pipeline(segment_chain_visibility_pipeline_, optix_scene_->context(),
+    ensure_pipeline(segment_chain_visibility_pipeline_, optix_scene().context(),
                     mesh_count_, segment_chain_visibility_pipeline_config());
 
     return trace_segment_chain_visibility_native<Detached>(
-        *optix_scene_,
+        optix_scene(),
         *segment_chain_visibility_pipeline_,
         face_offsets_,
         mesh_count_,

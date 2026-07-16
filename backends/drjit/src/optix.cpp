@@ -4,6 +4,10 @@
 
 #include <rayd/native_launch_audit.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -12,6 +16,7 @@
 #  define NOMINMAX
 #  include <windows.h>
 #  include <winver.h>
+#  include <cfgmgr32.h>
 #elif defined(__linux__) || defined(__APPLE__)
 #  include <dlfcn.h>
 #endif
@@ -171,6 +176,108 @@ std::string optix_module_version(void *) { return {}; }
 OptixQueryFunctionTableFn optix_query_function_table(void *) { return nullptr; }
 #endif
 
+// Standalone driver-module probe used by optix_available(). Unlike
+// optix_module_handle_from_symbol(), this actively *loads* the driver library
+// (GetModuleHandleW does not load), so it works before any OptiX symbol resolves.
+#if defined(_WIN32)
+// Locate nvoptix.dll the way the OptiX SDK's optixLoadWindowsDll does: it lives
+// in the NVIDIA driver store, not on the default DLL search path, so a bare
+// LoadLibrary("nvoptix.dll") fails. Fall back to the graphics-driver directory
+// found via the display-adapter device's OpenGLDriverName registry value.
+HMODULE optix_load_windows_dll_from_driver_store(const char *dll_name) {
+    static const char *kDisplayAdapterClassGuid =
+        "{4d36e968-e325-11ce-bfc1-08002be10318}";
+    const ULONG flags = CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT;
+
+    ULONG device_list_size = 0;
+    if (CM_Get_Device_ID_List_SizeA(&device_list_size, kDisplayAdapterClassGuid, flags) !=
+            CR_SUCCESS ||
+        device_list_size == 0) {
+        return nullptr;
+    }
+
+    std::string device_names(device_list_size, '\0');
+    if (CM_Get_Device_ID_ListA(kDisplayAdapterClassGuid, device_names.data(),
+                               device_list_size, flags) != CR_SUCCESS) {
+        return nullptr;
+    }
+
+    for (const char *device_name = device_names.c_str(); *device_name != '\0';
+         device_name += std::strlen(device_name) + 1) {
+        DEVINST device_id = 0;
+        if (CM_Locate_DevNodeA(&device_id, const_cast<DEVINSTID_A>(device_name),
+                               CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) {
+            continue;
+        }
+
+        HKEY reg_key = nullptr;
+        if (CM_Open_DevNode_Key(device_id, KEY_QUERY_VALUE, 0, RegDisposition_OpenExisting,
+                                &reg_key, CM_REGISTRY_SOFTWARE) != CR_SUCCESS) {
+            continue;
+        }
+
+        DWORD value_size = 0;
+        if (RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr, nullptr,
+                             &value_size) != ERROR_SUCCESS) {
+            RegCloseKey(reg_key);
+            continue;
+        }
+
+        std::string reg_value(value_size, '\0');
+        const LSTATUS status =
+            RegQueryValueExA(reg_key, "OpenGLDriverName", nullptr, nullptr,
+                             reinterpret_cast<LPBYTE>(reg_value.data()), &value_size);
+        RegCloseKey(reg_key);
+        if (status != ERROR_SUCCESS) {
+            continue;
+        }
+
+        // reg_value is the full path to the OpenGL driver DLL (possibly with a
+        // trailing NUL). Replace its file name with dll_name and try to load it.
+        const std::string driver_dll(reg_value.c_str());
+        const size_t slash = driver_dll.find_last_of('\\');
+        if (slash == std::string::npos) {
+            continue;
+        }
+        const std::string candidate = driver_dll.substr(0, slash + 1) + dll_name;
+        if (HMODULE handle = LoadLibraryA(candidate.c_str())) {
+            return handle;
+        }
+    }
+    return nullptr;
+}
+
+HMODULE probe_load_optix_module() {
+    // Already loaded (for example after Dr.Jit initialized OptiX): reuse it.
+    if (HMODULE module = GetModuleHandleW(L"nvoptix.dll")) {
+        return module;
+    }
+    // On the default search path (rare) or in System32.
+    if (HMODULE module = LoadLibraryW(L"nvoptix.dll")) {
+        return module;
+    }
+    return optix_load_windows_dll_from_driver_store("nvoptix.dll");
+}
+#elif defined(__linux__) || defined(__APPLE__)
+void *probe_load_optix_module() {
+    return dlopen("libnvoptix.so.1", RTLD_LAZY | RTLD_LOCAL);
+}
+#else
+void *probe_load_optix_module() { return nullptr; }
+#endif
+
+// Kill-switch: RAYD_DISABLE_OPTIX=1/true forces optix_available() to report false,
+// letting an OptiX-capable machine exercise the OptiX-less paths in tests/CI.
+bool env_disables_optix() {
+    const char *raw = std::getenv("RAYD_DISABLE_OPTIX");
+    if (raw == nullptr)
+        return false;
+    std::string value(raw);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value == "1" || value == "true";
+}
+
 } // namespace
 
 OptixRuntimeInfo query_optix_runtime_info() {
@@ -214,6 +321,32 @@ OptixRuntimeInfo query_optix_runtime_info() {
 #endif
 
     return info;
+}
+
+bool optix_available() noexcept {
+    static const bool available = []() noexcept -> bool {
+        try {
+            if (env_disables_optix())
+                return false;
+
+            auto module = probe_load_optix_module();
+            if (!module)
+                return false;
+
+            OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
+            if (query_fn == nullptr)
+                return false;
+
+            // ABI-93 probe (mirrors query_optix_runtime_info): 7801 signals the
+            // driver rejects the target ABI, anything else means it is supported.
+            const OptixResult abi_probe =
+                query_fn(RAYD_OPTIX_TARGET_ABI, 0, nullptr, nullptr, nullptr, 0);
+            return abi_probe != 7801;
+        } catch (...) {
+            return false;
+        }
+    }();
+    return available;
 }
 
 void check_optix(OptixResult result, const char *message) {

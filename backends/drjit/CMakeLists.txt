@@ -198,6 +198,9 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
+    ${RAYD_INCLUDE_DIR}/trace/trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/optix_trace_backend.h
+    ${RAYD_SOURCE_DIR}/trace/optix_trace_backend.cpp
     ${RAYD_INCLUDE_DIR}/multipath/pipelines.h
     ${RAYD_SOURCE_DIR}/multipath/pipelines.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
@@ -1350,7 +1353,9 @@ endif()
 
 set(PYRAYD_LIBRARIES drjit drjit-core drjit-extra nanothread)
 if(WIN32)
-    list(APPEND PYRAYD_LIBRARIES version)
+    # version: OptiX driver-module version query.
+    # cfgmgr32/advapi32: driver-store lookup for nvoptix.dll in optix_available().
+    list(APPEND PYRAYD_LIBRARIES version cfgmgr32 advapi32)
 endif()
 target_link_libraries(rayd_core PUBLIC ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
 set_property(TARGET rayd_core PROPERTY CXX_STANDARD 17)

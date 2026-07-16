@@ -18,6 +18,7 @@
 #include <rayd/edge/scene_edge.h>
 #include <rayd/edge/scene_edge_optix.h>
 #include <rayd/scene/scene_optix.h>
+#include <rayd/trace/optix_trace_backend.h>
 
 namespace rayd {
 
@@ -52,9 +53,17 @@ enum class EdgeBVHBackend {
 /// Collection of built meshes and the acceleration data required for intersection queries.
 class Scene final {
 public:
-    /// Construct an empty scene; \p edge_bvh_backend selects the nearest-edge backend
-    /// ("drjit", "optix", or "optix_drjit"). See EdgeBVHBackend.
-    explicit Scene(const std::string &edge_bvh_backend = "optix");
+    /// \brief Construct an empty scene.
+    ///
+    /// \param edge_bvh_backend Nearest-edge backend ("drjit", "optix", or
+    ///        "optix_drjit"; see EdgeBVHBackend).
+    /// \param trace_backend Triangle trace backend: "auto" resolves to OptiX when
+    ///        the driver is available and to "none" otherwise; "optix" forces
+    ///        OptiX (availability is enforced at build()); "none" builds no
+    ///        triangle trace backend (edge-only queries). "cuda"/"embree" are
+    ///        reserved for later phases and raise a not-implemented error.
+    explicit Scene(const std::string &edge_bvh_backend = "optix",
+                   const std::string &trace_backend = "auto");
     ~Scene();
 
     /// \brief Add a copy of \p mesh to the scene and return its mesh id.
@@ -85,6 +94,11 @@ public:
     SceneEdgeInfo edge_info() const;
     /// Canonical name of the active edge backend ("drjit", "optix", or "optix_drjit").
     std::string edge_bvh_backend() const;
+    /// Resolved triangle trace backend kind (Optix or None in this release).
+    TraceBackendKind trace_backend_kind() const { return triangle_kind_; }
+    /// The active triangle trace backend, or null when trace_backend='none'
+    /// (or OptiX was unavailable under trace_backend='auto').
+    const TraceBackend *trace_backend() const { return trace_backend_.get(); }
     /// Build/traversal statistics for the edge BVH.
     SceneEdgeBVHStats edge_bvh_stats() const;
     /// Scene-global edge connectivity tables.
@@ -330,13 +344,15 @@ private:
         int edge_offset = 0;
     };
 
-    struct OptixSceneSelection {
-        const OptixScene *primary = nullptr;
-        const OptixScene *secondary = nullptr;
-        int split_mode = 0;
-        int hitgroup_record_count = 0;
-    };
-
+    // Triangle-trace-backend accessors. Each requires a live trace backend (built
+    // only when trace_backend != 'none' and OptiX is available); the rest of the
+    // code uses these instead of touching the backend directly, so migrating to a
+    // second backend later stays localized here.
+    OptixTraceBackend &optix_backend() const;
+    OptixScene &optix_scene() const;
+    OptixScene &optix_static_scene() const;
+    OptixScene &optix_dynamic_scene() const;
+    bool optix_split_active() const;
     OptixSceneSelection select_optix_scenes() const;
     void reset_multipath_pipelines();
     void ensure_dfr_order1_accumulation_pipeline() const;
@@ -376,13 +392,8 @@ private:
     int edge_count_ = 0;
     mutable bool edge_bvh_dirty_ = false;
     mutable std::vector<EdgeDirtyRange> pending_edge_bvh_dirty_ranges_;
-    bool optix_split_active_ = false;
-    std::vector<int> optix_static_mesh_indices_;
-    std::vector<int> optix_dynamic_mesh_indices_;
-    std::vector<int> optix_dynamic_mesh_local_index_;
-    std::unique_ptr<OptixScene> optix_scene_;
-    std::unique_ptr<OptixScene> optix_static_scene_;
-    std::unique_ptr<OptixScene> optix_dynamic_scene_;
+    TraceBackendKind triangle_kind_ = TraceBackendKind::None;
+    std::unique_ptr<TraceBackend> trace_backend_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> reflection_accumulation_pipeline_;
     mutable std::shared_ptr<OptixLaunchPipeline> diffraction_order1_accumulation_pipeline_;
