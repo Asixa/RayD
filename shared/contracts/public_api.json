@@ -119,11 +119,15 @@
       "optix": {
         "stability": "stable",
         "summary": "OptiX GPU ray-tracing backend for triangle intersection, edge, visibility, reflection, and diffraction queries shared by both frontends."
+      },
+      "cuda": {
+        "stability": "provisional",
+        "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. Multipath queries stay OptiX-only until the CUDA fused executor lands."
       }
     },
     "integration_modes": ["jit_symbolic", "eager_native"],
     "frontend_support": {
-      "drjit": {"optix": ["jit_symbolic", "eager_native"]},
+      "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
       "torch": {"optix": ["eager_native"]}
     }
   }

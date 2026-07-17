@@ -7019,6 +7019,14 @@ MaskT<Detached> Scene::shadow_test(const RayT<Detached> &ray, MaskT<Detached> ac
     require(is_ready(), "Scene::shadow_test(): scene is not built.");
     require(!pending_updates_, "Scene::shadow_test(): scene has pending updates. Call Scene::sync() first.");
 
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        require(!jit_flag(JitFlag::Recording),
+                "trace_backend='cuda' cannot serve shadow_test() inside a Dr.Jit symbolic "
+                "recording region; use trace_backend='optix' or evaluate outside the "
+                "recorded loop.");
+        return cuda_backend().template shadow_test<Detached>(ray, active);
+    }
+
     const bool symbolic_optix_query = optix_split_active() && uses_symbolic_optix_query_path();
     if (!optix_split_active() || symbolic_optix_query) {
         return optix_scene().template shadow_test<Detached>(ray, active);

@@ -333,11 +333,13 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         self.assertIn("trace backend", data["intersect"]["msg"])
 
     def test_reserved_backend_name_raises_not_implemented(self):
+        # 'cuda' now resolves to the pure-CUDA backend; only 'embree' remains
+        # reserved for a later phase.
         script = """
         import json
         import rayd.drjit as rd
         try:
-            rd.Scene(trace_backend="cuda")
+            rd.Scene(trace_backend="embree")
             out = {"raised": False}
         except Exception as exc:  # noqa: BLE001
             out = {"raised": True, "msg": str(exc)}
@@ -346,6 +348,29 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         data = _run_json(script)
         self.assertTrue(data["raised"])
         self.assertIn("not implemented", data["msg"])
+
+    def test_cuda_backend_constructs_and_reports_capabilities(self):
+        script = """
+        import json
+        import rayd.drjit as rd
+        scene = rd.Scene(trace_backend="cuda")
+        caps = scene.capabilities()
+        print(json.dumps({
+            "trace_backend": caps["trace_backend"],
+            "intersect": caps["intersect"],
+            "shadow_test": caps["shadow_test"],
+            "visibility": caps["visibility"],
+            "integration": list(caps["integration"]),
+            "trace_backend_name": scene.trace_backend_name(),
+        }))
+        """
+        data = _run_json(script)
+        self.assertEqual(data["trace_backend"], "cuda")
+        self.assertIs(data["intersect"], True)
+        self.assertIs(data["shadow_test"], True)
+        self.assertIs(data["visibility"], False)
+        self.assertEqual(data["integration"], ["eager_native"])
+        self.assertEqual(data["trace_backend_name"], "cuda")
 
     def test_golden_edge_queries_still_match_baseline(self):
         # Determinism guard: with OptiX available, the default-backend golden

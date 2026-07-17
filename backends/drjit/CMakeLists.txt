@@ -201,6 +201,9 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_INCLUDE_DIR}/trace/trace_backend.h
     ${RAYD_INCLUDE_DIR}/trace/optix_trace_backend.h
     ${RAYD_SOURCE_DIR}/trace/optix_trace_backend.cpp
+    ${RAYD_INCLUDE_DIR}/trace/cuda_trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h
+    ${RAYD_SOURCE_DIR}/trace/cuda_trace_backend.cpp
     ${RAYD_INCLUDE_DIR}/multipath/pipelines.h
     ${RAYD_SOURCE_DIR}/multipath/pipelines.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
@@ -465,6 +468,81 @@ list(APPEND RAYD_CORE_SOURCE_FILES
     "${RAYD_SHARED_BVH_QUERY_OBJECT}"
     "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
     "${RAYD_SHARED_EDGE_AABB_OBJECT}")
+
+# Pure-CUDA triangle BVH: the primitive-specific traversal kernels live in the
+# shared tree; the build/refit/query orchestrator lives in the drjit backend.
+set(RAYD_SHARED_BVH_TRIANGLE_QUERY_CU
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu")
+set(RAYD_TRIANGLE_BVH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/triangle_bvh.cu")
+set(RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS
+    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h")
+set(RAYD_TRIANGLE_BVH_DEPS
+    "${RAYD_TRIANGLE_BVH_CU}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h")
+if(WIN32)
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.obj")
+    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.obj")
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_triangle_query.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}"
+        DEPENDS "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
+        VERBATIM)
+    set(RAYD_TRIANGLE_BVH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_triangle_bvh.bat")
+    file(GENERATE OUTPUT "${RAYD_TRIANGLE_BVH_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_TRIANGLE_BVH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_TRIANGLE_BVH_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
+        COMMAND "${RAYD_TRIANGLE_BVH_SCRIPT}"
+        DEPENDS "${RAYD_TRIANGLE_BVH_SCRIPT}" ${RAYD_TRIANGLE_BVH_DEPS}
+        VERBATIM)
+else()
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.o")
+    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.o")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        DEPENDS ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
+        VERBATIM)
+    add_custom_command(
+        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_TRIANGLE_BVH_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_TRIANGLE_BVH_OBJECT}"
+        DEPENDS ${RAYD_TRIANGLE_BVH_DEPS}
+        VERBATIM)
+endif()
+set_source_files_properties("${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_TRIANGLE_BVH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+    "${RAYD_TRIANGLE_BVH_OBJECT}")
 
 set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
 if(WIN32)

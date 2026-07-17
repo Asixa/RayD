@@ -85,15 +85,19 @@ class PublicApiManifestTests(unittest.TestCase):
             self.assertEqual(rich["aliases"], MANIFEST["aliases"])
             self.assertEqual(rich["trace"], MANIFEST["trace"])
 
-    def test_trace_axis_records_only_the_shipping_optix_backend(self):
+    def test_trace_axis_records_the_optix_and_cuda_backends(self):
         trace = MANIFEST["trace"]
         self.assertEqual(set(trace), {"backends", "integration_modes", "frontend_support"})
-        self.assertEqual(set(trace["backends"]), {"optix"})
+        self.assertEqual(set(trace["backends"]), {"optix", "cuda"})
         self.assertEqual(trace["backends"]["optix"]["stability"], "stable")
         self.assertTrue(trace["backends"]["optix"]["summary"])
+        self.assertEqual(trace["backends"]["cuda"]["stability"], "provisional")
+        self.assertTrue(trace["backends"]["cuda"]["summary"])
         self.assertEqual(trace["integration_modes"], ["jit_symbolic", "eager_native"])
+        # The CUDA backend is eager-native only: it never folds into a Dr.Jit
+        # symbolic megakernel, and it has no Torch frontend in this phase.
         self.assertEqual(trace["frontend_support"], {
-            "drjit": {"optix": ["jit_symbolic", "eager_native"]},
+            "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
             "torch": {"optix": ["eager_native"]},
         })
 

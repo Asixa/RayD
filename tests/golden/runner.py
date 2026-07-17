@@ -308,9 +308,15 @@ def _run_nearest_edges(dr, cuda, scene, query):
     )
 
 
-def _collect_scene(dr, cuda, rd, scene_def):
+# Query kinds that route through OptiX-only multipath and cannot run under the
+# eager CUDA trace backend (see capabilities(): visibility stays OptiX-only).
+_CUDA_UNSUPPORTED_KINDS = {"visible", "visible_pair"}
+
+
+def _collect_scene(dr, cuda, rd, scene_def, trace_backend=None):
     meshes = []
-    scene = rd.Scene()
+    scene = rd.Scene() if trace_backend is None else rd.Scene(trace_backend=trace_backend)
+    skip_kinds = _CUDA_UNSUPPORTED_KINDS if trace_backend == "cuda" else set()
     for mesh_def in scene_def["meshes"]:
         mesh = rd.Mesh(
             _make_vec3(cuda, mesh_def["vertices"]),
@@ -335,6 +341,8 @@ def _collect_scene(dr, cuda, rd, scene_def):
 
     for query in scene_def["queries"]:
         kind = query["kind"]
+        if kind in skip_kinds:
+            continue
         if kind == "update_vertices":
             scene.update_mesh_vertices(meshes[int(query["mesh"])], _make_vec3(cuda, query["vertices"]))
             scene.sync()
@@ -362,11 +370,14 @@ def _collect_scene(dr, cuda, rd, scene_def):
     return {"queries": queries}
 
 
-def collect_golden(backend="drjit"):
+def collect_golden(backend="drjit", trace_backend=None):
+    """Collect golden results. ``trace_backend`` selects the triangle backend
+    passed to ``rd.Scene`` (None keeps the default OptiX backend); under
+    ``"cuda"`` the OptiX-only multipath queries are skipped."""
     dr, cuda, rd = _load_backend(backend)
     result = {}
     for scene_def in scene_defs.SCENES:
-        result[scene_def["name"]] = _collect_scene(dr, cuda, rd, scene_def)
+        result[scene_def["name"]] = _collect_scene(dr, cuda, rd, scene_def, trace_backend)
     return result
 
 

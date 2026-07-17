@@ -16,6 +16,7 @@ enum class NativeLaunchStage {
     Unknown = 0,
     Build,
     Sync,
+    Intersect,
     TraceReflections,
     AccumulateReflections,
     AccumDfr,
@@ -61,6 +62,7 @@ struct NativeLaunchAuditSnapshot {
     NativeLaunchStageStats unknown;
     NativeLaunchStageStats build;
     NativeLaunchStageStats sync;
+    NativeLaunchStageStats intersect;
     NativeLaunchStageStats trace_reflections;
     NativeLaunchStageStats accumulate_reflections;
     NativeLaunchStageStats accum_dfr;

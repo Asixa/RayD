@@ -95,17 +95,15 @@ TraceBackendKind resolve_trace_backend_kind(const std::string &value) {
         return TraceBackendKind::None;
     }
     if (normalized == "cuda") {
-        throw std::runtime_error(
-            "trace_backend 'cuda' is not implemented yet "
-            "(planned: pure-CUDA in P3, Embree in P5)");
+        return TraceBackendKind::Cuda;
     }
     if (normalized == "embree") {
         throw std::runtime_error(
             "trace_backend 'embree' is not implemented yet "
-            "(planned: pure-CUDA in P3, Embree in P5)");
+            "(planned: Embree in P5)");
     }
     throw std::runtime_error(
-        "Invalid trace_backend. Expected one of: 'auto', 'optix', 'none'.");
+        "Invalid trace_backend. Expected one of: 'auto', 'optix', 'cuda', 'none'.");
 }
 
 template <bool Detached>
@@ -685,6 +683,14 @@ void Scene::build() {
         auto optix_backend = std::make_unique<OptixTraceBackend>();
         optix_backend->build(mesh_descs, dynamic_flags);
         trace_backend_ = std::move(optix_backend);
+    } else if (triangle_kind_ == TraceBackendKind::Cuda) {
+        // Pure-CUDA scene-level triangle BVH over the world-space detached
+        // triangle arrays scattered above (no OptiX driver required).
+        auto cuda_backend = std::make_unique<CudaTraceBackend>();
+        cuda_backend->build(triangle_info_detached_,
+                            global_geometry_.shape_id,
+                            global_geometry_.local_prim_id);
+        trace_backend_ = std::move(cuda_backend);
     } else {
         trace_backend_.reset();
     }
@@ -851,13 +857,23 @@ void Scene::sync() {
     // an edge-only scene (trace_backend='none') syncs its edge BVH above and
     // skips this block entirely.
     if (trace_backend_ != nullptr) {
-        const auto optix_start = Clock::now();
-        const OptixTraceSyncResult optix_result =
-            optix_backend().sync(mesh_descs, updates);
+        const auto trace_sync_start = Clock::now();
+        if (triangle_kind_ == TraceBackendKind::Cuda) {
+            // A pure-CUDA backend refits its scene-level BVH from the triangle
+            // arrays re-scattered above; there is no OptiX GAS/IAS timing.
+            if (!updates.empty()) {
+                cuda_backend().sync(triangle_info_detached_,
+                                    global_geometry_.shape_id,
+                                    global_geometry_.local_prim_id);
+            }
+        } else {
+            const OptixTraceSyncResult optix_result =
+                optix_backend().sync(mesh_descs, updates);
+            last_sync_profile_.optix_gas_update_ms = optix_result.gas_update_ms;
+            last_sync_profile_.optix_ias_update_ms = optix_result.ias_update_ms;
+        }
         last_sync_profile_.optix_sync_ms = std::chrono::duration<double, std::milli>(
-            Clock::now() - optix_start).count();
-        last_sync_profile_.optix_gas_update_ms = optix_result.gas_update_ms;
-        last_sync_profile_.optix_ias_update_ms = optix_result.ias_update_ms;
+            Clock::now() - trace_sync_start).count();
     }
     pending_updates_ = false;
     if (!updates.empty()) {
@@ -995,7 +1011,27 @@ OptixTraceBackend &Scene::optix_backend() const {
     require(trace_backend_ != nullptr,
             "Scene: this operation requires a triangle trace backend, but the "
             "scene was built with trace_backend='none' (or OptiX is unavailable).");
+    require(triangle_kind_ == TraceBackendKind::Optix,
+            "Scene: this operation requires the OptiX trace backend; the scene was "
+            "built with trace_backend='cuda'. CUDA multipath arrives with the "
+            "CudaFusedExecutor (P4).");
     return *static_cast<OptixTraceBackend *>(trace_backend_.get());
+}
+
+CudaTraceBackend &Scene::cuda_backend() const {
+    require(trace_backend_ != nullptr && triangle_kind_ == TraceBackendKind::Cuda,
+            "Scene: this operation requires the CUDA trace backend.");
+    return *static_cast<CudaTraceBackend *>(trace_backend_.get());
+}
+
+std::vector<int> Scene::cuda_first_blocker_selftest(const Vector3f &origin,
+                                                    const Vector3f &direction,
+                                                    const Float &tmax,
+                                                    const std::vector<int> &ignore_prim_ids) const {
+    require(is_ready(), "Scene::cuda_first_blocker_selftest(): scene is not built.");
+    require(!pending_updates_,
+            "Scene::cuda_first_blocker_selftest(): scene has pending updates. Call Scene::sync() first.");
+    return cuda_backend().first_blocker_selftest(origin, direction, tmax, ignore_prim_ids);
 }
 
 OptixScene &Scene::optix_scene() const { return optix_backend().primary(); }
@@ -1005,7 +1041,7 @@ OptixScene &Scene::optix_static_scene() const { return optix_backend().static_sc
 OptixScene &Scene::optix_dynamic_scene() const { return optix_backend().dynamic_scene(); }
 
 bool Scene::optix_split_active() const {
-    return trace_backend_ != nullptr && optix_backend().split_active();
+    return triangle_kind_ == TraceBackendKind::Optix && optix_backend().split_active();
 }
 
 OptixSceneSelection Scene::select_optix_scenes() const {

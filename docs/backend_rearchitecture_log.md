@@ -326,3 +326,111 @@ entry in `backends/torch/CMakeLists.txt`), next to the existing `shared/src/edge
   desktop at the 3 %/5 % smoke thresholds; the deterministic launch-count invariant (the real
   regression check) is identical, and the behavior suites confirm bit-identical edge-query
   results.
+
+## P3 Stage B+C — the pure-CUDA triangle TraceBackend
+
+A second concrete `TraceBackend` (`trace_backend='cuda'`) that answers closest-hit
+and occlusion queries with raw CUDA kernels over a scene-level triangle BVH, with
+no OptiX driver dependency (plan doc §5 eager-native axis, §8.2). Multipath stays
+OptiX-only until the CUDA fused executor (P4).
+
+### Design (locked in the supervisor spec)
+
+- **Single scene-level BVH over world-space triangles, no BLAS/TLAS.** Source is
+  `Scene::triangle_info_detached_.{p0,e1,e2}` (SoA, world space, transforms already
+  baked, indexed by global primitive id, refreshed by `sync()`). Unlike OptiX we do
+  not need an IAS because the detached triangles are already in world space.
+- **Watertight intersector** (`shared/include/rayd/shared/bvh/triangle_intersect.h`,
+  host/device dual, pure): Woop-Benthin-Wald 2013 ray-centric shear + 2D edge
+  functions, no backface culling, boundary-inclusive. The returned `(u, v)` match
+  the Möller-Trumbore convention of `utils.h ray_intersect_triangle`
+  (`P = p0 + u·e1 + v·e2`), verified against it. The edge functions use an
+  FMA-contraction-proof difference of products (Kahan) so a mathematically zero
+  edge function is exactly `0.0f` under any `--fmad` setting — without this a
+  diagonal-crossing ray gets a tiny-residual edge function of arbitrary sign and is
+  spuriously rejected (this was the initial watertight-grid failure: 8/1600 gaps,
+  all on the shared diagonal).
+- **Three separate traversal kernels** (`shared/src/bvh/triangle_query.cu`,
+  allocation-free, stream-parametered, POD params): `closest_hit` (near/far slab
+  ordering, `(t, global_prim_id)` tie-break), `occluded` (early-exit any-hit), and
+  `first_blocker` (closest blocker + per-ray ignore list). Each uses a 64-deep
+  depth-major caller-owned stack (`traversal_common.cuh` `stack_push`/`stack_load`)
+  plus a per-ray overflow flag; a build-time guard (`max_height + 1 ≤ 64`) makes
+  overflow structurally impossible, and brute-force repair kernels are wired as the
+  fallback the overflow flag triggers.
+- **`CudaTraceBackend`** (`backends/drjit/{include,src}/rayd/trace/cuda_trace_backend.*`
+  + `src/trace/triangle_bvh.cu`): clones the edge-BVH integration shape — persistent
+  Dr.Jit member buffers, `dr.eval` + `sync_thread` before exposing `.data()`, the
+  `.cu` orchestrator owns its own non-blocking streams + `CudaBuffer` scratch and
+  drives the shared `bvh/build.h` launchers, host compaction via `host_topology.h`,
+  and refit level-by-level in ascending height. Build is pure LBVH (see Deviations).
+  Every op records `audit_*` hooks under a new `NativeLaunchStage::Intersect`.
+- **Seam**: `CudaTraceBackend::intersect<Detached>`/`shadow_test<Detached>` return the
+  same detached `OptixIntersection`-shaped result as `OptixScene`, so
+  `scene_intersect.cpp:72+` (winner derivation + AD recompute) is reused verbatim.
+  A `triangle_kind_ == Cuda` arm gates the broad phase in `scene_intersect.cpp` and
+  `scene_multipath.cpp shadow_test`, both guarded against Dr.Jit symbolic recording
+  (`jit_flag(Recording)` ⇒ clear error). `optix_backend()` now kind-checks and
+  `optix_split_active()` is guarded so a CUDA scene never reinterprets the backend
+  pointer; multipath entry points raise "requires the OptiX trace backend; CUDA
+  multipath arrives with the CudaFusedExecutor (P4)".
+- **Numerics** match OptiX exactly: `tmin = RayEpsilon` (1e-3), `tmax = isfinite ?
+  tmax : 1e8`, miss ⇒ `t = +inf`, ids `= -1`.
+- **Python/contract**: `resolve_trace_backend_kind` maps `"cuda"` to the backend;
+  `capabilities()` reports `trace_backend="cuda"`, `integration=["eager_native"]`,
+  `intersect`/`shadow_test` true and multipath false; `public_api.json` trace section
+  gains the `cuda` backend + `frontend_support.drjit.cuda=["eager_native"]`, with
+  both `_capabilities.py` copies, the EOL-normalized SHA pin, and the manifest test
+  updated in lockstep.
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green:
+
+- **`test_cuda_trace_backend`** (new, 10 tests): golden cross-backend parity
+  (discrete bit-identical vs `baselines/optix`, continuous within `operations.json`
+  tolerances) across every CUDA-servable query in `single_tri`, `shared_edge_quad`,
+  `degenerate_tri`, `large_coordinates`, `self_intersection`, `multi_mesh_ids`,
+  `dynamic_refit`, `inactive_lanes`, `batch_sizes`, `finite_tmax_visibility`
+  (shadow), plus `edge_queries`/`edge_tie`; watertight 40×40 grid over the
+  shared-edge quad = 1600/1600 hits with 40 exact-diagonal rays, all occluded, zero
+  gaps; exact-diagonal `t ≈ 1.0`; degenerate zero-area triangle never hit and no
+  NaN; 1e6-offset scene hits; AD vertex + transform gradients identical to the OptiX
+  backend; dynamic vertex update refits (hit → miss → hit at the moved location);
+  launch audit shows exactly 1 `triangle_closest_hit_kernel` per query and a stable
+  50 launches over 50 queries (no per-call cudaMalloc-driven kernels / no overflow
+  repair); recording guard raises; first-blocker self-test returns prim 0, then
+  prim 1 with `ignore=[0]`, then -1 with `ignore=[0,1]`.
+- **OptiX regression (default path untouched, bit-identical):** `test_golden_scenes`
+  (2), `test_geometry` (63), `test_trace_backend_gate` (9, now incl. the CUDA-
+  constructs case), `test_visibility_topk` (12), `test_reflection_epc` (12),
+  `test_reflection_accumulation` (6), `test_diffraction_accumulation` (30),
+  `test_surfel` (32), `test_optix_pipeline_cold_create` (1), `tests.drjit.test_baseline`
+  (2), and workspace `unittest discover -s tests` (195, 3 pre-existing skips,
+  including the updated `test_public_api_manifest`).
+
+### Perf snapshot (informational, not a gate)
+
+RTX 5080, 18,432 triangles, 262,144 rays, median ms:
+
+| op | OptiX | CUDA |
+| --- | ---: | ---: |
+| `intersect` | `0.18 ms` | `2.21 ms` |
+| `shadow_test` | `0.15 ms` | `1.43 ms` |
+
+CUDA is ~9-12× slower than OptiX, as expected: it is the driver-independent Orin
+fallback path (pure LBVH, no RT cores).
+
+### Deviations from the spec
+
+- **Pure LBVH build, no treelet pass.** The build reuses the shared Morton/radix/
+  finalize launchers but omits the GPU treelet optimizer that the edge BVH runs at
+  ≥65 k primitives. Rationale: treelet is a query-throughput optimization that is
+  correctness-neutral (it never changes primitive membership), never triggers on the
+  golden scenes, and only affects the informational perf number. This keeps the
+  single-pass build tractable and low-risk; the treelet pass can be lifted from the
+  shared launchers later behind the same size gate.
+- **`shared/src/bvh/triangle_query.cu` is registered in both backends' CMakeLists**
+  (and `backends/torch/abi_audit.json` regenerated) to keep the shared source set
+  symmetric, even though the Torch backend does not consume the triangle trace
+  kernels until P4.

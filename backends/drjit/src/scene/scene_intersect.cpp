@@ -35,7 +35,13 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
     MaskT<Detached> hit_mask = active;
     OptixIntersection optix_hit;
-    if (optix_split_active() && !symbolic_optix_query) {
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        require(!jit_flag(JitFlag::Recording),
+                "trace_backend='cuda' cannot serve intersect() inside a Dr.Jit symbolic "
+                "recording region; use trace_backend='optix' or evaluate outside the "
+                "recorded loop.");
+        optix_hit = cuda_backend().template intersect<Detached>(ray, hit_mask);
+    } else if (optix_split_active() && !symbolic_optix_query) {
         MaskT<Detached> static_hit_mask = active;
         MaskT<Detached> dynamic_hit_mask = active;
         const OptixIntersection static_hit =

@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "e34783679abfe7fcce33d510f92d4f56bc411d00e7406ad1aca40e83701a1bb8"
+_SCHEMA_SHA256 = "27ed0f361e65636c624b01a134bb077659283275866b709cf53a53b1eed91db8"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -84,11 +84,15 @@ _TRACE = {
         "optix": {
             "stability": "stable",
             "summary": "OptiX GPU ray-tracing backend for triangle intersection, edge, visibility, reflection, and diffraction queries shared by both frontends.",
-        }
+        },
+        "cuda": {
+            "stability": "provisional",
+            "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. Multipath queries stay OptiX-only until the CUDA fused executor lands.",
+        },
     },
     "integration_modes": ["jit_symbolic", "eager_native"],
     "frontend_support": {
-        "drjit": {"optix": ["jit_symbolic", "eager_native"]},
+        "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
         "torch": {"optix": ["eager_native"]},
     },
 }

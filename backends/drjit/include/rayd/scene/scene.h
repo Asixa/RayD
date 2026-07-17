@@ -18,6 +18,7 @@
 #include <rayd/edge/scene_edge.h>
 #include <rayd/edge/scene_edge_optix.h>
 #include <rayd/scene/scene_optix.h>
+#include <rayd/trace/cuda_trace_backend.h>
 #include <rayd/trace/optix_trace_backend.h>
 
 namespace rayd {
@@ -272,6 +273,13 @@ public:
     /// Any-hit occlusion test: per-lane mask, true where the ray hits any surface within tmax.
     template <bool Detached>
     MaskT<Detached> shadow_test(const RayT<Detached> &ray, MaskT<Detached> active = true) const;
+    /// \brief P3 CUDA-backend test hook (not part of the public query surface):
+    /// closest blocker global primitive id per ray, honoring an ignore list.
+    /// Requires a scene built with trace_backend='cuda'.
+    std::vector<int> cuda_first_blocker_selftest(const Vector3f &origin,
+                                                 const Vector3f &direction,
+                                                 const Float &tmax,
+                                                 const std::vector<int> &ignore_prim_ids) const;
     /// \brief Mutual visibility of segment endpoints [start, end].
     /// \param ignore_prim_ids Optional per-ray list of primitive ids to treat as non-occluding.
     /// \param active          Per-lane mask; inactive lanes return invalid.
@@ -349,6 +357,7 @@ private:
     // code uses these instead of touching the backend directly, so migrating to a
     // second backend later stays localized here.
     OptixTraceBackend &optix_backend() const;
+    CudaTraceBackend &cuda_backend() const;
     OptixScene &optix_scene() const;
     OptixScene &optix_static_scene() const;
     OptixScene &optix_dynamic_scene() const;

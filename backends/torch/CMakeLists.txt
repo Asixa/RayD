@@ -526,6 +526,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/scene/geometry_backward.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu
