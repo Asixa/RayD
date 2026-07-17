@@ -553,22 +553,44 @@ UTD_DINLINE void assemble_beta_term(T cotV, T c1, T c2,
 //
 //   odd  = 0.5 * w(delta) * (t_i(beta) - t_i(2*bStar - beta))
 //   even = t_i - odd
-//   t_used = even * truncEven + odd * gammaOdd
+//   B    = wb + (1 - wb) * Re(truncEven),  wb = exp(-(delta / deltaB)^2)
+//   t_used = even * truncEven + odd * gammaOdd * B
 //
-// with a locality window w(delta), delta = beta - bStar. The identities
+// with a locality window w(delta) and a blend window wb(delta), both keyed on
+// the per-term boundary distance delta = beta - bStar. The identities
 // disc(odd) == disc(t_i) and disc(even) == 0 hold across the boundary, so the
-// odd part carries the ENTIRE GO discontinuity. truncEven is the complex
-// finite-edge truncation factor (Fresnel integral over the edge extent) applied
-// only to the continuous background; gammaOdd is the corner interior indicator
-// (1 deep inside the edge span, 0 past the ends). With gammaOdd = 1 the interior
-// ISB/RSB step is preserved EXACTLY regardless of truncEven -- the finite-edge
-// factor never distorts the GO-compensation step. With gammaOdd -> 0 the
-// extension-plane step vanishes. Every non-stationary / MC call site passes
-// gammaOdd = 1 and truncEven = 1, so t_used == t_i (exact no-op) and the
-// pseudo-infinite truncation multiplies the whole contribution outside as
-// before. Only the term VALUE is split; the first/second-derivative outputs
-// feed the slope-diffraction terms, carry no GO step, and take truncEven only.
+// odd part carries the ENTIRE GO discontinuity. truncEven is the finite-edge
+// truncation factor -- real and monotone since G1/F5e (Re(truncEven) = T_mono,
+// a Fresnel-ripple-free PO corner-wave surrogate) -- applied to the continuous
+// even background; gammaOdd is the corner interior indicator (1 deep inside the
+// edge span, 0 past the ends).
+//
+// G2/F5e boundary-distance blend of the odd part: the VISIBLE deep shadow is
+// transition-dominated (the odd, GO-step-carrying part, not the even
+// background), so truncating only the even part (G1) leaves the deep shadow
+// ~+3.6 dB too bright. B relaxes the odd part from the exact GO step at the
+// boundary (delta -> 0 => wb -> 1 => B = 1, so the interior ISB/RSB step is
+// preserved EXACTLY regardless of truncEven) to the same monotone finite-edge
+// truncation deep in the shadow (delta >> deltaB => wb -> 0 => B = Re(truncEven)
+// = T_mono, so the finite edge attenuates the transition wave too). With
+// gammaOdd -> 0 the extension-plane step still vanishes. Every non-stationary /
+// MC call site passes gammaOdd = 1 and truncEven = 1, so B = wb + (1 - wb) = 1
+// and t_used == t_i (exact no-op); the pseudo-infinite truncation multiplies
+// the whole contribution outside as before. Only the term VALUE is split; the
+// first/second-derivative outputs feed the slope-diffraction terms, carry no GO
+// step, and take truncEven only.
 // ===================================================================
+
+// Corner-mend odd-part blend width coefficient (design F5e / G2). Empirical
+// single-variable stand-in for the complex-pole truncated transition integral
+// (generalized Fresnel): it sets the boundary distance
+//   deltaB = C_BLEND * sqrt(2*pi / kL)
+// over which the odd/transition part of a boundary-active term relaxes from the
+// exact GO step (delta -> 0) to the monotone finite-edge truncation T_mono
+// (delta >> deltaB). Calibrated against the full-wave reference; the exact
+// two-variable corner-transition object is the recorded refinement.
+constexpr float C_BLEND = 0.35f;
+
 template <typename T>
 UTD_DINLINE T incident_nearest_boundary(T beta) {
     // Incident shadow boundaries lie at beta = +-pi; pick the nearer.
@@ -616,9 +638,20 @@ UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue,
                        trM, tr1M, tr2M, tvM, tfM, tsM);
     ComplexT<T> odd = cplx_mul_real(cplx_sub(termValue, tvM), T(0.5f) * w);
     ComplexT<T> even = cplx_sub(termValue, odd);
+    // G2/F5e boundary-distance blend of the odd (GO-step-carrying) part. delta is
+    // the SAME per-term boundary distance used by the locality window above. At
+    // the boundary (delta -> 0) blend = 1 preserves the GO step exactly; deep in
+    // the shadow (delta >> deltaB) blend -> Re(truncEven) = T_mono, so the
+    // transition wave gets the same monotone finite-edge truncation as the even
+    // background. MC / non-stationary callers (truncEven.re == 1) give blend == 1
+    // (already short-circuited above, but the identity holds regardless).
+    T deltaB = C_BLEND * sqrtf(UTD_TWO_PI / fmaxf(kL, T(1.0e-6f)));  // blend window
+    T wb = expf(-(delta / deltaB) * (delta / deltaB));
+    T blend = wb + (1.f - wb) * truncEven.re;  // B; == 1 at delta=0, -> T_mono far
     // Even (continuous) background takes the finite-edge truncation; the odd
-    // step carrier enters at gammaOdd (= 1 in the interior -> exact GO step).
-    return cplx_add(cplx_mul(even, truncEven), cplx_mul_real(odd, gammaOdd));
+    // step carrier enters at gammaOdd (= 1 in the interior -> exact GO step)
+    // scaled by the boundary-distance blend.
+    return cplx_add(cplx_mul(even, truncEven), cplx_mul_real(odd, gammaOdd * blend));
 }
 
 // ===================================================================
