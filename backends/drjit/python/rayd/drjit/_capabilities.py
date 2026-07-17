@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "27ed0f361e65636c624b01a134bb077659283275866b709cf53a53b1eed91db8"
+_SCHEMA_SHA256 = "5b20d9095000ae38f2117a010721a6a0aa318549f25f504561819d53e64aabd0"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -87,7 +87,7 @@ _TRACE = {
         },
         "cuda": {
             "stability": "provisional",
-            "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. Multipath queries stay OptiX-only until the CUDA fused executor lands.",
+            "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. The P4 fused executor also serves the full multipath surface (visibility, reflection trace and accumulation, diffraction paths and accumulation, and EPC) with no OptiX driver.",
         },
     },
     "integration_modes": ["jit_symbolic", "eager_native"],

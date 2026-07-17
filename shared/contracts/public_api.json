@@ -122,7 +122,7 @@
       },
       "cuda": {
         "stability": "provisional",
-        "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. Multipath queries stay OptiX-only until the CUDA fused executor lands."
+        "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. The P4 fused executor also serves the full multipath surface (visibility, reflection trace and accumulation, diffraction paths and accumulation, and EPC) with no OptiX driver."
       }
     },
     "integration_modes": ["jit_symbolic", "eager_native"],

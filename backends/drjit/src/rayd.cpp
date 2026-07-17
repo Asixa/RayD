@@ -1806,10 +1806,11 @@ NB_MODULE(_C, m) {
                      const bool has_optix = kind == TraceBackendKind::Optix;
                      const bool has_cuda = kind == TraceBackendKind::Cuda;
                      const bool has_trace = has_optix || has_cuda;
-                     // The CUDA backend serves only closest-hit and occlusion in
-                     // P3; multipath (visibility/reflection/diffraction/EPC) stays
-                     // OptiX-only until the CudaFusedExecutor lands in P4.
-                     const bool multipath = has_optix;
+                     // Both trace backends serve the full multipath surface: OptiX
+                     // through its pipelines, CUDA through the P4 fused executor
+                     // (visibility / reflection trace + accumulation / diffraction
+                     // paths + accumulation / EPC).
+                     const bool multipath = has_trace;
                      nb::dict caps;
                      caps["trace_backend"] =
                          has_optix ? "optix" : (has_cuda ? "cuda" : "none");

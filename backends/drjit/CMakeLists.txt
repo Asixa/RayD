@@ -574,6 +574,10 @@ set(RAYD_CUDA_MULTIPATH_DEPS
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h")

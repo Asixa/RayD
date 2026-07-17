@@ -746,8 +746,8 @@ triangle BVH, one thread per lane (the lane index is the former `optixGetLaunchI
   (source-visibility prepass then target export) ordered on one stream, matching the split_mode==0
   OptiX path.
 - **e-2. Diffraction accumulation** (`accum_dfr` / `accum_dfr_direct` / `accum_dfr_coherent_direct`)
-  — DEFERRED (see below). Its OptiX native path still throws the clear "requires the OptiX trace
-  backend" error on a CUDA scene.
+  — LANDED (see the "Diffraction accumulation — delivery" subsection below). The last remaining
+  pipeline; every multipath entry point now runs on `trace_backend='cuda'`.
 
 ### Shared-header changes (all PTX-neutral for the OptiX `-ptx` compiles)
 
@@ -776,16 +776,42 @@ triangle BVH, one thread per lane (the lane index is the former `optixGetLaunchI
 
 None of the wired ops has an OptiX-coupled AD flow (no stop-and-report on AD).
 
-### Diffraction accumulation — why deferred (not "too coupled", scope)
+### Diffraction accumulation — delivery
 
-Deferred for scope, not fundamental coupling. Wiring it needs (1) a CUDA-variant of the ~250-line
-`DiffractionAccumulationPolicy`, which is tied to the OptiX `__constant__ params` via `params()` and
-so cannot be shared as-is; (2) the seven raygen kernel variants
-(`run_diffraction_order1_accumulation_raygen<...>` plus source-visibility / suffix / coherent / chain);
-(3) multi-phase dispatch across `accum_dfr_direct` / `accum_dfr_coherent_direct` / `accum_dfr`, each a
-conditional source-visibility → (no-)suffix-target sequence. The AD custom op is already backend-agnostic
-(above), so a future stage wires only the eager native multi-phase launch — mechanical, following the
-same pattern as e-1.
+The last remaining pipeline. Delivered on the same eager-native pattern as e-1, with one structural
+difference: the migrated `DiffractionAccumulationAlgo<Policy, Traverser>` reads its storage through a
+**static `Policy::params()` accessor** (every other migrated algorithm takes params by argument). The
+shared body cannot change without disturbing the byte-identical OptiX path, so the CUDA arm keeps the
+same contract by staging the marshaled `DfrAccumParams` into a file-local `__constant__`
+(`g_dfr_accum_params` in `cuda_multipath.cu`) via `cudaMemcpyToSymbolAsync` on the launch stream before
+each launch — mirroring the OptiX module's own `__constant__ params`. This is the one place the CUDA
+executor uses a `__constant__`; it is confined to `cuda_multipath.cu` (not the DrJit/Torch `.cu`
+adapters, so the `test_share6` pins stay green), and `--use_fast_math` object compilation gives numeric
+parity with the OptiX `-ptx` pipelines.
+
+- **CUDA-variant policy.** `CudaDiffractionAccumulationPolicy` (in `cuda_multipath.cu`) is a byte-for-
+  byte clone of the DrJit `DiffractionAccumulationPolicy` (state-count lane mapping, edge-length
+  weighting, `atomicAdd` commit, `return false` staging hooks); only `params()` differs (it reads the
+  file-local `__constant__` instead of the OptiX module `__constant__`). `kDirect/kKeller/kSuffix` come
+  from `shared::optix::DiffractionStrategyBit` so the unit needs no DrJit header.
+- **Seven raygen kernels (template bools preserved).** `dfr_accum_order1_kernel<PrimaryOnly,
+  IncludeCoherent, IncludeDirect, IncludeKeller, IncludeSuffix>` (the combined 5-bool body) plus a
+  `dfr_accum_phase_kernel` dispatch over the six single-body PrimaryOnly variants (source visibility,
+  no-suffix target, suffix-first visibility, suffix target, coherent, chain), all instantiating the
+  shared algorithm body with `CudaBvhTraverser`.
+- **Multi-phase dispatch.** `CudaTraceBackend::run_dfr_accum_direct` runs the single-scene staged path
+  (source-visibility prepass → no-suffix target and/or suffix-first-visibility + suffix-target),
+  serialized on one non-blocking stream — identical marshaling to the `split_mode==0` OptiX dispatch.
+  `run_dfr_accum_coherent` and `run_dfr_accum_chain` are single primary-only launches;
+  `run_dfr_accum_combined` (defensive, split-scene arm) exists so every OptiX raygen variant has a CUDA
+  kernel (the single-scene CUDA backend always takes the staged path). `scene_multipath.cpp` guards the
+  `select_optix_scenes()` / pipeline-ensure behind `!cuda_trace` in all four entry functions
+  (`accum_dfr_direct`, both `accum_dfr_coherent_direct` overloads, `accum_dfr`) and adds a `cuda_trace`
+  launch arm marshaling identically to the OptiX native launch.
+- **AD is automatic.** `dfr_direct_accum_custom_op` / `dfr_chain_accum_custom_op` re-run the eager
+  `accum_dfr_direct<true>` / `accum_dfr<true>` forward (which now dispatches to the CUDA arm) and their
+  own backend-agnostic backward tape (`diffraction_accumulation_ad.cu`, no OptiX coupling). No AD wiring
+  was needed; the gradient parity test confirms it.
 
 ### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
 
@@ -819,16 +845,39 @@ same pattern as e-1.
 
 - [x] CudaFusedExecutor kernels for reflection / visibility / EPC / reflection accumulation /
       diffraction path export; secondary traverser is a null-equivalent (single-scene, never consulted).
-- [ ] Diffraction accumulation kernels — deferred for scope (above); OptiX native path errors cleanly
-      on a CUDA scene.
+- [x] Diffraction accumulation kernels — LANDED (seven raygen variants with template bools preserved;
+      see the "Diffraction accumulation — delivery" subsection). Every multipath entry point now runs on
+      `trace_backend='cuda'`; no pipeline errors on a CUDA scene.
 - [x] Scene dispatch `kind==Cuda` arms marshalling identically to the OptiX native launch.
-- [x] AD paths verified broad-phase-agnostic (no OptiX-coupled AD among the wired ops).
-- [x] Capabilities: `CudaTraceBackend::capabilities().fused_multipath = true`; `cuda` already lists
-      `eager_native` in `public_api.json` / `_capabilities.py` (integration mode unchanged).
+- [x] AD paths verified broad-phase-agnostic (no OptiX-coupled AD among the wired ops); diffraction
+      accumulation AD parity confirmed by a `dr.backward` A/B (`test_diffraction_accumulation_ad_parity`).
+- [x] Capabilities: `CudaTraceBackend::capabilities().fused_multipath = true`; `scene.capabilities()`
+      now reports `visibility` / `reflection_trace` / `reflection_accumulation` / `diffraction` / `epc`
+      = `true` for the CUDA backend (`rayd.cpp` `multipath = has_trace`); `public_api.json` cuda summary
+      updated to describe the full multipath surface; `cuda` lists `eager_native` (integration unchanged).
 - [x] Full grep gate over `shared/multipath/*_algo.h` + `shared/rt/**` (one gate test).
 - [x] Instantiation-matrix test (drjit × {Optix, CudaBvh}; torch × {Optix} only).
 - [x] Cross-backend golden multipath gate; visibility scenes un-skipped under CUDA.
-- [x] Stress (10 consecutive runs, no flake).
+- [x] Stress (10 consecutive runs, no flake) — extended to diffraction accumulation
+      (`test_diffraction_accumulation_stress`).
 - [x] Torch build + `test_multipath` + opt-in Dr.Jit parity (shared headers/CMake touched, behavior
       unchanged).
 - [ ] Orin desktop-less validation — blocked-on-hardware (Jetson Orin not available in this env).
+
+### P4 Stage D e-2 gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+- **Cross-backend parity (`test_cuda_multipath` extended, 6 cases):** `accum_dfr_direct`
+  (direct+keller and suffix), `accum_dfr` (chain order 2), and `accum_dfr_coherent_direct` (simple
+  overload) run under `trace_backend='optix'` and `='cuda'` in fresh subprocesses; every discrete field
+  (direct/keller/suffix/edge-use counts, vis/utd/edge-vis rejects, grid-cell counts) is BIT-IDENTICAL,
+  and power/field match within the `field` tolerance (`5e-5`). Observed: discrete counts exactly equal;
+  `direct_field_re` / coherent field bit-identical; `chain_power` differs `~1.1e-7` rel and `suffix_power`
+  `~1e-7` rel (grid-atomic accumulation order), both well inside tolerance.
+- **AD gradient parity (`test_diffraction_accumulation_ad_parity`):** `dr.backward` through
+  `accum_dfr_direct` on both backends; `grad(src)` x/y/z bit-identical (`grad_src_z = -0.0009968862868…`
+  on both), inside the `5e-4` gradient tolerance. The AD custom op re-runs the eager forward (CUDA arm)
+  and its backend-agnostic backward tape.
+- **Stress:** 10 consecutive CUDA runs of the four-case script are deterministic (no
+  literal-materialization / `__constant__`-staging race).
+- **OptiX regression (byte-unchanged apart from the added Cuda arms):** `test_diffraction_accumulation`
+  30/30 green.

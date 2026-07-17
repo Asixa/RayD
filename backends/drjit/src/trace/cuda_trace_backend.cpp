@@ -99,9 +99,10 @@ TraceCapabilities CudaTraceBackend::capabilities() const {
     caps.compaction = true;
     caps.device_callable = false;   // eager native only; not a device-callable megakernel
     caps.jit_symbolic = false;      // eager native only; cannot fold into a megakernel
-    // P4 Stage D: the CUDA fused multipath executor serves reflection trace,
-    // segment visibility, reflection EPC, reflection accumulation, and diffraction
-    // path export. (Diffraction accumulation remains OptiX-only for now.)
+    // P4 Stage D: the CUDA fused multipath executor serves every multipath
+    // pipeline -- reflection trace, segment visibility, reflection EPC, reflection
+    // accumulation, diffraction path export, and diffraction accumulation
+    // (accum_dfr / accum_dfr_direct / accum_dfr_coherent_direct).
     caps.fused_multipath = true;
     caps.cpu = false;
     return caps;
@@ -560,6 +561,50 @@ void CudaTraceBackend::run_dfr_paths(DfrPathParams params, int lane_count) const
     params.secondary_handle = 0;
     materialize_for_fused_launch();
     launch_dfr_paths_cuda(params, multipath_bvh(), lane_count);
+}
+
+void CudaTraceBackend::run_dfr_accum_direct(DfrAccumParams params, bool has_non_suffix_strategy,
+                                            bool has_suffix_strategy, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumDfr);
+    require(ready_, "CudaTraceBackend::run_dfr_accum_direct(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_dfr_accum_direct_cuda(params, multipath_bvh(), has_non_suffix_strategy,
+                                 has_suffix_strategy, lane_count);
+}
+
+void CudaTraceBackend::run_dfr_accum_coherent(DfrAccumParams params, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumDfr);
+    require(ready_, "CudaTraceBackend::run_dfr_accum_coherent(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_dfr_accum_coherent_cuda(params, multipath_bvh(), lane_count);
+}
+
+void CudaTraceBackend::run_dfr_accum_chain(DfrAccumParams params, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumDfr);
+    require(ready_, "CudaTraceBackend::run_dfr_accum_chain(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_dfr_accum_chain_cuda(params, multipath_bvh(), lane_count);
+}
+
+void CudaTraceBackend::run_dfr_accum_combined(DfrAccumParams params, bool has_non_suffix_strategy,
+                                              bool has_suffix_strategy, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumDfr);
+    require(ready_, "CudaTraceBackend::run_dfr_accum_combined(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_dfr_accum_combined_cuda(params, multipath_bvh(), has_non_suffix_strategy,
+                                   has_suffix_strategy, lane_count);
 }
 
 template OptixIntersection CudaTraceBackend::intersect<true>(const Ray &, Mask &) const;

@@ -12,7 +12,9 @@
 #include <rayd/shared/bvh/triangle_query.h>
 #include <rayd/shared/field_math.h>
 #include <rayd/shared/math/vec3.h>
+#include <rayd/multipath/diffraction_accumulation_params.h>
 #include <rayd/multipath/diffraction_paths_params.h>
+#include <rayd/shared/multipath/diffraction_accumulation_algo.h>
 #include <rayd/shared/multipath/diffraction_paths_algo.h>
 #include <rayd/shared/multipath/reflection_accumulation_algo.h>
 #include <rayd/shared/multipath/reflection_epc_algo.h>
@@ -34,6 +36,16 @@
 // query launchers.
 
 namespace rayd {
+
+// Diffraction accumulation is the one migrated pipeline whose algorithm body
+// reads its storage through a static Policy::params() accessor (every other
+// pipeline takes params by argument). The shared body cannot be changed without
+// disturbing the byte-identical OptiX path, so the CUDA arm keeps the same
+// contract by staging the marshaled params into this file-local __constant__
+// (cudaMemcpyToSymbolAsync on the launch stream) before each launch. This
+// mirrors the OptiX module's __constant__ params exactly, so the cloned policy
+// below is byte-for-byte the DrJit OptiX policy apart from where params() reads.
+__constant__ DfrAccumParams g_dfr_accum_params;
 
 namespace {
 
@@ -462,6 +474,253 @@ __global__ void dfr_paths_target_export_kernel(DfrPathParams params, CudaMultipa
         params, lane, traverser, traverser);
 }
 
+// ---------------------------------------------------------------------------
+// Diffraction accumulation (order-1 accumulation, source visibility, no-suffix
+// target, suffix-first visibility, suffix target, coherent, chain)
+// ---------------------------------------------------------------------------
+
+/// CUDA clone of the DrJit DiffractionAccumulationPolicy
+/// (backends/drjit/src/multipath/diffraction_accumulation.cu). Every method is
+/// byte-for-byte the DrJit OptiX policy; only params() differs (it reads the
+/// file-local g_dfr_accum_params __constant__ above instead of the OptiX module
+/// __constant__), so the backend extensions (state_count lane mapping,
+/// edge-length weighting, atomicAdd commit, return-false staging hooks) behave
+/// identically to the OptiX path.
+struct CudaDiffractionAccumulationPolicy {
+    static __forceinline__ __device__ const DfrAccumParams &params() {
+        return ::rayd::g_dfr_accum_params;
+    }
+
+    static constexpr int kDirect =
+        static_cast<int>(shared::optix::DiffractionStrategyBit::Direct);
+    static constexpr int kKeller =
+        static_cast<int>(shared::optix::DiffractionStrategyBit::Keller);
+    static constexpr int kSuffix =
+        static_cast<int>(shared::optix::DiffractionStrategyBit::SuffixReflection);
+
+    struct CellGroup {};
+
+    static __forceinline__ __device__ int sample_state_index_for_lane(unsigned int lane) {
+        return static_cast<int>(lane % static_cast<unsigned int>(params().state_count));
+    }
+
+    static __forceinline__ __device__ bool active_state(int i) {
+        return params().active_mask == nullptr || params().active_mask[i] != 0u;
+    }
+
+    static __forceinline__ __device__ bool recursive_active_state(int i) {
+        return params().recursive_active_mask == nullptr ||
+               params().recursive_active_mask[i] != 0u;
+    }
+
+    static __forceinline__ __device__ int state_edge_index_at(int i) {
+        return params().state_edge_index[i];
+    }
+
+    static __forceinline__ __device__ math::Vec3f state_edge_pos_at(int i) {
+        return math::make_vec3(params().state_edge_pos_x[i], params().state_edge_pos_y[i],
+                               params().state_edge_pos_z[i]);
+    }
+
+    static __forceinline__ __device__ math::Vec3f state_edge_dir_at(int i) {
+        return math::make_vec3(params().state_edge_dir_x[i], params().state_edge_dir_y[i],
+                               params().state_edge_dir_z[i]);
+    }
+
+    static __forceinline__ __device__ float state_edge_t_min_at(int i) {
+        return params().state_edge_t_min[i];
+    }
+
+    static __forceinline__ __device__ float state_edge_t_max_at(int i) {
+        return params().state_edge_t_max[i];
+    }
+
+    static __forceinline__ __device__ float
+    sample_edge_weight_for_lane(int state_idx, unsigned int, int sample_count) {
+        const float edge_length =
+            fmaxf(state_edge_t_max_at(state_idx) - state_edge_t_min_at(state_idx), 0.f);
+        return edge_length / fmaxf(static_cast<float>(sample_count), 1.f);
+    }
+
+    static __forceinline__ __device__ int state_prim0_at(int i) {
+        return params().state_prim0[i];
+    }
+
+    static __forceinline__ __device__ int state_prim1_at(int i) {
+        return params().state_prim1[i];
+    }
+
+    static __forceinline__ __device__ float state_exterior_angle_at(int i) {
+        return params().state_exterior_angle[i];
+    }
+
+    static __forceinline__ __device__ float state_src_power_at(int i) {
+        return params().state_src_power[i];
+    }
+
+    static __forceinline__ __device__ math::Vec3f state_src_at(int i) {
+        return math::make_vec3(params().state_src_x[i], params().state_src_y[i],
+                               params().state_src_z[i]);
+    }
+
+    static __forceinline__ __device__ float3 state_wi_at(int i) {
+        return make_float3(params().state_wi_x[i], params().state_wi_y[i], params().state_wi_z[i]);
+    }
+
+    static __forceinline__ __device__ int recursive_state_edge_index_at(int i) {
+        return params().recursive_state_edge_index[i];
+    }
+
+    static __forceinline__ __device__ math::Vec3f recursive_state_edge_pos_at(int i) {
+        return math::make_vec3(params().recursive_state_edge_pos_x[i],
+                               params().recursive_state_edge_pos_y[i],
+                               params().recursive_state_edge_pos_z[i]);
+    }
+
+    static __forceinline__ __device__ math::Vec3f recursive_state_edge_dir_at(int i) {
+        return math::make_vec3(params().recursive_state_edge_dir_x[i],
+                               params().recursive_state_edge_dir_y[i],
+                               params().recursive_state_edge_dir_z[i]);
+    }
+
+    static __forceinline__ __device__ float recursive_state_edge_t_min_at(int i) {
+        return params().recursive_state_edge_t_min[i];
+    }
+
+    static __forceinline__ __device__ float recursive_state_edge_t_max_at(int i) {
+        return params().recursive_state_edge_t_max[i];
+    }
+
+    static __forceinline__ __device__ int recursive_state_prim0_at(int i) {
+        return params().recursive_state_prim0[i];
+    }
+
+    static __forceinline__ __device__ int recursive_state_prim1_at(int i) {
+        return params().recursive_state_prim1[i];
+    }
+
+    static __forceinline__ __device__ float recursive_state_exterior_angle_at(int i) {
+        return params().recursive_state_exterior_angle[i];
+    }
+
+    static __forceinline__ __device__ bool material_valid_at(int prim) {
+        return params().material_valid == nullptr || params().material_valid[prim] != 0u;
+    }
+
+    static __forceinline__ __device__ float material_gain_at(int prim) {
+        return params().material_gain[prim];
+    }
+
+    static __forceinline__ __device__ CellGroup cell_group(int) { return {}; }
+
+    static __forceinline__ __device__ void
+    atomic_add_same_cell(float *base, int i, float value, CellGroup) {
+        atomicAdd(base + i, value);
+    }
+
+    static __forceinline__ __device__ void
+    atomic_add_same_cell(int *base, int i, int value, CellGroup) {
+        atomicAdd(base + i, value);
+    }
+
+    static __forceinline__ __device__ void atomic_add_warp(float *base, float value) {
+        atomicAdd(base, value);
+    }
+
+    static __forceinline__ __device__ void atomic_add_warp(int *base, int value) {
+        atomicAdd(base, value);
+    }
+
+    static __forceinline__ __device__ bool stage_order1(unsigned int, int, float, float, bool,
+                                                        bool) {
+        return false;
+    }
+
+    static __forceinline__ __device__ bool
+    stage_coherent(int, int, bool, float, float, float, float, float, float) {
+        return false;
+    }
+};
+
+using CudaDiffractionAccumulationAlgo =
+    multipath::DiffractionAccumulationAlgo<CudaDiffractionAccumulationPolicy, bvh::CudaBvhTraverser>;
+
+/// Build the per-lane algorithm object over the single scene BVH. The secondary
+/// traverser is a copy of the primary; split_mode is forced to 0 on the CUDA
+/// path so the algorithm never consults it (matches the OptiX single-scene run).
+__device__ __forceinline__ CudaDiffractionAccumulationAlgo make_dfr_accum_algo(
+    const CudaMultipathBvh &bvh, int *stack_nodes, int *overflow, int lane_count,
+    unsigned int lane) {
+    const bvh::CudaBvhView view = make_view(bvh);
+    const bvh::TriangleTraversalScratchView scratch = make_scratch(stack_nodes, overflow, lane_count);
+    const bvh::CudaBvhTraverser traverser = make_traverser(view, scratch, lane);
+    return CudaDiffractionAccumulationAlgo{traverser, traverser};
+}
+
+/// Enum tag selecting the diffraction-accumulation raygen body for the single,
+/// PrimaryOnly kernels (source visibility / no-suffix target / suffix-first
+/// visibility / suffix target / coherent / chain). The 5-bool combined
+/// accumulation body is a separate template kernel below.
+enum class DfrAccumPhase : int {
+    SourceVisibility = 0,
+    NoSuffixTarget = 1,
+    SuffixFirstVisibility = 2,
+    SuffixTarget = 3,
+    Coherent = 4,
+    Chain = 5,
+};
+
+/// Combined order-1 accumulation raygen (five template bools preserved). This is
+/// the CUDA counterpart of run_diffraction_order1_accumulation_raygen<...>; the
+/// scene dispatch only reaches it in the split-scene (split_mode != 0) branch,
+/// which never triggers on the single-scene CUDA backend, but it is instantiated
+/// for parity so every OptiX raygen variant has a CUDA kernel.
+template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect, bool IncludeKeller,
+          bool IncludeSuffix>
+__global__ void dfr_accum_order1_kernel(CudaMultipathBvh bvh, int *stack_nodes, int *overflow,
+                                        int lane_count) {
+    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
+    if (lane >= static_cast<unsigned int>(lane_count)) {
+        return;
+    }
+    make_dfr_accum_algo(bvh, stack_nodes, overflow, lane_count, lane)
+        .run_diffraction_order1_accumulation_algo<PrimaryOnly, IncludeCoherent, IncludeDirect,
+                                                  IncludeKeller, IncludeSuffix>(lane);
+}
+
+/// Single-body PrimaryOnly raygen kernels (source visibility / no-suffix target /
+/// suffix-first visibility / suffix target / coherent / chain), one dispatch
+/// switch. PrimaryOnly is always true on the single-scene CUDA path.
+__global__ void dfr_accum_phase_kernel(CudaMultipathBvh bvh, int phase, int *stack_nodes,
+                                       int *overflow, int lane_count) {
+    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
+    if (lane >= static_cast<unsigned int>(lane_count)) {
+        return;
+    }
+    CudaDiffractionAccumulationAlgo algo =
+        make_dfr_accum_algo(bvh, stack_nodes, overflow, lane_count, lane);
+    switch (static_cast<DfrAccumPhase>(phase)) {
+    case DfrAccumPhase::SourceVisibility:
+        algo.run_diffraction_order1_source_visibility_algo<true>(lane);
+        break;
+    case DfrAccumPhase::NoSuffixTarget:
+        algo.run_diffraction_order1_no_suffix_target_accumulation_algo<true>(lane);
+        break;
+    case DfrAccumPhase::SuffixFirstVisibility:
+        algo.run_diffraction_order1_suffix_first_visibility_algo<true>(lane);
+        break;
+    case DfrAccumPhase::SuffixTarget:
+        algo.run_diffraction_order1_suffix_target_accumulation_algo<true>(lane);
+        break;
+    case DfrAccumPhase::Coherent:
+        algo.run_diffraction_order1_coherent_accumulation_algo<true>(lane);
+        break;
+    case DfrAccumPhase::Chain:
+        algo.run_diffraction_chain_accumulation_algo<true>(lane);
+        break;
+    }
+}
+
 /// Allocate the per-lane traversal-stack scratch on \p stream.
 struct ScratchBuffers {
     CudaBuffer<int> stack;
@@ -609,6 +868,152 @@ void launch_dfr_paths_cuda(const DfrPathParams &params, const CudaMultipathBvh &
         check_cuda_call(cudaStreamSynchronize(s), "launch_dfr_paths_cuda(): stream sync failed");
     } catch (const std::exception &error) {
         throw_runtime_error_local(std::string("launch_dfr_paths_cuda(): ") + error.what());
+    }
+}
+
+namespace {
+
+/// Stage the marshaled params into the file-local __constant__ on \p stream, so
+/// the shared algorithm's static Policy::params() accessor reads them. Ordered
+/// before the kernel launches on the same stream; the host `params` stays valid
+/// until the launcher's stream sync (the caller holds it by value).
+void stage_dfr_accum_params(const DfrAccumParams &params, cudaStream_t stream) {
+    check_cuda_call(cudaMemcpyToSymbolAsync(g_dfr_accum_params, &params, sizeof(DfrAccumParams), 0,
+                                            cudaMemcpyHostToDevice, stream),
+                    "cuda_multipath: staging diffraction-accumulation params failed");
+}
+
+void launch_dfr_accum_phase(DfrAccumPhase phase, const char *audit_name, const CudaMultipathBvh &bvh,
+                            int *stack, int *ovf, int lane_count, cudaStream_t stream) {
+    const int blocks = block_count(lane_count);
+    dfr_accum_phase_kernel<<<blocks, kBlockSize, 0, stream>>>(bvh, static_cast<int>(phase), stack,
+                                                              ovf, lane_count);
+    audit_cuda_kernel_launch(audit_name, static_cast<uint32_t>(blocks), 1, 1, kBlockSize, 1, 1,
+                             static_cast<uint64_t>(lane_count));
+    check_cuda_last_error(audit_name);
+}
+
+} // namespace
+
+void launch_dfr_accum_direct_cuda(const DfrAccumParams &params, const CudaMultipathBvh &bvh,
+                                  bool has_non_suffix_strategy, bool has_suffix_strategy,
+                                  int lane_count) {
+    if (lane_count == 0) {
+        return;
+    }
+    try {
+        CudaStreamHandle stream_handle;
+        ScratchBuffers scratch(lane_count);
+        const cudaStream_t s = stream_handle.get();
+        int *stack = scratch.stack.get();
+        int *ovf = scratch.overflow.get();
+        stage_dfr_accum_params(params, s);
+        // Single-scene staged order (mirrors the split_mode==0 OptiX path): the
+        // source-visibility prepass writes temp_visibility, then the target
+        // phases read (and the suffix-first phase overwrites) it, all serialized
+        // on one stream.
+        launch_dfr_accum_phase(DfrAccumPhase::SourceVisibility,
+                               "dfr_accum_source_visibility_cuda_kernel", bvh, stack, ovf,
+                               lane_count, s);
+        if (has_non_suffix_strategy) {
+            launch_dfr_accum_phase(DfrAccumPhase::NoSuffixTarget,
+                                   "dfr_accum_no_suffix_target_cuda_kernel", bvh, stack, ovf,
+                                   lane_count, s);
+        }
+        if (has_suffix_strategy) {
+            launch_dfr_accum_phase(DfrAccumPhase::SuffixFirstVisibility,
+                                   "dfr_accum_suffix_first_visibility_cuda_kernel", bvh, stack, ovf,
+                                   lane_count, s);
+            launch_dfr_accum_phase(DfrAccumPhase::SuffixTarget,
+                                   "dfr_accum_suffix_target_cuda_kernel", bvh, stack, ovf,
+                                   lane_count, s);
+        }
+        audit_cuda_stream_synchronize();
+        check_cuda_call(cudaStreamSynchronize(s),
+                        "launch_dfr_accum_direct_cuda(): stream sync failed");
+    } catch (const std::exception &error) {
+        throw_runtime_error_local(std::string("launch_dfr_accum_direct_cuda(): ") + error.what());
+    }
+}
+
+void launch_dfr_accum_coherent_cuda(const DfrAccumParams &params, const CudaMultipathBvh &bvh,
+                                    int lane_count) {
+    if (lane_count == 0) {
+        return;
+    }
+    try {
+        CudaStreamHandle stream_handle;
+        ScratchBuffers scratch(lane_count);
+        const cudaStream_t s = stream_handle.get();
+        stage_dfr_accum_params(params, s);
+        launch_dfr_accum_phase(DfrAccumPhase::Coherent, "dfr_accum_coherent_cuda_kernel", bvh,
+                               scratch.stack.get(), scratch.overflow.get(), lane_count, s);
+        audit_cuda_stream_synchronize();
+        check_cuda_call(cudaStreamSynchronize(s),
+                        "launch_dfr_accum_coherent_cuda(): stream sync failed");
+    } catch (const std::exception &error) {
+        throw_runtime_error_local(std::string("launch_dfr_accum_coherent_cuda(): ") + error.what());
+    }
+}
+
+void launch_dfr_accum_chain_cuda(const DfrAccumParams &params, const CudaMultipathBvh &bvh,
+                                 int lane_count) {
+    if (lane_count == 0) {
+        return;
+    }
+    try {
+        CudaStreamHandle stream_handle;
+        ScratchBuffers scratch(lane_count);
+        const cudaStream_t s = stream_handle.get();
+        stage_dfr_accum_params(params, s);
+        launch_dfr_accum_phase(DfrAccumPhase::Chain, "dfr_accum_chain_cuda_kernel", bvh,
+                               scratch.stack.get(), scratch.overflow.get(), lane_count, s);
+        audit_cuda_stream_synchronize();
+        check_cuda_call(cudaStreamSynchronize(s),
+                        "launch_dfr_accum_chain_cuda(): stream sync failed");
+    } catch (const std::exception &error) {
+        throw_runtime_error_local(std::string("launch_dfr_accum_chain_cuda(): ") + error.what());
+    }
+}
+
+void launch_dfr_accum_combined_cuda(const DfrAccumParams &params, const CudaMultipathBvh &bvh,
+                                    bool has_non_suffix_strategy, bool has_suffix_strategy,
+                                    int lane_count) {
+    // Combined 5-bool accumulation body (run_diffraction_order1_accumulation_algo).
+    // The single-scene CUDA backend always takes the staged path above, so this
+    // is only reachable if a split-scene CUDA arm is ever added; it is
+    // instantiated (PrimaryOnly = true) so every OptiX raygen variant has a CUDA
+    // kernel. IncludeCoherent is always false here (the coherent body is its own
+    // kernel), matching the OptiX combined raygen entries.
+    if (lane_count == 0) {
+        return;
+    }
+    try {
+        CudaStreamHandle stream_handle;
+        ScratchBuffers scratch(lane_count);
+        const cudaStream_t s = stream_handle.get();
+        const int blocks = block_count(lane_count);
+        int *stack = scratch.stack.get();
+        int *ovf = scratch.overflow.get();
+        stage_dfr_accum_params(params, s);
+        if (has_non_suffix_strategy && has_suffix_strategy) {
+            dfr_accum_order1_kernel<true, false, true, true, true>
+                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+        } else if (has_suffix_strategy) {
+            dfr_accum_order1_kernel<true, false, false, false, true>
+                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+        } else {
+            dfr_accum_order1_kernel<true, false, true, true, false>
+                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+        }
+        audit_cuda_kernel_launch("dfr_accum_order1_cuda_kernel", static_cast<uint32_t>(blocks), 1, 1,
+                                 kBlockSize, 1, 1, static_cast<uint64_t>(lane_count));
+        check_cuda_last_error("launch_dfr_accum_combined_cuda(): kernel launch failed");
+        audit_cuda_stream_synchronize();
+        check_cuda_call(cudaStreamSynchronize(s),
+                        "launch_dfr_accum_combined_cuda(): stream sync failed");
+    } catch (const std::exception &error) {
+        throw_runtime_error_local(std::string("launch_dfr_accum_combined_cuda(): ") + error.what());
     }
 }
 

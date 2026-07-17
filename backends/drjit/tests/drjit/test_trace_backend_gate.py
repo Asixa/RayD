@@ -368,7 +368,8 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         self.assertEqual(data["trace_backend"], "cuda")
         self.assertIs(data["intersect"], True)
         self.assertIs(data["shadow_test"], True)
-        self.assertIs(data["visibility"], False)
+        # P4 fused executor: the CUDA backend now serves the full multipath surface.
+        self.assertIs(data["visibility"], True)
         self.assertEqual(data["integration"], ["eager_native"])
         self.assertEqual(data["trace_backend_name"], "cuda")
 

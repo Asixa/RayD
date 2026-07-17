@@ -92,4 +92,36 @@ void launch_dfr_paths_cuda(const DfrPathParams &params,
                            const CudaMultipathBvh &bvh,
                            int lane_count);
 
+/// First-order diffraction accumulation (scene.accum_dfr_direct). Runs the
+/// single-scene staged path: source-visibility prepass, then the no-suffix
+/// target and/or the suffix-first-visibility + suffix-target phases, all ordered
+/// on one stream (mirrors the split_mode==0 OptiX dispatch). `params` is staged
+/// into the file-local __constant__ before each phase.
+void launch_dfr_accum_direct_cuda(const DfrAccumParams &params,
+                                  const CudaMultipathBvh &bvh,
+                                  bool has_non_suffix_strategy,
+                                  bool has_suffix_strategy,
+                                  int lane_count);
+
+/// Coherent order-1 diffraction accumulation (scene.accum_dfr_coherent_direct,
+/// both the full-UTD and the simple-state overloads). Single primary-only launch.
+void launch_dfr_accum_coherent_cuda(const DfrAccumParams &params,
+                                    const CudaMultipathBvh &bvh,
+                                    int lane_count);
+
+/// Chain (order 2/3) diffraction accumulation (scene.accum_dfr). Single
+/// primary-only launch.
+void launch_dfr_accum_chain_cuda(const DfrAccumParams &params,
+                                 const CudaMultipathBvh &bvh,
+                                 int lane_count);
+
+/// Combined 5-bool order-1 accumulation body. The single-scene CUDA backend
+/// always takes the staged path above; this exists so every OptiX raygen variant
+/// has a CUDA kernel and is wired defensively for a future split-scene CUDA arm.
+void launch_dfr_accum_combined_cuda(const DfrAccumParams &params,
+                                    const CudaMultipathBvh &bvh,
+                                    bool has_non_suffix_strategy,
+                                    bool has_suffix_strategy,
+                                    int lane_count);
+
 } // namespace rayd

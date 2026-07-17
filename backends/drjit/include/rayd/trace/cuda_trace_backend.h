@@ -17,6 +17,7 @@ namespace rayd {
 // nanobind module). Only cuda_trace_backend.cpp / scene_multipath.cpp include it.
 struct AccumParams;
 struct DfrPathParams;
+struct DfrAccumParams;
 struct CudaMultipathBvh;
 enum class CudaSegmentVisibilityVariant : int;
 namespace shared::optix {
@@ -94,6 +95,22 @@ public:
 
     /// scene.trace_dfr_paths native path (single-scene two-phase export).
     void run_dfr_paths(DfrPathParams params, int lane_count) const;
+
+    /// scene.accum_dfr_direct native path (single-scene staged: source-visibility
+    /// prepass then no-suffix target and/or suffix-first + suffix-target phases).
+    void run_dfr_accum_direct(DfrAccumParams params, bool has_non_suffix_strategy,
+                              bool has_suffix_strategy, int lane_count) const;
+
+    /// scene.accum_dfr_coherent_direct native path (single primary-only launch).
+    void run_dfr_accum_coherent(DfrAccumParams params, int lane_count) const;
+
+    /// scene.accum_dfr chain native path (order 2/3, single primary-only launch).
+    void run_dfr_accum_chain(DfrAccumParams params, int lane_count) const;
+
+    /// Combined 5-bool order-1 accumulation body; defensive split-scene arm (the
+    /// single-scene CUDA path always uses run_dfr_accum_direct's staged phases).
+    void run_dfr_accum_combined(DfrAccumParams params, bool has_non_suffix_strategy,
+                                bool has_suffix_strategy, int lane_count) const;
 
 private:
     /// Gather this backend's persistent BVH buffers into a raw-pointer view for

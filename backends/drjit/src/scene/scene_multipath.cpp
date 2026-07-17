@@ -5345,17 +5345,24 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
                            drjit::isfinite(states.edge_pos.z()) &&
                            drjit::isfinite(states.src_power);
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        const int split_mode = scenes.split_mode;
-        const int hitgroup_record_count = scenes.hitgroup_record_count;
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = 0;
         const int triangle_count =
             static_cast<int>(slices(triangle_info_detached_.p0));
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accum_dfr_direct(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::accum_dfr_direct(): invalid hitgroup record count.");
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            hitgroup_record_count = scenes.hitgroup_record_count;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr_direct(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::accum_dfr_direct(): invalid hitgroup record count.");
+        }
         if (suffix_samples > 0) {
             require(triangle_count > 0,
                     "Scene::accum_dfr_direct(): suffix reflection requires scene triangles.");
@@ -5366,6 +5373,8 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
         const bool has_suffix_strategy = suffix_samples > 0;
         const bool has_non_suffix_strategy =
             direct_samples > 0 || keller_samples > 0;
+        // The CUDA backend is single-scene (split_mode == 0), so it always takes
+        // the staged path below (source-visibility prepass then target phases).
         const bool staged_primary = split_mode == 0;
         std::shared_ptr<OptixLaunchPipeline> *dfr_pipeline = nullptr;
         OptixPipelineConfig dfr_pipeline_config;
@@ -5431,9 +5440,11 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
         init_dfr_accum_raw(raw);
 
         DfrAccumParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
         params.split_mode = split_mode;
         params.n_rays = launch_count;
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
@@ -5546,32 +5557,39 @@ DfrAccumT<Detached> Scene::accum_dfr_direct(
             drjit::eval(temp_visibility);
             params.temp_visibility =
                 reinterpret_cast<uint8_t *>(temp_visibility.data());
-            ensure_pipeline(diffraction_order1_source_visibility_primary_pipeline_,
-                            primary_scene->context(),
-                            hitgroup_record_count,
-                            diffraction_order1_source_visibility_primary_pipeline_config());
-            diffraction_order1_source_visibility_primary_pipeline_->launch(0, params);
-            if (has_non_suffix_strategy) {
-                ensure_pipeline(diffraction_order1_no_suffix_target_primary_pipeline_,
+            if (cuda_trace) {
+                cuda_backend().run_dfr_accum_direct(params, has_non_suffix_strategy,
+                                                    has_suffix_strategy, launch_count);
+            } else {
+                ensure_pipeline(diffraction_order1_source_visibility_primary_pipeline_,
                                 primary_scene->context(),
                                 hitgroup_record_count,
-                                diffraction_order1_no_suffix_target_primary_pipeline_config());
-                diffraction_order1_no_suffix_target_primary_pipeline_->launch(0, params);
+                                diffraction_order1_source_visibility_primary_pipeline_config());
+                diffraction_order1_source_visibility_primary_pipeline_->launch(0, params);
+                if (has_non_suffix_strategy) {
+                    ensure_pipeline(diffraction_order1_no_suffix_target_primary_pipeline_,
+                                    primary_scene->context(),
+                                    hitgroup_record_count,
+                                    diffraction_order1_no_suffix_target_primary_pipeline_config());
+                    diffraction_order1_no_suffix_target_primary_pipeline_->launch(0, params);
+                }
+                if (has_suffix_strategy) {
+                    ensure_pipeline(diffraction_order1_suffix_first_visibility_primary_pipeline_,
+                                    primary_scene->context(),
+                                    hitgroup_record_count,
+                                    diffraction_order1_suffix_first_visibility_primary_pipeline_config());
+                    ensure_pipeline(diffraction_order1_suffix_target_primary_pipeline_,
+                                    primary_scene->context(),
+                                    hitgroup_record_count,
+                                    diffraction_order1_suffix_target_primary_pipeline_config());
+                    diffraction_order1_suffix_first_visibility_primary_pipeline_->launch(0, params);
+                    diffraction_order1_suffix_target_primary_pipeline_->launch(0, params);
+                }
+                drjit::sync_thread();
             }
-            if (has_suffix_strategy) {
-                ensure_pipeline(diffraction_order1_suffix_first_visibility_primary_pipeline_,
-                                primary_scene->context(),
-                                hitgroup_record_count,
-                                diffraction_order1_suffix_first_visibility_primary_pipeline_config());
-                ensure_pipeline(diffraction_order1_suffix_target_primary_pipeline_,
-                                primary_scene->context(),
-                                hitgroup_record_count,
-                                diffraction_order1_suffix_target_primary_pipeline_config());
-                diffraction_order1_suffix_first_visibility_primary_pipeline_->launch(0, params);
-                diffraction_order1_suffix_target_primary_pipeline_->launch(0, params);
-            }
-            drjit::sync_thread();
         } else {
+            // Split-scene (split_mode != 0) is OptiX-only; the CUDA backend is
+            // single-scene and always takes the staged path above.
             (*dfr_pipeline)->launch(0, params);
         }
 
@@ -6038,25 +6056,32 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
                            drjit::isfinite(states.edge_pos.y()) &&
                            drjit::isfinite(states.edge_pos.z());
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
-        require(scenes.hitgroup_record_count > 0,
-                "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
+            require(scenes.hitgroup_record_count > 0,
+                    "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
 
-        auto &dfr_pipeline = scenes.split_mode == 0
-            ? diffraction_coherent_accumulation_primary_pipeline_
-            : diffraction_coherent_accumulation_pipeline_;
-        const OptixPipelineConfig dfr_pipeline_config = scenes.split_mode == 0
-            ? diffraction_coherent_accumulation_primary_pipeline_config()
-            : diffraction_coherent_accumulation_pipeline_config();
+            auto &dfr_pipeline = split_mode == 0
+                ? diffraction_coherent_accumulation_primary_pipeline_
+                : diffraction_coherent_accumulation_pipeline_;
+            const OptixPipelineConfig dfr_pipeline_config = split_mode == 0
+                ? diffraction_coherent_accumulation_primary_pipeline_config()
+                : diffraction_coherent_accumulation_pipeline_config();
 
-        ensure_pipeline(dfr_pipeline,
-                        primary_scene->context(),
-                        scenes.hitgroup_record_count,
-                        dfr_pipeline_config);
+            ensure_pipeline(dfr_pipeline,
+                            primary_scene->context(),
+                            scenes.hitgroup_record_count,
+                            dfr_pipeline_config);
+        }
 
         drjit::eval(states.edge_pos,
                     states.edge_dir,
@@ -6115,10 +6140,12 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         init_dfr_coherent_accum_raw(raw);
 
         DfrAccumParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
-        params.split_mode = scenes.split_mode;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
+        params.split_mode = split_mode;
         params.n_rays = launch_count;
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
         params.state_count = state_count;
@@ -6251,7 +6278,13 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         params.out_visibility_reject_count = raw.visibility_reject_count.data();
         params.out_utd_reject_count = raw.utd_reject_count.data();
 
-        dfr_pipeline->launch(0, params);
+        if (cuda_trace) {
+            cuda_backend().run_dfr_accum_coherent(params, launch_count);
+        } else {
+            (split_mode == 0 ? diffraction_coherent_accumulation_primary_pipeline_
+                             : diffraction_coherent_accumulation_pipeline_)
+                ->launch(0, params);
+        }
 
         result.direct_field_x = drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
         result.direct_field_y = drjit::Complex<Float>(raw.direct_field_y_re, raw.direct_field_y_im);
@@ -6351,25 +6384,32 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
                            drjit::isfinite(states.edge_pos.z()) &&
                            drjit::isfinite(states.src_power);
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
-        require(scenes.hitgroup_record_count > 0,
-                "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr_coherent_direct(): OptiX scene is not ready.");
+            require(scenes.hitgroup_record_count > 0,
+                    "Scene::accum_dfr_coherent_direct(): invalid hitgroup record count.");
 
-        auto &dfr_pipeline = scenes.split_mode == 0
-            ? diffraction_coherent_accumulation_primary_pipeline_
-            : diffraction_coherent_accumulation_pipeline_;
-        const OptixPipelineConfig dfr_pipeline_config = scenes.split_mode == 0
-            ? diffraction_coherent_accumulation_primary_pipeline_config()
-            : diffraction_coherent_accumulation_pipeline_config();
+            auto &dfr_pipeline = split_mode == 0
+                ? diffraction_coherent_accumulation_primary_pipeline_
+                : diffraction_coherent_accumulation_pipeline_;
+            const OptixPipelineConfig dfr_pipeline_config = split_mode == 0
+                ? diffraction_coherent_accumulation_primary_pipeline_config()
+                : diffraction_coherent_accumulation_pipeline_config();
 
-        ensure_pipeline(dfr_pipeline,
-                        primary_scene->context(),
-                        scenes.hitgroup_record_count,
-                        dfr_pipeline_config);
+            ensure_pipeline(dfr_pipeline,
+                            primary_scene->context(),
+                            scenes.hitgroup_record_count,
+                            dfr_pipeline_config);
+        }
 
         drjit::eval(states.edge_index,
                     states.edge_pos,
@@ -6398,10 +6438,12 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
         init_dfr_coherent_accum_raw(raw);
 
         DfrAccumParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
-        params.split_mode = scenes.split_mode;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
+        params.split_mode = split_mode;
         params.n_rays = launch_count;
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
         params.state_count = state_count;
@@ -6474,7 +6516,13 @@ DfrCoherentAccumT<Detached> Scene::accum_dfr_coherent_direct(
             raw.visibility_reject_count.data();
         params.out_utd_reject_count = raw.utd_reject_count.data();
 
-        dfr_pipeline->launch(0, params);
+        if (cuda_trace) {
+            cuda_backend().run_dfr_accum_coherent(params, launch_count);
+        } else {
+            (split_mode == 0 ? diffraction_coherent_accumulation_primary_pipeline_
+                             : diffraction_coherent_accumulation_pipeline_)
+                ->launch(0, params);
+        }
 
         result.direct_field_x =
             drjit::Complex<Float>(raw.direct_field_x_re, raw.direct_field_x_im);
@@ -7075,17 +7123,24 @@ DfrAccumT<Detached> Scene::accum_dfr(
                                 drjit::isfinite(recursive_states.edge_dir.y()) &&
                                 drjit::isfinite(recursive_states.edge_dir.z());
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        const int split_mode = scenes.split_mode;
-        const int hitgroup_record_count = scenes.hitgroup_record_count;
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = 0;
         const int triangle_count =
             static_cast<int>(slices(triangle_info_detached_.p0));
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accum_dfr(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::accum_dfr(): invalid hitgroup record count.");
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            hitgroup_record_count = scenes.hitgroup_record_count;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accum_dfr(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::accum_dfr(): invalid hitgroup record count.");
+        }
         if (suffix_samples > 0) {
             require(triangle_count > 0,
                     "Scene::accum_dfr(): suffix reflection requires scene triangles.");
@@ -7093,17 +7148,19 @@ DfrAccumT<Detached> Scene::accum_dfr(
                     "Scene::accum_dfr(): suffix reflection requires per-triangle materials.");
         }
 
-        auto &dfr_pipeline = split_mode == 0
-            ? diffraction_chain_accumulation_primary_pipeline_
-            : diffraction_chain_accumulation_pipeline_;
-        const OptixPipelineConfig dfr_pipeline_config = split_mode == 0
-            ? diffraction_chain_accumulation_primary_pipeline_config()
-            : diffraction_chain_accumulation_pipeline_config();
+        if (!cuda_trace) {
+            auto &dfr_pipeline = split_mode == 0
+                ? diffraction_chain_accumulation_primary_pipeline_
+                : diffraction_chain_accumulation_pipeline_;
+            const OptixPipelineConfig dfr_pipeline_config = split_mode == 0
+                ? diffraction_chain_accumulation_primary_pipeline_config()
+                : diffraction_chain_accumulation_pipeline_config();
 
-        ensure_pipeline(dfr_pipeline,
-                        primary_scene->context(),
-                        hitgroup_record_count,
-                        dfr_pipeline_config);
+            ensure_pipeline(dfr_pipeline,
+                            primary_scene->context(),
+                            hitgroup_record_count,
+                            dfr_pipeline_config);
+        }
 
         drjit::eval(initial_states.edge_index,
                     initial_states.edge_pos,
@@ -7142,9 +7199,11 @@ DfrAccumT<Detached> Scene::accum_dfr(
         init_dfr_accum_raw(raw);
 
         DfrAccumParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
         params.split_mode = split_mode;
         params.n_rays = launch_count;
         params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
@@ -7256,7 +7315,13 @@ DfrAccumT<Detached> Scene::accum_dfr(
                 active_dfr_direct_tape_capture->edge_u.data();
         }
 
-        dfr_pipeline->launch(0, params);
+        if (cuda_trace) {
+            cuda_backend().run_dfr_accum_chain(params, launch_count);
+        } else {
+            (split_mode == 0 ? diffraction_chain_accumulation_primary_pipeline_
+                             : diffraction_chain_accumulation_pipeline_)
+                ->launch(0, params);
+        }
 
         result.power = raw.power;
         result.field_x =
