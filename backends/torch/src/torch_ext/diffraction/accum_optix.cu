@@ -86,12 +86,10 @@ struct DiffractionAccumulationPolicy {
     return mask[active_idx * stride] != 0u;
   }
 
-  static __forceinline__ __device__ float3 state_vec(const float *x,
-                                                     const float *y,
-                                                     const float *z, int stride,
-                                                     int idx) {
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_vec(
+      const float *x, const float *y, const float *z, int stride, int idx) {
     const int offset = idx * stride;
-    return make_f3(x[offset], y[offset], z[offset]);
+    return ::rayd::shared::math::make_vec3(x[offset], y[offset], z[offset]);
   }
 
   static __forceinline__ __device__ float3 optional_state_vec(
@@ -102,10 +100,10 @@ struct DiffractionAccumulationPolicy {
                    z != nullptr ? z[offset] : 0.f);
   }
 
-  static __forceinline__ __device__ float3 recursive_state_vec(
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f recursive_state_vec(
       const float *x, const float *y, const float *z, int stride, int idx) {
     const int offset = idx * stride;
-    return make_f3(x[offset], y[offset], z[offset]);
+    return ::rayd::shared::math::make_vec3(x[offset], y[offset], z[offset]);
   }
 
   static __forceinline__ __device__ float read_f32(const float *ptr, int stride,
@@ -140,13 +138,13 @@ struct DiffractionAccumulationPolicy {
                     idx);
   }
 
-  static __forceinline__ __device__ float3 state_edge_pos_at(int idx) {
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_edge_pos_at(int idx) {
     return state_vec(params().state_edge_pos_x, params().state_edge_pos_y,
                      params().state_edge_pos_z, params().state_edge_pos_stride,
                      idx);
   }
 
-  static __forceinline__ __device__ float3 state_edge_dir_at(int idx) {
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_edge_dir_at(int idx) {
     return state_vec(params().state_edge_dir_x, params().state_edge_dir_y,
                      params().state_edge_dir_z, params().state_edge_dir_stride,
                      idx);
@@ -195,7 +193,7 @@ struct DiffractionAccumulationPolicy {
                     idx);
   }
 
-  static __forceinline__ __device__ float3 state_src_at(int idx) {
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_src_at(int idx) {
     return state_vec(params().state_src_x, params().state_src_y,
                      params().state_src_z, params().state_src_stride, idx);
   }
@@ -211,7 +209,7 @@ struct DiffractionAccumulationPolicy {
                     params().recursive_state_edge_index_stride, idx);
   }
 
-  static __forceinline__ __device__ float3
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f
   recursive_state_edge_pos_at(int idx) {
     return recursive_state_vec(params().recursive_state_edge_pos_x,
                                params().recursive_state_edge_pos_y,
@@ -219,7 +217,7 @@ struct DiffractionAccumulationPolicy {
                                params().recursive_state_edge_pos_stride, idx);
   }
 
-  static __forceinline__ __device__ float3
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f
   recursive_state_edge_dir_at(int idx) {
     return recursive_state_vec(params().recursive_state_edge_dir_x,
                                params().recursive_state_edge_dir_y,

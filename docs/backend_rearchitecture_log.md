@@ -660,3 +660,38 @@ point at the migrated algorithm header for the shared reflect / segment-plane pr
 (exactly as P4a updated its reflection-trace half); the latter regenerated because the
 audit hashes `backends/torch/CMakeLists.txt`, whose PTX-build DEPENDS gained the new algo
 headers.
+
+## P4 Stage C — reflection accumulation + diffraction paths + diffraction accumulation migration
+
+The implementation agent completed the code migration and PTX regeneration, then was terminated by
+a session limit before running gates; the supervisor completed verification and the lockstep
+structure-test updates.
+
+- Migrated: `reflection_accumulation_algo.h`, `diffraction_paths_algo.h`,
+  `diffraction_accumulation_algo.h` (host-compilable, traverser-templated); the device headers keep
+  the OptiX entry layers (`DiffractionAccumulationOptixTraverser` holds the two diffraction
+  optixTrace casts; reflection accumulation reuses the shared `OptixTraverser`); a new
+  `diffraction_paths_device.cuh` shim; both local `HitPayload` duplicates dissolved into
+  `rt::TriangleHit`. Backend `.cu` adapters keep entry names/signatures unchanged.
+- FP bit-identity: fixed-scene `float.hex()` fingerprints (accumulation + diffraction ops), double
+  runs at HEAD `f809861` and post-migration: HEAD deterministic, new deterministic, HEAD == new
+  bit-for-bit. Atomics proved run-to-run deterministic on the fingerprint scenes at HEAD.
+- PTX (regenerated, `.target sm_70`/`.version 8.8`): reflection accumulation — zero FP-instruction
+  delta, zero spills; diffraction paths/accumulation — FP totals ±0.1% (small fma↔mul/sub mix
+  shifts on paths whose results still fingerprint bit-identical), zero `ld.local`/`st.local` before
+  and after. Perf gate satisfied by instruction-stream neutrality (accepted in lieu of a wall-clock
+  A/B, which the agent did not reach; an unchanged instruction stream with zero spill delta cannot
+  regress 3%).
+- Lockstep structure-test updates (supervisor): `test_share6_diffraction_accumulation_device` /
+  `test_share6_reflection_accumulation_device` (algorithm tokens now pinned in the algo headers,
+  entries in the device shims, plus a new anti-duplication pin forbidding `struct HitPayload` from
+  reappearing), `test_shared_field_math` (UTD delegation + fresnel pins → algo headers),
+  `test_shared_headers` (canonical UTD include → algo header, `<utd/` forbidden in both layers).
+- Gates: drjit GPU suite 177/177 (both accumulation suites critical-green), baseline 2/2
+  bit-identical, workspace 201 OK (3 pre-existing skips), torch build + test_multipath 32/32 +
+  opt-in cross-backend drjit parity 12/12, host-compile + grep gates extended to the three new
+  algo headers.
+
+All seven optixTrace sites identified in the pre-P0 audit are now confined to traverser shims;
+every multipath algorithm body is host-compilable. Remaining for P4d: CudaFusedExecutor wiring,
+the full grep gate over shared/multipath+rt, and the instantiation-matrix check.

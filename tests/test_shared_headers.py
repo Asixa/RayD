@@ -14,16 +14,15 @@ class SharedHeaderTests(unittest.TestCase):
         self.assertFalse(list((ROOT / "backends" / "torch" / "include" / "utd").glob("*.h")))
 
     def test_backends_use_canonical_include(self):
-        shared_device = (
-            ROOT
-            / "shared"
-            / "include"
-            / "rayd"
-            / "shared"
-            / "multipath"
-            / "diffraction_accumulation_device.cuh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_device)
+        multipath = ROOT / "shared" / "include" / "rayd" / "shared" / "multipath"
+        shared_algo = (multipath / "diffraction_accumulation_algo.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_algo)
+        self.assertNotIn("<utd/", shared_algo)
+        shared_device = (multipath / "diffraction_accumulation_device.cuh").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("<utd/", shared_device)
 
         sources = [

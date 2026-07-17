@@ -26,19 +26,29 @@ ALGO_HEADERS = (
     MULTIPATH_INCLUDE / "reflection_trace_algo.h",
     MULTIPATH_INCLUDE / "segment_visibility_algo.h",
     MULTIPATH_INCLUDE / "reflection_epc_algo.h",
+    MULTIPATH_INCLUDE / "reflection_accumulation_algo.h",
+    MULTIPATH_INCLUDE / "diffraction_paths_algo.h",
+    MULTIPATH_INCLUDE / "diffraction_accumulation_algo.h",
 )
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
 
 # Tokens that must not appear in a host-compilable algorithm header: the OptiX
-# device intrinsics, the six payload-register accessors, the launch-index query,
-# and the CUDA float3 vector type (the algorithm uses math::Vec3f throughout).
+# device intrinsics, the six payload-register accessors, and the launch-index
+# query. Matched as plain substrings.
 FORBIDDEN_ALGO_TOKENS = (
     "optixTrace",
     "optixGetPayload",
     "optixSetPayload",
     "optixGetLaunchIndex",
-    "float3",
 )
+
+# The CUDA float3 vector type must not appear either (the algorithm uses
+# math::Vec3f throughout), but the diffraction algorithm headers legitimately
+# speak UTD's host-safe `float3a` POD at the utd_math boundary. Match `float3`
+# only when it is NOT immediately followed by an identifier character, so the
+# CUDA `float3` type and `make_float3(` constructor are caught while `float3a`
+# is allowed.
+FORBIDDEN_ALGO_REGEXES = (re.compile(r"float3(?![0-9A-Za-z_])"),)
 
 
 def _vswhere_install_path():
@@ -96,6 +106,12 @@ class RtHostCompileTests(unittest.TestCase):
             for token in FORBIDDEN_ALGO_TOKENS:
                 with self.subTest(header=header.name, token=token):
                     self.assertNotIn(token, text)
+            for regex in FORBIDDEN_ALGO_REGEXES:
+                with self.subTest(header=header.name, regex=regex.pattern):
+                    self.assertIsNone(
+                        regex.search(text),
+                        f"{header.name}: forbidden token matching {regex.pattern!r}",
+                    )
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):

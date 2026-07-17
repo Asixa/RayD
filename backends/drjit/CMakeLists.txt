@@ -970,6 +970,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -985,6 +993,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -1060,6 +1076,12 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -1078,6 +1100,12 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -1151,6 +1179,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -1167,6 +1203,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()

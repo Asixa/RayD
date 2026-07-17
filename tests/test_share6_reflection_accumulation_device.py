@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = ROOT / "shared/include/rayd/shared/multipath/reflection_accumulation_device.cuh"
+ALGO = ROOT / "shared/include/rayd/shared/multipath/reflection_accumulation_algo.h"
 DRJIT = ROOT / "backends/drjit/src/multipath/reflection_accumulation.cu"
 TORCH = ROOT / "backends/torch/src/torch_ext/reflection/accum_optix.cu"
 
@@ -15,25 +16,39 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.shared = SHARED.read_text(encoding="utf-8")
+        cls.algo = ALGO.read_text(encoding="utf-8")
         cls.drjit = DRJIT.read_text(encoding="utf-8")
         cls.torch = TORCH.read_text(encoding="utf-8")
 
     def test_shared_header_owns_complete_device_operation(self) -> None:
-        required = (
-            "struct HitPayload",
-            "HitPayload trace_scene(",
+        # Since P4c the algorithm body lives in the host-compilable algo header;
+        # the device header keeps only the OptiX entry layer and delegates.
+        algorithm_tokens = (
+            "trace_scene(",
             "Complex3 reflect_field_vector(",
             "void store_wedge_event(",
             "bool accumulate_plane(",
-            "void closest_hit()",
-            "void miss()",
-            "void raygen(const Params &params)",
             "for (int depth = 0; depth <= params.max_bounces; ++depth)",
             "Policy::include_depth(params, depth)",
             "Policy::commit(",
         )
-        for token in required:
+        for token in algorithm_tokens:
+            self.assertIn(token, self.algo)
+            self.assertNotIn(token, self.drjit)
+            self.assertNotIn(token, self.torch)
+        entry_tokens = (
+            "void closest_hit()",
+            "void miss()",
+            "void raygen(const Params &params)",
+        )
+        for token in entry_tokens:
             self.assertIn(token, self.shared)
+        self.assertIn("reflection_accumulation_algo.h", self.shared)
+        # The former file-local HitPayload duplication dissolved into the
+        # canonical shared types; forbid it from reappearing.
+        self.assertIn("TriangleHit", self.algo)
+        for text in (self.algo, self.shared):
+            self.assertNotIn("struct HitPayload", text)
 
     def test_adapters_are_only_params_policy_and_entry_wrappers(self) -> None:
         forbidden = (
