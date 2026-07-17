@@ -77,12 +77,20 @@ class Share2SharedMathTests(unittest.TestCase):
             "reflection::reflect_direction",
             "reflection::reflect_point_across_plane",
         )
+        # P4 Stage A moved the reflection-trace algorithm body out of the OptiX
+        # device header into the host-compilable shared/multipath algorithm; the
+        # shared reflect primitives now live there, and the OptiX entry header
+        # funnels through it.
+        algo = (
+            ROOT / "shared/include/rayd/shared/multipath/reflection_trace_algo.h"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", algo)
+        for symbol in required:
+            self.assertIn(symbol, algo)
         shared_device = (
             ROOT / "shared/include/rayd/shared/optix/reflection_trace_device.cuh"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", shared_device)
-        for symbol in required:
-            self.assertIn(symbol, shared_device)
+        self.assertIn("<rayd/shared/multipath/reflection_trace_algo.h>", shared_device)
 
         epc_device = (
             ROOT / "shared/include/rayd/shared/optix/reflection_epc_device.cuh"

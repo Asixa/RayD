@@ -9,6 +9,8 @@ NUMERIC_POLICY = RT_DIR / "numeric_policy.h"
 HIT_TYPES = RT_DIR / "hit_types.h"
 RAY_TYPES = RT_DIR / "ray_types.h"
 BACKEND = RT_DIR / "backend.h"
+QUALIFIERS = RT_DIR / "qualifiers.h"
+TRAVERSER = RT_DIR / "traverser.h"
 
 # rt/ headers are backend-neutral and host-safe: no backend, CUDA, or OptiX
 # tokens may leak in, otherwise a third backend cannot include them cleanly.
@@ -20,6 +22,13 @@ FORBIDDEN_TOKENS = ("__device__", "__host__", "optix", "float3", "cuda_runtime")
 # CUDA vector types) plus a guard that it pulls in no CUDA/OptiX SDK header.
 BACKEND_FORBIDDEN_TOKENS = ("__device__", "__host__", "float3", "cuda_runtime")
 BACKEND_FORBIDDEN_INCLUDES = ("#include <optix", "#include <cuda", "#include <drjit")
+
+# traverser.h documents the OptiX/CUDA-BVH instantiation matrix in prose, so like
+# backend.h the identifiers "Optix"/"Cuda" appear; it is checked against the
+# dependency tokens only. qualifiers.h is the one rt/ header that legitimately
+# spells __device__ / __host__ (that is its whole purpose), so it is checked only
+# for SDK-header leakage and its __CUDACC__ guard.
+SDK_FORBIDDEN_INCLUDES = ("#include <optix", "#include <cuda", "#include <drjit", "#include <vector_types")
 
 
 def struct_fields(header: str, struct_name: str) -> list[str]:
@@ -33,6 +42,40 @@ class RtContractHeaderTests(unittest.TestCase):
         self.assertTrue(HIT_TYPES.is_file())
         self.assertTrue(RAY_TYPES.is_file())
         self.assertTrue(BACKEND.is_file())
+        self.assertTrue(QUALIFIERS.is_file())
+        self.assertTrue(TRAVERSER.is_file())
+
+    def test_qualifiers_header_is_guarded_and_sdk_free(self):
+        text = QUALIFIERS.read_text(encoding="utf-8")
+        # qualifiers.h defines the device/host inline macros; it must be guarded
+        # so a host compiler sees plain `inline`, and must pull in no SDK header.
+        self.assertIn("#if defined(__CUDACC__)", text)
+        self.assertIn("define RAYD_DEVICE", text)
+        self.assertIn("define RAYD_HOST_DEVICE", text)
+        lowered = text.lower()
+        for include in SDK_FORBIDDEN_INCLUDES:
+            with self.subTest(include=include):
+                self.assertNotIn(include, lowered)
+
+    def test_traverser_header_is_host_safe(self):
+        text = TRAVERSER.read_text(encoding="utf-8")
+        lowered = text.lower()
+        for token in BACKEND_FORBIDDEN_TOKENS:
+            with self.subTest(token=token):
+                self.assertNotIn(token, lowered)
+        for include in SDK_FORBIDDEN_INCLUDES:
+            with self.subTest(include=include):
+                self.assertNotIn(include, lowered)
+        # The concept surface and the merged-axes config must be present.
+        for symbol in ("struct TriangleHit", "is_traverser", "is_traverser_v", "struct TraceConfig"):
+            self.assertIn(symbol, text)
+
+    def test_traverser_triangle_hit_field_order(self):
+        header = TRAVERSER.read_text(encoding="utf-8")
+        self.assertEqual(
+            struct_fields(header, "TriangleHit"),
+            ["t", "bary_u", "bary_v", "prim", "instance", "hit"],
+        )
 
     def test_headers_are_host_safe(self):
         for path in (NUMERIC_POLICY, HIT_TYPES, RAY_TYPES):

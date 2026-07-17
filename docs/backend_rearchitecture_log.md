@@ -434,3 +434,103 @@ fallback path (pure LBVH, no RT cores).
   (and `backends/torch/abi_audit.json` regenerated) to keep the shared source set
   symmetric, even though the Torch backend does not consume the triangle trace
   kernels until P4.
+
+## P4 Stage A — Traverser infrastructure + reflection-trace pipeline migration
+
+The pattern-setter for every later multipath migration: a backend-neutral
+Traverser concept, the extraction of the P3 triangle traversal cores into a
+reusable device header, and the reflection-trace pipeline lifted end-to-end into a
+host-compilable, traverser-templated algorithm body. Reflection is the smallest
+multipath pipeline (one ray-cast site, one payload shape), so it establishes the
+shape the rest of P4 follows.
+
+### What moved
+
+- **`shared/rt/qualifiers.h`** (new): `RAYD_DEVICE` / `RAYD_HOST_DEVICE` behind the
+  `__CUDACC__` toggle (`inline` under a host compiler). `shared/math/vec3.h` now
+  spells its inline qualifier through `RAYD_HOST_DEVICE` — behavior-identical to the
+  former local `RAYD_SHARED_MATH_INLINE`.
+- **`shared/rt/traverser.h`** (new): `struct TriangleHit` (decoded mirror of the
+  OptiX `TriangleHitPayload`), the C++17 `is_traverser` traits + `static_assert`
+  concept (`trace_closest`, `trace_occluded`, `trace_occluded_ignore`,
+  `trace_first_blocker`), and `TraceConfig<Layout, Traverser>` merging the two axes
+  (audit A3). Instantiation matrix is documented in-header: DrJit × {Optix, CudaBvh},
+  Torch × {Optix} only. Host-safe (no device qualifier / SDK-include tokens; checked
+  by `test_rt_contract_headers`).
+- **`shared/bvh/triangle_query_device.cuh`** (new): the P3 triangle traversal cores
+  (`traverse_closest`, `traverse_any_hit`, `traverse_first_blocker`, brute-force
+  repair, `safe_rcp`, `intersect_node_bounds`, …) extracted verbatim from
+  `shared/src/bvh/triangle_query.cu`. The kernels become thin `__global__` wrappers
+  calling the cores — behavior and the one-launch-per-query contract unchanged.
+- **`shared/bvh/cuda_bvh_traverser.h`** (new): `CudaBvhTraverser` over a `CudaBvhView`,
+  implementing the Traverser concept on those cores. Compiled and concept-checked via
+  `triangle_query.cu` (both backends); not yet wired to a pipeline (that is the P4d
+  `CudaFusedExecutor`).
+- **`shared/optix/optix_traverser.h`** (new): `OptixTraverser`, the sole home of
+  `optixTrace` + the six-register payload codec, decoding to `TriangleHit`. Holds ONE
+  traversable handle; the dual-handle "choose nearest" logic stays in the algorithm
+  (it is pipeline semantics, not traversal), which owns a primary and a secondary
+  traverser.
+- **`shared/multipath/reflection_trace_algo.h`** (new): the de-CUDA-ised algorithm.
+  `math::Vec3f` throughout (mirroring the exact op order of the old local `float3`
+  helpers so device codegen stays bit-identical), all ray casts routed through the
+  Traverser, the lane index a plain `uint32_t` parameter, templated over `TraceConfig`.
+  The P0 numeric-policy `static_assert` locks moved here with the constants. Contains
+  no `optixTrace` / `optixGet/SetPayload` / `optixGetLaunchIndex` / `float3` token
+  (grep-gated) and compiles under a pure host C++ compiler.
+- **`shared/optix/reflection_trace_device.cuh`** (refactored): keeps only the OptiX
+  layer — raygen/closesthit/miss entries, `ReflectionTracePolicy` (now the Layout axis)
+  with the DrJit/Torch aliases, the `OptixTraverser` instantiation, and params
+  adaptation. Produces bit-identical behavior.
+
+### Risk protocols
+
+- **A (FP bit-identity):** the observable reflection output is bit-identical across the
+  refactor — the two-bounce fingerprint (`t = [1.4142135381698608, 0.7070969939231873,
+  inf]`, `hit = [1.0, 0.0, 1.4999998807907104] / [0.4999997615814209, 0.0, 2.0]`,
+  image sources `[2,0,0.5] / [2,0,3.5]`) matches to the last ULP before and after.
+  `test_baseline` (continuous within tolerance, discrete exact), the golden suite, and
+  a `test_golden_scenes` determinism double-run are all green.
+- **B (PTX regen):** the committed DrJit reflection-trace PTX was regenerated via
+  `-DRAYD_REGENERATE_REFLECTION_TRACE_PTX=ON` (passed through scikit-build with
+  `SKBUILD_CMAKE_DEFINE`, OptiX SDK 9.1.0). `.version 8.8` / `.target sm_70` are
+  unchanged (local nvcc 12.9.41 matches the committed header's compiler); no test pins
+  PTX properties. The regenerated PTX differs only structurally — register renumbering,
+  the two traversable-handle loads hoisted earlier (up-front traverser construction),
+  and a `setp.ge`↔`setp.le` operand swap on the identical `ray_index >= n_rays` guard —
+  with no change to the floating-point instruction stream. The multipath pipeline
+  guardrail holds (`test_optix_pipeline_cold_create` green after regen).
+- **C (Torch):** the full Torch build succeeds and `test_multipath` (32) is green with
+  `TorchReflectionTracePolicy` on the same shared headers. The initial build attempt
+  failed on `No space left on device` (system `C:` at 100%) in unrelated diffraction /
+  edge / common `.cu` files — my two P4a surfaces (`reflection_trace_optix.ptx` from
+  `trace_optix.cu`, and `triangle_query.cu.obj`) had already compiled cleanly.
+  Redirecting the nvcc temp directory to a drive with free space completed the build.
+- **D (perf, < 3% gate):** `trace_reflections` (4-bounce, 4096 rays) median ≈ 0.24 ms /
+  best ≈ 0.19 ms, versus the pre-refactor baseline median 0.28 ms / best 0.22 ms — no
+  regression (the numerically identical PTX runs the same math).
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green: `test_geometry` (63), `test_golden_scenes` (2, plus determinism re-run),
+`test_trace_backend_gate` (9), `test_reflection_accumulation` (6), `test_reflection_epc`
+(12), `test_diffraction_accumulation` (30), `test_visibility_topk` (12), `test_surfel`
+(32), `test_optix_pipeline_cold_create` (1, critical after PTX regen),
+`tests.drjit.test_baseline` (2, bit-identical), workspace `unittest discover -s tests`
+(200, 3 pre-existing/environmental skips), the new host-compile gate
+(`test_rt_host_compile`: the algorithm header compiled host-only by `cl.exe` located via
+`vswhere`, plus the token grep-gate), and Torch `test_multipath` (32). `test_cuda_trace_backend`
+passes on non-racing runs (10 tests) — see the known issue below.
+
+### Known issue (pre-existing, out of scope)
+
+`test_cuda_trace_backend`'s full-collection setup is intermittently flaky under the
+CUDA trace backend: the `batch_sizes` intersect-grid occasionally reports zero hits
+(all rays miss), which surfaces as a `min() arg is an empty sequence` collection error.
+An A/B rebuild confirms this predates P4a and lives in the unchanged P3 CUDA
+orchestration (`cuda_trace_backend.cpp` / `triangle_bvh.cu`, a separate-stream eager
+launch), not the traversal cores: HEAD `a06487c`'s triangle_query.cu failed 6/30 full
+collections; the P4a extraction failed 9/30 (statistically comparable at a ~25% base
+rate). The extraction is verbatim code motion and every non-racing run matches the
+OptiX baselines bit-for-bit. Left as-is rather than patching P3 orchestration outside
+this stage.

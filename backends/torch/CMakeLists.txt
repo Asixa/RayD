@@ -320,8 +320,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"

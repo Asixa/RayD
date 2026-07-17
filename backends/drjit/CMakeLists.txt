@@ -477,9 +477,14 @@ set(RAYD_TRIANGLE_BVH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/t
 set(RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS
     "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
     "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h")
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h")
 set(RAYD_TRIANGLE_BVH_DEPS
     "${RAYD_TRIANGLE_BVH_CU}"
     "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
@@ -755,8 +760,13 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -774,8 +784,13 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
