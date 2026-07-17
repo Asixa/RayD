@@ -549,6 +549,65 @@ list(APPEND RAYD_CORE_SOURCE_FILES
     "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
     "${RAYD_TRIANGLE_BVH_OBJECT}")
 
+# CUDA fused multipath executor (P4 Stage D): runs the traverser-templated
+# multipath algorithm bodies with CudaBvhTraverser over the scene triangle BVH.
+# Object-compiled (host-callable launchers) like triangle_bvh.cu; needs no OptiX
+# headers because the migrated params/algo headers are host-safe.
+set(RAYD_CUDA_MULTIPATH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/cuda_multipath.cu")
+set(RAYD_CUDA_MULTIPATH_DEPS
+    "${RAYD_CUDA_MULTIPATH_CU}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/cuda_multipath_gpu.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h")
+if(WIN32)
+    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.obj")
+    set(RAYD_CUDA_MULTIPATH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_cuda_multipath.bat")
+    file(GENERATE OUTPUT "${RAYD_CUDA_MULTIPATH_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda --use_fast_math -std=c++17 -c \"${RAYD_CUDA_MULTIPATH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_MULTIPATH_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        COMMAND "${RAYD_CUDA_MULTIPATH_SCRIPT}"
+        DEPENDS "${RAYD_CUDA_MULTIPATH_SCRIPT}" ${RAYD_CUDA_MULTIPATH_DEPS}
+        VERBATIM)
+else()
+    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.o")
+    add_custom_command(
+        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda --use_fast_math -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_CUDA_MULTIPATH_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        DEPENDS ${RAYD_CUDA_MULTIPATH_DEPS}
+        VERBATIM)
+endif()
+set_source_files_properties("${RAYD_CUDA_MULTIPATH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_CUDA_MULTIPATH_OBJECT}")
+
 set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
 if(WIN32)
     set(RAYD_REFLECTION_DEDUP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_dedup.obj")

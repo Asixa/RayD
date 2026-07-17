@@ -48,7 +48,7 @@ static_assert(RayBias == ::rayd::shared::rt::kMultipathRayBias);
 static_assert(TraceTMax == ::rayd::shared::rt::kReflectionTraceMissDistance);
 
 RAYD_HOST_DEVICE float reciprocal_sqrt(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return rsqrtf(value);
 #else
     return 1.0f / std::sqrt(value);
@@ -56,7 +56,7 @@ RAYD_HOST_DEVICE float reciprocal_sqrt(float value) {
 }
 
 RAYD_HOST_DEVICE bool is_finite(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return isfinite(value);
 #else
     return std::isfinite(value);
@@ -70,7 +70,7 @@ RAYD_HOST_DEVICE int imin(int a, int b) { return a < b ? a : b; }
 // atomicAdd on device; a non-atomic byte-equivalent on the host so the wedge
 // slot reservation compiles off-device (the host path is never executed).
 RAYD_HOST_DEVICE int atomic_add(int *address, int value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return atomicAdd(address, value);
 #else
     const int old = *address;

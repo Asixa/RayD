@@ -40,7 +40,7 @@ static_assert(kMinSegmentLength == ::rayd::shared::rt::kMinSegmentLength);
 // Bit-cast of a uint sentinel to float. On device this is __uint_as_float; on the
 // host it is a byte copy. 0x7f800000 is +inf, the segment-visibility out_t sentinel.
 RAYD_HOST_DEVICE float uint_as_float(unsigned int bits) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return __uint_as_float(bits);
 #else
     float value;
@@ -229,7 +229,7 @@ RAYD_DEVICE void axial_edge_visibility_algo(
     const float span = fmaxf(params.edge_t_max[ray] - line_min, 0.0f);
     std::uint32_t any_visible = 0u;
 
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
 #pragma unroll
 #endif
     for (int i = 0; i < ::rayd::shared::optix::SegmentVisibilityMaxSamples; ++i) {

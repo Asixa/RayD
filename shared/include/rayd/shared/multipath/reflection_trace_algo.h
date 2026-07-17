@@ -50,7 +50,7 @@ struct TriangleData {
 };
 
 RAYD_HOST_DEVICE float reciprocal_sqrt(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return rsqrtf(value);
 #else
     return 1.0f / std::sqrt(value);
@@ -58,7 +58,7 @@ RAYD_HOST_DEVICE float reciprocal_sqrt(float value) {
 }
 
 RAYD_HOST_DEVICE bool is_finite(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return isfinite(value);
 #else
     return std::isfinite(value);

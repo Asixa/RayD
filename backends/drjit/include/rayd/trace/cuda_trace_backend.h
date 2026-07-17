@@ -10,6 +10,21 @@
 
 namespace rayd {
 
+// Forward declarations for the CUDA fused multipath executor surface. The full
+// definitions live in <rayd/trace/cuda_multipath_gpu.h>, which pulls the OptiX
+// launch-param structs (some include <vector_types.h>); keeping it out of this
+// widely-included header avoids leaking CUDA headers into pure-host TUs (e.g. the
+// nanobind module). Only cuda_trace_backend.cpp / scene_multipath.cpp include it.
+struct AccumParams;
+struct DfrPathParams;
+struct CudaMultipathBvh;
+enum class CudaSegmentVisibilityVariant : int;
+namespace shared::optix {
+struct ReflectionTraceParams;
+struct SegmentVisibilityParams;
+struct ReflEpcParams;
+} // namespace shared::optix
+
 /// \brief Pure-CUDA triangle trace backend (eager native axis).
 ///
 /// Owns a single scene-level LBVH over the scene's world-space triangles
@@ -54,7 +69,40 @@ public:
                                             const Float &tmax,
                                             const std::vector<int> &ignore_prim_ids) const;
 
+    // -- CUDA fused multipath executor (P4 Stage D) -----------------------------
+    // Each entry marshals exactly like the OptiX native launch (the caller in
+    // scene_multipath.cpp assembles the params with the same .data() pointers),
+    // then forces the single-scene CUDA convention (split_mode = 0, null handles
+    // / a non-zero visibility sentinel), materializes the BVH buffers, drains the
+    // Dr.Jit stream, and launches the pure-CUDA kernel over the scene triangle
+    // BVH. `params` is taken by value; the CUDA-scene overrides are applied here.
+
+    /// scene.trace_reflections(..., symbolic=True) native path.
+    void run_reflection_trace(shared::optix::ReflectionTraceParams params, int lane_count) const;
+
+    /// scene.visible / visible_pair / visible_edge / visible_chain native arm.
+    void run_segment_visibility(shared::optix::SegmentVisibilityParams params,
+                                CudaSegmentVisibilityVariant variant, int lane_count) const;
+
+    /// scene.accumulate_reflections native path.
+    void run_reflection_accumulation(AccumParams params, int lane_count) const;
+
+    /// scene.trace_refl_epc / trace_refl_epc_field discovery native path.
+    /// `direct_only` / `primary_visibility_only` mirror the OptiX raygen variants.
+    void run_reflection_epc(shared::optix::ReflEpcParams params, bool direct_only,
+                            bool primary_visibility_only, int lane_count) const;
+
+    /// scene.trace_dfr_paths native path (single-scene two-phase export).
+    void run_dfr_paths(DfrPathParams params, int lane_count) const;
+
 private:
+    /// Gather this backend's persistent BVH buffers into a raw-pointer view for
+    /// the fused kernels. Caller must have materialized the buffers first.
+    CudaMultipathBvh multipath_bvh() const;
+    /// Materialize the persistent BVH buffers and drain the Dr.Jit stream so the
+    /// fused kernel (on its own stream) sees consistent inputs (b7f7226 protocol).
+    void materialize_for_fused_launch() const;
+
     void build_or_refit(const TriangleInfo &triangles,
                         const Int &shape_id,
                         const Int &local_prim_id,

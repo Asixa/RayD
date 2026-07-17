@@ -2,18 +2,12 @@
 
 #include <cstdint>
 
-#ifdef __CUDACC__
-#  include <optix.h>
-#else
-#  include <rayd/optix.h>
-#endif
-
 namespace rayd {
 
 /// Launch parameters for the native reflection-accumulation pipeline (flat SoA device pointers).
 struct AccumParams {
-    OptixTraversableHandle primary_handle;   ///< Primary scene IAS handle.
-    OptixTraversableHandle secondary_handle; ///< Secondary IAS handle (split scene).
+    std::uint64_t primary_handle;   ///< Primary scene IAS handle (OptiX; 0 on the CUDA path).
+    std::uint64_t secondary_handle; ///< Secondary IAS handle (split scene; 0 on the CUDA path).
     int split_mode;                          ///< 0 = single scene, nonzero = traverse both handles.
 
     // Scene-global triangles in edge-vector form (p0 + s*e1 + t*e2) with face normal fn.

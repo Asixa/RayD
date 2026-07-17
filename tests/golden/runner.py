@@ -308,9 +308,10 @@ def _run_nearest_edges(dr, cuda, scene, query):
     )
 
 
-# Query kinds that route through OptiX-only multipath and cannot run under the
-# eager CUDA trace backend (see capabilities(): visibility stays OptiX-only).
-_CUDA_UNSUPPORTED_KINDS = {"visible", "visible_pair"}
+# Query kinds that cannot run under the eager CUDA trace backend. Since P4 Stage
+# D the CUDA fused executor serves segment visibility (visible / visible_pair),
+# so nothing in the golden set is CUDA-unsupported.
+_CUDA_UNSUPPORTED_KINDS = set()
 
 
 def _collect_scene(dr, cuda, rd, scene_def, trace_backend=None):

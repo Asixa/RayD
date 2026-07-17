@@ -695,3 +695,140 @@ structure-test updates.
 All seven optixTrace sites identified in the pre-P0 audit are now confined to traverser shims;
 every multipath algorithm body is host-compilable. Remaining for P4d: CudaFusedExecutor wiring,
 the full grep gate over shared/multipath+rt, and the instantiation-matrix check.
+
+## P4 Stage D — CudaFusedExecutor (multipath for trace_backend="cuda")
+
+The pure-CUDA counterpart of the OptiX multipath pipeline launches: each migrated,
+traverser-templated algorithm body (`shared/multipath/*_algo.h`) now runs on the Dr.Jit
+eager-native path with `Traverser = shared::bvh::CudaBvhTraverser` over the single scene-level
+triangle BVH, one thread per lane (the lane index is the former `optixGetLaunchIndex`).
+
+### What landed
+
+- **`backends/drjit/src/trace/cuda_multipath.cu`** (new, object-compiled like `triangle_bvh.cu`):
+  one `__global__` kernel per pipeline that builds a `CudaBvhView` + per-lane traversal-stack
+  scratch and instantiates the shared algorithm body. Owns its own non-blocking stream + scratch,
+  audit hooks, and synchronizes before returning. Compiled with `--use_fast_math` to match the
+  OptiX `-ptx` PTX (without it the UTD diffraction field drifted ~2e-4 relative, past the 5e-5
+  `field_rel` tolerance; with it the field matches OptiX to ~1e-7).
+- **`backends/drjit/include/rayd/trace/cuda_multipath_gpu.h`** (new): host-safe seam declaring
+  `CudaMultipathBvh` (raw BVH pointers) and the `launch_*_cuda` launchers. Kept out of the
+  widely-included `cuda_trace_backend.h` (forward declarations only there) so its `<vector_types.h>`
+  pull does not leak into pure-host TUs like the nanobind `_C` module.
+- **`CudaTraceBackend`** gains the fused surface: `run_reflection_trace`, `run_segment_visibility`,
+  `run_reflection_accumulation`, `run_reflection_epc`, `run_dfr_paths`. Each forces the single-scene
+  convention (`split_mode = 0`, null handles / a non-zero visibility sentinel), materializes the BVH
+  buffers, and drains the Dr.Jit stream before launching (the b7f7226 protocol: the caller `.data()`s
+  every param pointer during assembly, then `materialize_for_fused_launch()` touches the BVH pointers
+  and `sync_thread`s once, so the fused kernel on its own stream sees consistent inputs).
+- **`scene_multipath.cpp`** dispatch: every wired op gains a `triangle_kind_ == Cuda` arm that
+  marshals the params exactly like the OptiX native launch, then calls the fused surface instead of
+  `pipeline->launch(0, params)`. The four `visible*` methods take the CUDA arm before the jit /
+  native OptiX dispatch (the jit-symbolic variants stay OptiX-only).
+
+### Per-pipeline status (a–e)
+
+- **a. Reflection trace** (`trace_reflections` symbolic=False) — LANDED. `reflection_trace_algo.h`
+  with `CudaBvhTraverser`; a null secondary (same view, never consulted since split_mode=0).
+- **b. Segment visibility** (`visible` / `visible_pair` / `visible_edge` / `visible_chain`) — LANDED.
+  The CUDA arm replaces the NATIVE variant; the jit-symbolic variant stays OptiX-only. Ignore lists
+  are global prim ids, which `CudaBvhTraverser.trace_first_blocker` compares directly.
+- **c. Reflection EPC** (`trace_refl_epc`, `trace_refl_epc_field`) — LANDED, including surface-group
+  ignore parity. `CudaBvhTraverser` handles primitive-mode ignore natively; a dedicated
+  `CudaEpcTraverser` (in `cuda_multipath.cu`) adds a group-aware closest-blocker traversal that
+  resolves each candidate prim to its surface group (parity with the OptiX anyhit filter) without
+  touching the shared traversal core. EPC is non-AD (both entries `require(false)` for `!Detached`),
+  so it is inherently broad-phase-agnostic; the EPC field computation (`reflection_epc_field_gpu`)
+  is already a plain CUDA kernel and needed only the discovery on CUDA.
+- **d. Reflection accumulation** (`accumulate_reflections`) — LANDED. `reflection_accumulation_algo.h`
+  with a duplicated `CudaReflectionAccumulationPolicy` (bit-for-bit the DrJit atomic-commit policy).
+- **e-1. Diffraction path export** (`trace_dfr_paths`) — LANDED. Single-scene two-phase export
+  (source-visibility prepass then target export) ordered on one stream, matching the split_mode==0
+  OptiX path.
+- **e-2. Diffraction accumulation** (`accum_dfr` / `accum_dfr_direct` / `accum_dfr_coherent_direct`)
+  — DEFERRED (see below). Its OptiX native path still throws the clear "requires the OptiX trace
+  backend" error on a CUDA scene.
+
+### Shared-header changes (all PTX-neutral for the OptiX `-ptx` compiles)
+
+- **Params handles → `std::uint64_t`.** `AccumParams` / `DfrPathParams` / `DfrAccumParams` handle
+  fields changed from `OptixTraversableHandle` to `std::uint64_t` (matching the already-migrated
+  reflection/EPC/visibility params), so `cuda_multipath.cu` needs no OptiX headers. Same underlying
+  type (`unsigned long long`) ⇒ identical codegen; the OptiX shims' `static_cast<OptixTraversableHandle>`
+  is a no-op.
+- **`__CUDACC__` → `__CUDA_ARCH__`** in the device/host branch selection inside the `RAYD_HOST_DEVICE`
+  helpers of all six `*_algo.h`. `__CUDACC__` is defined in BOTH nvcc passes, so the host pass of the
+  object-compiled fused unit was taking the device branch and calling device-only intrinsics
+  (`atomicAdd`, `__uint_as_float`) → host-pass errors. `__CUDA_ARCH__` is defined only in the device
+  pass, the correct idiom; the `-ptx` device compiles are unaffected.
+- **`utd_types.h`:** `UTD_DEVICE` / `UTD_DINLINE` promoted from `__device__` to `__host__ __device__`
+  under `__CUDACC__` so the UTD helpers are callable from the host+device object unit; the two
+  `sincosf` body guards moved to `__CUDA_ARCH__` (MSVC's host pass lacks `::sincosf`). Device codegen
+  for `-ptx` is unchanged.
+
+### AD verification
+
+- **EPC:** non-AD (native fast path); no fixed-winner AD recompute exists, so it is broad-phase-agnostic.
+- **Reflection accumulation:** the CUDA arm covers the eager (`Detached`) native launch; the AD path is
+  the existing Dr.Jit `scatter_reduce` symbolic path (unchanged, backend-independent).
+- **Diffraction accumulation AD:** `diffraction_accumulation_ad.cu` is a pure-CUDA custom-op tape (no
+  `->launch`, no `select_optix_scenes`) — already backend-agnostic. Not OptiX-coupled.
+
+None of the wired ops has an OptiX-coupled AD flow (no stop-and-report on AD).
+
+### Diffraction accumulation — why deferred (not "too coupled", scope)
+
+Deferred for scope, not fundamental coupling. Wiring it needs (1) a CUDA-variant of the ~250-line
+`DiffractionAccumulationPolicy`, which is tied to the OptiX `__constant__ params` via `params()` and
+so cannot be shared as-is; (2) the seven raygen kernel variants
+(`run_diffraction_order1_accumulation_raygen<...>` plus source-visibility / suffix / coherent / chain);
+(3) multi-phase dispatch across `accum_dfr_direct` / `accum_dfr_coherent_direct` / `accum_dfr`, each a
+conditional source-visibility → (no-)suffix-target sequence. The AD custom op is already backend-agnostic
+(above), so a future stage wires only the eager native multi-phase launch — mechanical, following the
+same pattern as e-1.
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+- **Cross-backend parity (new `test_cuda_multipath`, 3 cases):** reflection trace, all four
+  visibility variants, reflection accumulation, EPC (primitive + surface-group), EPC field, and
+  diffraction path export run under `trace_backend='optix'` and `='cuda'` in fresh subprocesses;
+  discrete fields (visibility bools, prim/shape/group/blocker ids, bounce/path counts) BIT-IDENTICAL,
+  continuous within `operations.json` tolerances (default 1e-5, field 5e-5). Fingerprints: reflection
+  `t` abs≤5e-7; accumulation power abs≤2e-11; EPC surface-group `path_length` = 2√2 exact; diffraction
+  field abs≤2e-10.
+- **Golden cross-backend gate:** `tests/golden/runner.py` no longer skips `visible` / `visible_pair`
+  under CUDA (`_CUDA_UNSUPPORTED_KINDS = set()`); `test_cuda_trace_backend` + `test_golden_scenes`
+  (12) green — the CUDA visibility scenes match the OptiX baselines bit-for-bit, and the determinism
+  double-collect is stable.
+- **Full P4 grep gate + instantiation matrix (`test_rt_host_compile`, 4):** the forbidden-token grep
+  (`optixTrace|optixGetPayload|optixSetPayload|optixGetLaunchIndex|float3`) now covers every
+  `shared/multipath/*_algo.h` (globbed) AND `shared/rt/**`; the instantiation-matrix test asserts the
+  drjit backend uses `CudaBvhTraverser` and the Torch backend never does; the host-only smoke TU still
+  compiles under `cl.exe`.
+- **OptiX regression (default path untouched):** drjit GPU suite 156 (`test_geometry`,
+  `test_reflection_accumulation`, `test_reflection_epc`, `test_diffraction_accumulation`,
+  `test_visibility_topk`, `test_surfel`, `test_optix_pipeline_cold_create`), `tests.drjit.test_baseline`
+  (2, bit-identical), golden/gate/cuda/new-multipath (24), workspace `unittest discover -s tests`
+  (203, 3 pre-existing CI skips) — all green.
+- **Stress:** 10/10 consecutive `test_cuda_multipath` runs green (no literal-materialization race).
+- **Perf (informational):** OptiX dispatch is byte-unchanged apart from the added `cuda_trace` arms
+  (the OptiX branch of each site is the original `pipeline->launch(0, params)`); CUDA multipath is the
+  driver-independent fallback and is expected slower (no RT cores), as with P3 intersect.
+
+### P4 acceptance checklist (doc §15-P4)
+
+- [x] CudaFusedExecutor kernels for reflection / visibility / EPC / reflection accumulation /
+      diffraction path export; secondary traverser is a null-equivalent (single-scene, never consulted).
+- [ ] Diffraction accumulation kernels — deferred for scope (above); OptiX native path errors cleanly
+      on a CUDA scene.
+- [x] Scene dispatch `kind==Cuda` arms marshalling identically to the OptiX native launch.
+- [x] AD paths verified broad-phase-agnostic (no OptiX-coupled AD among the wired ops).
+- [x] Capabilities: `CudaTraceBackend::capabilities().fused_multipath = true`; `cuda` already lists
+      `eager_native` in `public_api.json` / `_capabilities.py` (integration mode unchanged).
+- [x] Full grep gate over `shared/multipath/*_algo.h` + `shared/rt/**` (one gate test).
+- [x] Instantiation-matrix test (drjit × {Optix, CudaBvh}; torch × {Optix} only).
+- [x] Cross-backend golden multipath gate; visibility scenes un-skipped under CUDA.
+- [x] Stress (10 consecutive runs, no flake).
+- [x] Torch build + `test_multipath` + opt-in Dr.Jit parity (shared headers/CMake touched, behavior
+      unchanged).
+- [ ] Orin desktop-less validation — blocked-on-hardware (Jetson Orin not available in this env).

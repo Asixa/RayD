@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "shared" / "include"
 MULTIPATH_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "multipath"
+RT_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "rt"
 ALGO_HEADERS = (
     MULTIPATH_INCLUDE / "reflection_trace_algo.h",
     MULTIPATH_INCLUDE / "segment_visibility_algo.h",
@@ -30,6 +31,10 @@ ALGO_HEADERS = (
     MULTIPATH_INCLUDE / "diffraction_paths_algo.h",
     MULTIPATH_INCLUDE / "diffraction_accumulation_algo.h",
 )
+# The full P4 grep gate scans every migrated multipath algorithm header AND every
+# rt/ contract header; the shared/optix/** OptiX shims are the only place these
+# device-only tokens are allowed (grep-gate exception).
+RT_HEADERS = tuple(sorted(RT_INCLUDE.glob("*.h")))
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
 
 # Tokens that must not appear in a host-compilable algorithm header: the OptiX
@@ -100,18 +105,61 @@ def _cuda_include_dir():
 
 
 class RtHostCompileTests(unittest.TestCase):
+    def _assert_no_device_only_tokens(self, header):
+        text = header.read_text(encoding="utf-8")
+        for token in FORBIDDEN_ALGO_TOKENS:
+            with self.subTest(header=header.name, token=token):
+                self.assertNotIn(token, text)
+        for regex in FORBIDDEN_ALGO_REGEXES:
+            with self.subTest(header=header.name, regex=regex.pattern):
+                self.assertIsNone(
+                    regex.search(text),
+                    f"{header.name}: forbidden token matching {regex.pattern!r}",
+                )
+
     def test_migrated_algo_headers_have_no_device_only_tokens(self):
-        for header in ALGO_HEADERS:
-            text = header.read_text(encoding="utf-8")
-            for token in FORBIDDEN_ALGO_TOKENS:
-                with self.subTest(header=header.name, token=token):
-                    self.assertNotIn(token, text)
-            for regex in FORBIDDEN_ALGO_REGEXES:
-                with self.subTest(header=header.name, regex=regex.pattern):
-                    self.assertIsNone(
-                        regex.search(text),
-                        f"{header.name}: forbidden token matching {regex.pattern!r}",
-                    )
+        # Every *_algo.h in the multipath tree is covered (not just the six known
+        # names), so a future migrated pipeline is grep-gated automatically.
+        globbed = sorted(MULTIPATH_INCLUDE.glob("*_algo.h"))
+        self.assertTrue(set(ALGO_HEADERS).issubset(set(globbed)),
+                        "known algo headers missing from the multipath tree")
+        for header in globbed:
+            self._assert_no_device_only_tokens(header)
+
+    def test_rt_contract_headers_have_no_device_only_tokens(self):
+        # The full P4 grep gate also covers shared/rt/** (traverser, qualifiers,
+        # numeric_policy, ...): the backend-neutral trace contracts stay free of
+        # OptiX ray-cast intrinsics, payload registers, the launch-index query,
+        # and the CUDA float3 type.
+        self.assertTrue(RT_HEADERS, "no rt/ contract headers found")
+        for header in RT_HEADERS:
+            self._assert_no_device_only_tokens(header)
+
+    def test_instantiation_matrix_drjit_has_cuda_torch_optix_only(self):
+        # The Dr.Jit backend instantiates the migrated algorithm bodies with the
+        # CUDA BVH traverser (the eager-native fused executor); the Torch backend
+        # is OptiX-only and must never instantiate them with CudaBvhTraverser.
+        drjit_src = ROOT / "backends" / "drjit" / "src"
+        torch_src = ROOT / "backends" / "torch" / "src"
+
+        def sources(root):
+            return list(root.rglob("*.cu")) + list(root.rglob("*.cpp")) + \
+                list(root.rglob("*.cuh")) + list(root.rglob("*.h"))
+
+        drjit_uses_cuda_bvh = any(
+            "CudaBvhTraverser" in path.read_text(encoding="utf-8", errors="ignore")
+            for path in sources(drjit_src))
+        self.assertTrue(drjit_uses_cuda_bvh,
+                        "drjit backend must instantiate algo bodies with CudaBvhTraverser")
+
+        if torch_src.is_dir():
+            offenders = [
+                str(path.relative_to(ROOT))
+                for path in sources(torch_src)
+                if "CudaBvhTraverser" in path.read_text(encoding="utf-8", errors="ignore")
+            ]
+            self.assertEqual(offenders, [],
+                             f"Torch backend must be OptiX-only (no CudaBvhTraverser): {offenders}")
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):

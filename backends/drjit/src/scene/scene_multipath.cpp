@@ -13,6 +13,7 @@
 #include <rayd/multipath/reflection_epc_field.h>
 #include <rayd/multipath/pipelines.h>
 #include <rayd/native_launch_audit.h>
+#include <rayd/trace/cuda_multipath_gpu.h>
 
 namespace rayd {
 
@@ -1637,6 +1638,208 @@ SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_native(
     return result;
 }
 
+// -- CUDA fused segment-visibility marshaling (P4 Stage D) --------------------
+// These mirror the OptiX native functions above field-for-field but launch the
+// pure-CUDA kernel over the scene triangle BVH instead of an OptiX pipeline. The
+// handle is left 0 here; CudaTraceBackend::run_segment_visibility sets the
+// non-zero scene sentinel. They are the CUDA arm the Scene::visible* dispatch
+// takes when trace_backend='cuda'; the jit-symbolic variants stay OptiX-only.
+
+SegmentVisibilityParams make_segment_visibility_params_cuda(
+    const Int &face_offsets,
+    int mesh_count,
+    const Vector3f &start,
+    const Int &ignore_prim_ids,
+    int ignore_k,
+    const Mask &active_detached,
+    int ray_count) {
+    SegmentVisibilityParams params = {};
+    params.face_offsets = face_offsets.data();
+    params.n_meshes = mesh_count;
+    params.start_x = start.x().data();
+    params.start_y = start.y().data();
+    params.start_z = start.z().data();
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_ids.data() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.n_rays = ray_count;
+    return params;
+}
+
+template <bool Detached>
+SegmentVisibilityT<Detached> trace_segment_visibility_cuda(
+    const CudaTraceBackend &cuda,
+    const Int &face_offsets,
+    int mesh_count,
+    const Vector3f &start,
+    const Vector3f &end,
+    const Int &ignore_prim_ids,
+    int ignore_k,
+    const Mask &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    Mask visible = empty<Mask>(ray_count);
+    eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end);
+
+    SegmentVisibilityParams params = make_segment_visibility_params_cuda(
+        face_offsets, mesh_count, start, ignore_prim_ids, ignore_k, active_detached, ray_count);
+    params.end_x = end.x().data();
+    params.end_y = end.y().data();
+    params.end_z = end.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible.data());
+    cuda.run_segment_visibility(params, CudaSegmentVisibilityVariant::Single, ray_count);
+
+    if constexpr (!Detached) {
+        result.visible = MaskAD(visible);
+    } else {
+        result.visible = visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentPairVisibilityT<Detached> trace_segment_pair_visibility_cuda(
+    const CudaTraceBackend &cuda,
+    const Int &face_offsets,
+    int mesh_count,
+    const Vector3f &start,
+    const Vector3f &end_a,
+    const Vector3f &end_b,
+    const Int &ignore_prim_ids,
+    int ignore_k,
+    const Mask &active_detached) {
+    const int ray_count = static_cast<int>(slices(start));
+    SegmentPairVisibilityT<Detached> result;
+    result.ray_count = ray_count;
+
+    Mask visible_a = empty<Mask>(ray_count);
+    Mask visible_b = empty<Mask>(ray_count);
+    eval_segment_visibility_common(start, face_offsets, ignore_prim_ids, ignore_k, active_detached);
+    drjit::eval(end_a, end_b);
+
+    SegmentVisibilityParams params = make_segment_visibility_params_cuda(
+        face_offsets, mesh_count, start, ignore_prim_ids, ignore_k, active_detached, ray_count);
+    params.end_x = end_a.x().data();
+    params.end_y = end_a.y().data();
+    params.end_z = end_a.z().data();
+    params.end_b_x = end_b.x().data();
+    params.end_b_y = end_b.y().data();
+    params.end_b_z = end_b.z().data();
+    params.out_visible = reinterpret_cast<uint8_t *>(visible_a.data());
+    params.out_visible_b = reinterpret_cast<uint8_t *>(visible_b.data());
+    cuda.run_segment_visibility(params, CudaSegmentVisibilityVariant::Pair, ray_count);
+
+    if constexpr (!Detached) {
+        result.visible_a = MaskAD(visible_a);
+        result.visible_b = MaskAD(visible_b);
+    } else {
+        result.visible_a = visible_a;
+        result.visible_b = visible_b;
+    }
+    return result;
+}
+
+template <bool Detached>
+AxialEdgeVisibilityT<Detached> trace_axial_edge_visibility_cuda(
+    const CudaTraceBackend &cuda,
+    const Int &face_offsets,
+    int mesh_count,
+    const Vector3f &src,
+    const Vector3f &edge_pos,
+    const Vector3f &edge_dir,
+    const Float &edge_t_min,
+    const Float &edge_t_max,
+    const std::vector<float> &sample_fractions,
+    const Mask &active_detached) {
+    const int state_count = static_cast<int>(slices(src));
+    AxialEdgeVisibilityT<Detached> result;
+    result.state_count = state_count;
+
+    Mask any_visible = empty<Mask>(state_count);
+    drjit::eval(src, edge_pos, edge_dir, edge_t_min, edge_t_max, face_offsets, active_detached);
+
+    SegmentVisibilityParams params = make_segment_visibility_params_cuda(
+        face_offsets, mesh_count, src, Int(), 0, active_detached, state_count);
+    params.end_x = edge_pos.x().data();
+    params.end_y = edge_pos.y().data();
+    params.end_z = edge_pos.z().data();
+    params.edge_dir_x = edge_dir.x().data();
+    params.edge_dir_y = edge_dir.y().data();
+    params.edge_dir_z = edge_dir.z().data();
+    params.edge_t_min = edge_t_min.data();
+    params.edge_t_max = edge_t_max.data();
+    params.sample_count = static_cast<int>(sample_fractions.size());
+    for (size_t i = 0; i < sample_fractions.size(); ++i) {
+        params.sample_fractions[i] = sample_fractions[i];
+    }
+    params.out_visible = reinterpret_cast<uint8_t *>(any_visible.data());
+    cuda.run_segment_visibility(params, CudaSegmentVisibilityVariant::AxialEdge, state_count);
+
+    if constexpr (!Detached) {
+        result.any_visible = MaskAD(any_visible);
+    } else {
+        result.any_visible = any_visible;
+    }
+    return result;
+}
+
+template <bool Detached>
+SegmentChainVisibilityT<Detached> trace_segment_chain_visibility_cuda(
+    const CudaTraceBackend &cuda,
+    const Int &face_offsets,
+    int mesh_count,
+    const Vector3f &points,
+    const Int &chain_length,
+    const Int &ignore_prim_per_segment,
+    int ignore_k,
+    int chain_count,
+    int max_points,
+    int max_segments,
+    const Mask &active_detached) {
+    SegmentChainVisibilityT<Detached> result;
+    result.chain_count = chain_count;
+    result.max_segments = max_segments;
+
+    Mask all_visible = empty<Mask>(chain_count);
+    Int first_blocked_segment = empty<Int>(chain_count);
+    Int first_blocked_prim = empty<Int>(chain_count);
+    eval_segment_visibility_common(
+        points, face_offsets, ignore_prim_per_segment, ignore_k, active_detached);
+    drjit::eval(chain_length);
+
+    SegmentVisibilityParams params = {};
+    params.face_offsets = face_offsets.data();
+    params.n_meshes = mesh_count;
+    params.chain_point_x = points.x().data();
+    params.chain_point_y = points.y().data();
+    params.chain_point_z = points.z().data();
+    params.chain_length = chain_length.data();
+    params.max_points = max_points;
+    params.max_segments = max_segments;
+    params.ignore_prim_ids = ignore_k > 0 ? ignore_prim_per_segment.data() : nullptr;
+    params.ignore_k = ignore_k;
+    params.active_mask = reinterpret_cast<const uint8_t *>(active_detached.data());
+    params.n_rays = chain_count;
+    params.out_visible = reinterpret_cast<uint8_t *>(all_visible.data());
+    params.out_first_blocked_segment = first_blocked_segment.data();
+    params.out_first_blocked_prim = first_blocked_prim.data();
+    cuda.run_segment_visibility(params, CudaSegmentVisibilityVariant::Chain, chain_count);
+
+    if constexpr (!Detached) {
+        result.all_visible = MaskAD(all_visible);
+        result.first_blocked_segment = IntAD(first_blocked_segment);
+        result.first_blocked_prim = IntAD(first_blocked_prim);
+    } else {
+        result.all_visible = all_visible;
+        result.first_blocked_segment = first_blocked_segment;
+        result.first_blocked_prim = first_blocked_prim;
+    }
+    return result;
+}
+
 template <bool Detached>
 ReflectionTraceT<Detached> trace_bounces_impl(
     const Scene &scene,
@@ -1897,21 +2100,27 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
         return result;
     }
 
-    const OptixSceneSelection scenes = select_optix_scenes();
-    const OptixScene *primary_scene = scenes.primary;
-    const OptixScene *secondary_scene = scenes.secondary;
-    int split_mode = scenes.split_mode;
-    int hitgroup_record_count = scenes.hitgroup_record_count;
+    const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+    const OptixScene *primary_scene = nullptr;
+    const OptixScene *secondary_scene = nullptr;
+    int split_mode = 0;
+    if (!cuda_trace) {
+        const OptixSceneSelection scenes = select_optix_scenes();
+        primary_scene = scenes.primary;
+        secondary_scene = scenes.secondary;
+        split_mode = scenes.split_mode;
+        const int hitgroup_record_count = scenes.hitgroup_record_count;
 
-    require(primary_scene != nullptr && primary_scene->is_ready(),
-            "Scene::trace_reflections(): OptiX scene is not ready.");
-    require(hitgroup_record_count > 0,
-            "Scene::trace_reflections(): invalid hitgroup record count.");
+        require(primary_scene != nullptr && primary_scene->is_ready(),
+                "Scene::trace_reflections(): OptiX scene is not ready.");
+        require(hitgroup_record_count > 0,
+                "Scene::trace_reflections(): invalid hitgroup record count.");
 
-    ensure_pipeline(reflection_pipeline_,
-                    primary_scene->context(),
-                    hitgroup_record_count,
-                    reflection_trace_pipeline_config());
+        ensure_pipeline(reflection_pipeline_,
+                        primary_scene->context(),
+                        hitgroup_record_count,
+                        reflection_trace_pipeline_config());
+    }
 
     const Mask active_detached = sanitize_reflection_active<Detached>(ray, active);
     if (drjit::none(active_detached)) {
@@ -1955,9 +2164,11 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     initialize_reflection_trace_raw(raw, false);
 
     ReflectionTraceParams params = {};
-    params.primary_handle = primary_scene->ias_handle();
+    params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
     params.secondary_handle =
-        secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+        (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+            ? secondary_scene->ias_handle()
+            : 0ull;
     params.split_mode = split_mode;
     params.tri_p0_x = triangle_info_detached_.p0.x().data();
     params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -2020,7 +2231,11 @@ ReflectionChainT<Detached> Scene::trace_reflections(const RayT<Detached> &ray,
     params.out_trailing_origin_z =
         slices(raw.trailing_origin_z) > 0 ? raw.trailing_origin_z.data() : nullptr;
 
-    reflection_pipeline_->launch(0, params);
+    if (cuda_trace) {
+        cuda_backend().run_reflection_trace(params, ray_count);
+    } else {
+        reflection_pipeline_->launch(0, params);
+    }
 
     int trace_ray_count = ray_count;
     Int trace_bounce_count = raw.bounce_count;
@@ -2642,21 +2857,28 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
                 "Scene::trace_dfr_paths(): requested path capacity exceeds int range.");
         const int capacity = static_cast<int>(capacity64);
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        const int split_mode = scenes.split_mode;
-        const int hitgroup_record_count = scenes.hitgroup_record_count;
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_dfr_paths(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::trace_dfr_paths(): invalid hitgroup record count.");
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        int hitgroup_record_count = 0;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            hitgroup_record_count = scenes.hitgroup_record_count;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::trace_dfr_paths(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::trace_dfr_paths(): invalid hitgroup record count.");
 
-        if (split_mode != 0) {
-            ensure_pipeline(diffraction_paths_pipeline_,
-                            primary_scene->context(),
-                            hitgroup_record_count,
-                            diffraction_paths_pipeline_config());
+            if (split_mode != 0) {
+                ensure_pipeline(diffraction_paths_pipeline_,
+                                primary_scene->context(),
+                                hitgroup_record_count,
+                                diffraction_paths_pipeline_config());
+            }
         }
 
         drjit::eval(tx_positions,
@@ -2684,9 +2906,11 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
         init_dfr_paths_raw(raw);
 
         DfrPathParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
         params.split_mode = split_mode;
         params.n_rays = capacity;
         params.capacity = capacity;
@@ -2770,18 +2994,22 @@ DfrPathsT<Detached> Scene::trace_dfr_paths(
             params.temp_visibility =
                 reinterpret_cast<uint8_t *>(temp_visibility.data());
 
-            ensure_pipeline(diffraction_paths_source_visibility_primary_pipeline_,
-                            primary_scene->context(),
-                            hitgroup_record_count,
-                            diffraction_paths_source_visibility_primary_pipeline_config());
-            diffraction_paths_source_visibility_primary_pipeline_->launch(0, params);
+            if (cuda_trace) {
+                cuda_backend().run_dfr_paths(params, capacity);
+            } else {
+                ensure_pipeline(diffraction_paths_source_visibility_primary_pipeline_,
+                                primary_scene->context(),
+                                hitgroup_record_count,
+                                diffraction_paths_source_visibility_primary_pipeline_config());
+                diffraction_paths_source_visibility_primary_pipeline_->launch(0, params);
 
-            ensure_pipeline(diffraction_paths_target_export_primary_pipeline_,
-                            primary_scene->context(),
-                            hitgroup_record_count,
-                            diffraction_paths_target_export_primary_pipeline_config());
-            diffraction_paths_target_export_primary_pipeline_->launch(0, params);
-            drjit::sync_thread();
+                ensure_pipeline(diffraction_paths_target_export_primary_pipeline_,
+                                primary_scene->context(),
+                                hitgroup_record_count,
+                                diffraction_paths_target_export_primary_pipeline_config());
+                diffraction_paths_target_export_primary_pipeline_->launch(0, params);
+                drjit::sync_thread();
+            }
         } else {
             params.temp_visibility = nullptr;
             diffraction_paths_pipeline_->launch(0, params);
@@ -2886,19 +3114,25 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
             return result;
         }
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        int split_mode = scenes.split_mode;
-        int hitgroup_record_count = scenes.hitgroup_record_count;
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            const int hitgroup_record_count = scenes.hitgroup_record_count;
 
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_refl_epc(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::trace_refl_epc(): invalid hitgroup record count.");
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::trace_refl_epc(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::trace_refl_epc(): invalid hitgroup record count.");
 
-        ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
-                        hitgroup_record_count, reflection_epc_pipeline_config());
+            ensure_pipeline(reflection_epc_pipeline_, primary_scene->context(),
+                            hitgroup_record_count, reflection_epc_pipeline_config());
+        }
 
         drjit::eval(ray.o,
                     ray.d,
@@ -2922,9 +3156,9 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         ReflEpcRaw raw = alloc_refl_epc_raw(ray_count, max_bounces);
 
         ReflEpcParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready()
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
                 ? secondary_scene->ias_handle()
                 : 0ull;
         params.split_mode = split_mode;
@@ -2993,7 +3227,12 @@ ReflEpcT<Detached> Scene::trace_refl_epc(
         params.out_first_blocked_prim = raw.first_blocked_prim.data();
         params.out_first_blocked_group = raw.first_blocked_group.data();
 
-        reflection_epc_pipeline_->launch(0, params);
+        if (cuda_trace) {
+            cuda_backend().run_reflection_epc(params, /*direct_only=*/false,
+                                              /*primary_visibility_only=*/false, ray_count);
+        } else {
+            reflection_epc_pipeline_->launch(0, params);
+        }
 
         result.valid = raw.valid;
         result.bounce_count = raw.bounce_count;
@@ -3621,25 +3860,31 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
             return result;
         }
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        int split_mode = scenes.split_mode;
-        int hitgroup_record_count = scenes.hitgroup_record_count;
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::trace_refl_epc_field(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::trace_refl_epc_field(): invalid hitgroup record count.");
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        std::shared_ptr<OptixLaunchPipeline> *epc_pipeline = nullptr;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            const int hitgroup_record_count = scenes.hitgroup_record_count;
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::trace_refl_epc_field(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::trace_refl_epc_field(): invalid hitgroup record count.");
 
-        std::shared_ptr<OptixLaunchPipeline> &epc_pipeline =
-            split_mode == 0 ? reflection_epc_direct_primary_pipeline_
-                            : reflection_epc_direct_pipeline_;
-        const OptixPipelineConfig epc_pipeline_config =
-            split_mode == 0 ? reflection_epc_direct_primary_pipeline_config()
-                            : reflection_epc_direct_pipeline_config();
+            epc_pipeline = split_mode == 0 ? &reflection_epc_direct_primary_pipeline_
+                                           : &reflection_epc_direct_pipeline_;
+            const OptixPipelineConfig epc_pipeline_config =
+                split_mode == 0 ? reflection_epc_direct_primary_pipeline_config()
+                                : reflection_epc_direct_pipeline_config();
 
-        ensure_pipeline(epc_pipeline, primary_scene->context(),
-                        hitgroup_record_count, epc_pipeline_config);
+            ensure_pipeline(*epc_pipeline, primary_scene->context(),
+                            hitgroup_record_count, epc_pipeline_config);
+        }
 
         drjit::eval(tx_position,
                     receiver,
@@ -3665,9 +3910,9 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
 
         ReflEpcRaw raw = alloc_refl_epc_raw(ray_count, max_bounces);
         ReflEpcParams epc_params = {};
-        epc_params.primary_handle = primary_scene->ias_handle();
+        epc_params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         epc_params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready()
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
                 ? secondary_scene->ias_handle()
                 : 0ull;
         epc_params.split_mode = split_mode;
@@ -3740,7 +3985,13 @@ ReflEpcFieldT<Detached> Scene::trace_refl_epc_field(
         epc_params.out_first_blocked_segment = raw.first_blocked_segment.data();
         epc_params.out_first_blocked_prim = raw.first_blocked_prim.data();
         epc_params.out_first_blocked_group = raw.first_blocked_group.data();
-        epc_pipeline->launch(0, epc_params);
+        if (cuda_trace) {
+            // Single-scene CUDA: split_mode is 0, so the direct-primary variant.
+            cuda_backend().run_reflection_epc(epc_params, /*direct_only=*/true,
+                                              /*primary_visibility_only=*/true, ray_count);
+        } else {
+            (*epc_pipeline)->launch(0, epc_params);
+        }
 
         ReflEpcFieldParams field_params = {};
         field_params.n_rays = ray_count;
@@ -4504,19 +4755,25 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         require(material_count >= triangle_count,
                 "Scene::accumulate_reflections(): material payload must provide one entry per global primitive.");
 
-        const OptixSceneSelection scenes = select_optix_scenes();
-        const OptixScene *primary_scene = scenes.primary;
-        const OptixScene *secondary_scene = scenes.secondary;
-        int split_mode = scenes.split_mode;
-        int hitgroup_record_count = scenes.hitgroup_record_count;
+        const bool cuda_trace = triangle_kind_ == TraceBackendKind::Cuda;
+        const OptixScene *primary_scene = nullptr;
+        const OptixScene *secondary_scene = nullptr;
+        int split_mode = 0;
+        if (!cuda_trace) {
+            const OptixSceneSelection scenes = select_optix_scenes();
+            primary_scene = scenes.primary;
+            secondary_scene = scenes.secondary;
+            split_mode = scenes.split_mode;
+            const int hitgroup_record_count = scenes.hitgroup_record_count;
 
-        require(primary_scene != nullptr && primary_scene->is_ready(),
-                "Scene::accumulate_reflections(): OptiX scene is not ready.");
-        require(hitgroup_record_count > 0,
-                "Scene::accumulate_reflections(): invalid hitgroup record count.");
+            require(primary_scene != nullptr && primary_scene->is_ready(),
+                    "Scene::accumulate_reflections(): OptiX scene is not ready.");
+            require(hitgroup_record_count > 0,
+                    "Scene::accumulate_reflections(): invalid hitgroup record count.");
 
-        ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
-                        hitgroup_record_count, reflection_accumulation_pipeline_config());
+            ensure_pipeline(reflection_accumulation_pipeline_, primary_scene->context(),
+                            hitgroup_record_count, reflection_accumulation_pipeline_config());
+        }
 
         initialize_result_storage();
 
@@ -4570,9 +4827,11 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         initialize_reflection_accumulation_raw(raw);
 
         AccumParams params = {};
-        params.primary_handle = primary_scene->ias_handle();
+        params.primary_handle = cuda_trace ? 0ull : primary_scene->ias_handle();
         params.secondary_handle =
-            secondary_scene != nullptr && secondary_scene->is_ready() ? secondary_scene->ias_handle() : 0ull;
+            (!cuda_trace && secondary_scene != nullptr && secondary_scene->is_ready())
+                ? secondary_scene->ias_handle()
+                : 0ull;
         params.split_mode = split_mode;
         params.tri_p0_x = triangle_info_detached_.p0.x().data();
         params.tri_p0_y = triangle_info_detached_.p0.y().data();
@@ -4660,7 +4919,11 @@ AccumResultT<Detached> Scene::accumulate_reflections(
         params.out_wedge_initial_dir_z = raw.wedge_initial_dir_z.data();
         params.out_wedge_bounce_depth = raw.wedge_bounce_depth.data();
 
-        reflection_accumulation_pipeline_->launch(0, params);
+        if (cuda_trace) {
+            cuda_backend().run_reflection_accumulation(params, ray_count);
+        } else {
+            reflection_accumulation_pipeline_->launch(0, params);
+        }
 
         result.reflection_power = raw.reflection_power;
         result.reflection_field_x =
@@ -7079,6 +7342,12 @@ SegmentVisibilityT<Detached> Scene::visible(
         end_detached = end;
     }
 
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        return trace_segment_visibility_cuda<Detached>(
+            cuda_backend(), face_offsets_, mesh_count_, start_detached, end_detached,
+            ignore_prim_ids, ignore_k, active_detached);
+    }
+
     if (use_jit_trace_visibility_path(ignore_k)) {
         return trace_segment_visibility_jit_no_ignore<Detached>(
             optix_scene(), start_detached, end_detached, active_detached);
@@ -7145,6 +7414,12 @@ SegmentPairVisibilityT<Detached> Scene::visible_pair(
         start_detached = start;
         end_a_detached = end_a;
         end_b_detached = end_b;
+    }
+
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        return trace_segment_pair_visibility_cuda<Detached>(
+            cuda_backend(), face_offsets_, mesh_count_, start_detached, end_a_detached,
+            end_b_detached, ignore_prim_ids, ignore_k, active_detached);
     }
 
     if (use_jit_trace_visibility_path(ignore_k)) {
@@ -7237,6 +7512,13 @@ AxialEdgeVisibilityT<Detached> Scene::visible_edge(
                        drjit::isfinite(edge_t_min_detached) &&
                        drjit::isfinite(edge_t_max_detached);
 
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        return trace_axial_edge_visibility_cuda<Detached>(
+            cuda_backend(), face_offsets_, mesh_count_, source_detached, edge_pos_detached,
+            edge_dir_detached, edge_t_min_detached, edge_t_max_detached, sample_fractions,
+            active_detached);
+    }
+
     if (active_trace_visibility_backend() != TraceVisibilityBackend::Native) {
         return trace_axial_edge_visibility_jit<Detached>(
             optix_scene(),
@@ -7316,6 +7598,14 @@ SegmentChainVisibilityT<Detached> Scene::visible_chain(
     }
 
     active_detached &= chain_length >= 0;
+
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        return trace_segment_chain_visibility_cuda<Detached>(
+            cuda_backend(), face_offsets_, mesh_count_, points_detached, chain_length,
+            ignore_prim_per_segment, ignore_k, chain_count, max_points, max_segments,
+            active_detached);
+    }
+
     const bool use_jit_visibility = use_jit_trace_visibility_path(ignore_k);
 
     if (use_jit_visibility) {

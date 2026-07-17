@@ -50,7 +50,7 @@ static_assert(kEpcTolerance == ::rayd::shared::rt::kEpcBarycentricSlack);
 // Bit-cast of a uint sentinel to float. On device this is __uint_as_float; on the
 // host a byte copy. 0x7f800000 is +inf, the EPC out_path_length invalid sentinel.
 RAYD_HOST_DEVICE float uint_as_float(unsigned int bits) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return __uint_as_float(bits);
 #else
     float value;
@@ -60,7 +60,7 @@ RAYD_HOST_DEVICE float uint_as_float(unsigned int bits) {
 }
 
 RAYD_HOST_DEVICE bool is_finite(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
     return isfinite(value);
 #else
     return std::isfinite(value);

@@ -67,14 +67,14 @@ struct DiffractionAccumulationAlgo {
 
     // ---- host/device scalar shims -----------------------------------------
     RAYD_HOST_DEVICE static float reciprocal_sqrt(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
         return rsqrtf(value);
 #else
         return 1.0f / std::sqrt(value);
 #endif
     }
     RAYD_HOST_DEVICE static bool is_finite(float value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
         return isfinite(value);
 #else
         return std::isfinite(value);
@@ -83,7 +83,7 @@ struct DiffractionAccumulationAlgo {
     RAYD_HOST_DEVICE static int imin(int a, int b) { return a < b ? a : b; }
     RAYD_HOST_DEVICE static int imax(int a, int b) { return a > b ? a : b; }
     RAYD_HOST_DEVICE static int atomic_add(int *address, int value) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
         return atomicAdd(address, value);
 #else
         const int old = *address;
@@ -92,7 +92,7 @@ struct DiffractionAccumulationAlgo {
 #endif
     }
     RAYD_HOST_DEVICE static void sincos_f(float x, float *s, float *c) {
-#if defined(__CUDACC__)
+#if defined(__CUDA_ARCH__)
         sincosf(x, s, c);
 #else
         *s = sinf(x);

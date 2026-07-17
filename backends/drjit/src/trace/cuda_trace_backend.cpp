@@ -6,6 +6,7 @@
 #include <drjit-core/jit.h>
 
 #include <rayd/native_launch_audit.h>
+#include <rayd/trace/cuda_multipath_gpu.h>
 #include <rayd/trace/triangle_bvh_gpu.h>
 #include <rayd/utils.h>
 
@@ -96,9 +97,12 @@ TraceCapabilities CudaTraceBackend::capabilities() const {
     caps.instancing = false;
     caps.refit = true;
     caps.compaction = true;
-    caps.device_callable = false;   // arrives in P4 (device-callable fused executor)
+    caps.device_callable = false;   // eager native only; not a device-callable megakernel
     caps.jit_symbolic = false;      // eager native only; cannot fold into a megakernel
-    caps.fused_multipath = false;   // P4
+    // P4 Stage D: the CUDA fused multipath executor serves reflection trace,
+    // segment visibility, reflection EPC, reflection accumulation, and diffraction
+    // path export. (Diffraction accumulation remains OptiX-only for now.)
+    caps.fused_multipath = true;
     caps.cpu = false;
     return caps;
 }
@@ -455,6 +459,107 @@ std::vector<int> CudaTraceBackend::first_blocker_selftest(const Vector3f &origin
         stack_nodes.data(), overflow.data());
 
     return copy_ints_to_host(out_global);
+}
+
+CudaMultipathBvh CudaTraceBackend::multipath_bvh() const {
+    CudaMultipathBvh bvh;
+    bvh.p0_x = tri_p0_[0].data();
+    bvh.p0_y = tri_p0_[1].data();
+    bvh.p0_z = tri_p0_[2].data();
+    bvh.e1_x = tri_e1_[0].data();
+    bvh.e1_y = tri_e1_[1].data();
+    bvh.e1_z = tri_e1_[2].data();
+    bvh.e2_x = tri_e2_[0].data();
+    bvh.e2_y = tri_e2_[1].data();
+    bvh.e2_z = tri_e2_[2].data();
+    bvh.node_min_x = node_bbox_min_[0].data();
+    bvh.node_min_y = node_bbox_min_[1].data();
+    bvh.node_min_z = node_bbox_min_[2].data();
+    bvh.node_max_x = node_bbox_max_[0].data();
+    bvh.node_max_y = node_bbox_max_[1].data();
+    bvh.node_max_z = node_bbox_max_[2].data();
+    bvh.left_child = left_child_.data();
+    bvh.right_child = right_child_.data();
+    bvh.leaf_primitives = leaf_primitives_.data();
+    bvh.shape_id = shape_id_.data();
+    bvh.local_prim_id = local_prim_id_.data();
+    bvh.primitive_count = primitive_count_;
+    bvh.node_count = node_count_;
+    bvh.leaf_primitive_count = static_cast<int>(leaf_primitives_.size());
+    return bvh;
+}
+
+void CudaTraceBackend::materialize_for_fused_launch() const {
+    // The fused kernel runs on its own non-blocking stream; finish the Dr.Jit
+    // producers of the BVH buffers and drain the thread stream (which also drains
+    // the param fills the caller enqueued via .data()) before exposing pointers.
+    // eval() is a no-op for literal-backed arrays; the .data() touches below are
+    // the real enqueue points and must precede sync_thread (commit b7f7226).
+    drjit::eval(tri_p0_, tri_e1_, tri_e2_, node_bbox_min_, node_bbox_max_, left_child_,
+                right_child_, leaf_primitives_, shape_id_, local_prim_id_);
+    (void) tri_p0_[0].data(); (void) tri_p0_[1].data(); (void) tri_p0_[2].data();
+    (void) tri_e1_[0].data(); (void) tri_e1_[1].data(); (void) tri_e1_[2].data();
+    (void) tri_e2_[0].data(); (void) tri_e2_[1].data(); (void) tri_e2_[2].data();
+    (void) node_bbox_min_[0].data(); (void) node_bbox_min_[1].data(); (void) node_bbox_min_[2].data();
+    (void) node_bbox_max_[0].data(); (void) node_bbox_max_[1].data(); (void) node_bbox_max_[2].data();
+    (void) left_child_.data(); (void) right_child_.data(); (void) leaf_primitives_.data();
+    (void) shape_id_.data(); (void) local_prim_id_.data();
+    drjit::sync_thread();
+}
+
+void CudaTraceBackend::run_reflection_trace(shared::optix::ReflectionTraceParams params,
+                                            int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::TraceReflections);
+    require(ready_, "CudaTraceBackend::run_reflection_trace(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_reflection_trace_cuda(params, multipath_bvh(), lane_count);
+}
+
+void CudaTraceBackend::run_segment_visibility(shared::optix::SegmentVisibilityParams params,
+                                              CudaSegmentVisibilityVariant variant,
+                                              int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::TraceReflections);
+    require(ready_, "CudaTraceBackend::run_segment_visibility(): backend is not built.");
+    // The CUDA triangle BVH is the scene; a non-zero handle sentinel satisfies the
+    // algorithm's null-scene guard (segment_visibility_algo trace_segment).
+    params.handle = 1ull;
+    materialize_for_fused_launch();
+    launch_segment_visibility_cuda(params, multipath_bvh(), variant, lane_count);
+}
+
+void CudaTraceBackend::run_reflection_accumulation(AccumParams params, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumulateReflections);
+    require(ready_, "CudaTraceBackend::run_reflection_accumulation(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_reflection_accumulation_cuda(params, multipath_bvh(), lane_count);
+}
+
+void CudaTraceBackend::run_reflection_epc(shared::optix::ReflEpcParams params, bool direct_only,
+                                          bool primary_visibility_only, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::TraceReflections);
+    require(ready_, "CudaTraceBackend::run_reflection_epc(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_reflection_epc_cuda(params, multipath_bvh(), direct_only, primary_visibility_only,
+                               lane_count);
+}
+
+void CudaTraceBackend::run_dfr_paths(DfrPathParams params, int lane_count) const {
+    ScopedNativeLaunchStage stage(NativeLaunchStage::AccumDfr);
+    require(ready_, "CudaTraceBackend::run_dfr_paths(): backend is not built.");
+    params.split_mode = 0;
+    params.primary_handle = 0;
+    params.secondary_handle = 0;
+    materialize_for_fused_launch();
+    launch_dfr_paths_cuda(params, multipath_bvh(), lane_count);
 }
 
 template OptixIntersection CudaTraceBackend::intersect<true>(const Ray &, Mask &) const;
