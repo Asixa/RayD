@@ -865,6 +865,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -882,6 +890,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -1225,6 +1241,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -1242,6 +1263,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()

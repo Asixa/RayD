@@ -92,12 +92,20 @@ class Share2SharedMathTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/multipath/reflection_trace_algo.h>", shared_device)
 
+        # P4 Stage B did the same for the reflection-EPC pipeline: the discovery
+        # body (and with it the shared reflect / segment-plane primitives) moved to
+        # the host-compilable algorithm header, and the OptiX entry header funnels
+        # through it.
+        epc_algo = (
+            ROOT / "shared/include/rayd/shared/multipath/reflection_epc_algo.h"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", epc_algo)
+        self.assertIn("reflection::intersect_segment_plane", epc_algo)
+        self.assertIn("reflection::reflect_point_across_plane", epc_algo)
         epc_device = (
             ROOT / "shared/include/rayd/shared/optix/reflection_epc_device.cuh"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", epc_device)
-        self.assertIn("reflection::intersect_segment_plane", epc_device)
-        self.assertIn("reflection::reflect_point_across_plane", epc_device)
+        self.assertIn("<rayd/shared/multipath/reflection_epc_algo.h>", epc_device)
 
         for relative in (
             "backends/drjit/src/multipath/reflection_trace.cu",

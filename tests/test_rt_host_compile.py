@@ -21,7 +21,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "shared" / "include"
-ALGO_HEADER = SHARED_INCLUDE / "rayd" / "shared" / "multipath" / "reflection_trace_algo.h"
+MULTIPATH_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "multipath"
+ALGO_HEADERS = (
+    MULTIPATH_INCLUDE / "reflection_trace_algo.h",
+    MULTIPATH_INCLUDE / "segment_visibility_algo.h",
+    MULTIPATH_INCLUDE / "reflection_epc_algo.h",
+)
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
 
 # Tokens that must not appear in a host-compilable algorithm header: the OptiX
@@ -85,11 +90,12 @@ def _cuda_include_dir():
 
 
 class RtHostCompileTests(unittest.TestCase):
-    def test_reflection_trace_algo_has_no_device_only_tokens(self):
-        text = ALGO_HEADER.read_text(encoding="utf-8")
-        for token in FORBIDDEN_ALGO_TOKENS:
-            with self.subTest(token=token):
-                self.assertNotIn(token, text)
+    def test_migrated_algo_headers_have_no_device_only_tokens(self):
+        for header in ALGO_HEADERS:
+            text = header.read_text(encoding="utf-8")
+            for token in FORBIDDEN_ALGO_TOKENS:
+                with self.subTest(header=header.name, token=token):
+                    self.assertNotIn(token, text)
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):

@@ -2,12 +2,24 @@
 
 #ifdef __CUDACC__
 
+#include <cstdint>
+
 #include <optix.h>
 #include <optix_device.h>
 
+#include <rayd/shared/math/vec3.h>
+#include <rayd/shared/multipath/segment_visibility_algo.h>
 #include <rayd/shared/optix/device_hit.h>
 #include <rayd/shared/optix/segment_visibility_params.h>
-#include <rayd/shared/rt/numeric_policy.h>
+#include <rayd/shared/rt/traverser.h>
+
+// OptiX entry layer for segment visibility. The algorithm bodies now live in the
+// host-compilable rayd/shared/multipath/segment_visibility_algo.h; this header
+// keeps only the OptiX-specific pieces: the anyhit ignore-filter / closesthit /
+// miss programs, the SegmentVisibilityOptixTraverser (the sole home of the
+// occlusion optixTrace), the SegmentVisibilityDevicePolicy layout policy that
+// becomes the Layout axis of TraceConfig, and the raygen entries that instantiate
+// the traverser and dispatch to the algorithm.
 
 namespace rayd::shared::optix {
 
@@ -20,136 +32,90 @@ struct SegmentVisibilityDevicePolicy {
 
 namespace segment_visibility {
 
-constexpr float TraceTMin = 1e-5f;
-constexpr float RayBias = 1e-5f;
-constexpr float MinSegmentLength = 2e-5f;
+/// Single-handle OptiX occlusion traverser for segment visibility. Wraps the one
+/// occlusion optixTrace (TERMINATE_ON_FIRST_HIT, payload 0 = visible, payload 1 =
+/// blocker, payload 2 = ignore-row base for the anyhit filter) and decodes it into
+/// rt::TriangleHit. `DisableAnyHitWithoutIgnore` is the compile-time layout choice
+/// of whether a ray with no ignore list skips the anyhit. The blocker is reported
+/// as the already-global prim (payload 1, set by closesthit) with instance = -1, so
+/// the algorithm's global_primitive_id passes it through unchanged; a mesh-local
+/// traverser (CudaBvhTraverser) instead sets prim = local / instance = shape and the
+/// same algorithm helper resolves the global id. `ignore_prim_ids` is the params
+/// base pointer used to turn the algorithm's ignore sub-pointer back into the row
+/// index the anyhit expects.
+template <bool DisableAnyHitWithoutIgnore>
+struct SegmentVisibilityOptixTraverser {
+    ::OptixTraversableHandle handle;
+    const int *ignore_prim_ids;
 
-static_assert(TraceTMin == ::rayd::shared::rt::kMultipathTraceTMin);
-static_assert(RayBias == ::rayd::shared::rt::kMultipathRayBias);
-static_assert(MinSegmentLength == ::rayd::shared::rt::kMinSegmentLength);
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
+        const std::int32_t *ignore, int ignore_count) const {
+        ::rayd::shared::rt::TriangleHit hit;
+        hit.t = tmax;
+        hit.bary_u = 0.0f;
+        hit.bary_v = 0.0f;
+        hit.prim = -1;
+        hit.instance = -1;
+        hit.hit = 0u;
+        if (handle == 0ull)
+            return hit;
 
-static __forceinline__ __device__ float3 add(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 subtract(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 multiply(float scalar, float3 value) {
-    return make_float3(scalar * value.x, scalar * value.y, scalar * value.z);
-}
-
-static __forceinline__ __device__ float dot(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float3 load_aos_vec3(const float *value,
-                                                       unsigned int index) {
-    const unsigned int base = index * 3u;
-    return make_float3(value[base], value[base + 1u], value[base + 2u]);
-}
-
-static __forceinline__ __device__ float3 load_soa_vec3(const float *x,
-                                                       const float *y,
-                                                       const float *z,
-                                                       unsigned int index) {
-    return make_float3(x[index], y[index], z[index]);
-}
-
-static __forceinline__ __device__ bool is_active(
-    const SegmentVisibilityParams &params,
-    unsigned int ray) {
-    return params.active_mask == nullptr || params.active_mask[ray] != 0u;
-}
-
-static __forceinline__ __device__ float3 load_start(
-    const SegmentVisibilityParams &params,
-    unsigned int ray) {
-    return params.start_aos != nullptr
-        ? load_aos_vec3(params.start_aos, ray)
-        : load_soa_vec3(params.start_x, params.start_y, params.start_z, ray);
-}
-
-static __forceinline__ __device__ float3 load_end_a(
-    const SegmentVisibilityParams &params,
-    unsigned int ray) {
-    return params.end_aos != nullptr
-        ? load_aos_vec3(params.end_aos, ray)
-        : load_soa_vec3(params.end_x, params.end_y, params.end_z, ray);
-}
-
-static __forceinline__ __device__ float3 load_end_b(
-    const SegmentVisibilityParams &params,
-    unsigned int ray) {
-    return params.end_b_aos != nullptr
-        ? load_aos_vec3(params.end_b_aos, ray)
-        : load_soa_vec3(params.end_b_x, params.end_b_y, params.end_b_z, ray);
-}
-
-static __forceinline__ __device__ float3 load_chain_point(
-    const SegmentVisibilityParams &params,
-    unsigned int chain,
-    int point_index) {
-    const int slot = static_cast<int>(chain) * params.max_points + point_index;
-    return make_float3(params.chain_point_x[slot],
-                       params.chain_point_y[slot],
-                       params.chain_point_z[slot]);
-}
-
-template <typename Policy>
-static __forceinline__ __device__ std::uint32_t trace_segment(
-    const SegmentVisibilityParams &params,
-    float3 start,
-    float3 end,
-    bool active,
-    unsigned int ignore_base,
-    std::uint32_t *blocker_prim) {
-    if (!active || params.handle == 0ull) {
-        if (blocker_prim != nullptr)
-            *blocker_prim = 0xFFFFFFFFu;
-        return 0u;
+        std::uint32_t visible = 1u;
+        std::uint32_t blocker = 0xFFFFFFFFu;
+        unsigned int ignore_base =
+            (ignore != nullptr && ignore_prim_ids != nullptr)
+                ? static_cast<unsigned int>(ignore - ignore_prim_ids)
+                : 0u;
+        unsigned int ray_flags = OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT;
+        if constexpr (DisableAnyHitWithoutIgnore) {
+            if (ignore == nullptr || ignore_count <= 0)
+                ray_flags |= OPTIX_RAY_FLAG_DISABLE_ANYHIT;
+        }
+        optixTrace(handle,
+                   make_float3(origin.x, origin.y, origin.z),
+                   make_float3(direction.x, direction.y, direction.z),
+                   tmin,
+                   tmax,
+                   0.0f,
+                   255u,
+                   ray_flags,
+                   0,
+                   1,
+                   0,
+                   visible,
+                   blocker,
+                   ignore_base);
+        hit.hit = visible == 0u ? 1u : 0u;
+        hit.prim = static_cast<std::int32_t>(blocker);
+        hit.instance = -1;
+        return hit;
     }
 
-    float3 direction = subtract(end, start);
-    const float length = sqrtf(dot(direction, direction));
-    if (length <= MinSegmentLength) {
-        if (blocker_prim != nullptr)
-            *blocker_prim = 0xFFFFFFFFu;
-        return 1u;
+    __device__ __forceinline__ bool trace_occluded_ignore(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
+        const std::int32_t *ignore, int ignore_count) const {
+        return trace_first_blocker(origin, direction, tmin, tmax, ignore, ignore_count).hit != 0u;
     }
 
-    direction = multiply(1.0f / length, direction);
-    const float3 origin = add(start, multiply(RayBias, direction));
-    const float tmax = fmaxf(length - 2.0f * RayBias, 0.0f);
-
-    std::uint32_t visible = 1u;
-    std::uint32_t blocker = 0xFFFFFFFFu;
-    unsigned int ray_flags = OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT;
-    if constexpr (Policy::disable_anyhit_without_ignore) {
-        if (params.ignore_prim_ids == nullptr || params.ignore_k <= 0)
-            ray_flags |= OPTIX_RAY_FLAG_DISABLE_ANYHIT;
+    __device__ __forceinline__ bool trace_occluded(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+        return trace_occluded_ignore(origin, direction, tmin, tmax, nullptr, 0);
     }
 
-    optixTrace(static_cast<OptixTraversableHandle>(params.handle),
-               origin,
-               direction,
-               TraceTMin,
-               tmax,
-               0.0f,
-               255u,
-               ray_flags,
-               0,
-               1,
-               0,
-               visible,
-               blocker,
-               ignore_base);
-    if (blocker_prim != nullptr)
-        *blocker_prim = blocker;
-    return visible;
-}
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+        return trace_first_blocker(origin, direction, tmin, tmax, nullptr, 0);
+    }
+};
 
+static_assert(::rayd::shared::rt::is_traverser_v<SegmentVisibilityOptixTraverser<false>>,
+              "SegmentVisibilityOptixTraverser must satisfy the rt::Traverser concept.");
+static_assert(::rayd::shared::rt::is_traverser_v<SegmentVisibilityOptixTraverser<true>>,
+              "SegmentVisibilityOptixTraverser must satisfy the rt::Traverser concept.");
+
+/// Anyhit (ignore filter): skip occluders whose global prim id is on this ray's
+/// ignore row. Unchanged from the pre-migration program.
 static __forceinline__ __device__ void anyhit(
     const SegmentVisibilityParams &params) {
     if (params.ignore_prim_ids == nullptr || params.ignore_k <= 0)
@@ -184,129 +150,47 @@ static __forceinline__ __device__ void closesthit(
 }
 
 static __forceinline__ __device__ void miss() {
-    // Payload 0 is initialized to 1 by raygen and remains clear on miss.
+    // Payload 0 is initialized to 1 by the traverser and remains clear on miss.
 }
+
+template <typename Policy>
+static __forceinline__ __device__
+SegmentVisibilityOptixTraverser<Policy::disable_anyhit_without_ignore>
+make_segment_traverser(const SegmentVisibilityParams &params) {
+    return SegmentVisibilityOptixTraverser<Policy::disable_anyhit_without_ignore>{
+        static_cast<::OptixTraversableHandle>(params.handle), params.ignore_prim_ids};
+}
+
+template <typename Policy>
+using SegmentVisibilityConfig = ::rayd::shared::rt::TraceConfig<
+    Policy, SegmentVisibilityOptixTraverser<Policy::disable_anyhit_without_ignore>>;
 
 template <typename Policy>
 static __forceinline__ __device__ void raygen_segment(
     const SegmentVisibilityParams &params) {
-    const unsigned int ray = optixGetLaunchIndex().x;
-    if (ray >= static_cast<unsigned int>(params.n_rays))
-        return;
-
-    std::uint32_t blocker = 0xFFFFFFFFu;
-    const bool collect_blocker = params.out_first_blocked_prim != nullptr;
-    const std::uint32_t visible = trace_segment<Policy>(
-        params,
-        load_start(params, ray),
-        load_end_a(params, ray),
-        is_active(params, ray),
-        ray * params.ignore_k,
-        collect_blocker ? &blocker : nullptr);
-    params.out_visible[ray] = visible != 0u ? 1u : 0u;
-    if (collect_blocker) {
-        params.out_first_blocked_prim[ray] =
-            visible == 0u && blocker != 0xFFFFFFFFu
-                ? static_cast<int>(blocker)
-                : -1;
-    }
-    if constexpr (Policy::write_output_t) {
-        if (params.out_t != nullptr)
-            params.out_t[ray] = __uint_as_float(0x7f800000u);
-    }
+    ::rayd::shared::multipath::segment_visibility_algo<SegmentVisibilityConfig<Policy>>(
+        params, optixGetLaunchIndex().x, make_segment_traverser<Policy>(params));
 }
 
 template <typename Policy>
 static __forceinline__ __device__ void raygen_segment_pair(
     const SegmentVisibilityParams &params) {
-    const unsigned int ray = optixGetLaunchIndex().x;
-    if (ray >= static_cast<unsigned int>(params.n_rays))
-        return;
-
-    const bool active = is_active(params, ray);
-    const float3 start = load_start(params, ray);
-    const unsigned int ignore_base = ray * params.ignore_k;
-    params.out_visible[ray] = trace_segment<Policy>(
-        params, start, load_end_a(params, ray), active, ignore_base, nullptr) != 0u;
-    params.out_visible_b[ray] = trace_segment<Policy>(
-        params, start, load_end_b(params, ray), active, ignore_base, nullptr) != 0u;
+    ::rayd::shared::multipath::segment_pair_visibility_algo<SegmentVisibilityConfig<Policy>>(
+        params, optixGetLaunchIndex().x, make_segment_traverser<Policy>(params));
 }
 
 template <typename Policy>
 static __forceinline__ __device__ void raygen_axial_edge(
     const SegmentVisibilityParams &params) {
-    const unsigned int ray = optixGetLaunchIndex().x;
-    if (ray >= static_cast<unsigned int>(params.n_rays))
-        return;
-
-    const bool active = is_active(params, ray);
-    const float3 source = load_start(params, ray);
-    const float3 edge_pos = load_end_a(params, ray);
-    const float3 edge_dir = load_soa_vec3(
-        params.edge_dir_x, params.edge_dir_y, params.edge_dir_z, ray);
-    const float line_min = params.edge_t_min[ray];
-    const float span = fmaxf(params.edge_t_max[ray] - line_min, 0.0f);
-    std::uint32_t any_visible = 0u;
-
-    #pragma unroll
-    for (int i = 0; i < SegmentVisibilityMaxSamples; ++i) {
-        if (i < params.sample_count) {
-            const float t = line_min + params.sample_fractions[i] * span;
-            const float3 sample = add(edge_pos, multiply(t, edge_dir));
-            any_visible |= trace_segment<Policy>(
-                params, source, sample, active, 0u, nullptr);
-        }
-    }
-    params.out_visible[ray] = any_visible != 0u ? 1u : 0u;
+    ::rayd::shared::multipath::axial_edge_visibility_algo<SegmentVisibilityConfig<Policy>>(
+        params, optixGetLaunchIndex().x, make_segment_traverser<Policy>(params));
 }
 
 template <typename Policy>
 static __forceinline__ __device__ void raygen_segment_chain(
     const SegmentVisibilityParams &params) {
-    const unsigned int chain = optixGetLaunchIndex().x;
-    if (chain >= static_cast<unsigned int>(params.n_rays))
-        return;
-
-    if (!is_active(params, chain)) {
-        params.out_visible[chain] = 0u;
-        params.out_first_blocked_segment[chain] = -1;
-        params.out_first_blocked_prim[chain] = -1;
-        return;
-    }
-
-    int segment_count = params.chain_length != nullptr
-        ? params.chain_length[chain]
-        : params.max_segments;
-    segment_count = segment_count < 0 ? 0 : segment_count;
-    segment_count = segment_count > params.max_segments
-        ? params.max_segments
-        : segment_count;
-
-    std::uint32_t all_visible = 1u;
-    int first_blocked_segment = -1;
-    int first_blocked_prim = -1;
-    for (int segment = 0; segment < segment_count; ++segment) {
-        const float3 start = load_chain_point(params, chain, segment);
-        const float3 end = load_chain_point(params, chain, segment + 1);
-        const unsigned int ignore_base = params.ignore_k > 0
-            ? (chain * static_cast<unsigned int>(params.max_segments) +
-               static_cast<unsigned int>(segment)) *
-                  static_cast<unsigned int>(params.ignore_k)
-            : 0u;
-
-        std::uint32_t blocker_prim = 0xFFFFFFFFu;
-        if (trace_segment<Policy>(
-                params, start, end, true, ignore_base, &blocker_prim) == 0u) {
-            all_visible = 0u;
-            first_blocked_segment = segment;
-            first_blocked_prim = static_cast<int>(blocker_prim);
-            break;
-        }
-    }
-
-    params.out_visible[chain] = all_visible != 0u ? 1u : 0u;
-    params.out_first_blocked_segment[chain] = first_blocked_segment;
-    params.out_first_blocked_prim[chain] = first_blocked_prim;
+    ::rayd::shared::multipath::segment_chain_visibility_algo<SegmentVisibilityConfig<Policy>>(
+        params, optixGetLaunchIndex().x, make_segment_traverser<Policy>(params));
 }
 
 } // namespace segment_visibility

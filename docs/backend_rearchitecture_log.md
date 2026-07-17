@@ -550,3 +550,113 @@ Fix: touch `.data()` on every device pointer the native launch consumes BEFORE `
 all three query paths. Stress gate: 30/30 consecutive `test_cuda_trace_backend` runs green
 (previously ~6/30 failing). Lesson recorded for all future eager native paths: `eval()` does not
 materialize literals; pointer acquisition is the enqueue point and must precede the sync.
+
+## P4 Stage B — segment visibility + reflection-EPC pipeline migration
+
+Following the P4a pattern, the two remaining "trace" multipath pipelines were lifted
+end-to-end into host-compilable, traverser-templated algorithm bodies. Segment
+visibility (four launch variants, one occlusion `optixTrace` with a conditional
+anyhit ignore filter) and reflection EPC (the 739-line discovery kernel: a reflector
+scene trace + a mode-switched segment-visibility trace, sharing one SBT) both now
+carry their math in `math::Vec3f`, route every ray cast through an `rt::is_traverser`
+Traverser, and take the lane index as a plain parameter.
+
+### What moved
+
+- **`shared/multipath/segment_visibility_algo.h`** (new): the de-CUDA-ised bodies of
+  `segment_visibility_algo` / `segment_pair_visibility_algo` /
+  `axial_edge_visibility_algo` / `segment_chain_visibility_algo`, plus the shared
+  `trace_segment` core. The P0 numeric locks (`kTraceTMin` / `kRayBias` /
+  `kMinSegmentLength`) and their `static_assert`s moved here with the constants. The
+  `out_t` +inf sentinel is written through a host/device `uint_as_float` helper
+  (device `__uint_as_float`, host `memcpy`) instead of the device intrinsic.
+- **`shared/multipath/reflection_epc_algo.h`** (new): the discovery body
+  `run_reflection_epc_algo<Config, DirectOnly, PrimaryVisibilityOnly>` and every
+  helper that was `float3`-typed (`length3`, `point_inside_triangle`,
+  `point_inside_surface_group`, `surface_group_for_prim`, containment freeze,
+  `store_invalid`, the shared `epc_backtrace_and_length` call, …). `normalize3`
+  collapses to `reflection::epc_normalize` (verified bit-identical on device); the
+  `to_shared`/`from_shared` `float3`↔`Vec3f` repacks vanish because the body is
+  `Vec3f` throughout. `reflection_geometry.h` was confirmed host-compilable as-is
+  (its `inline` host branch already builds; `intersect_line_plane` was migrated to
+  keep `intersect_segment_plane` host-exercised even though it is dead in discovery).
+- **`shared/optix/segment_visibility_device.cuh`** (refactored): keeps the anyhit /
+  closesthit / miss programs byte-for-byte, the `SegmentVisibilityDevicePolicy`
+  layout policy, the four raygen entries, and gains `SegmentVisibilityOptixTraverser
+  <DisableAnyHitWithoutIgnore>` — the sole home of the occlusion `optixTrace`, which
+  reconstructs the anyhit's ignore-row base from the algorithm's ignore sub-pointer.
+- **`shared/optix/reflection_epc_device.cuh`** (refactored): keeps the mode-switched
+  programs byte-for-byte and gains `ReflEpcOptixTraverser<DisableAnyHitWithoutIgnore>`,
+  a single traverser whose `trace_closest` runs the reflection-mode cast and whose
+  `trace_first_blocker` runs the visibility-mode cast — the two `optixTrace` sites —
+  so the algorithm owns one primary + one secondary traverser exactly as P4a's
+  reflection body does.
+
+Both backends' `.cu` adapters are unchanged: the raygen entry names and signatures
+(`raygen_segment_chain`, `run_reflection_epc_raygen<Policy, Direct, PrimaryOnly>`,
+…) and the DrJit/Torch policies (`SegmentVisibilityDevicePolicy<false,false>` vs
+`<true,true>`, `DisableAnyHitWithoutIgnore = false` vs `true`) are preserved.
+
+**Blocker-prim convention (occlusion path).** The OptiX occlusion closesthits still
+emit the blocker's *global* prim id, so the traversers return it in `TriangleHit.prim`
+with `instance = -1`; the algorithm resolves it through `global_primitive_id`, which
+is a pass-through for `instance = -1` and computes the real global id from a mesh-local
+prim + shape. This keeps the OptiX programs byte-identical AND makes the algorithm
+correct for a future `CudaBvhTraverser` (which reports mesh-local prim + shape) with no
+edit — the same helper serves both. P4d wiring of the CUDA path needs no reconciliation.
+
+### Risk protocols
+
+- **A (FP bit-identity):** a fixed-scene fingerprint over `scene.visible` /
+  `visible_pair` / `visible_edge` / `visible_chain` and `scene.trace_refl_epc`
+  (1-bounce blocked, 1-bounce valid, 2-bounce), captured as exact `float.hex()` reprs
+  BEFORE any edit (installed P4a `.pyd`) and AFTER the migrated build, is **bit-for-bit
+  identical** — every EPC `path_length`, `reflection_points` and `plane_normals`
+  component matches to the last ULP, and every visibility bool/blocker matches. It
+  stayed identical across the A/B rebuild cycle. `test_baseline` (continuous within
+  tolerance, discrete exact) and a `test_golden_scenes` determinism double-run are green.
+- **B (PTX regen):** the committed DrJit segment-visibility and reflection-EPC PTX were
+  regenerated via `-DRAYD_REGENERATE_SEGMENT_VISIBILITY_PTX=ON` /
+  `-DRAYD_REGENERATE_REFLECTION_EPC_PTX=ON` (passed through scikit-build with
+  `SKBUILD_CMAKE_DEFINE`, OptiX SDK 9.1.0). `.version 8.8` / `.target sm_70` unchanged.
+  The committed headers are LF-normalized (CMake normalizes CRLF→LF on read, so the
+  embedded `_size` is the LF byte count; the build-dir header's `file(APPEND)` re-adds
+  CRLF, so the committed copy is `\r`-stripped to make `_size == embedded length`
+  self-consistent — cleaner than P4a's reflection_trace, whose committed string kept its
+  CRLF). Segment visibility's FP-instruction multiset is essentially unchanged (556→559,
+  +3 `mov.f32`). Reflection EPC's regenerated PTX is ~12% larger with more register
+  spilling (`ld.local` 63→147, larger `sqrt`/`mul` counts) — a codegen artifact of the
+  one-big-inlined-function algorithm body, **not** a math change: the observable outputs
+  are bit-identical (risk A) and the controlled perf A/B (risk D) shows no runtime cost.
+  `test_optix_pipeline_cold_create` green after regen. The multipath pipeline guardrail
+  (exception flags 11) was not touched.
+- **C (Torch):** the full Torch build succeeds; `test_multipath` (32) is green and the
+  opt-in cross-backend `test_drjit_parity` (12, `RAYD_TORCH_RUN_DR_JIT_PARITY=1`) passes,
+  confirming Torch and DrJit produce matching results on the migrated shared headers with
+  `SegmentVisibilityDevicePolicy<true,true>` / `TorchEpcPolicy`. The build redirected
+  `TMP`/`TEMP` to a drive with free space (system `C:` full), as in P4a.
+- **D (perf, < 3% gate):** a controlled same-session rebuild A/B (old shims + old committed
+  PTX via `git stash`, non-regen build, vs the migrated regen build) shows **no regression**:
+  heavy kernel-dominated probe `scene.visible` (262 144 rays) p5 ≈ 0.120 ms both; heavy
+  `trace_refl_epc` (65 536 rays, 2-bounce) p5 old ≈ 0.102 ms vs new ≈ 0.098 ms (new marginally
+  faster). The larger EPC PTX does not cost runtime (the spills sit on cold discovery paths).
+  A first cross-session light probe suggested EPC +8%, which the controlled A/B showed to be
+  measurement noise (sub-100-µs dispatch-dominated timings).
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green: `test_visibility_topk` (12, critical), `test_reflection_epc` (12, critical),
+`test_optix_pipeline_cold_create` (1, critical after regen), `test_geometry` (63),
+`test_golden_scenes` (2, plus determinism re-run), `test_trace_backend_gate` (9),
+`test_cuda_trace_backend` (10, no flake — stable after the b7f7226 race fix),
+`test_reflection_accumulation` (6), `test_diffraction_accumulation` (30), `test_surfel`
+(32), `tests.drjit.test_baseline` (2, bit-identical), workspace `unittest discover -s
+tests` (200, 3 pre-existing/environmental skips), the host-compile gate
+(`test_rt_host_compile`: both new algo headers compiled host-only by `cl.exe`, plus the
+extended token grep), and Torch `test_multipath` (32) + `test_drjit_parity` (12, opt-in).
+
+`test_share2` (the EPC portion) and the Torch `abi_audit.json` were updated: the former to
+point at the migrated algorithm header for the shared reflect / segment-plane primitives
+(exactly as P4a updated its reflection-trace half); the latter regenerated because the
+audit hashes `backends/torch/CMakeLists.txt`, whose PTX-build DEPENDS gained the new algo
+headers.

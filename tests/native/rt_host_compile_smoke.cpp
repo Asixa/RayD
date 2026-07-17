@@ -11,7 +11,9 @@
 
 #include <cstdint>
 
+#include <rayd/shared/multipath/reflection_epc_algo.h>
 #include <rayd/shared/multipath/reflection_trace_algo.h>
+#include <rayd/shared/multipath/segment_visibility_algo.h>
 #include <rayd/shared/rt/qualifiers.h>
 #include <rayd/shared/rt/traverser.h>
 
@@ -58,9 +60,55 @@ using HostConfig = rayd::shared::rt::TraceConfig<HostLayoutPolicy, HostTraverser
 using AlgoFn = void (*)(const rayd::shared::optix::ReflectionTraceParams &,
                         std::uint32_t, const HostTraverser &, const HostTraverser &);
 
+// Segment-visibility layout policy (both compile-time knobs on) and its config.
+struct HostSegmentLayoutPolicy {
+    static constexpr bool disable_anyhit_without_ignore = true;
+    static constexpr bool write_output_t = true;
+};
+using HostSegmentConfig =
+    rayd::shared::rt::TraceConfig<HostSegmentLayoutPolicy, HostTraverser>;
+using SegmentAlgoFn = void (*)(const rayd::shared::optix::SegmentVisibilityParams &,
+                               std::uint32_t, const HostTraverser &);
+
+// Reflection-EPC layout policy and its config. The EPC algorithm reads only the
+// traverser axis; the layout only carries the anyhit-disable knob the OptiX shim's
+// traverser template consumes.
+struct HostEpcLayoutPolicy {
+    static constexpr bool DisableAnyHitWithoutIgnore = true;
+};
+using HostEpcConfig = rayd::shared::rt::TraceConfig<HostEpcLayoutPolicy, HostTraverser>;
+using EpcAlgoFn = void (*)(const rayd::shared::optix::ReflEpcParams &,
+                           std::uint32_t, const HostTraverser &, const HostTraverser &);
+
 }  // namespace
 
-// Returning the address forces full host instantiation of the algorithm body.
+// Returning the address forces full host instantiation of each algorithm body.
 AlgoFn rt_host_compile_smoke_reflection_trace() {
     return &rayd::shared::multipath::reflection_trace_algo<HostConfig>;
+}
+
+SegmentAlgoFn rt_host_compile_smoke_segment_visibility() {
+    // Instantiating one entry pulls in the shared trace_segment core; take the
+    // address of every launch variant so all four fully type-check off-device.
+    volatile SegmentAlgoFn pair =
+        &rayd::shared::multipath::segment_pair_visibility_algo<HostSegmentConfig>;
+    volatile SegmentAlgoFn axial =
+        &rayd::shared::multipath::axial_edge_visibility_algo<HostSegmentConfig>;
+    volatile SegmentAlgoFn chain =
+        &rayd::shared::multipath::segment_chain_visibility_algo<HostSegmentConfig>;
+    (void)pair;
+    (void)axial;
+    (void)chain;
+    return &rayd::shared::multipath::segment_visibility_algo<HostSegmentConfig>;
+}
+
+EpcAlgoFn rt_host_compile_smoke_reflection_epc() {
+    // Exercise the DirectOnly / PrimaryVisibilityOnly template axes off-device.
+    volatile EpcAlgoFn direct =
+        &rayd::shared::multipath::run_reflection_epc_algo<HostEpcConfig, true, false>;
+    volatile EpcAlgoFn primary_only =
+        &rayd::shared::multipath::run_reflection_epc_algo<HostEpcConfig, false, true>;
+    (void)direct;
+    (void)primary_only;
+    return &rayd::shared::multipath::run_reflection_epc_algo<HostEpcConfig, false, false>;
 }
