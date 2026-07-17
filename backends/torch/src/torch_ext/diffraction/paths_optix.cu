@@ -342,6 +342,30 @@ static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(
     return p;
 }
 
+// Diffraction visibility rays start/end at the on-edge point Q, where they
+// graze the wedge's own faces and hit/miss chaotically in the watertight
+// intersector. Nudge the Q endpoint off both face planes along the exterior
+// wedge bisector before the visibility trace; the physics still uses the true
+// Q. normalize3's eps guard shrinks the offset toward zero for near-coplanar
+// faces (thin screens), where the along-ray bias already covers the trace.
+static __forceinline__ __device__ float3 edge_visibility_offset(int state_idx) {
+    const float3 n0 = vec_from_storage(params.state_n0_aos,
+                                       params.state_n0_stride0,
+                                       params.state_n0_stride1,
+                                       params.state_n0_x,
+                                       params.state_n0_y,
+                                       params.state_n0_z,
+                                       state_idx);
+    const float3 n1 = vec_from_storage(params.state_n1_aos,
+                                       params.state_n1_stride0,
+                                       params.state_n1_stride1,
+                                       params.state_n1_x,
+                                       params.state_n1_y,
+                                       params.state_n1_z,
+                                       state_idx);
+    return kDfrRayBias * normalize3(n0 + n1);
+}
+
 static __forceinline__ __device__ utd::MaterialParams paths_material_params(int tx_idx) {
     utd::MaterialParams mat;
     mat.useFresnel = 1;
@@ -440,8 +464,9 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     }
     const float clamped_parameter = fminf(fmaxf(parameter, 0.f), edge_length);
     const float3 edge_point = edge_origin + clamped_parameter * edge_dir;
-    if (!visible_segment<SplitScene>(source, edge_point) ||
-        !visible_segment<SplitScene>(edge_point, receiver)) {
+    const float3 vis_point = edge_point + edge_visibility_offset(state_idx);
+    if (!visible_segment<SplitScene>(source, vis_point) ||
+        !visible_segment<SplitScene>(vis_point, receiver)) {
         return;
     }
 
@@ -570,7 +595,7 @@ static __forceinline__ __device__ void trace_paths_order1_source_visibility_prim
     }
 
     params.temp_visibility[lane] =
-        visible_segment<false>(source, edge_point) ? 1u : 0u;
+        visible_segment<false>(source, edge_point + edge_visibility_offset(state_idx)) ? 1u : 0u;
 }
 
 static __forceinline__ __device__ void trace_paths_order1_target_export_primary_impl() {
@@ -610,7 +635,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
     if (!finite_paths_points(source, edge_point, receiver)) {
         return;
     }
-    if (!visible_segment<false>(edge_point, receiver)) {
+    if (!visible_segment<false>(edge_point + edge_visibility_offset(state_idx), receiver)) {
         return;
     }
 

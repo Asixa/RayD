@@ -26,7 +26,9 @@ constexpr float UTD_TWO_PI         = 6.28318530717958647692f;
 constexpr float UTD_EPS            = 1.0e-10f;
 constexpr float UTD_SMALL_EPS      = 1.0e-6f;
 constexpr float UTD_EPSILON_0      = rayd::shared::VacuumPermittivity;
-constexpr float UTD_MIN_DISTANCE   = 5.0e-2f;
+// Numerical guard only; UTD is evaluated outside its asymptotic regime below
+// ~lambda, which beats hard-zeroing the field there.
+constexpr float UTD_MIN_DISTANCE   = 1.0e-4f;
 constexpr float UTD_SLOPE_STEP     = 1.0e-4f;
 
 constexpr int OWNERSHIP_DIRECT   = 0;

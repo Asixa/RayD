@@ -540,26 +540,96 @@ UTD_DINLINE void assemble_beta_term(T cotV, T c1, T c2,
 }
 
 // ===================================================================
-// Diffraction beta groups (2D / 3D)
+// Corner even/odd finite-edge assembly (design F5d, supersedes F5c)
+//
+// The four cotangent terms of the coefficient carry GO-compensation steps
+// across the wedge's ISB/RSB boundary planes. Those planes extend beyond the
+// finite edge's shadow sector; when the stationary point sits past an edge end
+// no GO field toggles there, so the step becomes a spurious seam.
+//
+// Each boundary-active term value is split about its nearest GO boundary bStar
+// (mirror argument 2*bStar - beta) into an odd part (the step carrier) and an
+// even part (the continuous smooth background), then reassembled as
+//
+//   odd  = 0.5 * w(delta) * (t_i(beta) - t_i(2*bStar - beta))
+//   even = t_i - odd
+//   t_used = even * truncEven + odd * gammaOdd
+//
+// with a locality window w(delta), delta = beta - bStar. The identities
+// disc(odd) == disc(t_i) and disc(even) == 0 hold across the boundary, so the
+// odd part carries the ENTIRE GO discontinuity. truncEven is the complex
+// finite-edge truncation factor (Fresnel integral over the edge extent) applied
+// only to the continuous background; gammaOdd is the corner interior indicator
+// (1 deep inside the edge span, 0 past the ends). With gammaOdd = 1 the interior
+// ISB/RSB step is preserved EXACTLY regardless of truncEven -- the finite-edge
+// factor never distorts the GO-compensation step. With gammaOdd -> 0 the
+// extension-plane step vanishes. Every non-stationary / MC call site passes
+// gammaOdd = 1 and truncEven = 1, so t_used == t_i (exact no-op) and the
+// pseudo-infinite truncation multiplies the whole contribution outside as
+// before. Only the term VALUE is split; the first/second-derivative outputs
+// feed the slope-diffraction terms, carry no GO step, and take truncEven only.
 // ===================================================================
 template <typename T>
-UTD_DINLINE T endpoint_unpaired_direct_beta(T beta, T n) {
-    T period = fmaxf(2.f * n * UTD_PI, T(UTD_SMALL_EPS));
-    T centered = beta - period * floorf((beta + 0.5f * period) / period);
-    if (centered > UTD_PI) {
-        return 2.f * UTD_PI - centered;
-    }
-    if (centered < -UTD_PI) {
-        return -2.f * UTD_PI - centered;
-    }
-    return centered;
+UTD_DINLINE T incident_nearest_boundary(T beta) {
+    // Incident shadow boundaries lie at beta = +-pi; pick the nearer.
+    float b = scalar_value(beta);
+    return (fabsf(b - UTD_PI) <= fabsf(b + UTD_PI)) ? T(UTD_PI) : T(-UTD_PI);
 }
 
+template <typename T>
+UTD_DINLINE T reflection_nearest_boundary(T beta, T n) {
+    // Reflection shadow boundaries lie at beta = pi and beta = (2n-1)*pi.
+    float b = scalar_value(beta);
+    float bFar = (2.f * scalar_value(n) - 1.f) * UTD_PI;
+    return (fabsf(b - UTD_PI) <= fabsf(b - bFar)) ? T(UTD_PI)
+                                                  : (2.f * n - 1.f) * T(UTD_PI);
+}
+
+template <typename T>
+UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue,
+    T beta, T bStar, T n, T kL, float cotSign, bool plusBranch,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+{
+    // Fast path: MC / non-stationary callers pass gammaOdd = 1 and
+    // truncEven = 1, so t_used == t_i. Returning the input verbatim keeps that
+    // path BIT-IDENTICAL (an even/odd subtract-then-add round-trip would
+    // round-drift, and a multiply by exact one is unnecessary work).
+    const bool truncIsOne =
+        scalar_value(truncEven.re) == 1.f && scalar_value(truncEven.im) == 0.f;
+    if (scalar_value(gammaOdd) >= 1.f && truncIsOne) return termValue;
+    T delta = beta - bStar;
+    T deltaW = 4.f * sqrtf(UTD_TWO_PI / fmaxf(kL, T(1.0e-6f)));  // locality window
+    T w = expf(-(delta / deltaW) * (delta / deltaW));
+    if (!(scalar_value(w) > 1.0e-3f)) {
+        // Far from every GO boundary: no odd part, pure smooth background.
+        return cplx_mul(termValue, truncEven);
+    }
+    // Evaluate the SAME term at the mirrored argument (roundf inside
+    // beta_term_values reselects N+- automatically; no extra branch handling).
+    T betaM = 2.f * bStar - beta;
+    T cvM, c1M, c2M, xoM, x1M, x2M;
+    beta_term_values(betaM, n, kL, cotSign, plusBranch, cvM, c1M, c2M, xoM, x1M, x2M);
+    ComplexT<T> trM, tr1M, tr2M;
+    f_utd_with_derivatives(xoM, trM, tr1M, tr2M);
+    ComplexT<T> tvM, tfM, tsM;
+    assemble_beta_term(cvM, c1M, c2M, xoM, x1M, x2M, kL, n, cotSign,
+                       trM, tr1M, tr2M, tvM, tfM, tsM);
+    ComplexT<T> odd = cplx_mul_real(cplx_sub(termValue, tvM), T(0.5f) * w);
+    ComplexT<T> even = cplx_sub(termValue, odd);
+    // Even (continuous) background takes the finite-edge truncation; the odd
+    // step carrier enters at gammaOdd (= 1 in the interior -> exact GO step).
+    return cplx_add(cplx_mul(even, truncEven), cplx_mul_real(odd, gammaOdd));
+}
+
+// ===================================================================
+// Diffraction beta groups (2D / 3D)
+// ===================================================================
 template <typename T>
 UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k,
     T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     T l = s*sP/(s+sP+T(UTD_EPS));
     T kL = k*l;
@@ -577,39 +647,43 @@ UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k,
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1[i],c2[i],xv[i],x1[i],x2[i],kL,n,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
     }
+    // Corner even/odd finite-edge assembly on the term VALUES (F5d). Incident
+    // group (i=0,1) about +-pi of dP; reflection group (i=2,3) about
+    // {pi,(2n-1)pi} of sP2. Nearest boundary by |beta - bStar|.
+    T bIncident = incident_nearest_boundary(dP);
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven);
+    T bReflect = reflection_nearest_boundary(sP2, n);
+    tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
     dG  = cplx_add(tv[0],tv[1]);
-    dG1 = cplx_add(tf[0],tf[1]);
-    dG2 = cplx_add(ts[0],ts[1]);
+    // Slope-derivative feeds carry no GO step -> smooth background only
+    // (truncEven, no odd split). truncEven == 1 on the MC path is a no-op.
+    dG1 = cplx_mul(cplx_add(tf[0],tf[1]), truncEven);
+    dG2 = cplx_mul(cplx_add(ts[0],ts[1]), truncEven);
     sG  = cplx_add(cplx_mul(rn,tv[2]), cplx_mul(r0,tv[3]));
-    sG1 = cplx_add(cplx_mul(rn,tf[2]), cplx_mul(r0,tf[3]));
-    sG2 = cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3]));
+    sG1 = cplx_mul(cplx_add(cplx_mul(rn,tf[2]), cplx_mul(r0,tf[3])), truncEven);
+    sG2 = cplx_mul(cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3])), truncEven);
 }
 
 template <typename T>
 UTD_DINLINE void diffraction_beta_groups(T phi, T phiP, T n, T k,
     T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     diffraction_beta_groups_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
-                                       r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2);
-}
-
-template <typename T>
-UTD_DINLINE void diffraction_beta_groups_with_direct_beta(T phi, T phiP,
-    T directBeta, T n, T k, T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
-    ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
-{
-    diffraction_beta_groups_from_betas(directBeta, phi + phiP, n, k, s, sP,
-                                       r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2);
+                                       r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2,
+                                       gammaOdd, truncEven);
 }
 
 template <typename T>
 UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k,
     T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     T sb = fmaxf(sinBeta0, T(UTD_SMALL_EPS));
     T l = s*sP/(s+sP+T(UTD_EPS))*sb*sb;
@@ -628,34 +702,33 @@ UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k,
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1[i],c2[i],xv[i],x1[i],x2[i],kL,n,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
     }
+    // Corner even/odd finite-edge assembly on the term VALUES (F5d); 2D twin.
+    T bIncident = incident_nearest_boundary(dP);
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven);
+    T bReflect = reflection_nearest_boundary(sP2, n);
+    tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
     dG  = cplx_add(tv[0],tv[1]);
-    dG1 = cplx_add(tf[0],tf[1]);
-    dG2 = cplx_add(ts[0],ts[1]);
+    // Slope-derivative feeds carry no GO step -> smooth background only
+    // (truncEven, no odd split). truncEven == 1 on the MC path is a no-op.
+    dG1 = cplx_mul(cplx_add(tf[0],tf[1]), truncEven);
+    dG2 = cplx_mul(cplx_add(ts[0],ts[1]), truncEven);
     sG  = cplx_add(cplx_mul(rn,tv[2]), cplx_mul(r0,tv[3]));
-    sG1 = cplx_add(cplx_mul(rn,tf[2]), cplx_mul(r0,tf[3]));
-    sG2 = cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3]));
+    sG1 = cplx_mul(cplx_add(cplx_mul(rn,tf[2]), cplx_mul(r0,tf[3])), truncEven);
+    sG2 = cplx_mul(cplx_add(cplx_mul(rn,ts[2]), cplx_mul(r0,ts[3])), truncEven);
 }
 
 template <typename T>
 UTD_DINLINE void diffraction_beta_groups_3d(T phi, T phiP, T n, T k,
     T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
+    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     diffraction_beta_groups_3d_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
                                           sinBeta0, r0, rn, factor, dG, dG1,
-                                          sG, sG1, dG2, sG2);
-}
-
-template <typename T>
-UTD_DINLINE void diffraction_beta_groups_3d_with_direct_beta(T phi, T phiP,
-    T directBeta, T n, T k, T s, T sP, T sinBeta0,
-    ComplexT<T> r0, ComplexT<T> rn, ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
-    ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2)
-{
-    diffraction_beta_groups_3d_from_betas(directBeta, phi + phiP, n, k, s, sP,
-                                          sinBeta0, r0, rn, factor, dG, dG1,
-                                          sG, sG1, dG2, sG2);
+                                          sG, sG1, dG2, sG2, gammaOdd, truncEven);
 }
 
 // ===================================================================
@@ -663,37 +736,20 @@ UTD_DINLINE void diffraction_beta_groups_3d_with_direct_beta(T phi, T phiP,
 // ===================================================================
 template <typename T>
 UTD_DINLINE ComplexT<T> diff_coeff_2d(T phi, T phiP, T n, T k,
-                                   T s, T sP, ComplexT<T> r0, ComplexT<T> rn) {
+                                   T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
+                                   T gammaOdd = T(1.f),
+                                   ComplexT<T> truncEven = c_const<T>(1, 0)) {
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
-    return cplx_mul(fac, cplx_add(dG,sG));
-}
-
-template <typename T>
-UTD_DINLINE ComplexT<T> diff_coeff_2d_endpoint_continued(T phi, T phiP,
-    T n, T k, T s, T sP, ComplexT<T> r0, ComplexT<T> rn) {
-    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
-    diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,n,k,s,sP,r0,rn,
-                                             fac,dG,dG1,sG,sG1,dG2,sG2);
+    diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
 template <typename T>
 UTD_DINLINE ComplexT<T> diff_coeff_3d(T phi, T phiP, T n, T k,
-    T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn) {
+    T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn,
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0)) {
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
-    return cplx_mul(fac, cplx_add(dG,sG));
-}
-
-template <typename T>
-UTD_DINLINE ComplexT<T> diff_coeff_3d_endpoint_continued(T phi, T phiP,
-    T n, T k, T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn) {
-    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, n);
-    diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,n,k,s,sP,sb,
-                                                r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2);
+    diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
@@ -912,37 +968,19 @@ UTD_DINLINE JonesOperatorT<T> fallback_face_operator(JonesOperatorT<T> stored,
 // ===================================================================
 template <typename T>
 UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d(T phi, T phiP,
-    T wedgeN, T k, T s, T sP, T sinBeta0)
+    T wedgeN, T k, T s, T sP, T sinBeta0, T gammaOdd = T(1.f),
+    ComplexT<T> truncEven = c_const<T>(1, 0))
 {
+    // (gammaOdd, truncEven) flow into each beta-group build so the
+    // direct/face0/face1 term VALUES take the even/odd finite-edge assembly
+    // while the derivative feeds take truncEven only (F5d).
     ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
     ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02,gammaOdd,truncEven);
     ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
-    return {
-        cplx_mul(fac, dG),
-        cplx_mul(fac0, sF0),
-        cplx_mul(fac1, sF1),
-        cplx_mul(fac, cplx_mul_real(dG1, -1.f)),
-        cplx_mul(fac0, sF01),
-        cplx_mul(fac1, sF11)
-    };
-}
-
-template <typename T>
-UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d_endpoint_continued(T phi, T phiP,
-    T wedgeN, T k, T s, T sP, T sinBeta0)
-{
-    ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
-    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
-    diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
-    ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
-    diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
-    ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
-    diffraction_beta_groups_3d_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12,gammaOdd,truncEven);
     return {
         cplx_mul(fac, dG),
         cplx_mul(fac0, sF0),
@@ -955,7 +993,8 @@ UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d_endpoint_continued(
 
 template <typename T>
 UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP,
-    T wedgeN, T k, T s, T sP)
+    T wedgeN, T k, T s, T sP, T gammaOdd = T(1.f),
+    ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     T l = s*sP/(s+sP+T(UTD_EPS));
     T kL = k*l;
@@ -974,39 +1013,30 @@ UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP,
         float cotSign = (i == 0 || i == 2) ? +1.f : -1.f;
         assemble_beta_term(cv[i],c1v[i],c2v[i],xv[i],x1v[i],x2v[i],kL,wedgeN,cotSign,tr[i],tr1[i],tr2[i],tv[i],tf[i],ts[i]);
     }
+    // Corner even/odd finite-edge assembly on the term VALUES (F5d); the
+    // .directDphiPrime / faceNDphiPrime derivative feeds below take truncEven
+    // only (no odd split).
+    T bIncident = incident_nearest_boundary(dPhi);
+    tv[0] = mend_beta_term_value(tv[0], dPhi, bIncident, wedgeN, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[1] = mend_beta_term_value(tv[1], dPhi, bIncident, wedgeN, kL, -1.f, false, gammaOdd, truncEven);
+    T bReflect = reflection_nearest_boundary(sPhi, wedgeN);
+    tv[2] = mend_beta_term_value(tv[2], sPhi, bReflect, wedgeN, kL, +1.f, true,  gammaOdd, truncEven);
+    tv[3] = mend_beta_term_value(tv[3], sPhi, bReflect, wedgeN, kL, -1.f, false, gammaOdd, truncEven);
     ComplexT<T> factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
                      -1.f/(2.f*wedgeN*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))));
     ComplexT<T> difV = cplx_add(tv[0],tv[1]);
-    ComplexT<T> difF = cplx_add(tf[0],tf[1]);
+    // Derivative feeds: smooth-background truncation only (truncEven == 1 on
+    // the MC path is a no-op).
+    ComplexT<T> difF = cplx_mul(cplx_add(tf[0],tf[1]), truncEven);
+    ComplexT<T> f0F = cplx_mul(tf[3], truncEven);
+    ComplexT<T> f1F = cplx_mul(tf[2], truncEven);
     return {
         cplx_mul(factor, difV),
         cplx_mul(factor, tv[3]),
         cplx_mul(factor, tv[2]),
         cplx_mul(factor, cplx_mul_real(difF, -1.f)),
-        cplx_mul(factor, tf[3]),
-        cplx_mul(factor, tf[2])
-    };
-}
-
-template <typename T>
-UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d_endpoint_continued(T phi, T phiP,
-    T wedgeN, T k, T s, T sP)
-{
-    ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
-    ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    T directBeta = endpoint_unpaired_direct_beta(phi - phiP, wedgeN);
-    diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,z,z,fac,dG,dG1,sG,sG1,dG2,sG2);
-    ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
-    diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02);
-    ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
-    diffraction_beta_groups_with_direct_beta(phi,phiP,directBeta,wedgeN,k,s,sP,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12);
-    return {
-        cplx_mul(fac, dG),
-        cplx_mul(fac0, sF0),
-        cplx_mul(fac1, sF1),
-        cplx_mul(fac, cplx_mul_real(dG1, -1.f)),
-        cplx_mul(fac0, sF01),
-        cplx_mul(fac1, sF11)
+        cplx_mul(factor, f0F),
+        cplx_mul(factor, f1F)
     };
 }
 
@@ -1027,6 +1057,12 @@ UTD_DINLINE JonesOperatorT<T> assemble_diff_operator(ComplexT<T> free_term,
 // ===================================================================
 // Scalar field terms (for computePairFieldTerms)
 // ===================================================================
+// Normalized Fresnel truncation factor over the edge extent about the paraxial
+// stationary parameter. The MC (selectStationaryPoint = 0) path uses the
+// project-then-solve stationary parameter (stationaryAtOrigin = false); the
+// deterministic path re-anchors the edge to the exact Fermat point and passes
+// stationaryAtOrigin = true (the stationary parameter is then the origin of the
+// re-anchored [lineMin, lineMax] extent).
 template <typename T>
 UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor_bounds(
     PairInputsT<T> state,
@@ -1099,38 +1135,63 @@ UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor(PairInputsT<T> state, Vec
     );
 }
 
+// Corner-mend weight gamma for the deterministic (stationary) path. It reuses
+// the SAME projected geometry as finite_wedge_truncation_factor_bounds with
+// stationaryAtOrigin = true (u* = 0, sigma = sqrt(k*curvature/pi)) and maps the
+// signed stationary-exit coordinate through a smooth sigmoid: gamma -> 1 while
+// the stationary point is inside the edge span (uExit < 0), gamma -> 0 once it
+// exits (uExit > 0). Smooth in every input and kept in T-typed math so the dual
+// instantiation differentiates it. See design F5c.
 template <typename T>
-UTD_DINLINE ComplexT<T> finite_wedge_stationary_completion_factor(
+UTD_DINLINE T corner_mend_gamma(
     PairInputsT<T> state,
     Vec3T<T> tgtPos,
     T k,
-    bool inside)
+    T lineMin,
+    T lineMax)
 {
-    if (inside) {
-        return c_const<T>(1.f, 0.f);
-    }
-    T edgeLength = state.edgeLineMax - state.edgeLineMin;
-    T outsideDistance = fmaxf(fmaxf(state.edgeLineMin, -state.edgeLineMax), T(0.f));
-    T wavelength = (2.f * UTD_PI) / fmaxf(k, T(UTD_SMALL_EPS));
-    T taperLength = fminf(0.25f * edgeLength, fmaxf(0.5f * wavelength, T(UTD_EPS)));
-    T endpointU = fmaxf(outsideDistance / fmaxf(taperLength, T(UTD_EPS)), T(0.f));
-    T endpointWeight = expf(-endpointU * endpointU);
-    ComplexT<T> raw = finite_wedge_truncation_factor_bounds(
-        state,
-        tgtPos,
-        k,
-        state.edgeLineMin,
-        state.edgeLineMax,
-        true
-    );
-    ComplexT<T> boundary = state.edgeLineMin >= 0.f
-        ? finite_wedge_truncation_factor_bounds(state, tgtPos, k, T(0.f), edgeLength, true)
-        : finite_wedge_truncation_factor_bounds(state, tgtPos, k, -edgeLength, T(0.f), true);
-    T boundaryPower = cplx_abs_sqr(boundary);
-    if (boundaryPower <= UTD_EPS) {
-        return cplx_mul_real(raw, endpointWeight);
-    }
-    return cplx_mul_real(cplx_div(raw, boundary), endpointWeight);
+    Vec3T<T> edgeHat = safe_normalize(state.edgeDir, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> edgePos = state.edgePos;
+    Vec3T<T> sourcePos = state.sourcePos;
+
+    T sourceAxial = f3_dot(f3_sub(sourcePos, edgePos), edgeHat);
+    T targetAxial = f3_dot(f3_sub(tgtPos, edgePos), edgeHat);
+
+    Vec3T<T> sourceToEdge = f3_sub(edgePos, sourcePos);
+    Vec3T<T> edgeToTarget = f3_sub(tgtPos, edgePos);
+    T sPrimeProj = safe_length(project_to_wedge_plane(sourceToEdge, edgeHat)) + T(UTD_EPS);
+    T sProj = safe_length(project_to_wedge_plane(edgeToTarget, edgeHat)) + T(UTD_EPS);
+
+    // stationaryAtOrigin = true: the re-anchored edge places u* at the origin.
+    T stationaryU = T(0.f);
+    T sourceOffset = stationaryU - sourceAxial;
+    T targetOffset = targetAxial - stationaryU;
+    T sourceRange =
+        sqrtf(sPrimeProj * sPrimeProj + sourceOffset * sourceOffset + T(UTD_EPS));
+    T targetRange =
+        sqrtf(sProj * sProj + targetOffset * targetOffset + T(UTD_EPS));
+    T curvature =
+        sPrimeProj * sPrimeProj / (sourceRange * sourceRange * sourceRange + T(UTD_EPS))
+        + sProj * sProj / (targetRange * targetRange * targetRange + T(UTD_EPS));
+    T sigma = sqrtf(fmaxf(k * curvature, T(UTD_EPS)) / UTD_PI);
+
+    // Signed exit coordinate in sigma-units: negative while u* is interior,
+    // positive once it passes an edge end.
+    T uExit = fmaxf(sigma * (lineMin - stationaryU), sigma * (stationaryU - lineMax));
+    // Sigmoid width of the corner-cone ramp in stationary-exit sigma-units.
+    // Exit-side suppression must reach ~0.06 by uExit~0.08 to keep
+    // extension-plane residues < 1 dB, while the interior side reaches 0.94 by
+    // uExit=-0.08 restoring near-exact GO compensation close to corners; the
+    // ~4.4*width span in the stationary parameter maps to ~2 receiver cells at
+    // the validation geometry, keeping the corner-cone ramp resolved.
+    constexpr float kCornerMendSigmoidWidth = 0.03f;
+    // Clamp the sigmoid argument before exp: at this narrow width an off-edge
+    // stationary point drives uExit/width past ~88, where expf overflows to
+    // +inf and the Dual derivative becomes inf/inf = NaN (poisoning AD). gamma
+    // is already saturated to 0 (or 1) well before |z| = 80, so clamping there
+    // is exact for the forward value and yields a finite (zero) tangent.
+    T z = fminf(fmaxf(uExit / T(kCornerMendSigmoidWidth), T(-80.f)), T(80.f));
+    return T(1.f) / (T(1.f) + expf(z));
 }
 
 template <typename T>
@@ -1141,6 +1202,10 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
     geomValid = false;
     field = cplx_zero<T>(); directGain = cplx_zero<T>(); derivativeGain = cplx_zero<T>();
 
+    // Deterministic (selectStationaryPoint > 0.5) path re-anchors the edge to
+    // its (possibly off-edge) analytic Fermat point; the MC path leaves state
+    // at the caller-supplied Keller point. selectedInside is not used by the
+    // closed-form finite factor and is retained only for the re-anchor call.
     bool selectedStationary = false;
     bool selectedInside = false;
     bool selectedValid = true;
@@ -1152,9 +1217,9 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
         selectedValid
     );
     if (!selectedValid) return;
+    (void)selectedInside;
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
-    bool tgtExt = wedge_exterior_mask(f3_sub(tgtPos, state.edgePos), state.edgeDir, state.n0, state.nn);
     T phi,phiP,s,sP,sb;
     compute_edge_geometry_3d(state.sourcePos, state.edgePos, state.edgeDir, state.n0, tgtPos, phi,phiP,s,sP,sb);
 
@@ -1163,21 +1228,48 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
 
     ComplexT<T> r0 = state.r0, rn = state.rn;
     T w = state.wedgeN;
+    // Faces are finite, so targets slightly past an extended face plane are
+    // legitimately illuminated by the edge; clamp the angles into the wedge
+    // domain [0, n*pi] (nearest-boundary wrap) so the coefficient continues
+    // with its grazing value instead of switching branches. Genuinely blocked
+    // directions are removed by segment occlusion, not by the coefficient.
+    T npi = w * UTD_PI;
+    if (phi > npi)  phi  = (phi - npi < 2.f*UTD_PI - phi) ? npi : T(0);
+    if (phiP > npi) phiP = (phiP - npi < 2.f*UTD_PI - phiP) ? npi : T(0);
     bool poleSafe = cot_pole_safe_mask(phi,phiP,w,1.0e-6f);
     T safePhi  = poleSafe ? phi  : T(0.5f)*w*UTD_PI;
     T safePhiP = poleSafe ? phiP : T(0.5f)*w*UTD_PI;
     bool slopeSafe = slope_safe_mask(safePhi,safePhiP,w,UTD_SLOPE_STEP);
     bool useFace = (state.face0Material.present > 0.5f) || (state.face1Material.present > 0.5f);
-    bool endpointContinuation = selectedStationary && !tgtExt;
-    ComplexT<T> d = endpointContinuation
-        ? (useFace ? diff_coeff_3d_endpoint_continued(phi,phiP,w,k,s,sP,sb,r0,rn)
-                   : diff_coeff_2d_endpoint_continued(phi,phiP,w,k,s,sP,r0,rn))
-        : (useFace ? diff_coeff_3d(phi,phiP,w,k,s,sP,sb,r0,rn)
-                   : diff_coeff_2d(phi,phiP,w,k,s,sP,r0,rn));
+    // Finite-edge structure (F5d). Deterministic path: the truncation factor
+    // truncEven scales the continuous even background INSIDE the coefficient and
+    // the outer factor is unity; gammaOdd (1 while the stationary point is inside
+    // the edge span, -> 0 once it exits) weights the GO-compensation step so the
+    // interior discontinuity is preserved exactly. MC path: truncEven = 1,
+    // gammaOdd = 1, and the pseudo-infinite factor multiplies outside as before
+    // (bit-identical to the pre-F5d code).
+    ComplexT<T> one = c_const<T>(1, 0);
+    ComplexT<T> truncEven, outerFinite;
+    T gammaOdd;
+    if (selectedStationary) {
+        truncEven = finite_wedge_truncation_factor_bounds(state, tgtPos, k,
+              state.edgeLineMin, state.edgeLineMax, /*stationaryAtOrigin=*/true);
+        gammaOdd = corner_mend_gamma(state, tgtPos, k, state.edgeLineMin, state.edgeLineMax);
+        outerFinite = one;
+    } else {
+        truncEven = one;
+        gammaOdd = T(1.f);
+        outerFinite = finite_wedge_truncation_factor(state, tgtPos, k);
+    }
+    ComplexT<T> d = useFace ? diff_coeff_3d(phi,phiP,w,k,s,sP,sb,r0,rn,gammaOdd,truncEven)
+                            : diff_coeff_2d(phi,phiP,w,k,s,sP,r0,rn,gammaOdd,truncEven);
     if (!poleSafe) { d.re = d.re; d.im = d.im; } // detach (no AD in CUDA anyway)
     ComplexT<T> dSlope = cplx_zero<T>();
     bool hasSlope = (cplx_abs_sqr(state.incidentNormalDerivative) > 1.0e-24f) && slopeSafe;
     if (hasSlope) {
+        // Slope diffraction only survives on the MC path (the deterministic path
+        // zeroes the incident normal derivative below), where truncEven = 1 and
+        // the finite factor multiplies outside; no inner truncation needed here.
         dSlope = useFace ? slope_diff_3d(safePhi,safePhiP,w,k,s,sP,sb,r0,rn)
                          : slope_diff_2d(safePhi,safePhiP,w,k,s,sP,r0,rn);
     }
@@ -1185,11 +1277,12 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
     ComplexT<T> phase = cplx_exp_phase(-k*s);
     directGain = cplx_mul_real(cplx_mul(d,phase), ls);
     derivativeGain = cplx_mul_real(cplx_mul(dSlope,phase), ls);
-    ComplexT<T> finiteFactor = selectedStationary
-        ? finite_wedge_stationary_completion_factor(state, tgtPos, k, selectedInside)
-        : finite_wedge_truncation_factor(state, tgtPos, k);
-    directGain = cplx_mul(directGain, finiteFactor);
-    derivativeGain = cplx_mul(derivativeGain, finiteFactor);
+    // Deterministic path: truncation already lives inside d (truncEven), so the
+    // outer factor is unity. MC path: outerFinite is the pseudo-infinite factor.
+    directGain = cplx_mul(directGain, outerFinite);
+    derivativeGain = cplx_mul(derivativeGain, outerFinite);
+    // On the deterministic path the incident field is the direct source field to
+    // the (re-anchored) stationary point and there is no incident slope term.
     ComplexT<T> incidentField = selectedStationary
         ? direct_source_field(state.sourcePos, state.edgePos, k)
         : state.incidentField;
@@ -1223,9 +1316,16 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
     Basis3T<T> inEB,
     Basis3T<T> outEB,
     ComplexT<T> finiteFactor,
-    bool endpointContinuation)
+    T gammaOdd = T(1.f),
+    ComplexT<T> truncEven = c_const<T>(1, 0))
 {
     bool selectedStationary = state.selectStationaryPoint > 0.5f;
+    // Faces are finite: continue the coefficient with its grazing value at the
+    // wedge boundary [0, n*pi] (nearest-boundary wrap) instead of switching to
+    // an endpoint branch; blocked directions are removed by segment occlusion.
+    T npi = state.wedgeN * UTD_PI;
+    if (phi > npi)  phi  = (phi - npi < 2.f*UTD_PI - phi) ? npi : T(0);
+    if (phiP > npi) phiP = (phiP - npi < 2.f*UTD_PI - phiP) ? npi : T(0);
     Complex3T<T> incidentVector = selectedStationary
         ? direct_source_vector(state.sourcePos, state.edgePos, k, mat)
         : vector_from_jones(state.incidentJones, state.incidentBasis);
@@ -1257,20 +1357,17 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
             state.nn, inEB.k, outEB.k, inEB, outEB, mat.omega)
         : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
 
-    DiffractionOperatorTermsT<T> terms = endpointContinuation
-        ? (useFace
-            ? compute_op_terms_3d_endpoint_continued(phi,phiP,state.wedgeN,k,s,sP,sb)
-            : compute_op_terms_2d_endpoint_continued(phi,phiP,state.wedgeN,k,s,sP))
-        : (useFace
-            ? compute_op_terms_3d(phi,phiP,state.wedgeN,k,s,sP,sb)
-            : compute_op_terms_2d(phi,phiP,state.wedgeN,k,s,sP));
-    DiffractionOperatorTermsT<T> slopeTerms = endpointContinuation
-        ? (useFace
-            ? compute_op_terms_3d_endpoint_continued(safePhi,safePhiP,state.wedgeN,k,s,sP,sb)
-            : compute_op_terms_2d_endpoint_continued(safePhi,safePhiP,state.wedgeN,k,s,sP))
-        : (useFace
-            ? compute_op_terms_3d(safePhi,safePhiP,state.wedgeN,k,s,sP,sb)
-            : compute_op_terms_2d(safePhi,safePhiP,state.wedgeN,k,s,sP));
+    DiffractionOperatorTermsT<T> terms = useFace
+        ? compute_op_terms_3d(phi,phiP,state.wedgeN,k,s,sP,sb,gammaOdd,truncEven)
+        : compute_op_terms_2d(phi,phiP,state.wedgeN,k,s,sP,gammaOdd,truncEven);
+    // Slope-diffraction feeds carry no GO step, so they take the smooth
+    // background truncation only (gammaOdd = 1, truncEven applied to the
+    // derivative outputs). Only the *DphiPrime outputs of slopeTerms are used
+    // below, and the slope branch is gated off entirely on the deterministic
+    // path (zero incident derivative), so this stays a no-op there.
+    DiffractionOperatorTermsT<T> slopeTerms = useFace
+        ? compute_op_terms_3d(safePhi,safePhiP,state.wedgeN,k,s,sP,sb,T(1.f),truncEven)
+        : compute_op_terms_2d(safePhi,safePhiP,state.wedgeN,k,s,sP,T(1.f),truncEven);
     JonesOperatorT<T> directOp = assemble_diff_operator(
         cplx_mul_real(terms.direct, -1.f),
         terms.face0,
@@ -1299,6 +1396,8 @@ template <typename T>
 UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInputsT<T> state, Vec3T<T> tgtPos,
     T k, MaterialParamsT<T> mat)
 {
+    // Deterministic (selectStationaryPoint > 0.5) path re-anchors the edge to
+    // its analytic Fermat point; MC leaves the caller-supplied Keller point.
     bool selectedStationary = false;
     bool selectedInside = false;
     bool selectedValid = true;
@@ -1310,6 +1409,7 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
         selectedValid
     );
     if (!selectedValid) return c3_zero<T>();
+    (void)selectedInside;
 
     bool srcExt = wedge_exterior_mask(f3_sub(state.sourcePos, state.edgePos), state.edgeDir, state.n0, state.nn);
     T phi,phiP,s,sP,sb;
@@ -1319,14 +1419,27 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
 
     Basis3T<T> inEB  = diffraction_edge_basis(f3_sub(state.edgePos, state.sourcePos), state.edgeDir, false);
     Basis3T<T> outEB = diffraction_edge_basis(f3_sub(tgtPos, state.edgePos), state.edgeDir, true);
-    ComplexT<T> finiteFactor = selectedStationary
-        ? finite_wedge_stationary_completion_factor(state, tgtPos, k, selectedInside)
-        : finite_wedge_truncation_factor(state, tgtPos, k);
-    bool tgtExt = wedge_exterior_mask(f3_sub(tgtPos, state.edgePos), state.edgeDir, state.n0, state.nn);
-    bool endpointContinuation = selectedStationary && !tgtExt;
+    // Finite-edge structure (F5d), matching the scalar twin. Deterministic path:
+    // truncEven scales the even background inside the coefficient, gammaOdd
+    // weights the GO step, and the outer factor passed to the assembly is unity.
+    // MC path: truncEven = 1, gammaOdd = 1, and the pseudo-infinite factor is
+    // the outer jones_scale (bit-identical to the pre-F5d code).
+    ComplexT<T> one = c_const<T>(1, 0);
+    ComplexT<T> truncEven, outerFinite;
+    T gammaOdd;
+    if (selectedStationary) {
+        truncEven = finite_wedge_truncation_factor_bounds(state, tgtPos, k,
+              state.edgeLineMin, state.edgeLineMax, /*stationaryAtOrigin=*/true);
+        gammaOdd = corner_mend_gamma(state, tgtPos, k, state.edgeLineMin, state.edgeLineMax);
+        outerFinite = one;
+    } else {
+        truncEven = one;
+        gammaOdd = T(1.f);
+        outerFinite = finite_wedge_truncation_factor(state, tgtPos, k);
+    }
     return compute_pair_vector_at_angles(
-        state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB, finiteFactor,
-        endpointContinuation);
+        state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB,
+        outerFinite, gammaOdd, truncEven);
 }
 
 template <typename T>
