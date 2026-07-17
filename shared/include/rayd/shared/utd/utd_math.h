@@ -1135,6 +1135,76 @@ UTD_DINLINE ComplexT<T> finite_wedge_truncation_factor(PairInputsT<T> state, Vec
     );
 }
 
+// Monotone real truncation of the smooth (even) background over the finite
+// edge extent, evaluated at the re-anchored stationary origin
+// (stationaryAtOrigin = true semantics, u* = 0). It reuses the exact projected
+// geometry / sigma internals of finite_wedge_truncation_factor_bounds and
+// replaces the complex even-part factor on the deterministic path:
+//
+//   tail_lo = (0.5+0.5j)*conj(F(u1) - F(-inf)),  F(-inf) = -(0.5+0.5j)
+//   tail_hi = (0.5+0.5j)*conj(F(+inf) - F(u2)),  F(+inf) = +(0.5+0.5j)
+//   T_mono  = clamp(1 - |tail_lo| - |tail_hi|, 0, 1)
+//
+// with u1 = sigma*(lineMin - u*), u2 = sigma*(lineMax - u*). The complex form's
+// Fresnel ripple (|T| ~ 1.29, arg ~ +14 deg at mid-edge for the 0.2 m cube
+// edges, ~2 Fresnel units long) is the PO-style corner-wave overestimate: it
+// implies corner waves too strong, and the full-wave reference contradicts it
+// (~+4 dB deep-shadow over-brightness). The monotone real form is the
+// conservative smooth background that matches the shadow level (design F5e/G1).
+// A true corner-diffraction term with correct (sub-PO) amplitude is the
+// recorded future refinement. The odd/gamma GO-compensation machinery is
+// unchanged, and the MC / non-stationary path never calls this.
+template <typename T>
+UTD_DINLINE T finite_wedge_monotone_truncation(
+    PairInputsT<T> state,
+    Vec3T<T> tgtPos,
+    T k,
+    T lineMin,
+    T lineMax)
+{
+    Vec3T<T> edgeHat = safe_normalize(state.edgeDir, v3_const<T>(0.f, 0.f, 1.f));
+    Vec3T<T> edgePos = state.edgePos;
+    Vec3T<T> sourcePos = state.sourcePos;
+
+    T sourceAxial = f3_dot(f3_sub(sourcePos, edgePos), edgeHat);
+    T targetAxial = f3_dot(f3_sub(tgtPos, edgePos), edgeHat);
+
+    Vec3T<T> sourceToEdge = f3_sub(edgePos, sourcePos);
+    Vec3T<T> edgeToTarget = f3_sub(tgtPos, edgePos);
+    T sPrimeProj = safe_length(project_to_wedge_plane(sourceToEdge, edgeHat)) + T(UTD_EPS);
+    T sProj = safe_length(project_to_wedge_plane(edgeToTarget, edgeHat)) + T(UTD_EPS);
+
+    // stationaryAtOrigin = true: the re-anchored edge places u* at the origin.
+    T stationaryU = T(0.f);
+    T sourceOffset = stationaryU - sourceAxial;
+    T targetOffset = targetAxial - stationaryU;
+    T sourceRange =
+        sqrtf(sPrimeProj * sPrimeProj + sourceOffset * sourceOffset + T(UTD_EPS));
+    T targetRange =
+        sqrtf(sProj * sProj + targetOffset * targetOffset + T(UTD_EPS));
+    T curvature =
+        sPrimeProj * sPrimeProj / (sourceRange * sourceRange * sourceRange + T(UTD_EPS))
+        + sProj * sProj / (targetRange * targetRange * targetRange + T(UTD_EPS));
+    T scale = sqrtf(fmaxf(k * curvature, T(UTD_EPS)) / UTD_PI);
+
+    ComplexT<T> fMin, fMin1, fMin2;
+    ComplexT<T> fMax, fMax1, fMax2;
+    fresnel_boersma(scale * (lineMin - stationaryU), fMin, fMin1, fMin2);
+    fresnel_boersma(scale * (lineMax - stationaryU), fMax, fMax1, fMax2);
+
+    // F(+-inf) = +-(0.5+0.5j). Each tail measures the smooth background the
+    // finite aperture removes past the corresponding edge end.
+    ComplexT<T> cn = c_const<T>(0.5f, 0.5f);
+    ComplexT<T> fPosInf = c_const<T>(0.5f, 0.5f);
+    ComplexT<T> fNegInf = c_const<T>(-0.5f, -0.5f);
+    ComplexT<T> tailLo = cplx_mul(cn, cplx_conj(cplx_sub(fMin, fNegInf)));
+    ComplexT<T> tailHi = cplx_mul(cn, cplx_conj(cplx_sub(fPosInf, fMax)));
+    T magLo = sqrtf(fmaxf(cplx_abs_sqr(tailLo), T(0.f)));
+    T magHi = sqrtf(fmaxf(cplx_abs_sqr(tailHi), T(0.f)));
+    T tMono = T(1.f) - magLo - magHi;
+    return fminf(fmaxf(tMono, T(0.f)), T(1.f));
+}
+
 // Corner-mend weight gamma for the deterministic (stationary) path. It reuses
 // the SAME projected geometry as finite_wedge_truncation_factor_bounds with
 // stationaryAtOrigin = true (u* = 0, sigma = sqrt(k*curvature/pi)) and maps the
@@ -1252,8 +1322,14 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
     ComplexT<T> truncEven, outerFinite;
     T gammaOdd;
     if (selectedStationary) {
-        truncEven = finite_wedge_truncation_factor_bounds(state, tgtPos, k,
-              state.edgeLineMin, state.edgeLineMax, /*stationaryAtOrigin=*/true);
+        // G1/F5e: the even (smooth) background takes the MONOTONE real
+        // truncation. The complex finite_wedge_truncation_factor_bounds value
+        // carries a Fresnel ripple (a PO-style corner-wave overestimate) the
+        // full-wave reference contradicts (~+4 dB deep-shadow brightness). The
+        // odd/gamma GO-compensation machinery is unchanged.
+        T tMono = finite_wedge_monotone_truncation(state, tgtPos, k,
+              state.edgeLineMin, state.edgeLineMax);
+        truncEven = cplx(tMono, T(0.f));
         gammaOdd = corner_mend_gamma(state, tgtPos, k, state.edgeLineMin, state.edgeLineMax);
         outerFinite = one;
     } else {
@@ -1428,8 +1504,14 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
     ComplexT<T> truncEven, outerFinite;
     T gammaOdd;
     if (selectedStationary) {
-        truncEven = finite_wedge_truncation_factor_bounds(state, tgtPos, k,
-              state.edgeLineMin, state.edgeLineMax, /*stationaryAtOrigin=*/true);
+        // G1/F5e: the even (smooth) background takes the MONOTONE real
+        // truncation. The complex finite_wedge_truncation_factor_bounds value
+        // carries a Fresnel ripple (a PO-style corner-wave overestimate) the
+        // full-wave reference contradicts (~+4 dB deep-shadow brightness). The
+        // odd/gamma GO-compensation machinery is unchanged.
+        T tMono = finite_wedge_monotone_truncation(state, tgtPos, k,
+              state.edgeLineMin, state.edgeLineMax);
+        truncEven = cplx(tMono, T(0.f));
         gammaOdd = corner_mend_gamma(state, tgtPos, k, state.edgeLineMin, state.edgeLineMax);
         outerFinite = one;
     } else {
