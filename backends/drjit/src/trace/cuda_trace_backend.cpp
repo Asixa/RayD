@@ -283,6 +283,17 @@ OptixIntersection CudaTraceBackend::intersect_impl(const RayT<Detached> &ray,
                 node_bbox_min_, node_bbox_max_, left_child_, right_child_, leaf_primitives_,
                 shape_id_, local_prim_id_, intersection.t, intersection.barycentric,
                 intersection.shape_id, intersection.local_prim_id, stack_nodes, overflow);
+    // eval() is a no-op for literal-backed arrays (e.g. the select()-folded
+    // t_max or an all-ones active_flags); their fill kernels are only enqueued
+    // by .data(). Touch every pointer the native launch consumes BEFORE the
+    // stream sync, or the fill races the query kernel on the backend stream.
+    (void) ox.data(); (void) oy.data(); (void) oz.data();
+    (void) dx.data(); (void) dy.data(); (void) dz.data();
+    (void) t_max.data(); (void) active_flags.data();
+    (void) intersection.t.data();
+    (void) intersection.barycentric[0].data(); (void) intersection.barycentric[1].data();
+    (void) intersection.shape_id.data(); (void) intersection.local_prim_id.data();
+    (void) stack_nodes.data(); (void) overflow.data();
     drjit::sync_thread();
 
     query_triangle_closest_hit_gpu(
@@ -353,6 +364,12 @@ MaskT<Detached> CudaTraceBackend::shadow_test_impl(const RayT<Detached> &ray, Ma
     drjit::eval(ox, oy, oz, dx, dy, dz, t_max, active_flags, tri_p0_, tri_e1_, tri_e2_,
                 node_bbox_min_, node_bbox_max_, left_child_, right_child_, leaf_primitives_,
                 out_hit, stack_nodes, overflow);
+    // See intersect_impl: literal-backed arrays materialize on .data(), which
+    // must happen before the stream sync to keep the native launch ordered.
+    (void) ox.data(); (void) oy.data(); (void) oz.data();
+    (void) dx.data(); (void) dy.data(); (void) dz.data();
+    (void) t_max.data(); (void) active_flags.data();
+    (void) out_hit.data(); (void) stack_nodes.data(); (void) overflow.data();
     drjit::sync_thread();
 
     query_triangle_occluded_gpu(
@@ -415,8 +432,15 @@ std::vector<int> CudaTraceBackend::first_blocker_selftest(const Vector3f &origin
     drjit::eval(ox, oy, oz, dx, dy, dz, t_max, tri_p0_, tri_e1_, tri_e2_, node_bbox_min_,
                 node_bbox_max_, left_child_, right_child_, leaf_primitives_, out_global,
                 stack_nodes, overflow);
+    // See intersect_impl: literal-backed arrays materialize on .data(), which
+    // must happen before the stream sync to keep the native launch ordered.
+    (void) ox.data(); (void) oy.data(); (void) oz.data();
+    (void) dx.data(); (void) dy.data(); (void) dz.data();
+    (void) t_max.data();
+    (void) out_global.data(); (void) stack_nodes.data(); (void) overflow.data();
     if (ignore_stride > 0) {
         drjit::eval(ignore);
+        (void) ignore.data();
     }
     drjit::sync_thread();
 
