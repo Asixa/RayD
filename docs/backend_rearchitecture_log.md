@@ -534,3 +534,19 @@ collections; the P4a extraction failed 9/30 (statistically comparable at a ~25% 
 rate). The extraction is verbatim code motion and every non-racing run matches the
 OptiX baselines bit-for-bit. Left as-is rather than patching P3 orchestration outside
 this stage.
+
+## P3 post-hoc fix — literal-materialization race (supervisor debug, commit b7f7226)
+
+P4a's repeated gate runs exposed an intermittent whole-batch zero-hit failure in the CUDA eager
+query path (~25% repro on the `batch_sizes` golden scene; present at P3 HEAD `a06487c`, proven by
+A/B). Root cause: `drjit::eval()` is a **no-op for literal-backed arrays** — the `select()`-folded
+`t_max` (all-`1e8`) and an all-ones `active_flags` stay symbolic through `eval()` + `sync_thread()`,
+and their fill kernels are only enqueued by the later `.data()` calls, i.e. AFTER the stream sync.
+The native query kernel on the backend's own stream then raced those fills and intermittently read
+garbage ray inputs. Symptom fingerprint: whole-batch failure (not per-ray), only on the CUDA eager
+path, scene-dependent (default `tmax=inf` takes the literal fold).
+
+Fix: touch `.data()` on every device pointer the native launch consumes BEFORE `sync_thread()`, in
+all three query paths. Stress gate: 30/30 consecutive `test_cuda_trace_backend` runs green
+(previously ~6/30 failing). Lesson recorded for all future eager native paths: `eval()` does not
+materialize literals; pointer acquisition is the enqueue point and must precede the sync.
