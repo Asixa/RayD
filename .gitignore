@@ -31,3 +31,4 @@ unit_test/result/
 tests/slang/test_interop_gen.cpp
 artifacts/
 docs/
+.worktrees/

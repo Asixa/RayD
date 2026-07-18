@@ -242,6 +242,14 @@ struct PairInputsT {
     // point, instead of the direct transmitter source. Default 0 preserves the
     // order-1 diffraction and MC callers bit-for-bit.
     float   stationaryExternalIncident;
+    // ADR-017 (channel-native) ISB boundary-taper width scale. When > 0 on the
+    // stationary path, the incident-boundary (ISB) beta-terms' odd (GO-step
+    // carrying) part is notched over the congruent angular half-width
+    // widthScale * w_F / s (w_F = sqrt(lambda s s'/(s+s'))), matching the
+    // caller's smoothed LoS occlusion gate so the compensation pair transitions
+    // together. Reflection-boundary terms are untouched. Default 0 preserves
+    // every existing caller bit-for-bit (aggregate zero-init).
+    float   isbTaperWidthScale;
 };
 using PairInputs = PairInputsT<float>;
 
@@ -628,6 +636,7 @@ UTD_DINLINE PairInputsT<Dual> pair_inputs_seed(
     out.face1Material = dual_seed(value.face1Material, tangent.face1Material);
     out.selectStationaryPoint = value.selectStationaryPoint;
     out.stationaryExternalIncident = value.stationaryExternalIncident;
+    out.isbTaperWidthScale = value.isbTaperWidthScale;
     return out;
 }
 

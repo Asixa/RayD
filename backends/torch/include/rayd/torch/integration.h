@@ -299,6 +299,7 @@ extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
     int64_t state_limit,
     int64_t capacity,
     double wavelength,
+    double isb_taper_width_scale,
     at::Tensor *outputs,
     int64_t output_capacity);
 

@@ -337,6 +337,9 @@ static __forceinline__ __device__ utd::PairInputs direct_pair_inputs(
     p.edgeLineMax = t_max;
     p.sourcePos = to_utd(source);
     p.selectStationaryPoint = 1.f;
+    // ADR-017: carry the channel-native ISB taper width into the pair so the
+    // shared header notches the incident-boundary odd part. 0 = hard GO step.
+    p.isbTaperWidthScale = params.isb_taper_width_scale;
     p.face0Material = face_material_params(read_i32(params.state_prim0, params.state_prim0_stride, state_idx));
     p.face1Material = face_material_params(read_i32(params.state_prim1, params.state_prim1_stride, state_idx));
     return p;

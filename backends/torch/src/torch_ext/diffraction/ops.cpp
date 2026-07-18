@@ -421,7 +421,8 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor material_valid,
     int64_t state_limit_arg,
     int64_t capacity,
-    double wavelength) {
+    double wavelength,
+    double isb_taper_width_scale) {
     require_vec3f_strided(tx_pos, "tx_pos");
     require_vec3f_strided(tx_pol, "tx_pol");
     require_vec3f_strided(rx_pos, "rx_pos");
@@ -644,6 +645,9 @@ py::tuple diffraction_paths_order1_forward_op(
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.omega = static_cast<float>(2.0 * 3.14159265358979323846 * 299792458.0 / wavelength);
+    // ADR-017 ISB boundary-taper width scale (channel-native owned). 0 for
+    // every existing caller reproduces the hard GO step bit-for-bit.
+    params.isb_taper_width_scale = static_cast<float>(isb_taper_width_scale);
     params.seed = 0;
     params.max_order = 1;
     params.strategy_mask = RAYD_TORCH_DFR_DIRECT;
@@ -728,6 +732,7 @@ extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
     int64_t state_limit,
     int64_t capacity,
     double wavelength,
+    double isb_taper_width_scale,
     at::Tensor *outputs,
     int64_t output_capacity) {
     auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
@@ -765,7 +770,8 @@ extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
         required(material_valid, "material_valid"),
         state_limit,
         capacity,
-        wavelength);
+        wavelength,
+        isb_taper_width_scale);
     if (static_cast<int64_t>(py::len(result)) != kOutputCount)
         throw std::runtime_error("rayd_torch_native_diffraction_paths_order1_forward returned an unexpected output count");
     for (int64_t i = 0; i < kOutputCount; ++i)

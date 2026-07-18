@@ -610,15 +610,19 @@ UTD_DINLINE T reflection_nearest_boundary(T beta, T n) {
 template <typename T>
 UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue,
     T beta, T bStar, T n, T kL, float cotSign, bool plusBranch,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindow = T(0))
 {
     // Fast path: MC / non-stationary callers pass gammaOdd = 1 and
     // truncEven = 1, so t_used == t_i. Returning the input verbatim keeps that
     // path BIT-IDENTICAL (an even/odd subtract-then-add round-trip would
-    // round-drift, and a multiply by exact one is unnecessary work).
+    // round-drift, and a multiply by exact one is unnecessary work). An active
+    // ADR-017 taper window (isbWindow > 0, stationary callers only) must not
+    // take the shortcut, or exactly-1 truncation rows would skip the notch.
     const bool truncIsOne =
         scalar_value(truncEven.re) == 1.f && scalar_value(truncEven.im) == 0.f;
-    if (scalar_value(gammaOdd) >= 1.f && truncIsOne) return termValue;
+    if (scalar_value(gammaOdd) >= 1.f && truncIsOne &&
+        !(scalar_value(isbWindow) > 0.f)) return termValue;
     T delta = beta - bStar;
     T deltaW = 4.f * sqrtf(UTD_TWO_PI / fmaxf(kL, T(1.0e-6f)));  // locality window
     T w = expf(-(delta / deltaW) * (delta / deltaW));
@@ -648,10 +652,22 @@ UTD_DINLINE ComplexT<T> mend_beta_term_value(ComplexT<T> termValue,
     T deltaB = C_BLEND * sqrtf(UTD_TWO_PI / fmaxf(kL, T(1.0e-6f)));  // blend window
     T wb = expf(-(delta / deltaB) * (delta / deltaB));
     T blend = wb + (1.f - wb) * truncEven.re;  // B; == 1 at delta=0, -> T_mono far
+    // ADR-017 ISB boundary taper: notch the odd (GO-step-carrying) part over
+    // the caller's congruent angular half-width so the smoothed LoS occlusion
+    // gate and the compensating diffraction step transition TOGETHER
+    // (single-sided smoothing is measured catastrophic; see the ADR).
+    // W = smoothstep(|delta|/isbWindow): 0 exactly on the boundary, 1 outside
+    // the window, C1 at delta = 0. isbWindow <= 0 (default) is exact 1.
+    T isbNotch = T(1.f);
+    if (scalar_value(isbWindow) > 0.f) {
+        T a = fminf(fabsf(delta) / isbWindow, T(1.f));
+        isbNotch = a * a * (3.f - 2.f * a);
+    }
     // Even (continuous) background takes the finite-edge truncation; the odd
     // step carrier enters at gammaOdd (= 1 in the interior -> exact GO step)
     // scaled by the boundary-distance blend.
-    return cplx_add(cplx_mul(even, truncEven), cplx_mul_real(odd, gammaOdd * blend));
+    return cplx_add(cplx_mul(even, truncEven),
+                    cplx_mul_real(odd, gammaOdd * blend * isbNotch));
 }
 
 // ===================================================================
@@ -662,10 +678,25 @@ UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k,
     T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
     ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindowScale = T(0))
 {
     T l = s*sP/(s+sP+T(UTD_EPS));
     T kL = k*l;
+    // ADR-017: congruent ISB odd-notch half-width in beta space, from the
+    // pair's own geometry (w_F = sqrt(lambda * l), lambda = 2 pi / k; the
+    // receiver-side arc s maps spatial width to angle). Default scale 0 -> 0.
+    T isbW = T(0);
+    if (scalar_value(isbWindowScale) > 0.f) {
+        // Receiver-plane penumbra half-width: the knife-edge Fresnel width at
+        // the edge, w_F = sqrt(lambda l), magnified to the observation plane
+        // by (s + s')/s' -- the SAME receiver-plane metric the LoS member's
+        // clearance gate uses, so the compensation pair stays congruent.
+        // Divided by s to map the spatial width to the beta angle arc.
+        T wF = sqrtf(UTD_TWO_PI / fmaxf(k, T(UTD_EPS)) * l);
+        T mag = (s + sP) / fmaxf(sP, T(UTD_EPS));
+        isbW = isbWindowScale * wF * mag / fmaxf(s, T(UTD_EPS));
+    }
     factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
                            -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))));
     T cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
@@ -684,8 +715,9 @@ UTD_DINLINE void diffraction_beta_groups_from_betas(T dP, T sP2, T n, T k,
     // group (i=0,1) about +-pi of dP; reflection group (i=2,3) about
     // {pi,(2n-1)pi} of sP2. Nearest boundary by |beta - bStar|.
     T bIncident = incident_nearest_boundary(dP);
-    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven);
-    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven);
+    // ADR-017: the isbW notch applies to the incident-boundary terms ONLY.
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sP2, n);
     tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true,  gammaOdd, truncEven);
     tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
@@ -704,11 +736,12 @@ UTD_DINLINE void diffraction_beta_groups(T phi, T phiP, T n, T k,
     T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
     ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindowScale = T(0))
 {
     diffraction_beta_groups_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
                                        r0, rn, factor, dG, dG1, sG, sG1, dG2, sG2,
-                                       gammaOdd, truncEven);
+                                       gammaOdd, truncEven, isbWindowScale);
 }
 
 template <typename T>
@@ -716,11 +749,25 @@ UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k,
     T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
     ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindowScale = T(0))
 {
     T sb = fmaxf(sinBeta0, T(UTD_SMALL_EPS));
     T l = s*sP/(s+sP+T(UTD_EPS))*sb*sb;
     T kL = k*l;
+    // ADR-017: congruent ISB odd-notch half-width in beta space (see the 2D
+    // twin); the oblique distance parameter l already carries sin^2(beta0).
+    T isbW = T(0);
+    if (scalar_value(isbWindowScale) > 0.f) {
+        // Receiver-plane penumbra half-width: the knife-edge Fresnel width at
+        // the edge, w_F = sqrt(lambda l), magnified to the observation plane
+        // by (s + s')/s' -- the SAME receiver-plane metric the LoS member's
+        // clearance gate uses, so the compensation pair stays congruent.
+        // Divided by s to map the spatial width to the beta angle arc.
+        T wF = sqrtf(UTD_TWO_PI / fmaxf(k, T(UTD_EPS)) * l);
+        T mag = (s + sP) / fmaxf(sP, T(UTD_EPS));
+        isbW = isbWindowScale * wF * mag / fmaxf(s, T(UTD_EPS));
+    }
     factor = cplx_mul_real(cplx_exp_phase(T(-0.25f*UTD_PI)),
                            -1.f/(2.f*n*sqrtf(UTD_TWO_PI*k+T(UTD_EPS))*sb));
     T cv[4],c1[4],c2[4],xv[4],x1[4],x2[4];
@@ -737,8 +784,9 @@ UTD_DINLINE void diffraction_beta_groups_3d_from_betas(T dP, T sP2, T n, T k,
     }
     // Corner even/odd finite-edge assembly on the term VALUES (F5d); 2D twin.
     T bIncident = incident_nearest_boundary(dP);
-    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven);
-    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven);
+    // ADR-017: the isbW notch applies to the incident-boundary terms ONLY.
+    tv[0] = mend_beta_term_value(tv[0], dP, bIncident, n, kL, +1.f, true,  gammaOdd, truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dP, bIncident, n, kL, -1.f, false, gammaOdd, truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sP2, n);
     tv[2] = mend_beta_term_value(tv[2], sP2, bReflect, n, kL, +1.f, true,  gammaOdd, truncEven);
     tv[3] = mend_beta_term_value(tv[3], sP2, bReflect, n, kL, -1.f, false, gammaOdd, truncEven);
@@ -757,11 +805,13 @@ UTD_DINLINE void diffraction_beta_groups_3d(T phi, T phiP, T n, T k,
     T s, T sP, T sinBeta0, ComplexT<T> r0, ComplexT<T> rn,
     ComplexT<T>& factor, ComplexT<T>& dG, ComplexT<T>& dG1,
     ComplexT<T>& sG, ComplexT<T>& sG1, ComplexT<T>& dG2, ComplexT<T>& sG2,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0))
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindowScale = T(0))
 {
     diffraction_beta_groups_3d_from_betas(phi - phiP, phi + phiP, n, k, s, sP,
                                           sinBeta0, r0, rn, factor, dG, dG1,
-                                          sG, sG1, dG2, sG2, gammaOdd, truncEven);
+                                          sG, sG1, dG2, sG2, gammaOdd, truncEven,
+                                          isbWindowScale);
 }
 
 // ===================================================================
@@ -771,18 +821,20 @@ template <typename T>
 UTD_DINLINE ComplexT<T> diff_coeff_2d(T phi, T phiP, T n, T k,
                                    T s, T sP, ComplexT<T> r0, ComplexT<T> rn,
                                    T gammaOdd = T(1.f),
-                                   ComplexT<T> truncEven = c_const<T>(1, 0)) {
+                                   ComplexT<T> truncEven = c_const<T>(1, 0),
+                                   T isbWindowScale = T(0)) {
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
+    diffraction_beta_groups(phi,phiP,n,k,s,sP,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven,isbWindowScale);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
 template <typename T>
 UTD_DINLINE ComplexT<T> diff_coeff_3d(T phi, T phiP, T n, T k,
     T s, T sP, T sb, ComplexT<T> r0, ComplexT<T> rn,
-    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0)) {
+    T gammaOdd = T(1.f), ComplexT<T> truncEven = c_const<T>(1, 0),
+    T isbWindowScale = T(0)) {
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
+    diffraction_beta_groups_3d(phi,phiP,n,k,s,sP,sb,r0,rn,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven,isbWindowScale);
     return cplx_mul(fac, cplx_add(dG,sG));
 }
 
@@ -1002,18 +1054,19 @@ UTD_DINLINE JonesOperatorT<T> fallback_face_operator(JonesOperatorT<T> stored,
 template <typename T>
 UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d(T phi, T phiP,
     T wedgeN, T k, T s, T sP, T sinBeta0, T gammaOdd = T(1.f),
-    ComplexT<T> truncEven = c_const<T>(1, 0))
+    ComplexT<T> truncEven = c_const<T>(1, 0), T isbWindowScale = T(0))
 {
     // (gammaOdd, truncEven) flow into each beta-group build so the
     // direct/face0/face1 term VALUES take the even/odd finite-edge assembly
-    // while the derivative feeds take truncEven only (F5d).
+    // while the derivative feeds take truncEven only (F5d). The ADR-017
+    // isbWindowScale rides the same route into every build's incident group.
     ComplexT<T> z = cplx_zero<T>(), one = c_const<T>(1,0);
     ComplexT<T> fac,dG,dG1,sG,sG1,dG2,sG2;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,z,fac,dG,dG1,sG,sG1,dG2,sG2,gammaOdd,truncEven,isbWindowScale);
     ComplexT<T> fac0,dF0,dF01,sF0,sF01,dF02,sF02;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02,gammaOdd,truncEven);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,one,z,fac0,dF0,dF01,sF0,sF01,dF02,sF02,gammaOdd,truncEven,isbWindowScale);
     ComplexT<T> fac1,dF1,dF11,sF1,sF11,dF12,sF12;
-    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12,gammaOdd,truncEven);
+    diffraction_beta_groups_3d(phi,phiP,wedgeN,k,s,sP,sinBeta0,z,one,fac1,dF1,dF11,sF1,sF11,dF12,sF12,gammaOdd,truncEven,isbWindowScale);
     return {
         cplx_mul(fac, dG),
         cplx_mul(fac0, sF0),
@@ -1027,10 +1080,22 @@ UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_3d(T phi, T phiP,
 template <typename T>
 UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP,
     T wedgeN, T k, T s, T sP, T gammaOdd = T(1.f),
-    ComplexT<T> truncEven = c_const<T>(1, 0))
+    ComplexT<T> truncEven = c_const<T>(1, 0), T isbWindowScale = T(0))
 {
     T l = s*sP/(s+sP+T(UTD_EPS));
     T kL = k*l;
+    // ADR-017: congruent ISB odd-notch half-width (see beta-group twins).
+    T isbW = T(0);
+    if (scalar_value(isbWindowScale) > 0.f) {
+        // Receiver-plane penumbra half-width: the knife-edge Fresnel width at
+        // the edge, w_F = sqrt(lambda l), magnified to the observation plane
+        // by (s + s')/s' -- the SAME receiver-plane metric the LoS member's
+        // clearance gate uses, so the compensation pair stays congruent.
+        // Divided by s to map the spatial width to the beta angle arc.
+        T wF = sqrtf(UTD_TWO_PI / fmaxf(k, T(UTD_EPS)) * l);
+        T mag = (s + sP) / fmaxf(sP, T(UTD_EPS));
+        isbW = isbWindowScale * wF * mag / fmaxf(s, T(UTD_EPS));
+    }
     T dPhi = phi - phiP;
     T sPhi = phi + phiP;
     // Build beta term caches inline
@@ -1050,8 +1115,8 @@ UTD_DINLINE DiffractionOperatorTermsT<T> compute_op_terms_2d(T phi, T phiP,
     // .directDphiPrime / faceNDphiPrime derivative feeds below take truncEven
     // only (no odd split).
     T bIncident = incident_nearest_boundary(dPhi);
-    tv[0] = mend_beta_term_value(tv[0], dPhi, bIncident, wedgeN, kL, +1.f, true,  gammaOdd, truncEven);
-    tv[1] = mend_beta_term_value(tv[1], dPhi, bIncident, wedgeN, kL, -1.f, false, gammaOdd, truncEven);
+    tv[0] = mend_beta_term_value(tv[0], dPhi, bIncident, wedgeN, kL, +1.f, true,  gammaOdd, truncEven, isbW);
+    tv[1] = mend_beta_term_value(tv[1], dPhi, bIncident, wedgeN, kL, -1.f, false, gammaOdd, truncEven, isbW);
     T bReflect = reflection_nearest_boundary(sPhi, wedgeN);
     tv[2] = mend_beta_term_value(tv[2], sPhi, bReflect, wedgeN, kL, +1.f, true,  gammaOdd, truncEven);
     tv[3] = mend_beta_term_value(tv[3], sPhi, bReflect, wedgeN, kL, -1.f, false, gammaOdd, truncEven);
@@ -1370,8 +1435,10 @@ UTD_DINLINE void compute_pair_field_terms(PairInputsT<T> state, Vec3T<T> tgtPos,
         gammaOdd = T(1.f);
         outerFinite = finite_wedge_truncation_factor(state, tgtPos, k);
     }
-    ComplexT<T> d = useFace ? diff_coeff_3d(phi,phiP,w,k,s,sP,sb,r0,rn,gammaOdd,truncEven)
-                            : diff_coeff_2d(phi,phiP,w,k,s,sP,r0,rn,gammaOdd,truncEven);
+    ComplexT<T> d = useFace ? diff_coeff_3d(phi,phiP,w,k,s,sP,sb,r0,rn,gammaOdd,truncEven,
+                                            T(state.isbTaperWidthScale))
+                            : diff_coeff_2d(phi,phiP,w,k,s,sP,r0,rn,gammaOdd,truncEven,
+                                            T(state.isbTaperWidthScale));
     if (!poleSafe) { d.re = d.re; d.im = d.im; } // detach (no AD in CUDA anyway)
     ComplexT<T> dSlope = cplx_zero<T>();
     bool hasSlope = (cplx_abs_sqr(state.incidentNormalDerivative) > 1.0e-24f) && slopeSafe;
@@ -1499,8 +1566,10 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
         : fallback_face_operator(state.face1Operator, state.nn, inEB.k, outEB.k, inEB, outEB);
 
     DiffractionOperatorTermsT<T> terms = useFace
-        ? compute_op_terms_3d(phi,phiP,state.wedgeN,k,s,sP,sb,gammaOdd,truncEven)
-        : compute_op_terms_2d(phi,phiP,state.wedgeN,k,s,sP,gammaOdd,truncEven);
+        ? compute_op_terms_3d(phi,phiP,state.wedgeN,k,s,sP,sb,gammaOdd,truncEven,
+                              T(state.isbTaperWidthScale))
+        : compute_op_terms_2d(phi,phiP,state.wedgeN,k,s,sP,gammaOdd,truncEven,
+                              T(state.isbTaperWidthScale));
     // Slope-diffraction feeds carry no GO step, so they take the smooth
     // background truncation only (gammaOdd = 1, truncEven applied to the
     // derivative outputs). Only the *DphiPrime outputs of slopeTerms are used

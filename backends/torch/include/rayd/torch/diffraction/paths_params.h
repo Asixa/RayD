@@ -109,6 +109,11 @@ struct DfrPathParams {
     float wavelength;
     float k;
     float omega;
+    // ADR-017 (channel-native) ISB boundary-taper width scale threaded into
+    // each order-1 PairInputs fill. 0 (the default fill) reproduces the hard
+    // GO step bit-for-bit; > 0 notches the incident-boundary odd part over the
+    // congruent half-width in the shared UTD header. Off callers pass 0.
+    float isb_taper_width_scale;
     int seed;
     int max_order;
     int strategy_mask;
