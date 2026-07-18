@@ -66,7 +66,18 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             source = (SHARED / name).read_text(encoding="utf-8")
             self.assertIn("rayd/shared/optix/device_hit.h", source)
             self.assertIn(entry, source)
-            self.assertIn("optixTrace", source)
+
+        # P4 Stage A funnels the reflection trace's single optixTrace through the
+        # shared OptixTraverser shim (still one shared implementation, one include
+        # deeper); the entry header instantiates it. Not-yet-migrated pipelines
+        # keep optixTrace inline in their device header.
+        reflection_trace = (SHARED / "reflection_trace_device.cuh").read_text(encoding="utf-8")
+        self.assertIn("rayd/shared/optix/optix_traverser.h", reflection_trace)
+        self.assertIn("OptixTraverser", reflection_trace)
+        traverser = (SHARED / "optix_traverser.h").read_text(encoding="utf-8")
+        self.assertIn("optixTrace", traverser)
+        for name in ("reflection_epc_device.cuh", "segment_visibility_device.cuh"):
+            self.assertIn("optixTrace", (SHARED / name).read_text(encoding="utf-8"))
 
         adapters = (
             ("backends/drjit/src/multipath/reflection_trace.cu", "reflection_trace_device.cuh"),

@@ -1,0 +1,84 @@
+{
+  "queries": {
+    "batch_of_4096_grid": {
+      "continuous": {
+        "t_hit_max": 1.0,
+        "t_hit_min": 1.0
+      },
+      "discrete": {
+        "hit_count": 1024,
+        "width": 4096
+      },
+      "kind": "intersect_grid"
+    },
+    "batch_of_one": {
+      "continuous": {
+        "geo_n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "n": [
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "p": [
+          [
+            0.5,
+            0.5,
+            0.0
+          ]
+        ],
+        "t": [
+          1.0
+        ],
+        "uv": [
+          [
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "shape_id": [
+          0
+        ],
+        "valid": [
+          1
+        ]
+      },
+      "informative": {
+        "bary": [
+          [
+            0.5,
+            0.0,
+            0.5
+          ]
+        ],
+        "global_prim_id": [
+          0
+        ],
+        "local_prim_id": [
+          0
+        ],
+        "prim_id": [
+          0
+        ]
+      },
+      "kind": "intersect"
+    },
+    "batch_of_zero": {
+      "continuous": {},
+      "discrete": {
+        "exc_type": "RuntimeError",
+        "raises": 1
+      },
+      "kind": "intersect"
+    }
+  }
+}

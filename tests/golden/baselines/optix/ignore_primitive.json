@@ -1,0 +1,31 @@
+{
+  "queries": {
+    "ignore_list_nine_entries": {
+      "continuous": {},
+      "discrete": {
+        "visible": [
+          1
+        ]
+      },
+      "kind": "visible"
+    },
+    "ignore_pair_prim0": {
+      "continuous": {},
+      "discrete": {
+        "visible": [
+          1
+        ]
+      },
+      "kind": "visible"
+    },
+    "no_ignore": {
+      "continuous": {},
+      "discrete": {
+        "visible": [
+          0
+        ]
+      },
+      "kind": "visible"
+    }
+  }
+}

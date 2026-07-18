@@ -1,9 +1,9 @@
-# RayDN API Reference
+# RayD Torch API Reference
 
-Use RayDN as:
+Use the RayD Torch backend as:
 
 ```python
-import raydn as rt
+import rayd.torch as rt
 ```
 
 ## Core Types
@@ -11,14 +11,36 @@ import raydn as rt
 - `rt.Mesh(vertices, faces, ...)`: CUDA mesh input. `vertices` must be contiguous `torch.float32` with shape `(N, 3)`, and `faces` must be contiguous `torch.int32` with shape `(M, 3)`.
 - `rt.Scene()`: Native CUDA/OptiX scene. Build with `add_mesh()` and `build()`.
 - `rt.Ray(o, d, tmax=None)`: Ray batch with CUDA `torch.float32` origin and direction tensors of shape `(N, 3)`.
-- `rt.Camera(width, height, fov_x)`: Torch Python camera helper for primary ray generation.
+- `rt.Camera(width, height, fov_x)`: Torch Python camera helper for primary ray generation. Exposes the `aspect` property plus `sample_to_world(sample, depth=1.0)`, `world_to_sample(point)`, and `sample_ray(sample)`.
+
+## Introspection
+
+- `rt.backend_capabilities()`: machine-readable capability manifest.
+- `rt.api_manifest()`: public API surface manifest.
+
+The `rayd.torch.path_exchange` submodule provides the backend-neutral path
+record exchange format.
+
+## Scene Lifecycle
+
+- `Scene.add_mesh(mesh, dynamic=False)` returns the new mesh id.
+- `Scene.build()` builds the acceleration structures; `Scene.is_ready()` reports build state.
+- `Scene.num_meshes` / `Scene.version`: mesh count and scene revision.
+- `Scene.update_mesh_vertices(mesh_id, positions)` then `Scene.sync()` refits without a full rebuild; `Scene.has_pending_updates()` reports outstanding edits.
 
 ## Geometry
 
-- `Scene.intersect(ray, active=None)` returns `Intersection`.
+- `Scene.intersect(ray, active=None, flags=RayFlags.All)` returns `Intersection`.
 - `Scene.nearest_edge(point)` returns `NearestPointEdge`.
 - `Scene.nearest_edge(ray)` returns `NearestRayEdge`.
+- `Scene.nearest_edges(point, k, active=None)` returns `NearestEdgesTopK` for `1 <= k <= 16`.
+- `Scene.global_geometry()` returns `SceneGlobalGeometry`.
+- `Scene.edge_mask()` / `Scene.set_edge_mask(mask)` filter the secondary-edge BVH in scene-global edge index space.
+
+## Visibility
+
 - `Scene.visible(start, end, active=None)` returns a `torch.bool` visibility tensor.
+- `Scene.visible_pair(...)`, `Scene.visible_edge(...)`, `Scene.visible_chain(...)`: segment-pair, edge, and chain visibility helpers.
 
 ## Multipath
 
@@ -41,6 +63,7 @@ All native geometry and multipath inputs are CUDA tensors. Continuous vector inp
 
 Native operators support VJP and JVP for continuous Torch inputs. Discrete choices such as primitive id, edge id, visibility, and fixed path sequence are non-differentiable and are held fixed from the forward pass. Continuous outputs are recomputed from the fixed winner and live geometry tensors during AD.
 
-RayDN does not import or depend on Dr.Jit in the `raydn` package path.
+The Torch backend does not import or depend on Dr.Jit in the `rayd.torch` package path.
 
-See `docs/raydn_native_gap_analysis.md` for current acceptance status.
+See [`torch_gap_analysis.md`](torch_gap_analysis.md) for the acceptance status
+recorded on 2026-06-12.

@@ -1,0 +1,29 @@
+{
+  "backend": "drjit",
+  "comparison_policy": {
+    "continuous": "shared/contracts/operations.json tolerances (default_abs, default_rel)",
+    "discrete": "exact bitwise equality (ints, bools-as-ints, strings)",
+    "informative": "recorded but not compared (traversal-order or tie dependent)"
+  },
+  "cuda": "13.2",
+  "driver": "596.49",
+  "generation_command": "python -m tests.golden.runner --write",
+  "gpu": "NVIDIA GeForce RTX 5080",
+  "python": "3.10.20",
+  "rayd_commit": "1c8f9a22092d36688162bca9c5512ca3daf76dd3",
+  "scenes": [
+    "batch_sizes",
+    "degenerate_tri",
+    "dynamic_refit",
+    "edge_queries",
+    "edge_tie",
+    "finite_tmax_visibility",
+    "ignore_primitive",
+    "inactive_lanes",
+    "large_coordinates",
+    "multi_mesh_ids",
+    "self_intersection",
+    "shared_edge_quad",
+    "single_tri"
+  ]
+}

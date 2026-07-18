@@ -4,6 +4,8 @@
 
 #include <cmath>
 
+#include <rayd/shared/rt/numeric_policy.h>
+
 namespace rayd::torch_backend {
 
 constexpr float kSmallEps = 1e-12f;
@@ -13,6 +15,10 @@ constexpr float kRayBias = 1e-5f;
 constexpr float kDfrRayBias = 1e-4f;
 constexpr float kRayTMax = 1e8f;
 constexpr float kPi = 3.14159265358979323846f;
+
+static_assert(kRayTMin == ::rayd::shared::rt::kMultipathTraceTMin);
+static_assert(kRayBias == ::rayd::shared::rt::kMultipathRayBias);
+static_assert(kRayTMax == ::rayd::shared::rt::kTraceTMaxFinite);
 
 __forceinline__ __host__ __device__ float3 make_f3(float x, float y, float z) {
     return make_float3(x, y, z);

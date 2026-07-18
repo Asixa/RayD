@@ -1,0 +1,145 @@
+{
+  "queries": {
+    "point_equidistant_two_edges": {
+      "continuous": {
+        "distance": [
+          1.0
+        ],
+        "point": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ]
+      },
+      "discrete": {
+        "valid": [
+          1
+        ]
+      },
+      "informative": {
+        "edge_id": [
+          0
+        ],
+        "edge_point": [
+          [
+            0.0,
+            1.0,
+            0.0
+          ]
+        ],
+        "edge_t": [
+          0.5
+        ],
+        "global_edge_id": [
+          0
+        ],
+        "is_boundary": [
+          1
+        ],
+        "shape_id": [
+          0
+        ]
+      },
+      "kind": "nearest_edge_point"
+    },
+    "topk_equidistant": {
+      "continuous": {
+        "distances": [
+          1.0,
+          1.0,
+          1.4142135381698608,
+          1.4142135381698608
+        ]
+      },
+      "discrete": {
+        "is_valid": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "k": 4,
+        "query_count": 1
+      },
+      "informative": {
+        "edge_ids": [
+          3,
+          0,
+          5,
+          4
+        ],
+        "edge_points": [
+          [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            -1.0,
+            0.0
+          ],
+          [
+            -1.0,
+            -1.0,
+            0.0
+          ]
+        ],
+        "edge_t": [
+          0.5,
+          0.5,
+          0.0,
+          0.0
+        ],
+        "global_edge_ids": [
+          3,
+          0,
+          5,
+          4
+        ],
+        "is_boundary": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "points": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "shape_ids": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "kind": "nearest_edges"
+    }
+  }
+}

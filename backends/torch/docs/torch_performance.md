@@ -1,4 +1,10 @@
-# RayDN Native Performance
+# RayD Torch Native Performance
+
+> **Historical record, frozen 2026-06-12.** This document predates the 0.6.0
+> dual-backend monorepo and uses the pre-rename names "RayDN" / `raydn` for what
+> is now `rayd.torch`, and "RayD" for what is now `rayd.drjit`. The measurements
+> are point-in-time; the module paths and commands below have been re-rooted to
+> their current locations so they remain runnable.
 
 Measured on Windows with NVIDIA GeForce RTX 5080 and Torch CUDA 12.8.
 
@@ -269,7 +275,7 @@ The public RayDN surface intentionally remains the original user-facing API:
 `scene.intersect(...)`, `scene.trace_reflections(...)`, and the multipath /
 diffraction methods on `Scene`. Benchmark-specific public names such as
 `trace_reflections_minimal`, `intersect_t_sum`, and `intersect_t_sum_vjp` are not
-part of the API and are guarded by `tests.raydn_native.test_public_api_contract`.
+part of the API and are guarded by `backends.torch.tests.torch_backend.test_public_api_contract`.
 Reduced/full output timing is selected through the normal operation semantics
 (`RayFlags.None` vs full flags, AD state, and whether full public fields are
 materialized in the benchmark), not through a separate Python method.
@@ -302,8 +308,8 @@ returned vector gradients.
 The stress benchmark also has an opt-in PyTorch-loss wrapper mode:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
-  --scenario ad_uv_tape_256_65k:192:256 --backends raydn rayd mitsuba `
+python -m backends.torch.tests.benchmark_rayd_torch_drjit_mitsuba_stress `
+  --scenario ad_uv_tape_256_65k:192:256 --backends torch rayd mitsuba `
   --repeats 30 --warmup 8 --rayd-source package --include-backward `
   --torch-loss-backward --materialize-full-vjp --require-mitsuba
 ```
@@ -587,8 +593,8 @@ Torch-native AD tests cover fixed-winner VJP/JVP for:
 
 Current default native discover result after the no-fallback chain AD migration:
 
-- `python -m unittest discover tests.raydn_native -v`: 106 passed, 12 skipped.
-- `RAYDN_RUN_DR_JIT_PARITY=1 python -m unittest tests.raydn_native.test_drjit_parity -v`:
+- `python -m unittest discover backends.torch.tests.torch_backend -v`: 106 passed, 12 skipped.
+- `RAYD_TORCH_RUN_DR_JIT_PARITY=1 python -m unittest backends.torch.tests.torch_backend.test_drjit_parity -v`:
   12 passed. The run printed `jitc_llvm_init(): LLVM API initialization failed ..`,
   as in earlier passing parity runs.
 
@@ -597,10 +603,10 @@ Visibility returns a discrete bool and has no continuous gradient contract.
 ## Multipath Implementation Status
 
 RayDN now contains source ports for the RayD reflection and diffraction
-`src/multipath` execution paths, including segment visibility, reflection trace,
+`backends/drjit/src/multipath` execution paths, including segment visibility, reflection trace,
 reflection EPC, EPC field, reflection dedup, reflection accumulation,
 diffraction path search, diffraction accumulation, chain accumulation, suffix
 reflection, and coherent direct accumulation. Performance remains the active
 completion risk.
 
-See `docs/raydn_native_gap_analysis.md` for the tracked gap list.
+See [`torch_gap_analysis.md`](torch_gap_analysis.md) for the tracked gap list.

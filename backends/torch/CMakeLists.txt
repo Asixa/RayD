@@ -320,8 +320,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"
@@ -355,6 +360,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
@@ -389,6 +399,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX_HEADER}"
@@ -525,6 +542,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu

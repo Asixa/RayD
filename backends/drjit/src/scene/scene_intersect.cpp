@@ -21,7 +21,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
     const bool want_geo_n   = has_flag(flags, RayFlags::Geometric);
     const bool want_shading = has_flag(flags, RayFlags::ShadingN);
     const bool want_uv      = has_flag(flags, RayFlags::UV);
-    const bool symbolic_optix_query = optix_split_active_ && uses_symbolic_optix_query_path();
+    const bool symbolic_optix_query = optix_split_active() && uses_symbolic_optix_query_path();
 
     IntersectionT<Detached> intersection;
     intersection.t = full<FloatT<Detached>>(Infinity, ray_count);
@@ -35,13 +35,19 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
 
     MaskT<Detached> hit_mask = active;
     OptixIntersection optix_hit;
-    if (optix_split_active_ && !symbolic_optix_query) {
+    if (triangle_kind_ == TraceBackendKind::Cuda) {
+        require(!jit_flag(JitFlag::Recording),
+                "trace_backend='cuda' cannot serve intersect() inside a Dr.Jit symbolic "
+                "recording region; use trace_backend='optix' or evaluate outside the "
+                "recorded loop.");
+        optix_hit = cuda_backend().template intersect<Detached>(ray, hit_mask);
+    } else if (optix_split_active() && !symbolic_optix_query) {
         MaskT<Detached> static_hit_mask = active;
         MaskT<Detached> dynamic_hit_mask = active;
         const OptixIntersection static_hit =
-            optix_static_scene_->template intersect<Detached>(ray, static_hit_mask);
+            optix_static_scene().template intersect<Detached>(ray, static_hit_mask);
         const OptixIntersection dynamic_hit =
-            optix_dynamic_scene_->template intersect<Detached>(ray, dynamic_hit_mask);
+            optix_dynamic_scene().template intersect<Detached>(ray, dynamic_hit_mask);
 
         const Mask static_hit_mask_detached = detach<false>(static_hit_mask);
         const Mask dynamic_hit_mask_detached = detach<false>(dynamic_hit_mask);
@@ -66,7 +72,7 @@ IntersectionT<Detached> Scene::intersect(const RayT<Detached> &ray, MaskT<Detach
             hit_mask = any_hit;
         }
     } else {
-        optix_hit = optix_scene_->template intersect<Detached>(ray, hit_mask);
+        optix_hit = optix_scene().template intersect<Detached>(ray, hit_mask);
     }
 
     const Int shape_id = optix_hit.shape_id;

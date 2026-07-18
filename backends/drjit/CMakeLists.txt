@@ -198,6 +198,12 @@ set(RAYD_CORE_SOURCE_FILES
 
     ${RAYD_INCLUDE_DIR}/scene/scene_optix.h
     ${RAYD_SOURCE_DIR}/scene/scene_optix.cpp
+    ${RAYD_INCLUDE_DIR}/trace/trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/optix_trace_backend.h
+    ${RAYD_SOURCE_DIR}/trace/optix_trace_backend.cpp
+    ${RAYD_INCLUDE_DIR}/trace/cuda_trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h
+    ${RAYD_SOURCE_DIR}/trace/cuda_trace_backend.cpp
     ${RAYD_INCLUDE_DIR}/multipath/pipelines.h
     ${RAYD_SOURCE_DIR}/multipath/pipelines.cpp
     ${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h
@@ -228,6 +234,7 @@ set(RAYD_CORE_SOURCE_FILES
 )
 if(WIN32)
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
+    set(RAYD_SHARED_BVH_CORE_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_core_build.obj")
     set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.obj")
     set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.obj")
     set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.obj")
@@ -256,6 +263,29 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_CUDA_BUILD_SCRIPT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+        VERBATIM
+    )
+    set(RAYD_SHARED_BVH_CORE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_core_build.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}"
+        DEPENDS
+            "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
         VERBATIM
     )
     set(RAYD_SHARED_BVH_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_build.bat")
@@ -272,6 +302,8 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${RAYD_SHARED_BVH_BUILD_SCRIPT}"
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
         VERBATIM
     )
     set(RAYD_SHARED_BVH_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_query.bat")
@@ -289,6 +321,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
         VERBATIM
     )
     set(RAYD_SHARED_EDGE_DISTANCE_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_distance.bat")
@@ -326,6 +359,7 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
     )
 else()
     set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
+    set(RAYD_SHARED_BVH_CORE_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_core_build.o")
     set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.o")
     set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.o")
     set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.o")
@@ -341,6 +375,26 @@ else()
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
             "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
         VERBATIM
     )
     add_custom_command(
@@ -354,6 +408,8 @@ else()
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
         VERBATIM
     )
     add_custom_command(
@@ -381,6 +437,7 @@ else()
             "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
         VERBATIM
     )
     add_custom_command(
@@ -399,16 +456,161 @@ else()
     )
 endif()
 set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_BVH_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_BVH_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_EDGE_DISTANCE_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 set_source_files_properties("${RAYD_SHARED_EDGE_AABB_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 list(APPEND RAYD_CORE_SOURCE_FILES
     "${RAYD_CUDA_OBJECT}"
+    "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
     "${RAYD_SHARED_BVH_BUILD_OBJECT}"
     "${RAYD_SHARED_BVH_QUERY_OBJECT}"
     "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
     "${RAYD_SHARED_EDGE_AABB_OBJECT}")
+
+# Pure-CUDA triangle BVH: the primitive-specific traversal kernels live in the
+# shared tree; the build/refit/query orchestrator lives in the drjit backend.
+set(RAYD_SHARED_BVH_TRIANGLE_QUERY_CU
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu")
+set(RAYD_TRIANGLE_BVH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/triangle_bvh.cu")
+set(RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS
+    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h")
+set(RAYD_TRIANGLE_BVH_DEPS
+    "${RAYD_TRIANGLE_BVH_CU}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h")
+if(WIN32)
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.obj")
+    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.obj")
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_triangle_query.bat")
+    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        COMMAND "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}"
+        DEPENDS "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
+        VERBATIM)
+    set(RAYD_TRIANGLE_BVH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_triangle_bvh.bat")
+    file(GENERATE OUTPUT "${RAYD_TRIANGLE_BVH_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_TRIANGLE_BVH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_TRIANGLE_BVH_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
+        COMMAND "${RAYD_TRIANGLE_BVH_SCRIPT}"
+        DEPENDS "${RAYD_TRIANGLE_BVH_SCRIPT}" ${RAYD_TRIANGLE_BVH_DEPS}
+        VERBATIM)
+else()
+    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.o")
+    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.o")
+    add_custom_command(
+        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+        DEPENDS ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
+        VERBATIM)
+    add_custom_command(
+        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_TRIANGLE_BVH_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_TRIANGLE_BVH_OBJECT}"
+        DEPENDS ${RAYD_TRIANGLE_BVH_DEPS}
+        VERBATIM)
+endif()
+set_source_files_properties("${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+set_source_files_properties("${RAYD_TRIANGLE_BVH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
+    "${RAYD_TRIANGLE_BVH_OBJECT}")
+
+# CUDA fused multipath executor (P4 Stage D): runs the traverser-templated
+# multipath algorithm bodies with CudaBvhTraverser over the scene triangle BVH.
+# Object-compiled (host-callable launchers) like triangle_bvh.cu; needs no OptiX
+# headers because the migrated params/algo headers are host-safe.
+set(RAYD_CUDA_MULTIPATH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/cuda_multipath.cu")
+set(RAYD_CUDA_MULTIPATH_DEPS
+    "${RAYD_CUDA_MULTIPATH_CU}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/cuda_multipath_gpu.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h")
+if(WIN32)
+    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.obj")
+    set(RAYD_CUDA_MULTIPATH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_cuda_multipath.bat")
+    file(GENERATE OUTPUT "${RAYD_CUDA_MULTIPATH_SCRIPT}" CONTENT
+"@echo off\r\n\
+${RAYD_MSVC_SETUP}\
+if errorlevel 1 exit /b %errorlevel%\r\n\
+\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda --use_fast_math -std=c++17 -c \"${RAYD_CUDA_MULTIPATH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_MULTIPATH_OBJECT}\"\r\n\
+")
+    add_custom_command(
+        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        COMMAND "${RAYD_CUDA_MULTIPATH_SCRIPT}"
+        DEPENDS "${RAYD_CUDA_MULTIPATH_SCRIPT}" ${RAYD_CUDA_MULTIPATH_DEPS}
+        VERBATIM)
+else()
+    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.o")
+    add_custom_command(
+        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda --use_fast_math -std=c++17 -Xcompiler=-fPIC -c
+                "${RAYD_CUDA_MULTIPATH_CU}"
+                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
+                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
+                ${RAYD_CUDA_DEFINITIONS_LIST}
+                -o "${RAYD_CUDA_MULTIPATH_OBJECT}"
+        DEPENDS ${RAYD_CUDA_MULTIPATH_DEPS}
+        VERBATIM)
+endif()
+set_source_files_properties("${RAYD_CUDA_MULTIPATH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+list(APPEND RAYD_CORE_SOURCE_FILES
+    "${RAYD_CUDA_MULTIPATH_OBJECT}")
 
 set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
 if(WIN32)
@@ -621,8 +823,13 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -640,8 +847,13 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -716,6 +928,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -733,6 +953,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -805,6 +1033,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -820,6 +1056,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_REFLECTION_ACCUMULATION_CU}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -895,6 +1139,12 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -913,6 +1163,12 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -986,6 +1242,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -1002,6 +1266,14 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -1076,6 +1348,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     else()
@@ -1093,6 +1370,11 @@ if errorlevel 1 exit /b %errorlevel%\r\n\
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
                 "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
             VERBATIM
         )
     endif()
@@ -1350,7 +1632,9 @@ endif()
 
 set(PYRAYD_LIBRARIES drjit drjit-core drjit-extra nanothread)
 if(WIN32)
-    list(APPEND PYRAYD_LIBRARIES version)
+    # version: OptiX driver-module version query.
+    # cfgmgr32/advapi32: driver-store lookup for nvoptix.dll in optix_available().
+    list(APPEND PYRAYD_LIBRARIES version cfgmgr32 advapi32)
 endif()
 target_link_libraries(rayd_core PUBLIC ${PYRAYD_LIBRARIES} ${CUDA_LIBRARIES})
 set_property(TARGET rayd_core PROPERTY CXX_STANDARD 17)

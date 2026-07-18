@@ -1,0 +1,77 @@
+{
+  "reference": "RAY_TRACING_BACKEND_ARCHITECTURE.md section 16 (test scope)",
+  "policy": "Every section 16 geometry and edge case maps to a golden scene, or to a documented reason it is not a golden scene (public API gap, or covered by an existing dedicated test).",
+  "golden": {
+    "miss": {
+      "scenes": ["single_tri", "degenerate_tri", "self_intersection", "finite_tmax_visibility", "dynamic_refit"]
+    },
+    "front_back_face": {
+      "scenes": ["single_tri"],
+      "note": "front_face_hit and back_face_hit record geo_n from both sides (identical +z geometric normal is frozen as-is)."
+    },
+    "shared_edge_vertex": {
+      "scenes": ["shared_edge_quad"],
+      "note": "Strict rays sit unambiguously inside one triangle; exact edge/vertex rays are tagged informative because the winner is traversal-order defined."
+    },
+    "degenerate_triangle": {
+      "scenes": ["degenerate_tri"],
+      "note": "Zero-area triangle produces a clean miss with no NaN (frozen via nan_flags); the valid triangle hits correctly."
+    },
+    "large_coordinates": {"scenes": ["large_coordinates"]},
+    "finite_tmax": {"scenes": ["single_tri", "finite_tmax_visibility"]},
+    "self_intersection": {
+      "scenes": ["self_intersection"],
+      "note": "Origin exactly on a triangle; drjit tmin=1e-3 swallows the self hit so the +z ray reports the parallel triangle at t=0.5."
+    },
+    "multi_mesh": {"scenes": ["multi_mesh_ids"]},
+    "dynamic_refit": {"scenes": ["dynamic_refit"]},
+    "id_mapping": {
+      "scenes": ["multi_mesh_ids"],
+      "note": "Frozen invariant global_prim_id == mesh_face_offsets()[shape_id] + local_prim_id via id_mapping_ok."
+    },
+    "ignore_primitive": {
+      "scenes": ["ignore_primitive"],
+      "note": "Includes an ignore list with more than eight entries."
+    },
+    "inactive_lane": {"scenes": ["inactive_lanes"]},
+    "empty_or_large_batch": {
+      "scenes": ["batch_sizes"],
+      "note": "Batch of 1, a 4096-ray grid, and a 0-size batch whose current behavior (RuntimeError) is frozen."
+    },
+    "point_ray_nearest": {"scenes": ["edge_queries"]},
+    "finite_infinite_ray": {
+      "scenes": ["edge_queries"],
+      "note": "ray_finite_segment uses a finite tmax; ray_infinite leaves tmax unset."
+    },
+    "boundary_edge": {
+      "scenes": ["edge_queries"],
+      "note": "point_near_boundary_edge yields is_boundary=1; point_near_internal_edge yields is_boundary=0."
+    },
+    "topk": {"scenes": ["edge_queries"]},
+    "equal_distance_tie": {
+      "scenes": ["edge_tie"],
+      "note": "Two edges symmetric about the query point; tie-dependent winner ids are tagged informative because drjit has no id tie-break, distances stay strict."
+    }
+  },
+  "not_golden": {
+    "instance": {
+      "status": "na",
+      "rationale": "The public RayD API exposes no instancing. Scene.add_mesh flattens each mesh into scene-global geometry and there is no per-instance transform or instance id to query, so there is no observable instance behavior to freeze."
+    },
+    "mask_update": {
+      "status": "covered_elsewhere",
+      "reference": "backends/drjit/tests/drjit/test_geometry.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
+      "rationale": "set_edge_mask + sync is exercised by an existing dedicated edge-BVH test across all edge backends; it is stateful and out of scope for the forward-value golden suite."
+    },
+    "edge_dynamic_refit": {
+      "status": "covered_elsewhere",
+      "reference": "backends/drjit/tests/drjit/test_geometry.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
+      "rationale": "Edge query after update_mesh_vertices + sync is exercised by the same existing edge-BVH test."
+    },
+    "edge_vjp_jvp": {
+      "status": "covered_elsewhere",
+      "reference": "backends/drjit/tests/drjit/test_geometry.py (vertex/transform gradient tests) and the P0 NumericPolicy/AD deliverable",
+      "rationale": "The golden suite freezes forward discrete and continuous query values only; fixed-winner VJP/JVP gradients are frozen by the existing AD gradient tests."
+    }
+  }
+}

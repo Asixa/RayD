@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "capability_keys": [
     "intersect",
     "nearest_edge_point",
@@ -112,6 +112,23 @@
         "torch_compile": true
       },
       "typing": "complete"
+    }
+  },
+  "trace": {
+    "backends": {
+      "optix": {
+        "stability": "stable",
+        "summary": "OptiX GPU ray-tracing backend for triangle intersection, edge, visibility, reflection, and diffraction queries shared by both frontends."
+      },
+      "cuda": {
+        "stability": "provisional",
+        "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. The P4 fused executor also serves the full multipath surface (visibility, reflection trace and accumulation, diffraction paths and accumulation, and EPC) with no OptiX driver."
+      }
+    },
+    "integration_modes": ["jit_symbolic", "eager_native"],
+    "frontend_support": {
+      "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
+      "torch": {"optix": ["eager_native"]}
     }
   }
 }

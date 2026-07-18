@@ -43,16 +43,16 @@ struct DiffractionAccumulationPolicy {
     return params().state_edge_index[i];
   }
 
-  static __forceinline__ __device__ float3 state_edge_pos_at(int i) {
-    return make_float3(params().state_edge_pos_x[i],
-                       params().state_edge_pos_y[i],
-                       params().state_edge_pos_z[i]);
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_edge_pos_at(int i) {
+    return ::rayd::shared::math::make_vec3(params().state_edge_pos_x[i],
+                                           params().state_edge_pos_y[i],
+                                           params().state_edge_pos_z[i]);
   }
 
-  static __forceinline__ __device__ float3 state_edge_dir_at(int i) {
-    return make_float3(params().state_edge_dir_x[i],
-                       params().state_edge_dir_y[i],
-                       params().state_edge_dir_z[i]);
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_edge_dir_at(int i) {
+    return ::rayd::shared::math::make_vec3(params().state_edge_dir_x[i],
+                                           params().state_edge_dir_y[i],
+                                           params().state_edge_dir_z[i]);
   }
 
   static __forceinline__ __device__ float state_edge_t_min_at(int i) {
@@ -86,9 +86,9 @@ struct DiffractionAccumulationPolicy {
     return params().state_src_power[i];
   }
 
-  static __forceinline__ __device__ float3 state_src_at(int i) {
-    return make_float3(params().state_src_x[i], params().state_src_y[i],
-                       params().state_src_z[i]);
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f state_src_at(int i) {
+    return ::rayd::shared::math::make_vec3(params().state_src_x[i], params().state_src_y[i],
+                                           params().state_src_z[i]);
   }
 
   static __forceinline__ __device__ float3 state_wi_at(int i) {
@@ -100,16 +100,16 @@ struct DiffractionAccumulationPolicy {
     return params().recursive_state_edge_index[i];
   }
 
-  static __forceinline__ __device__ float3 recursive_state_edge_pos_at(int i) {
-    return make_float3(params().recursive_state_edge_pos_x[i],
-                       params().recursive_state_edge_pos_y[i],
-                       params().recursive_state_edge_pos_z[i]);
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f recursive_state_edge_pos_at(int i) {
+    return ::rayd::shared::math::make_vec3(params().recursive_state_edge_pos_x[i],
+                                           params().recursive_state_edge_pos_y[i],
+                                           params().recursive_state_edge_pos_z[i]);
   }
 
-  static __forceinline__ __device__ float3 recursive_state_edge_dir_at(int i) {
-    return make_float3(params().recursive_state_edge_dir_x[i],
-                       params().recursive_state_edge_dir_y[i],
-                       params().recursive_state_edge_dir_z[i]);
+  static __forceinline__ __device__ ::rayd::shared::math::Vec3f recursive_state_edge_dir_at(int i) {
+    return ::rayd::shared::math::make_vec3(params().recursive_state_edge_dir_x[i],
+                                           params().recursive_state_edge_dir_y[i],
+                                           params().recursive_state_edge_dir_z[i]);
   }
 
   static __forceinline__ __device__ float recursive_state_edge_t_min_at(int i) {

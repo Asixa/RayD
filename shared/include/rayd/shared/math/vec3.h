@@ -2,11 +2,13 @@
 
 #include <cmath>
 
-#if defined(__CUDACC__)
-#  define RAYD_SHARED_MATH_INLINE __host__ __device__ __forceinline__
-#else
-#  define RAYD_SHARED_MATH_INLINE inline
-#endif
+#include <rayd/shared/rt/qualifiers.h>
+
+// vec3.h now spells its host/device inline qualifier through the shared
+// rt/qualifiers.h macro (RAYD_HOST_DEVICE). This is behavior-identical to the
+// former local RAYD_SHARED_MATH_INLINE toggle: __host__ __device__
+// __forceinline__ under nvcc, plain inline under a host compiler.
+#define RAYD_SHARED_MATH_INLINE RAYD_HOST_DEVICE
 
 namespace rayd::shared::math {
 

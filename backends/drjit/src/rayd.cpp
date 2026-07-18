@@ -37,7 +37,9 @@ bool is_deprecated_combined_edge_backend(const std::string &value) {
 }
 
 /// Construct a Scene while preserving one release cycle for legacy backend aliases.
-void construct_scene(Scene *scene, const std::string &edge_bvh_backend) {
+void construct_scene(Scene *scene,
+                     const std::string &edge_bvh_backend,
+                     const std::string &trace_backend) {
     if (is_deprecated_combined_edge_backend(edge_bvh_backend) &&
         PyErr_WarnEx(PyExc_DeprecationWarning,
                      "edge_bvh_backend='hybrid' and its legacy aliases are deprecated; "
@@ -45,7 +47,7 @@ void construct_scene(Scene *scene, const std::string &edge_bvh_backend) {
                      2) < 0) {
         throw nb::python_error();
     }
-    new (scene) Scene(edge_bvh_backend);
+    new (scene) Scene(edge_bvh_backend, trace_backend);
 }
 
 /// Number of Dr.Jit-compatible CUDA devices; throws if none are available.
@@ -283,6 +285,7 @@ NB_MODULE(_C, m) {
               result["unknown"] = native_stage_dict(snapshot.unknown);
               result["build"] = native_stage_dict(snapshot.build);
               result["sync"] = native_stage_dict(snapshot.sync);
+              result["intersect"] = native_stage_dict(snapshot.intersect);
               result["trace_reflections"] = native_stage_dict(snapshot.trace_reflections);
               result["accumulate_reflections"] =
                   native_stage_dict(snapshot.accumulate_reflections);
@@ -302,6 +305,13 @@ NB_MODULE(_C, m) {
           "Dr.Jit arrays that you intend to use with them. When "
           "initialize_optix=True, RayD also initializes the OptiX device "
           "context for the selected device.");
+    m.def("optix_available",
+          []() { return optix_available(); },
+          "Return True when a usable OptiX driver is present on this system.\n\n"
+          "This is a non-throwing capability probe (safe on machines without "
+          "OptiX). Set the environment variable RAYD_DISABLE_OPTIX=1 to force a "
+          "False result, which lets an OptiX-capable machine exercise the "
+          "OptiX-less code paths.");
     // Naming convention: the bare class name is the non-AD variant, which is the
     // common case; the autodiff variant carries an "AD" suffix (e.g. Ray / RayAD,
     // Intersection / IntersectionAD). The C++ aliases follow the same convention,
@@ -1757,7 +1767,9 @@ NB_MODULE(_C, m) {
 
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
-            .def("__init__", &construct_scene, "edge_bvh_backend"_a = "optix")
+            .def("__init__", &construct_scene,
+                 "edge_bvh_backend"_a = "optix",
+                 "trace_backend"_a = "auto")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("build", &Scene::build)
             .def("update_mesh_vertices", &Scene::update_mesh_vertices, "mesh_id"_a, "positions"_a)
@@ -1775,6 +1787,56 @@ NB_MODULE(_C, m) {
             .def_prop_ro("last_sync_profile", &Scene::last_sync_profile)
             .def("edge_info", &Scene::edge_info)
             .def_prop_ro("edge_bvh_backend", &Scene::edge_bvh_backend)
+            .def("trace_backend_name",
+                 [](const Scene &scene) -> std::string {
+                     switch (scene.trace_backend_kind()) {
+                     case TraceBackendKind::Optix:
+                         return "optix";
+                     case TraceBackendKind::Cuda:
+                         return "cuda";
+                     default:
+                         return "none";
+                     }
+                 },
+                 "Canonical name of the resolved triangle trace backend "
+                 "('optix', 'cuda', or 'none').")
+            .def("capabilities",
+                 [](const Scene &scene) {
+                     const TraceBackendKind kind = scene.trace_backend_kind();
+                     const bool has_optix = kind == TraceBackendKind::Optix;
+                     const bool has_cuda = kind == TraceBackendKind::Cuda;
+                     const bool has_trace = has_optix || has_cuda;
+                     // Both trace backends serve the full multipath surface: OptiX
+                     // through its pipelines, CUDA through the P4 fused executor
+                     // (visibility / reflection trace + accumulation / diffraction
+                     // paths + accumulation / EPC).
+                     const bool multipath = has_trace;
+                     nb::dict caps;
+                     caps["trace_backend"] =
+                         has_optix ? "optix" : (has_cuda ? "cuda" : "none");
+                     caps["optix_available"] = optix_available();
+                     caps["edge_backend"] = scene.edge_bvh_backend();
+                     nb::list integration;
+                     if (has_optix) {
+                         integration.append("jit_symbolic");
+                         integration.append("eager_native");
+                     } else if (has_cuda) {
+                         integration.append("eager_native");
+                     }
+                     caps["integration"] = integration;
+                     caps["intersect"] = has_trace;
+                     caps["shadow_test"] = has_trace;
+                     caps["visibility"] = multipath;
+                     caps["reflection_trace"] = multipath;
+                     caps["reflection_accumulation"] = multipath;
+                     caps["diffraction"] = multipath;
+                     caps["epc"] = multipath;
+                     caps["nearest_edge"] = true;
+                     return caps;
+                 },
+                 "Machine-readable capability map for this scene's resolved "
+                 "backend plan (trace backend, edge backend, integration modes, "
+                 "and per-operation availability).")
             .def("edge_bvh_stats", &Scene::edge_bvh_stats)
             .def("edge_topology", &Scene::edge_topology)
             .def("edge_mask", &Scene::edge_mask)
@@ -1806,6 +1868,15 @@ NB_MODULE(_C, m) {
                      return scene.intersect<false>(ray, active, flags);
                  },
                  nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
+            .def("_cuda_first_blocker_selftest",
+                 [](const Scene &scene, const Vector3f &origin, const Vector3f &direction,
+                    const rayd::Float &tmax, const std::vector<int> &ignore) {
+                     return scene.cuda_first_blocker_selftest(origin, direction, tmax, ignore);
+                 },
+                 nb::arg("origin"), nb::arg("direction"), nb::arg("tmax"),
+                 nb::arg("ignore") = std::vector<int>(),
+                 "P3 CUDA-backend test hook: closest blocker global primitive id per "
+                 "ray with an optional ignore list. Requires trace_backend='cuda'.")
             .def("trace_reflections",
                  [](const Scene &scene,
                     const Ray &ray,

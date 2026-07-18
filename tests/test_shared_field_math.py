@@ -18,12 +18,13 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertNotIn("namespace witwin::channel::native_ext {", types)
 
     def test_accumulation_backends_delegate_diffraction_parameter(self):
-        shared_device = (
-            SHARED / "multipath" / "diffraction_accumulation_device.cuh"
+        # Since P4c the algorithm body (and its UTD delegation) lives in the
+        # host-compilable algo header; the device header keeps the OptiX layer.
+        shared_algo = (
+            SHARED / "multipath" / "diffraction_accumulation_algo.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_device)
-        self.assertIn("namespace utd = ::rayd::shared::utd;", shared_device)
-        self.assertIn("return utd::first_order_diffraction_parameter(", shared_device)
+        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_algo)
+        self.assertIn("::rayd::shared::utd::first_order_diffraction_parameter(", shared_algo)
 
         paths = (
             ROOT / "backends" / "drjit" / "src" / "multipath" / "diffraction_accumulation.cu",
@@ -52,10 +53,10 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("<rayd/shared/field_math.h>", torch_compat)
         self.assertNotIn("struct Complex {", torch_compat)
 
-        shared_reflection = (
-            SHARED / "multipath" / "reflection_accumulation_device.cuh"
+        shared_reflection_algo = (
+            SHARED / "multipath" / "reflection_accumulation_algo.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection)
+        self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection_algo)
 
         accumulation_adapters = (
             ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_accumulation.cu",

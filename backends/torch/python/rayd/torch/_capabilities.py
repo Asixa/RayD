@@ -3,8 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-_SCHEMA_VERSION = 1
-_SCHEMA_SHA256 = "5fb52cb0da6211cce30f572a5a3238743b432e527742e41bb6327dae6067cc1f"
+_SCHEMA_VERSION = 2
+_SCHEMA_SHA256 = "5b20d9095000ae38f2117a010721a6a0aa318549f25f504561819d53e64aabd0"
 _BACKEND = "torch"
 _TYPING = "complete"
 
@@ -79,6 +79,24 @@ _ALIASES = {
     }
 }
 
+_TRACE = {
+    "backends": {
+        "optix": {
+            "stability": "stable",
+            "summary": "OptiX GPU ray-tracing backend for triangle intersection, edge, visibility, reflection, and diffraction queries shared by both frontends.",
+        },
+        "cuda": {
+            "stability": "provisional",
+            "summary": "Pure-CUDA scene-level triangle BVH backend for eager closest-hit and occlusion queries; no OptiX driver required. The P4 fused executor also serves the full multipath surface (visibility, reflection trace and accumulation, diffraction paths and accumulation, and EPC) with no OptiX driver.",
+        },
+    },
+    "integration_modes": ["jit_symbolic", "eager_native"],
+    "frontend_support": {
+        "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
+        "torch": {"optix": ["eager_native"]},
+    },
+}
+
 
 def backend_capabilities() -> dict[str, bool | str]:
     """Return the backward-compatible flat backend capability mapping."""
@@ -99,4 +117,5 @@ def api_manifest() -> dict[str, Any]:
             for name, (category, stability) in _API_CLASSIFICATION.items()
         },
         "aliases": deepcopy(_ALIASES),
+        "trace": deepcopy(_TRACE),
     }

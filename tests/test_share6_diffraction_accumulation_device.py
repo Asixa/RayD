@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = ROOT / "shared/include/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+ALGO = ROOT / "shared/include/rayd/shared/multipath/diffraction_accumulation_algo.h"
 REFLECTION = ROOT / "shared/include/rayd/shared/multipath/reflection_accumulation_device.cuh"
 DRJIT = ROOT / "backends/drjit/src/multipath/diffraction_accumulation.cu"
 TORCH = ROOT / "backends/torch/src/torch_ext/diffraction/accum_optix.cu"
@@ -22,18 +23,26 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.shared = SHARED.read_text(encoding="utf-8")
+        cls.algo = ALGO.read_text(encoding="utf-8")
         cls.reflection = REFLECTION.read_text(encoding="utf-8")
         cls.drjit = DRJIT.read_text(encoding="utf-8")
         cls.torch = TORCH.read_text(encoding="utf-8")
 
     def test_shared_header_owns_complete_operations(self) -> None:
-        required = (
-            "struct HitPayload",
+        # Since P4c the algorithm body lives in the host-compilable algo header;
+        # the device header keeps only the OptiX entry layer and delegates.
+        algorithm_tokens = (
             "trace_scene_impl(",
             "visible_segment_impl(",
             "run_coherent_utd_lane(",
             "suffix_reflection_connection(",
             "diffraction_weight(",
+        )
+        for token in algorithm_tokens:
+            self.assertIn(token, self.algo)
+            self.assertNotIn(token, self.drjit)
+            self.assertNotIn(token, self.torch)
+        entry_tokens = (
             "run_diffraction_order1_accumulation_raygen()",
             "run_diffraction_order1_source_visibility_raygen()",
             "run_diffraction_order1_no_suffix_target_accumulation_raygen()",
@@ -42,8 +51,16 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
             "run_diffraction_order1_coherent_accumulation_raygen()",
             "run_diffraction_chain_accumulation_raygen()",
         )
-        for token in required:
+        for token in entry_tokens:
             self.assertIn(token, self.shared)
+        self.assertIn("diffraction_accumulation_algo.h", self.shared)
+
+    def test_hit_payload_is_the_canonical_triangle_hit(self) -> None:
+        # The former file-local 4-field HitPayload dissolved into rt::TriangleHit;
+        # forbid it from reappearing anywhere in the pipeline pair.
+        self.assertIn("TriangleHit", self.algo)
+        for text in (self.algo, self.shared):
+            self.assertNotIn("struct HitPayload", text)
 
     def test_adapters_only_own_params_policy_and_entries(self) -> None:
         forbidden = (
@@ -107,6 +124,7 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
             "<<<",
         ):
             self.assertNotIn(token, self.shared)
+            self.assertNotIn(token, self.algo)
 
     def test_reflection_and_diffraction_namespaces_coexist(self) -> None:
         self.assertIn(

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository contains **RayD**, a Dr.Jit-native GPU package for differentiable ray geometry, edge queries, and multipath simulation primitives built on OptiX.
+This repository contains **RayD**, a CUDA/OptiX package for differentiable ray geometry, edge queries, and multipath simulation primitives. Since 0.6.0 it is a dual-backend monorepo exposing two independent, backend-native APIs: `rayd.drjit` and `rayd.torch`.
 
 ## Environment
 
@@ -12,31 +12,37 @@ conda activate witwin3
 
 ## Build
 
-```bash
-pip install .
-pip install --no-build-isolation -ve .
+The repository root is a meta-distribution and builds no native code. Build a backend explicitly:
+
+```powershell
+.\scripts\build_local.cmd -Backend drjit   # or: torch, all
 ```
 
 ## Architecture
 
-- `include/rayd/`, `src/`: C++/CUDA geometry, edge, and multipath kernels
+- `backends/drjit/include/rayd/`, `backends/drjit/src/`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
+- `backends/torch/include/rayd/torch/`, `backends/torch/src/`: Torch backend, dispatcher, and autograd bindings
+- `shared/include/rayd/shared/`, `shared/src/`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
+- `shared/contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
-- `Camera`: primary-ray sampling plus primary-edge preprocessing/sampling
+- `Camera`: primary-ray sampling plus primary-edge preprocessing/sampling. **Torch backend only** (`backends/torch/python/rayd/torch/camera.py`); the Dr.Jit backend has no `Camera`
 - `scene.intersect(ray)`: differentiable intersection query
 - `scene.nearest_edge(point)` / `scene.nearest_edge(ray)`: scene-level nearest-edge query over a GPU BVH
-- `scene.trace_reflections(...)`: specular reflection-path tracing
-- `scene.trace_segment_visibility(...)`: batched segment visibility queries
-- `scene.trace_reflection_epc(...)`: equivalent-path correction primitives for reflection paths
-- `include/rayd/multipath/`, `src/multipath/`: multipath result types, OptiX launch wrappers, and CUDA/OptiX kernels
-- `rayd/__init__.py`: Python package re-export
+- `scene.trace_reflections(...)`: specular reflection-path tracing; `symbolic=True` selects the bounce-level C++ path
+- `scene.visible(...)`: batched segment visibility queries
+- `scene.trace_refl_epc(...)` / `scene.trace_refl_epc_field(...)`: equivalent-path correction primitives for reflection paths
+- `backends/drjit/src/multipath/`: multipath result types, OptiX launch wrappers, and CUDA/OptiX kernels
+- `backends/drjit/python/rayd/drjit/`, `backends/torch/python/rayd/torch/`: the two backend Python packages; `rayd` itself is a PEP 420 namespace with no default backend
+
+Public names follow `backends/drjit/API_NAMING_STANDARD.md`; `backends/drjit/API_RENAME.md` records the 2026-05-21 rename.
 
 ## OptiX Pipeline Guardrail
 
 - If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.
 - The verified 2026-05-26 fix keeps scene/edge OptiX production flags separate from multipath flags: multipath uses production module optimization plus `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
 - Trace-call count and instruction count are useful diagnostics, but they are not proof of root cause; do not split reflection tracing or add fallback launches unless tests prove the pipeline shape itself is the failing variable.
-- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `tests.drjit.test_optix_pipeline_cold_create` for public API cold-create coverage.
+- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `backends.drjit.tests.drjit.test_optix_pipeline_cold_create` for public API cold-create coverage.
 - See `docs/optix_pipeline_create_failures.md` for the root-cause writeup and regression checklist.
 
 ## Edge BVH Status
@@ -61,7 +67,7 @@ Current status notes:
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 - the shared edge core owns the backend-neutral OptiX AABB kernel, LBVH/treelet build stages, dirty-ancestor/dirty-level/refit launchers, compact-BVH CUDA traversal, and exact-distance launchers; every API takes raw pointers, caller-owned buffers, and an explicit stream
-- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, host compaction, and its JIT traversal; Torch persistent compact-BVH ownership and public top-k/visibility integration are added in F1
+- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, host compaction, and its JIT traversal; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`backends/torch/src/torch_ext/scene/scene_cache.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
 
 Supported custom-BVH configuration after BVH-3 convergence:
 

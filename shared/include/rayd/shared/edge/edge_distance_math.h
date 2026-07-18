@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include <rayd/shared/math/vec3.h>
+#include <rayd/shared/rt/numeric_policy.h>
 
 #if defined(__CUDACC__)
 #  define RAYD_SHARED_EDGE_MATH_INLINE __host__ __device__ __forceinline__
@@ -14,6 +15,8 @@ namespace rayd::shared::edge {
 
 inline constexpr float EdgeDistanceDeviceEpsilon = 1.0e-7f;
 inline constexpr float EdgeDistanceFloatMax = 3.4028234663852886e38f;
+
+static_assert(EdgeDistanceDeviceEpsilon == ::rayd::shared::rt::kEdgeDistanceEpsilon);
 
 struct PointSegmentDistance {
     float edge_parameter;

@@ -3,25 +3,25 @@
 ## Native CUDA/OptiX Incremental Build
 
 - Do not use `python -m pip install --no-build-isolation -e .` for every debug iteration. That command creates or refreshes a full editable build/install flow and is too slow for CUDA/OptiX work.
-- The persistent native build directory is `artifacts/skbuild`. It is ignored by git and should be reused across edits.
-- If `artifacts/skbuild` does not exist, initialize it once:
+- The persistent native build directory is `build/local-120` (the `dev_build_native.ps1` default; `pyproject.toml` uses `build/{wheel_tag}`). It is ignored by git and should be reused across edits.
+- If the build directory does not exist, initialize it once:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m pip install --no-build-isolation -e . -Cbuild-dir=artifacts/skbuild
+python -m pip install --no-build-isolation -e . -Cbuild-dir=build/local-120
 ```
 
 - After native `.cpp`, `.cu`, `.h`, CMake, or PTX embedding changes, use the incremental helper:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File E:\Code\RayD Torch\scripts\dev_build_native.ps1
+powershell -ExecutionPolicy Bypass -File E:\Code\RayDi\backends\torch\scripts\dev_build_native.ps1
 ```
 
-- The helper runs `cmake --build artifacts/skbuild --config Release --target _raydn` and copies the resulting `_raydn*.pyd` to the conda site-packages path that the editable import hook actually loads.
+- The helper runs `cmake --build build/local-120 --config Release --target rayd_torch_stable_ops rayd_torch_legacy_ops _C` and copies the resulting `_stable_ops*.dll`, `_legacy_ops*.dll`, and `_C*.pyd` to the conda site-packages path that the editable import hook actually loads. See `abi_audit.json` for the authoritative `_C` / `_stable_ops` / `_legacy_ops` boundary.
 - Run focused tests with the environment Python directly, for example:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.torch_backend.test_multipath -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.torch_backend -v
+python -m unittest backends.torch.tests.torch_backend.test_multipath -v
+python -m unittest discover backends.torch.tests.torch_backend -v
 ```
 
 - Use full `pip install -e .` again only when intentionally regenerating the editable install metadata, changing packaging behavior, or recreating the persistent build directory from scratch.
@@ -32,13 +32,13 @@ Use the current worktree and command output as authoritative. Do not use a full
 editable reinstall for normal CUDA/OptiX iteration; use the incremental helper
 above and then run focused numeric/performance tests.
 
-Run the CUDA tests with the `witwin2` environment Python:
+Run the CUDA tests from the repository root:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.torch_backend.test_edge_queries -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.torch_backend.test_multipath -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.torch_backend.test_multipath tests.torch_backend.test_scene_cache -v
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest discover tests.torch_backend -v
+python -m unittest backends.torch.tests.torch_backend.test_edge_queries -v
+python -m unittest backends.torch.tests.torch_backend.test_multipath -v
+python -m unittest backends.torch.tests.torch_backend.test_multipath backends.torch.tests.torch_backend.test_scene_cache -v
+python -m unittest discover backends.torch.tests.torch_backend -v
 ```
 
 Latest recorded native test results, after the nearest-edge no-AD fast path and
@@ -51,7 +51,7 @@ Run external RayD parity explicitly; the normal discover run skips these tests:
 
 ```powershell
 $env:RAYD_TORCH_RUN_DR_JIT_PARITY='1'
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m unittest tests.torch_backend.test_drjit_parity -v
+python -m unittest backends.torch.tests.torch_backend.test_drjit_parity -v
 ```
 
 Latest recorded opt-in RayD parity result:
@@ -68,8 +68,8 @@ Latest recorded opt-in RayD parity result:
 Run same-script RayD vs RayD Torch performance comparison:
 
 ```powershell
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydn --grid 64 --queries 4096 --warmup 5 --repeat 30
-C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_rayd_vs_raydn --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
+python -m backends.torch.tests.benchmark_rayd_backends --grid 64 --queries 4096 --warmup 5 --repeat 30
+python -m backends.torch.tests.benchmark_rayd_backends --grid 64 --queries 4096 --warmup 5 --repeat 30 --dynamic
 ```
 
 Latest recorded same-script static-vs-static performance result (2026-06-12,

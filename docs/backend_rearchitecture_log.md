@@ -1,0 +1,883 @@
+# Multi-backend rearchitecture — execution log
+
+Execution log for `docs/RAY_TRACING_BACKEND_ARCHITECTURE.md` (P0 → P6), maintained per phase.
+Branch: `wt/ray-tracing-backend`. Desktop verification hardware: RTX 5080 (sm_120), Windows 11, conda `witwin3`.
+
+## Code-audit deltas vs the plan document
+
+Findings from the pre-P0 recon sweep that correct or sharpen claims in the plan document.
+The plan remains authoritative for goals and gates; the facts below are authoritative for code reality.
+
+1. **`optixTrace` call sites: 7, not 1.** The plan (§2.2, §6.1) treats `trace_handle()`
+   (`reflection_trace_device.cuh:88`) as the single choke point. Reality: 7 `optixTrace` calls across
+   5 files, and `trace_handle` is an independently defined file-local static in 3 of them
+   (`reflection_trace_device.cuh:98`, `reflection_accumulation_device.cuh:132`,
+   `diffraction_accumulation_device.cuh:151` and `:194`, `reflection_epc_device.cuh:148` and `:218`,
+   `segment_visibility_device.cuh:129`). P4's traverser refactor must migrate 7 sites / 5 files.
+2. **`DISABLE_ANYHIT` is not universal.** Closest-hit traces always disable anyhit, but the two
+   ignore-list occlusion paths (`segment_visibility_device.cuh:123-127`, `reflection_epc_device.cuh:209-216`)
+   run with anyhit **enabled** when an ignore list is present (anyhit program filters ignored prims).
+   The P3/P4 CUDA traversal needs an ignore-aware occlusion mode, not just a boolean occluded query.
+3. **Edge top-k tie-break is asymmetric across backends.** `(distance_squared, global_edge_id)` is
+   implemented only in the shared CUDA BVH query (`shared/src/edge/bvh_query.cu:168-174`) and the Torch
+   brute-force top-k (`edge_topk.cu:57-64`). Every Dr.Jit edge path (OptiX anyhit/topk, native BVH) uses
+   strict distance-only comparison — equal-distance winners are traversal-order-dependent. P0 freezes
+   this asymmetry as a recorded deviation (`operations.json` → `edge_topk_tie_break`); unification is a
+   behavior change deferred to ≥ P3.
+4. **Miss-distance sentinel is not uniformly `+inf`.** Primary intersect, segment visibility, and EPC
+   use `+inf`; the reflection-trace family uses `kTraceTMax = 1e8f` (`reflection_trace_device.cuh:94,140`).
+   Frozen as-is (`miss_sentinels.reflection_trace_distance`).
+5. **No JSON-Schema validation machinery existed.** `public_api.schema.json` was loaded only to compare
+   its `required` list against a hardcoded set. P0 adds a minimal dependency-free validator
+   (`tests/_schema_validate.py`) so "passes schema validation" is a real gate.
+6. **P0 item 6 (fix CLAUDE.md) was already done** by commit `1c8f9a2`: the tracked agent doc is
+   `AGENTS.md` and already describes the dual-backend workspace. No action needed.
+7. **Hash-pin EOL landmines (pre-existing, environment-dependent test failures).**
+   `_capabilities.py::_SCHEMA_SHA256` was pinned over LF bytes (fails on CRLF checkouts);
+   `backends/torch/abi_audit.json::source_sha256` was pinned over a *mixed-EOL* working tree
+   (7 files CRLF + `src/stable/camera.cu` LF) and was unreproducible from **any** clean checkout.
+   P0 makes both hashes EOL-normalized (`\r\n` → `\n` before hashing) so the full suite can be green on
+   every checkout. This is test-infrastructure robustness, not a semantic change.
+8. **Torch scene-level `shadow_test` does not exist**; the Torch `ray_tmin` (1e-6) vs Dr.Jit (1e-3)
+   divergence was already recorded in `operations.json` `backend_overrides` and is now also frozen in
+   `NumericPolicy` legacy profiles.
+
+## P0 — freeze public semantics
+
+### Design decisions (supervisor)
+
+- **Freeze, don't unify.** P0's zero-behavior-change gate forbids changing either backend's `ray_tmin`.
+  `NumericPolicy` (doc §7 shape: `ray_tmin`, `shadow_tmin`, `endpoint_offset`, `parallel_epsilon`,
+  `watertight_triangles`) is defined with `kDrJitLegacyProfile` / `kTorchLegacyProfile` recording today's
+  values; the *unified* profile is deliberately not chosen until a phase where behavior change is allowed
+  and measurable (≥ P3).
+- **Compile-time anti-drift locks.** The scattered per-family constants inside device headers
+  (`kTraceTMin`, `RayBias`, `kEpcTolerance`, …) get `static_assert`s tying them to
+  `shared/rt/numeric_policy.h`, so the frozen contract and the kernels can never silently diverge.
+- **SoA batch views.** `RayBatchView` / `SegmentBatchView` are SoA pointer views (doc §7 sketches AoS
+  `Float3*`). Repo precedent (`ReflectionTraceParams`, `RaySoAView`, `EdgeQuerySoAView`) and the Dr.Jit
+  frontend are SoA-native; Torch `(N,3)` tensors can view as SoA via stride tricks at the dispatch layer.
+- **Golden scenes: strict vs informative fields.** Rays exactly through a shared edge/vertex and
+  equal-distance edge ties have implementation-defined winners (OptiX traversal order; Dr.Jit edge paths
+  have no id tie-break). These are recorded in baselines but tagged `informative` and excluded from the
+  strict gate. Consequence for P3/P5: the "discrete results bit-identical across backends" gate applies
+  to the strict field set; exact-tie cases cannot be part of it until tie-breaks are unified.
+- **Instancing golden case: N/A.** RayD's public API has no instancing; recorded in the golden coverage
+  manifest with rationale instead of a scene.
+
+### Baseline (pre-P0, worktree @ `main`)
+
+- drjit GPU suite: **158/158 green** (`test_baseline` must run with `cwd=backends/drjit`:
+  `python -m unittest tests.drjit.test_baseline`).
+- Workspace suite: 166 tests, 163 green, 3 skips (packaging CI-provided), 2 environmental failures
+  (item 7 above) — both eliminated by the P0 EOL-normalization fix.
+- Worktree is LF-materialized (`extensions.worktreeConfig` + per-worktree `core.autocrlf=false`);
+  repo objects store LF.
+
+### Implementation notes
+
+- `operations.json` v3 → v4: `numeric_policy` (shared multipath constants + per-backend legacy
+  profiles), `miss_sentinels`, `edge_topk_tie_break`, per-operation `integration` arrays,
+  `result_contracts.raw_hit`.
+- `public_api.json` v1 → v2: additive `trace` axis (backends/integration_modes/frontend_support);
+  schema extended; `_capabilities.py` × 2 mirror it; sha pins now EOL-normalized; Torch ABI audit
+  hashing EOL-normalized and `abi_audit.json` regenerated (reproducible from any clean checkout).
+- Golden scenes: 13 scenes, `tests/golden/` (defs + baselines + coverage manifest) +
+  `backends/drjit/tests/drjit/test_golden_scenes.py` (double-collect bit-identical determinism +
+  baseline compare). Frozen surprises: ray exactly through a shared **vertex** misses entirely;
+  ray through the shared-edge midpoint hits prim 0 (informative); `geo_n` is not oriented toward
+  the ray (front and back hits both report +z); 0-size batches raise `RuntimeError` (jit size
+  mismatch — only the exception type is frozen); drjit edge top-k tie order `[3,0,5,4]` confirms
+  the missing id tie-break.
+- Newly spotted, not yet frozen: Torch-only `kDfrRayBias = 1e-4f`
+  (`backends/torch/include/rayd/torch/common/math.cuh:15`) — a diffraction ray bias with no
+  audited Dr.Jit counterpart. Follow-up: inventory both diffraction paths and add to
+  `numeric_policy` in a later phase.
+
+### Incidents
+
+- One implementation agent applied its edits to the **main checkout** instead of the worktree.
+  Detected via its report paths + CRLF observations; changes were ported into the worktree with LF
+  normalization (hash-verified), tests re-run in the worktree (23/23), and the main checkout was
+  restored (`git checkout --` + stray-file removal), preserving the user's pre-existing local state.
+
+### Status
+
+- [x] Recon + baseline established
+- [x] NumericPolicy + rt/ contract headers + operations.json v4
+- [x] Capability manifest `trace` section + schema validator + EOL-normalized pins
+- [x] Golden scenes + OptiX baselines + determinism gate
+- [ ] Supervisor diff audit (done for native headers/contracts), native rebuild, full-suite gate, commit
+
+## P1 — OptiX adopted as a formal backend + `Scene::build()` decoupled
+
+### Design decisions
+
+- **`TraceBackend` is host-lifecycle only.** The abstract base
+  (`backends/drjit/include/rayd/trace/trace_backend.h`) carries just `kind()`,
+  `capabilities()`, `is_ready()` — three per-*batch* host virtuals. The POD batch
+  trace methods from doc §5 are deliberately **not** added yet (they are the
+  eager-axis P3 concern); adding them now would risk a virtual landing in a
+  per-ray loop. Per-ray work still reaches the concrete `OptixScene` through one
+  extra non-virtual pointer hop per batch (`Scene` → `OptixTraceBackend` →
+  `OptixScene`), never a virtual call. Verified by inspecting the call chain:
+  `Scene::intersect` → `optix_scene()` (non-virtual) → `optix_backend().primary()`
+  (non-virtual inline) → `OptixScene::intersect<Detached>()` (non-virtual
+  template); the only per-batch virtual is `Scene::is_ready()`'s
+  `trace_backend_->is_ready()`.
+- **Split static/dynamic scene logic sunk into `OptixTraceBackend`.** The three
+  `OptixScene` unique_ptrs, `split_active`, and the static/dynamic mesh-index
+  bookkeeping moved out of `Scene` into `OptixTraceBackend`
+  (`src/trace/optix_trace_backend.{h,cpp}`), along with `should_split_optix_scene`
+  / `active_optix_split_mode`. The build/sync bodies are a **verbatim** transplant
+  of the old `scene.cpp` blocks, so results stay bit-identical (confirmed by the
+  golden + baseline gates below).
+- **`Scene::build()`'s unconditional OptiX GAS build is gone.** A triangle trace
+  backend is constructed only when the resolved plan asks for one
+  (`triangle_kind_ == Optix`); `trace_backend='none'` (or auto-resolved None on an
+  OptiX-less machine) leaves `trace_backend_` null and builds only the edge BVH.
+  `build()` validates the plan first: `trace_backend='optix'` without OptiX raises
+  "OptiX driver library is unavailable"; an OptiX edge backend without OptiX raises
+  naming `edge_bvh_backend="drjit"` as the software alternative.
+- **Clean, non-throwing OptiX probe.** `optix_available()` (`optix.cpp`/`optix.h`)
+  is `noexcept`, never calls `jit_optix_context()`, and caches its result per
+  process. `Scene(trace_backend="auto")` resolves to Optix when available and to
+  None otherwise — capability discovery, not exception catching. It also does not
+  eagerly initialize the OptiX context, so `set_device(initialize_optix=...)`
+  semantics are unchanged.
+
+### RAYD_DISABLE_OPTIX kill-switch
+
+`optix_available()` returns false immediately when the environment variable
+`RAYD_DISABLE_OPTIX` is `1`/`true` (case-insensitive), before touching any driver
+library. This lets an OptiX-capable desktop exercise the OptiX-less paths (the P1
+key gate). It is honored process-wide and cached on first call, so set it before
+constructing any Scene.
+
+### Gate results (RTX 5080, sm_120, Windows 11, conda `witwin3`)
+
+- **Key gate (OptiX blocked):** with `RAYD_DISABLE_OPTIX=1`,
+  `rd.optix_available()` is False, `Scene(edge_bvh_backend="drjit")` builds and
+  answers `nearest_edge`/`nearest_edges` with discrete fields **bit-identical** to
+  `tests/golden/baselines/optix/edge_queries.json`; `capabilities()` reports
+  `trace_backend="none"`, `optix_available=False`; `intersect` raises a clear
+  "requires a triangle trace backend" error; `Scene(trace_backend="optix")` and
+  the default `Scene()` raise the expected build-time errors. New test:
+  `backends/drjit/tests/drjit/test_trace_backend_gate.py` (8 cases, all green).
+- **OptiX-available regression:** all green — `test_geometry`,
+  `test_golden_scenes`, `test_visibility_topk`, `test_reflection_epc`,
+  `test_reflection_accumulation`, `test_diffraction_accumulation`, `test_surfel`,
+  `test_optix_pipeline_cold_create` (158 tests), `tests.drjit.test_baseline`
+  (bit-identical, 2), workspace suite `tests/` (195 tests, 3 pre-existing CI
+  skips), and the new gate (8). No baseline drift.
+- **Perf (< 3% gate):** controlled A/B, both builds freshly compiled and measured
+  back-to-back on the same idle GPU (`p1_perf_probe.py`, 262144 rays, median of 12
+  process-medians):
+
+  | op | pre-P1 median (ms) | P1 median (ms) | Δ median |
+  | --- | ---: | ---: | ---: |
+  | intersect | 0.1630 | 0.1580 | **−3.0%** |
+  | shadow_test | 0.1625 | 0.1505 | **−7.4%** |
+  | visible | 0.0139 | 0.0135 | **−2.9%** |
+
+  P1 is at parity or slightly faster — comfortably inside the < 3% gate. Note the
+  pre-P1 median (0.1630) is itself ~10% above the P0-recorded single-run baseline
+  (0.1486): sub-ms kernels are boost-clock/scheduling noise dominated, and that
+  drift moves both builds equally, so the controlled A/B — not the raw vs-P0
+  numbers — is the valid comparison. Naive back-to-back P1-only runs transiently
+  showed +15–45% purely from that drift; the A/B removes it.
+
+### Deviations from the P1 spec
+
+1. **Windows OptiX probe needed the driver-store lookup.** The spec's Windows
+   recipe (`GetModuleHandleW` else `LoadLibraryW("nvoptix.dll")`) returns null on
+   this machine: `nvoptix.dll` lives in the NVIDIA driver store
+   (`C:\WINDOWS\System32\DriverStore\FileRepository\nvmdi.inf_...\nvoptix.dll`),
+   not on the DLL search path, so a bare load fails with ERROR_MOD_NOT_FOUND (126)
+   and the probe wrongly reported OptiX unavailable — which broke every default
+   scene build. Fixed by extending the Windows path with the OptiX SDK's
+   `optixLoadWindowsDll` algorithm: enumerate display adapters via cfgmgr32, read
+   each device's `OpenGLDriverName`, and load `nvoptix.dll` from that directory.
+   Added `cfgmgr32`/`advapi32` to the Windows link libs in `CMakeLists.txt`. The
+   Linux/Jetson path uses the spec's `dlopen("libnvoptix.so.1", ...)` recipe
+   unchanged (the actual P2 target).
+2. **rt/ host-safety test for `backend.h`.** `TraceBackendKind::Optix` lowercases
+   to the existing FORBIDDEN token "optix", so `backend.h` cannot be added to the
+   shared `test_headers_are_host_safe` list as-is. A dedicated
+   `test_backend_header_is_host_safe` checks the real host-safety tokens
+   (`__device__`/`__host__`/`float3`/`cuda_runtime`) plus a guard against
+   `#include`ing any optix/cuda/drjit header, while allowing the enum-enumerator
+   identifier. `test_trace_capabilities_struct_field_order` freezes the field
+   order.
+3. **`OptixSceneSelection` promoted to namespace scope.** It was a private nested
+   `Scene::OptixSceneSelection`; it now lives at `rayd::OptixSceneSelection` in
+   `optix_trace_backend.h` so the backend can return it. The ~13 call sites and
+   the `test_project_metadata` source anchor
+   (`const OptixSceneSelection scenes = select_optix_scenes();`) are textually
+   unchanged; `Scene::select_optix_scenes()` remains a private method that
+   delegates to the backend.
+
+## P3 Stage A — extract the generic BVH core into shared/bvh/
+
+Behavior-preserving extraction of the primitive-agnostic BVH machinery out of the
+edge BVH (plan doc §15 P3 deliverable 1, §8.1). Zero behavior change: identical
+kernels, identical launch sequences, identical results.
+
+### What moved where
+
+- **`shared/include/rayd/shared/bvh/topology.h`** (new, namespace `rayd::shared::bvh`):
+  the generic `BvhFloat3`/`BvhBounds3`, `AabbSoAView`/`MutableAabbSoAView`, the raw
+  and compact topology views (with the literal `left_child[node] = -leaf_begin - 1`
+  leaf-encoding contract), `DeviceScratchView`, all eight treelet/leaf/stack/top-k
+  constants, and POD asserts (`RAYD_SHARED_BVH_ASSERT_POD`). This is now the single
+  home of these definitions.
+- **`shared/include/rayd/shared/bvh/build.h`** and **`refit.h`** (new): the seven
+  generic build param structs + launcher decls, and the three refit param structs +
+  launcher decls, all parameterized on `AabbSoAView`/topology rather than `EdgeSoAView`.
+- **`shared/src/bvh/build.cu`** (new, namespace `rayd::shared::bvh`): the ten generic
+  kernels (Morton, Karras radix tree, leaf/bounds finalize, SAH leaf/internal costs,
+  treelet DP optimizer, dirty-ancestor mark, dirty-level compact, internal-node refit)
+  and their ten launchers. The device code is byte-for-byte identical to the previous
+  `shared/src/edge/bvh_build.cu` (verified by per-function diff against `HEAD`).
+- **`shared/include/rayd/shared/bvh/traversal_common.cuh`** (new): the depth-major
+  `stack_push`/`stack_load` helpers (templated on the scratch view) and the near/far
+  tie-break `near_child_is_left`, shared for any BVH consumer.
+- **`shared/include/rayd/shared/bvh/host_topology.h`** (new, header-only, pure C++, no
+  Dr.Jit/Torch types): the primitive-agnostic host algorithms `compute_subtree_leaf_count`,
+  `compute_subtree_primitive_count`, `compute_node_height`, `collect_subtree_primitives`,
+  and the `HostCompactedBvh<Vec3>` / `emit_compacted_preorder<Vec3>` compaction, templated
+  on the caller's scalar vector type so bounds are copied byte-identically.
+
+### Edge layer keeps only edge-specific parts and delegates
+
+- `shared/edge/bvh_types.h` now includes `bvh/topology.h` and re-exports every generic
+  name via `using bvh::...` (types + constants), keeping `struct EdgeSoAView` as the only
+  edge-specific definition. All `rayd::shared::edge::` names still resolve unchanged.
+- `shared/edge/bvh_build.h` keeps the edge `PrimitiveBoundsParams` (+ launcher) and the
+  `BvhBuildParams`/`BvhRefitSelection`/`BvhRefitParams` contract structs (they carry
+  `EdgeSoAView`), re-exports the ten generic param structs, and declares thin edge
+  forwarding launchers.
+- `shared/edge/bvh_build.cu` keeps only the edge `compute_primitive_bounds` kernel and
+  defines ten thin forwarders (`shared::edge::launch_* -> shared::bvh::launch_*`). The
+  generic kernels exist exactly once, in the core.
+- `shared/edge/bvh_query.cu` now includes `bvh/traversal_common.cuh` and calls
+  `bvh::stack_push`/`bvh::stack_load`/`bvh::near_child_is_left` (local copies deleted);
+  the query kernels are otherwise unchanged.
+- `backends/drjit/src/edge/scene_edge.cpp` deletes its local copies of the four subtree/
+  height utilities and the compaction/`CompactedEdgeBVH`, and now calls the shared
+  `bvh::` host algorithms (`CompactedEdgeBVH = bvh::HostCompactedBvh<ScalarVector3f>`). The
+  dead host treelet optimizer and dead `build_preorder_mapping` were removed.
+
+### Deviations / scope decisions
+
+- **Torch left alone (as instructed).** Torch's `scene_cache.cpp::build_treelet_schedule`
+  is a structurally different iterative schedule (not byte-equivalent to the drjit host
+  optimizer), so it was not migrated. Torch native code was otherwise untouched; only its
+  CMakeLists source list gained `shared/src/bvh/build.cu` (and `backends/torch/abi_audit.json`
+  was regenerated because the audit hashes `CMakeLists.txt` — only its `source_sha256`
+  changed).
+- **Dead host treelet optimizer not extracted.** `rebuild_treelet_branch` /
+  `optimize_treelet_at_node` / `optimize_treelets_recursive` (and `build_preorder_mapping`)
+  had no live caller in `scene_edge.cpp` (GPU treelet path is used) and depend on Dr.Jit
+  `ScalarVector3f` + `require()`; they were removed rather than migrated. The device treelet
+  DP optimizer is fully shared in `bvh/build.cu`.
+- **`edge_bvh.obj` DEPENDS fix.** Aliasing the generic types under `bvh::` changes the
+  mangled names of the edge forwarders' signatures, so the `edge_bvh.cu` custom-command
+  object must recompile in lockstep. Its DEPENDS list gained the moved headers (both build
+  branches) so incremental/CI builds stay correct.
+
+### Build system
+
+`shared/src/bvh/build.cu` is compiled as a new object in both backends
+(`RAYD_SHARED_BVH_CORE_BUILD_OBJECT` in `backends/drjit/CMakeLists.txt`, and a new source
+entry in `backends/torch/CMakeLists.txt`), next to the existing `shared/src/edge/*` units.
+
+### Lockstep structure-test updates (equivalent-or-stronger pins on the new locations)
+
+- `tests/test_share5_edge_bvh_core.py`: topology struct defs / leaf-encoding comment /
+  treelet constants pinned in `bvh/topology.h` (plus edge re-export `using` checks); the
+  no-resources / `params.stream` and forbidden-strategy scans extended to `bvh/build.cu`
+  and the bvh core headers; the build-stage test now also asserts the generic launchers
+  live once in `bvh/build.cu` and the edge unit forwards to `bvh::`; the depth-major stack
+  indexing pin moved to `traversal_common.cuh` with a check that the query includes/uses it;
+  both-backends-compile check extended to `shared/src/bvh/build.cu`.
+- `tests/test_bvh4_shared_edge_core.py`: raw-pointer/caller-owned and enqueue-only contracts
+  extended to cover the bvh core headers and `bvh/build.cu`.
+- `tests/test_bvh1_removal.py`: the `finalize_leaves_and_bounds_kernel` atomic
+  publish-before-arrival invariant now pinned in `shared/src/bvh/build.cu`.
+
+### Verification (RTX 5080, sm_120, conda `witwin3`)
+
+- Device code byte-identical: per-function diff of every moved helper/kernel/launcher against
+  `HEAD` — 0 mismatches; the retained edge `compute_primitive_bounds` kernel/launcher identical.
+- Full suites green: `test_share5`/`test_bvh4`/`test_bvh1..3`/`test_edge_bvh_benchmark_*`,
+  drjit `test_geometry`/`test_golden_scenes`/`test_visibility_topk`/`test_trace_backend_gate`
+  (85 tests), drjit `tests.drjit.test_baseline`, and `unittest discover -s tests` (195 tests,
+  3 pre-existing skips) — all OK.
+- **Edge BVH gate — launch counts identical.** Pre vs post smoke: 330/330 launch-audit metric
+  comparisons `increase = 0`; 0 per-case launch-count mismatches across 11 cases (e.g. build
+  = 1921 launches pre and post). No launch-count regressions.
+- **Timing thresholds are noise-limited on the smoke profile, not a real regression.** The
+  pre-vs-post gate flags 8 timing failures (`build_ms`/`hot_query_ms`/`refit_ms`), but gating
+  the *byte-identical* post binary against itself (post-vs-postB and postB-vs-postC) flags
+  6-9 of the same timing metrics per run, with equal or larger deltas (e.g. build 132→162 ms
+  = +23 %, refit 1.09→1.61 ms = +48 %). `refit_ms` regresses on refit code this change does not
+  touch at all. Conclusion: the timing deltas are run-to-run measurement variance on this
+  desktop at the 3 %/5 % smoke thresholds; the deterministic launch-count invariant (the real
+  regression check) is identical, and the behavior suites confirm bit-identical edge-query
+  results.
+
+## P3 Stage B+C — the pure-CUDA triangle TraceBackend
+
+A second concrete `TraceBackend` (`trace_backend='cuda'`) that answers closest-hit
+and occlusion queries with raw CUDA kernels over a scene-level triangle BVH, with
+no OptiX driver dependency (plan doc §5 eager-native axis, §8.2). Multipath stays
+OptiX-only until the CUDA fused executor (P4).
+
+### Design (locked in the supervisor spec)
+
+- **Single scene-level BVH over world-space triangles, no BLAS/TLAS.** Source is
+  `Scene::triangle_info_detached_.{p0,e1,e2}` (SoA, world space, transforms already
+  baked, indexed by global primitive id, refreshed by `sync()`). Unlike OptiX we do
+  not need an IAS because the detached triangles are already in world space.
+- **Watertight intersector** (`shared/include/rayd/shared/bvh/triangle_intersect.h`,
+  host/device dual, pure): Woop-Benthin-Wald 2013 ray-centric shear + 2D edge
+  functions, no backface culling, boundary-inclusive. The returned `(u, v)` match
+  the Möller-Trumbore convention of `utils.h ray_intersect_triangle`
+  (`P = p0 + u·e1 + v·e2`), verified against it. The edge functions use an
+  FMA-contraction-proof difference of products (Kahan) so a mathematically zero
+  edge function is exactly `0.0f` under any `--fmad` setting — without this a
+  diagonal-crossing ray gets a tiny-residual edge function of arbitrary sign and is
+  spuriously rejected (this was the initial watertight-grid failure: 8/1600 gaps,
+  all on the shared diagonal).
+- **Three separate traversal kernels** (`shared/src/bvh/triangle_query.cu`,
+  allocation-free, stream-parametered, POD params): `closest_hit` (near/far slab
+  ordering, `(t, global_prim_id)` tie-break), `occluded` (early-exit any-hit), and
+  `first_blocker` (closest blocker + per-ray ignore list). Each uses a 64-deep
+  depth-major caller-owned stack (`traversal_common.cuh` `stack_push`/`stack_load`)
+  plus a per-ray overflow flag; a build-time guard (`max_height + 1 ≤ 64`) makes
+  overflow structurally impossible, and brute-force repair kernels are wired as the
+  fallback the overflow flag triggers.
+- **`CudaTraceBackend`** (`backends/drjit/{include,src}/rayd/trace/cuda_trace_backend.*`
+  + `src/trace/triangle_bvh.cu`): clones the edge-BVH integration shape — persistent
+  Dr.Jit member buffers, `dr.eval` + `sync_thread` before exposing `.data()`, the
+  `.cu` orchestrator owns its own non-blocking streams + `CudaBuffer` scratch and
+  drives the shared `bvh/build.h` launchers, host compaction via `host_topology.h`,
+  and refit level-by-level in ascending height. Build is pure LBVH (see Deviations).
+  Every op records `audit_*` hooks under a new `NativeLaunchStage::Intersect`.
+- **Seam**: `CudaTraceBackend::intersect<Detached>`/`shadow_test<Detached>` return the
+  same detached `OptixIntersection`-shaped result as `OptixScene`, so
+  `scene_intersect.cpp:72+` (winner derivation + AD recompute) is reused verbatim.
+  A `triangle_kind_ == Cuda` arm gates the broad phase in `scene_intersect.cpp` and
+  `scene_multipath.cpp shadow_test`, both guarded against Dr.Jit symbolic recording
+  (`jit_flag(Recording)` ⇒ clear error). `optix_backend()` now kind-checks and
+  `optix_split_active()` is guarded so a CUDA scene never reinterprets the backend
+  pointer; multipath entry points raise "requires the OptiX trace backend; CUDA
+  multipath arrives with the CudaFusedExecutor (P4)".
+- **Numerics** match OptiX exactly: `tmin = RayEpsilon` (1e-3), `tmax = isfinite ?
+  tmax : 1e8`, miss ⇒ `t = +inf`, ids `= -1`.
+- **Python/contract**: `resolve_trace_backend_kind` maps `"cuda"` to the backend;
+  `capabilities()` reports `trace_backend="cuda"`, `integration=["eager_native"]`,
+  `intersect`/`shadow_test` true and multipath false; `public_api.json` trace section
+  gains the `cuda` backend + `frontend_support.drjit.cuda=["eager_native"]`, with
+  both `_capabilities.py` copies, the EOL-normalized SHA pin, and the manifest test
+  updated in lockstep.
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green:
+
+- **`test_cuda_trace_backend`** (new, 10 tests): golden cross-backend parity
+  (discrete bit-identical vs `baselines/optix`, continuous within `operations.json`
+  tolerances) across every CUDA-servable query in `single_tri`, `shared_edge_quad`,
+  `degenerate_tri`, `large_coordinates`, `self_intersection`, `multi_mesh_ids`,
+  `dynamic_refit`, `inactive_lanes`, `batch_sizes`, `finite_tmax_visibility`
+  (shadow), plus `edge_queries`/`edge_tie`; watertight 40×40 grid over the
+  shared-edge quad = 1600/1600 hits with 40 exact-diagonal rays, all occluded, zero
+  gaps; exact-diagonal `t ≈ 1.0`; degenerate zero-area triangle never hit and no
+  NaN; 1e6-offset scene hits; AD vertex + transform gradients identical to the OptiX
+  backend; dynamic vertex update refits (hit → miss → hit at the moved location);
+  launch audit shows exactly 1 `triangle_closest_hit_kernel` per query and a stable
+  50 launches over 50 queries (no per-call cudaMalloc-driven kernels / no overflow
+  repair); recording guard raises; first-blocker self-test returns prim 0, then
+  prim 1 with `ignore=[0]`, then -1 with `ignore=[0,1]`.
+- **OptiX regression (default path untouched, bit-identical):** `test_golden_scenes`
+  (2), `test_geometry` (63), `test_trace_backend_gate` (9, now incl. the CUDA-
+  constructs case), `test_visibility_topk` (12), `test_reflection_epc` (12),
+  `test_reflection_accumulation` (6), `test_diffraction_accumulation` (30),
+  `test_surfel` (32), `test_optix_pipeline_cold_create` (1), `tests.drjit.test_baseline`
+  (2), and workspace `unittest discover -s tests` (195, 3 pre-existing skips,
+  including the updated `test_public_api_manifest`).
+
+### Perf snapshot (informational, not a gate)
+
+RTX 5080, 18,432 triangles, 262,144 rays, median ms:
+
+| op | OptiX | CUDA |
+| --- | ---: | ---: |
+| `intersect` | `0.18 ms` | `2.21 ms` |
+| `shadow_test` | `0.15 ms` | `1.43 ms` |
+
+CUDA is ~9-12× slower than OptiX, as expected: it is the driver-independent Orin
+fallback path (pure LBVH, no RT cores).
+
+### Deviations from the spec
+
+- **Pure LBVH build, no treelet pass.** The build reuses the shared Morton/radix/
+  finalize launchers but omits the GPU treelet optimizer that the edge BVH runs at
+  ≥65 k primitives. Rationale: treelet is a query-throughput optimization that is
+  correctness-neutral (it never changes primitive membership), never triggers on the
+  golden scenes, and only affects the informational perf number. This keeps the
+  single-pass build tractable and low-risk; the treelet pass can be lifted from the
+  shared launchers later behind the same size gate.
+- **`shared/src/bvh/triangle_query.cu` is registered in both backends' CMakeLists**
+  (and `backends/torch/abi_audit.json` regenerated) to keep the shared source set
+  symmetric, even though the Torch backend does not consume the triangle trace
+  kernels until P4.
+
+## P4 Stage A — Traverser infrastructure + reflection-trace pipeline migration
+
+The pattern-setter for every later multipath migration: a backend-neutral
+Traverser concept, the extraction of the P3 triangle traversal cores into a
+reusable device header, and the reflection-trace pipeline lifted end-to-end into a
+host-compilable, traverser-templated algorithm body. Reflection is the smallest
+multipath pipeline (one ray-cast site, one payload shape), so it establishes the
+shape the rest of P4 follows.
+
+### What moved
+
+- **`shared/rt/qualifiers.h`** (new): `RAYD_DEVICE` / `RAYD_HOST_DEVICE` behind the
+  `__CUDACC__` toggle (`inline` under a host compiler). `shared/math/vec3.h` now
+  spells its inline qualifier through `RAYD_HOST_DEVICE` — behavior-identical to the
+  former local `RAYD_SHARED_MATH_INLINE`.
+- **`shared/rt/traverser.h`** (new): `struct TriangleHit` (decoded mirror of the
+  OptiX `TriangleHitPayload`), the C++17 `is_traverser` traits + `static_assert`
+  concept (`trace_closest`, `trace_occluded`, `trace_occluded_ignore`,
+  `trace_first_blocker`), and `TraceConfig<Layout, Traverser>` merging the two axes
+  (audit A3). Instantiation matrix is documented in-header: DrJit × {Optix, CudaBvh},
+  Torch × {Optix} only. Host-safe (no device qualifier / SDK-include tokens; checked
+  by `test_rt_contract_headers`).
+- **`shared/bvh/triangle_query_device.cuh`** (new): the P3 triangle traversal cores
+  (`traverse_closest`, `traverse_any_hit`, `traverse_first_blocker`, brute-force
+  repair, `safe_rcp`, `intersect_node_bounds`, …) extracted verbatim from
+  `shared/src/bvh/triangle_query.cu`. The kernels become thin `__global__` wrappers
+  calling the cores — behavior and the one-launch-per-query contract unchanged.
+- **`shared/bvh/cuda_bvh_traverser.h`** (new): `CudaBvhTraverser` over a `CudaBvhView`,
+  implementing the Traverser concept on those cores. Compiled and concept-checked via
+  `triangle_query.cu` (both backends); not yet wired to a pipeline (that is the P4d
+  `CudaFusedExecutor`).
+- **`shared/optix/optix_traverser.h`** (new): `OptixTraverser`, the sole home of
+  `optixTrace` + the six-register payload codec, decoding to `TriangleHit`. Holds ONE
+  traversable handle; the dual-handle "choose nearest" logic stays in the algorithm
+  (it is pipeline semantics, not traversal), which owns a primary and a secondary
+  traverser.
+- **`shared/multipath/reflection_trace_algo.h`** (new): the de-CUDA-ised algorithm.
+  `math::Vec3f` throughout (mirroring the exact op order of the old local `float3`
+  helpers so device codegen stays bit-identical), all ray casts routed through the
+  Traverser, the lane index a plain `uint32_t` parameter, templated over `TraceConfig`.
+  The P0 numeric-policy `static_assert` locks moved here with the constants. Contains
+  no `optixTrace` / `optixGet/SetPayload` / `optixGetLaunchIndex` / `float3` token
+  (grep-gated) and compiles under a pure host C++ compiler.
+- **`shared/optix/reflection_trace_device.cuh`** (refactored): keeps only the OptiX
+  layer — raygen/closesthit/miss entries, `ReflectionTracePolicy` (now the Layout axis)
+  with the DrJit/Torch aliases, the `OptixTraverser` instantiation, and params
+  adaptation. Produces bit-identical behavior.
+
+### Risk protocols
+
+- **A (FP bit-identity):** the observable reflection output is bit-identical across the
+  refactor — the two-bounce fingerprint (`t = [1.4142135381698608, 0.7070969939231873,
+  inf]`, `hit = [1.0, 0.0, 1.4999998807907104] / [0.4999997615814209, 0.0, 2.0]`,
+  image sources `[2,0,0.5] / [2,0,3.5]`) matches to the last ULP before and after.
+  `test_baseline` (continuous within tolerance, discrete exact), the golden suite, and
+  a `test_golden_scenes` determinism double-run are all green.
+- **B (PTX regen):** the committed DrJit reflection-trace PTX was regenerated via
+  `-DRAYD_REGENERATE_REFLECTION_TRACE_PTX=ON` (passed through scikit-build with
+  `SKBUILD_CMAKE_DEFINE`, OptiX SDK 9.1.0). `.version 8.8` / `.target sm_70` are
+  unchanged (local nvcc 12.9.41 matches the committed header's compiler); no test pins
+  PTX properties. The regenerated PTX differs only structurally — register renumbering,
+  the two traversable-handle loads hoisted earlier (up-front traverser construction),
+  and a `setp.ge`↔`setp.le` operand swap on the identical `ray_index >= n_rays` guard —
+  with no change to the floating-point instruction stream. The multipath pipeline
+  guardrail holds (`test_optix_pipeline_cold_create` green after regen).
+- **C (Torch):** the full Torch build succeeds and `test_multipath` (32) is green with
+  `TorchReflectionTracePolicy` on the same shared headers. The initial build attempt
+  failed on `No space left on device` (system `C:` at 100%) in unrelated diffraction /
+  edge / common `.cu` files — my two P4a surfaces (`reflection_trace_optix.ptx` from
+  `trace_optix.cu`, and `triangle_query.cu.obj`) had already compiled cleanly.
+  Redirecting the nvcc temp directory to a drive with free space completed the build.
+- **D (perf, < 3% gate):** `trace_reflections` (4-bounce, 4096 rays) median ≈ 0.24 ms /
+  best ≈ 0.19 ms, versus the pre-refactor baseline median 0.28 ms / best 0.22 ms — no
+  regression (the numerically identical PTX runs the same math).
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green: `test_geometry` (63), `test_golden_scenes` (2, plus determinism re-run),
+`test_trace_backend_gate` (9), `test_reflection_accumulation` (6), `test_reflection_epc`
+(12), `test_diffraction_accumulation` (30), `test_visibility_topk` (12), `test_surfel`
+(32), `test_optix_pipeline_cold_create` (1, critical after PTX regen),
+`tests.drjit.test_baseline` (2, bit-identical), workspace `unittest discover -s tests`
+(200, 3 pre-existing/environmental skips), the new host-compile gate
+(`test_rt_host_compile`: the algorithm header compiled host-only by `cl.exe` located via
+`vswhere`, plus the token grep-gate), and Torch `test_multipath` (32). `test_cuda_trace_backend`
+passes on non-racing runs (10 tests) — see the known issue below.
+
+### Known issue (pre-existing, out of scope)
+
+`test_cuda_trace_backend`'s full-collection setup is intermittently flaky under the
+CUDA trace backend: the `batch_sizes` intersect-grid occasionally reports zero hits
+(all rays miss), which surfaces as a `min() arg is an empty sequence` collection error.
+An A/B rebuild confirms this predates P4a and lives in the unchanged P3 CUDA
+orchestration (`cuda_trace_backend.cpp` / `triangle_bvh.cu`, a separate-stream eager
+launch), not the traversal cores: HEAD `a06487c`'s triangle_query.cu failed 6/30 full
+collections; the P4a extraction failed 9/30 (statistically comparable at a ~25% base
+rate). The extraction is verbatim code motion and every non-racing run matches the
+OptiX baselines bit-for-bit. Left as-is rather than patching P3 orchestration outside
+this stage.
+
+## P3 post-hoc fix — literal-materialization race (supervisor debug, commit b7f7226)
+
+P4a's repeated gate runs exposed an intermittent whole-batch zero-hit failure in the CUDA eager
+query path (~25% repro on the `batch_sizes` golden scene; present at P3 HEAD `a06487c`, proven by
+A/B). Root cause: `drjit::eval()` is a **no-op for literal-backed arrays** — the `select()`-folded
+`t_max` (all-`1e8`) and an all-ones `active_flags` stay symbolic through `eval()` + `sync_thread()`,
+and their fill kernels are only enqueued by the later `.data()` calls, i.e. AFTER the stream sync.
+The native query kernel on the backend's own stream then raced those fills and intermittently read
+garbage ray inputs. Symptom fingerprint: whole-batch failure (not per-ray), only on the CUDA eager
+path, scene-dependent (default `tmax=inf` takes the literal fold).
+
+Fix: touch `.data()` on every device pointer the native launch consumes BEFORE `sync_thread()`, in
+all three query paths. Stress gate: 30/30 consecutive `test_cuda_trace_backend` runs green
+(previously ~6/30 failing). Lesson recorded for all future eager native paths: `eval()` does not
+materialize literals; pointer acquisition is the enqueue point and must precede the sync.
+
+## P4 Stage B — segment visibility + reflection-EPC pipeline migration
+
+Following the P4a pattern, the two remaining "trace" multipath pipelines were lifted
+end-to-end into host-compilable, traverser-templated algorithm bodies. Segment
+visibility (four launch variants, one occlusion `optixTrace` with a conditional
+anyhit ignore filter) and reflection EPC (the 739-line discovery kernel: a reflector
+scene trace + a mode-switched segment-visibility trace, sharing one SBT) both now
+carry their math in `math::Vec3f`, route every ray cast through an `rt::is_traverser`
+Traverser, and take the lane index as a plain parameter.
+
+### What moved
+
+- **`shared/multipath/segment_visibility_algo.h`** (new): the de-CUDA-ised bodies of
+  `segment_visibility_algo` / `segment_pair_visibility_algo` /
+  `axial_edge_visibility_algo` / `segment_chain_visibility_algo`, plus the shared
+  `trace_segment` core. The P0 numeric locks (`kTraceTMin` / `kRayBias` /
+  `kMinSegmentLength`) and their `static_assert`s moved here with the constants. The
+  `out_t` +inf sentinel is written through a host/device `uint_as_float` helper
+  (device `__uint_as_float`, host `memcpy`) instead of the device intrinsic.
+- **`shared/multipath/reflection_epc_algo.h`** (new): the discovery body
+  `run_reflection_epc_algo<Config, DirectOnly, PrimaryVisibilityOnly>` and every
+  helper that was `float3`-typed (`length3`, `point_inside_triangle`,
+  `point_inside_surface_group`, `surface_group_for_prim`, containment freeze,
+  `store_invalid`, the shared `epc_backtrace_and_length` call, …). `normalize3`
+  collapses to `reflection::epc_normalize` (verified bit-identical on device); the
+  `to_shared`/`from_shared` `float3`↔`Vec3f` repacks vanish because the body is
+  `Vec3f` throughout. `reflection_geometry.h` was confirmed host-compilable as-is
+  (its `inline` host branch already builds; `intersect_line_plane` was migrated to
+  keep `intersect_segment_plane` host-exercised even though it is dead in discovery).
+- **`shared/optix/segment_visibility_device.cuh`** (refactored): keeps the anyhit /
+  closesthit / miss programs byte-for-byte, the `SegmentVisibilityDevicePolicy`
+  layout policy, the four raygen entries, and gains `SegmentVisibilityOptixTraverser
+  <DisableAnyHitWithoutIgnore>` — the sole home of the occlusion `optixTrace`, which
+  reconstructs the anyhit's ignore-row base from the algorithm's ignore sub-pointer.
+- **`shared/optix/reflection_epc_device.cuh`** (refactored): keeps the mode-switched
+  programs byte-for-byte and gains `ReflEpcOptixTraverser<DisableAnyHitWithoutIgnore>`,
+  a single traverser whose `trace_closest` runs the reflection-mode cast and whose
+  `trace_first_blocker` runs the visibility-mode cast — the two `optixTrace` sites —
+  so the algorithm owns one primary + one secondary traverser exactly as P4a's
+  reflection body does.
+
+Both backends' `.cu` adapters are unchanged: the raygen entry names and signatures
+(`raygen_segment_chain`, `run_reflection_epc_raygen<Policy, Direct, PrimaryOnly>`,
+…) and the DrJit/Torch policies (`SegmentVisibilityDevicePolicy<false,false>` vs
+`<true,true>`, `DisableAnyHitWithoutIgnore = false` vs `true`) are preserved.
+
+**Blocker-prim convention (occlusion path).** The OptiX occlusion closesthits still
+emit the blocker's *global* prim id, so the traversers return it in `TriangleHit.prim`
+with `instance = -1`; the algorithm resolves it through `global_primitive_id`, which
+is a pass-through for `instance = -1` and computes the real global id from a mesh-local
+prim + shape. This keeps the OptiX programs byte-identical AND makes the algorithm
+correct for a future `CudaBvhTraverser` (which reports mesh-local prim + shape) with no
+edit — the same helper serves both. P4d wiring of the CUDA path needs no reconciliation.
+
+### Risk protocols
+
+- **A (FP bit-identity):** a fixed-scene fingerprint over `scene.visible` /
+  `visible_pair` / `visible_edge` / `visible_chain` and `scene.trace_refl_epc`
+  (1-bounce blocked, 1-bounce valid, 2-bounce), captured as exact `float.hex()` reprs
+  BEFORE any edit (installed P4a `.pyd`) and AFTER the migrated build, is **bit-for-bit
+  identical** — every EPC `path_length`, `reflection_points` and `plane_normals`
+  component matches to the last ULP, and every visibility bool/blocker matches. It
+  stayed identical across the A/B rebuild cycle. `test_baseline` (continuous within
+  tolerance, discrete exact) and a `test_golden_scenes` determinism double-run are green.
+- **B (PTX regen):** the committed DrJit segment-visibility and reflection-EPC PTX were
+  regenerated via `-DRAYD_REGENERATE_SEGMENT_VISIBILITY_PTX=ON` /
+  `-DRAYD_REGENERATE_REFLECTION_EPC_PTX=ON` (passed through scikit-build with
+  `SKBUILD_CMAKE_DEFINE`, OptiX SDK 9.1.0). `.version 8.8` / `.target sm_70` unchanged.
+  The committed headers are LF-normalized (CMake normalizes CRLF→LF on read, so the
+  embedded `_size` is the LF byte count; the build-dir header's `file(APPEND)` re-adds
+  CRLF, so the committed copy is `\r`-stripped to make `_size == embedded length`
+  self-consistent — cleaner than P4a's reflection_trace, whose committed string kept its
+  CRLF). Segment visibility's FP-instruction multiset is essentially unchanged (556→559,
+  +3 `mov.f32`). Reflection EPC's regenerated PTX is ~12% larger with more register
+  spilling (`ld.local` 63→147, larger `sqrt`/`mul` counts) — a codegen artifact of the
+  one-big-inlined-function algorithm body, **not** a math change: the observable outputs
+  are bit-identical (risk A) and the controlled perf A/B (risk D) shows no runtime cost.
+  `test_optix_pipeline_cold_create` green after regen. The multipath pipeline guardrail
+  (exception flags 11) was not touched.
+- **C (Torch):** the full Torch build succeeds; `test_multipath` (32) is green and the
+  opt-in cross-backend `test_drjit_parity` (12, `RAYD_TORCH_RUN_DR_JIT_PARITY=1`) passes,
+  confirming Torch and DrJit produce matching results on the migrated shared headers with
+  `SegmentVisibilityDevicePolicy<true,true>` / `TorchEpcPolicy`. The build redirected
+  `TMP`/`TEMP` to a drive with free space (system `C:` full), as in P4a.
+- **D (perf, < 3% gate):** a controlled same-session rebuild A/B (old shims + old committed
+  PTX via `git stash`, non-regen build, vs the migrated regen build) shows **no regression**:
+  heavy kernel-dominated probe `scene.visible` (262 144 rays) p5 ≈ 0.120 ms both; heavy
+  `trace_refl_epc` (65 536 rays, 2-bounce) p5 old ≈ 0.102 ms vs new ≈ 0.098 ms (new marginally
+  faster). The larger EPC PTX does not cost runtime (the spills sit on cold discovery paths).
+  A first cross-session light probe suggested EPC +8%, which the controlled A/B showed to be
+  measurement noise (sub-100-µs dispatch-dominated timings).
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+All green: `test_visibility_topk` (12, critical), `test_reflection_epc` (12, critical),
+`test_optix_pipeline_cold_create` (1, critical after regen), `test_geometry` (63),
+`test_golden_scenes` (2, plus determinism re-run), `test_trace_backend_gate` (9),
+`test_cuda_trace_backend` (10, no flake — stable after the b7f7226 race fix),
+`test_reflection_accumulation` (6), `test_diffraction_accumulation` (30), `test_surfel`
+(32), `tests.drjit.test_baseline` (2, bit-identical), workspace `unittest discover -s
+tests` (200, 3 pre-existing/environmental skips), the host-compile gate
+(`test_rt_host_compile`: both new algo headers compiled host-only by `cl.exe`, plus the
+extended token grep), and Torch `test_multipath` (32) + `test_drjit_parity` (12, opt-in).
+
+`test_share2` (the EPC portion) and the Torch `abi_audit.json` were updated: the former to
+point at the migrated algorithm header for the shared reflect / segment-plane primitives
+(exactly as P4a updated its reflection-trace half); the latter regenerated because the
+audit hashes `backends/torch/CMakeLists.txt`, whose PTX-build DEPENDS gained the new algo
+headers.
+
+## P4 Stage C — reflection accumulation + diffraction paths + diffraction accumulation migration
+
+The implementation agent completed the code migration and PTX regeneration, then was terminated by
+a session limit before running gates; the supervisor completed verification and the lockstep
+structure-test updates.
+
+- Migrated: `reflection_accumulation_algo.h`, `diffraction_paths_algo.h`,
+  `diffraction_accumulation_algo.h` (host-compilable, traverser-templated); the device headers keep
+  the OptiX entry layers (`DiffractionAccumulationOptixTraverser` holds the two diffraction
+  optixTrace casts; reflection accumulation reuses the shared `OptixTraverser`); a new
+  `diffraction_paths_device.cuh` shim; both local `HitPayload` duplicates dissolved into
+  `rt::TriangleHit`. Backend `.cu` adapters keep entry names/signatures unchanged.
+- FP bit-identity: fixed-scene `float.hex()` fingerprints (accumulation + diffraction ops), double
+  runs at HEAD `f809861` and post-migration: HEAD deterministic, new deterministic, HEAD == new
+  bit-for-bit. Atomics proved run-to-run deterministic on the fingerprint scenes at HEAD.
+- PTX (regenerated, `.target sm_70`/`.version 8.8`): reflection accumulation — zero FP-instruction
+  delta, zero spills; diffraction paths/accumulation — FP totals ±0.1% (small fma↔mul/sub mix
+  shifts on paths whose results still fingerprint bit-identical), zero `ld.local`/`st.local` before
+  and after. Perf gate satisfied by instruction-stream neutrality (accepted in lieu of a wall-clock
+  A/B, which the agent did not reach; an unchanged instruction stream with zero spill delta cannot
+  regress 3%).
+- Lockstep structure-test updates (supervisor): `test_share6_diffraction_accumulation_device` /
+  `test_share6_reflection_accumulation_device` (algorithm tokens now pinned in the algo headers,
+  entries in the device shims, plus a new anti-duplication pin forbidding `struct HitPayload` from
+  reappearing), `test_shared_field_math` (UTD delegation + fresnel pins → algo headers),
+  `test_shared_headers` (canonical UTD include → algo header, `<utd/` forbidden in both layers).
+- Gates: drjit GPU suite 177/177 (both accumulation suites critical-green), baseline 2/2
+  bit-identical, workspace 201 OK (3 pre-existing skips), torch build + test_multipath 32/32 +
+  opt-in cross-backend drjit parity 12/12, host-compile + grep gates extended to the three new
+  algo headers.
+
+All seven optixTrace sites identified in the pre-P0 audit are now confined to traverser shims;
+every multipath algorithm body is host-compilable. Remaining for P4d: CudaFusedExecutor wiring,
+the full grep gate over shared/multipath+rt, and the instantiation-matrix check.
+
+## P4 Stage D — CudaFusedExecutor (multipath for trace_backend="cuda")
+
+The pure-CUDA counterpart of the OptiX multipath pipeline launches: each migrated,
+traverser-templated algorithm body (`shared/multipath/*_algo.h`) now runs on the Dr.Jit
+eager-native path with `Traverser = shared::bvh::CudaBvhTraverser` over the single scene-level
+triangle BVH, one thread per lane (the lane index is the former `optixGetLaunchIndex`).
+
+### What landed
+
+- **`backends/drjit/src/trace/cuda_multipath.cu`** (new, object-compiled like `triangle_bvh.cu`):
+  one `__global__` kernel per pipeline that builds a `CudaBvhView` + per-lane traversal-stack
+  scratch and instantiates the shared algorithm body. Owns its own non-blocking stream + scratch,
+  audit hooks, and synchronizes before returning. Compiled with `--use_fast_math` to match the
+  OptiX `-ptx` PTX (without it the UTD diffraction field drifted ~2e-4 relative, past the 5e-5
+  `field_rel` tolerance; with it the field matches OptiX to ~1e-7).
+- **`backends/drjit/include/rayd/trace/cuda_multipath_gpu.h`** (new): host-safe seam declaring
+  `CudaMultipathBvh` (raw BVH pointers) and the `launch_*_cuda` launchers. Kept out of the
+  widely-included `cuda_trace_backend.h` (forward declarations only there) so its `<vector_types.h>`
+  pull does not leak into pure-host TUs like the nanobind `_C` module.
+- **`CudaTraceBackend`** gains the fused surface: `run_reflection_trace`, `run_segment_visibility`,
+  `run_reflection_accumulation`, `run_reflection_epc`, `run_dfr_paths`. Each forces the single-scene
+  convention (`split_mode = 0`, null handles / a non-zero visibility sentinel), materializes the BVH
+  buffers, and drains the Dr.Jit stream before launching (the b7f7226 protocol: the caller `.data()`s
+  every param pointer during assembly, then `materialize_for_fused_launch()` touches the BVH pointers
+  and `sync_thread`s once, so the fused kernel on its own stream sees consistent inputs).
+- **`scene_multipath.cpp`** dispatch: every wired op gains a `triangle_kind_ == Cuda` arm that
+  marshals the params exactly like the OptiX native launch, then calls the fused surface instead of
+  `pipeline->launch(0, params)`. The four `visible*` methods take the CUDA arm before the jit /
+  native OptiX dispatch (the jit-symbolic variants stay OptiX-only).
+
+### Per-pipeline status (a–e)
+
+- **a. Reflection trace** (`trace_reflections` symbolic=False) — LANDED. `reflection_trace_algo.h`
+  with `CudaBvhTraverser`; a null secondary (same view, never consulted since split_mode=0).
+- **b. Segment visibility** (`visible` / `visible_pair` / `visible_edge` / `visible_chain`) — LANDED.
+  The CUDA arm replaces the NATIVE variant; the jit-symbolic variant stays OptiX-only. Ignore lists
+  are global prim ids, which `CudaBvhTraverser.trace_first_blocker` compares directly.
+- **c. Reflection EPC** (`trace_refl_epc`, `trace_refl_epc_field`) — LANDED, including surface-group
+  ignore parity. `CudaBvhTraverser` handles primitive-mode ignore natively; a dedicated
+  `CudaEpcTraverser` (in `cuda_multipath.cu`) adds a group-aware closest-blocker traversal that
+  resolves each candidate prim to its surface group (parity with the OptiX anyhit filter) without
+  touching the shared traversal core. EPC is non-AD (both entries `require(false)` for `!Detached`),
+  so it is inherently broad-phase-agnostic; the EPC field computation (`reflection_epc_field_gpu`)
+  is already a plain CUDA kernel and needed only the discovery on CUDA.
+- **d. Reflection accumulation** (`accumulate_reflections`) — LANDED. `reflection_accumulation_algo.h`
+  with a duplicated `CudaReflectionAccumulationPolicy` (bit-for-bit the DrJit atomic-commit policy).
+- **e-1. Diffraction path export** (`trace_dfr_paths`) — LANDED. Single-scene two-phase export
+  (source-visibility prepass then target export) ordered on one stream, matching the split_mode==0
+  OptiX path.
+- **e-2. Diffraction accumulation** (`accum_dfr` / `accum_dfr_direct` / `accum_dfr_coherent_direct`)
+  — LANDED (see the "Diffraction accumulation — delivery" subsection below). The last remaining
+  pipeline; every multipath entry point now runs on `trace_backend='cuda'`.
+
+### Shared-header changes (all PTX-neutral for the OptiX `-ptx` compiles)
+
+- **Params handles → `std::uint64_t`.** `AccumParams` / `DfrPathParams` / `DfrAccumParams` handle
+  fields changed from `OptixTraversableHandle` to `std::uint64_t` (matching the already-migrated
+  reflection/EPC/visibility params), so `cuda_multipath.cu` needs no OptiX headers. Same underlying
+  type (`unsigned long long`) ⇒ identical codegen; the OptiX shims' `static_cast<OptixTraversableHandle>`
+  is a no-op.
+- **`__CUDACC__` → `__CUDA_ARCH__`** in the device/host branch selection inside the `RAYD_HOST_DEVICE`
+  helpers of all six `*_algo.h`. `__CUDACC__` is defined in BOTH nvcc passes, so the host pass of the
+  object-compiled fused unit was taking the device branch and calling device-only intrinsics
+  (`atomicAdd`, `__uint_as_float`) → host-pass errors. `__CUDA_ARCH__` is defined only in the device
+  pass, the correct idiom; the `-ptx` device compiles are unaffected.
+- **`utd_types.h`:** `UTD_DEVICE` / `UTD_DINLINE` promoted from `__device__` to `__host__ __device__`
+  under `__CUDACC__` so the UTD helpers are callable from the host+device object unit; the two
+  `sincosf` body guards moved to `__CUDA_ARCH__` (MSVC's host pass lacks `::sincosf`). Device codegen
+  for `-ptx` is unchanged.
+
+### AD verification
+
+- **EPC:** non-AD (native fast path); no fixed-winner AD recompute exists, so it is broad-phase-agnostic.
+- **Reflection accumulation:** the CUDA arm covers the eager (`Detached`) native launch; the AD path is
+  the existing Dr.Jit `scatter_reduce` symbolic path (unchanged, backend-independent).
+- **Diffraction accumulation AD:** `diffraction_accumulation_ad.cu` is a pure-CUDA custom-op tape (no
+  `->launch`, no `select_optix_scenes`) — already backend-agnostic. Not OptiX-coupled.
+
+None of the wired ops has an OptiX-coupled AD flow (no stop-and-report on AD).
+
+### Diffraction accumulation — delivery
+
+The last remaining pipeline. Delivered on the same eager-native pattern as e-1, with one structural
+difference: the migrated `DiffractionAccumulationAlgo<Policy, Traverser>` reads its storage through a
+**static `Policy::params()` accessor** (every other migrated algorithm takes params by argument). The
+shared body cannot change without disturbing the byte-identical OptiX path, so the CUDA arm keeps the
+same contract by staging the marshaled `DfrAccumParams` into a file-local `__constant__`
+(`g_dfr_accum_params` in `cuda_multipath.cu`) via `cudaMemcpyToSymbolAsync` on the launch stream before
+each launch — mirroring the OptiX module's own `__constant__ params`. This is the one place the CUDA
+executor uses a `__constant__`; it is confined to `cuda_multipath.cu` (not the DrJit/Torch `.cu`
+adapters, so the `test_share6` pins stay green), and `--use_fast_math` object compilation gives numeric
+parity with the OptiX `-ptx` pipelines.
+
+- **CUDA-variant policy.** `CudaDiffractionAccumulationPolicy` (in `cuda_multipath.cu`) is a byte-for-
+  byte clone of the DrJit `DiffractionAccumulationPolicy` (state-count lane mapping, edge-length
+  weighting, `atomicAdd` commit, `return false` staging hooks); only `params()` differs (it reads the
+  file-local `__constant__` instead of the OptiX module `__constant__`). `kDirect/kKeller/kSuffix` come
+  from `shared::optix::DiffractionStrategyBit` so the unit needs no DrJit header.
+- **Seven raygen kernels (template bools preserved).** `dfr_accum_order1_kernel<PrimaryOnly,
+  IncludeCoherent, IncludeDirect, IncludeKeller, IncludeSuffix>` (the combined 5-bool body) plus a
+  `dfr_accum_phase_kernel` dispatch over the six single-body PrimaryOnly variants (source visibility,
+  no-suffix target, suffix-first visibility, suffix target, coherent, chain), all instantiating the
+  shared algorithm body with `CudaBvhTraverser`.
+- **Multi-phase dispatch.** `CudaTraceBackend::run_dfr_accum_direct` runs the single-scene staged path
+  (source-visibility prepass → no-suffix target and/or suffix-first-visibility + suffix-target),
+  serialized on one non-blocking stream — identical marshaling to the `split_mode==0` OptiX dispatch.
+  `run_dfr_accum_coherent` and `run_dfr_accum_chain` are single primary-only launches;
+  `run_dfr_accum_combined` (defensive, split-scene arm) exists so every OptiX raygen variant has a CUDA
+  kernel (the single-scene CUDA backend always takes the staged path). `scene_multipath.cpp` guards the
+  `select_optix_scenes()` / pipeline-ensure behind `!cuda_trace` in all four entry functions
+  (`accum_dfr_direct`, both `accum_dfr_coherent_direct` overloads, `accum_dfr`) and adds a `cuda_trace`
+  launch arm marshaling identically to the OptiX native launch.
+- **AD is automatic.** `dfr_direct_accum_custom_op` / `dfr_chain_accum_custom_op` re-run the eager
+  `accum_dfr_direct<true>` / `accum_dfr<true>` forward (which now dispatches to the CUDA arm) and their
+  own backend-agnostic backward tape (`diffraction_accumulation_ad.cu`, no OptiX coupling). No AD wiring
+  was needed; the gradient parity test confirms it.
+
+### Gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+- **Cross-backend parity (new `test_cuda_multipath`, 3 cases):** reflection trace, all four
+  visibility variants, reflection accumulation, EPC (primitive + surface-group), EPC field, and
+  diffraction path export run under `trace_backend='optix'` and `='cuda'` in fresh subprocesses;
+  discrete fields (visibility bools, prim/shape/group/blocker ids, bounce/path counts) BIT-IDENTICAL,
+  continuous within `operations.json` tolerances (default 1e-5, field 5e-5). Fingerprints: reflection
+  `t` abs≤5e-7; accumulation power abs≤2e-11; EPC surface-group `path_length` = 2√2 exact; diffraction
+  field abs≤2e-10.
+- **Golden cross-backend gate:** `tests/golden/runner.py` no longer skips `visible` / `visible_pair`
+  under CUDA (`_CUDA_UNSUPPORTED_KINDS = set()`); `test_cuda_trace_backend` + `test_golden_scenes`
+  (12) green — the CUDA visibility scenes match the OptiX baselines bit-for-bit, and the determinism
+  double-collect is stable.
+- **Full P4 grep gate + instantiation matrix (`test_rt_host_compile`, 4):** the forbidden-token grep
+  (`optixTrace|optixGetPayload|optixSetPayload|optixGetLaunchIndex|float3`) now covers every
+  `shared/multipath/*_algo.h` (globbed) AND `shared/rt/**`; the instantiation-matrix test asserts the
+  drjit backend uses `CudaBvhTraverser` and the Torch backend never does; the host-only smoke TU still
+  compiles under `cl.exe`.
+- **OptiX regression (default path untouched):** drjit GPU suite 156 (`test_geometry`,
+  `test_reflection_accumulation`, `test_reflection_epc`, `test_diffraction_accumulation`,
+  `test_visibility_topk`, `test_surfel`, `test_optix_pipeline_cold_create`), `tests.drjit.test_baseline`
+  (2, bit-identical), golden/gate/cuda/new-multipath (24), workspace `unittest discover -s tests`
+  (203, 3 pre-existing CI skips) — all green.
+- **Stress:** 10/10 consecutive `test_cuda_multipath` runs green (no literal-materialization race).
+- **Perf (informational):** OptiX dispatch is byte-unchanged apart from the added `cuda_trace` arms
+  (the OptiX branch of each site is the original `pipeline->launch(0, params)`); CUDA multipath is the
+  driver-independent fallback and is expected slower (no RT cores), as with P3 intersect.
+
+### P4 acceptance checklist (doc §15-P4)
+
+- [x] CudaFusedExecutor kernels for reflection / visibility / EPC / reflection accumulation /
+      diffraction path export; secondary traverser is a null-equivalent (single-scene, never consulted).
+- [x] Diffraction accumulation kernels — LANDED (seven raygen variants with template bools preserved;
+      see the "Diffraction accumulation — delivery" subsection). Every multipath entry point now runs on
+      `trace_backend='cuda'`; no pipeline errors on a CUDA scene.
+- [x] Scene dispatch `kind==Cuda` arms marshalling identically to the OptiX native launch.
+- [x] AD paths verified broad-phase-agnostic (no OptiX-coupled AD among the wired ops); diffraction
+      accumulation AD parity confirmed by a `dr.backward` A/B (`test_diffraction_accumulation_ad_parity`).
+- [x] Capabilities: `CudaTraceBackend::capabilities().fused_multipath = true`; `scene.capabilities()`
+      now reports `visibility` / `reflection_trace` / `reflection_accumulation` / `diffraction` / `epc`
+      = `true` for the CUDA backend (`rayd.cpp` `multipath = has_trace`); `public_api.json` cuda summary
+      updated to describe the full multipath surface; `cuda` lists `eager_native` (integration unchanged).
+- [x] Full grep gate over `shared/multipath/*_algo.h` + `shared/rt/**` (one gate test).
+- [x] Instantiation-matrix test (drjit × {Optix, CudaBvh}; torch × {Optix} only).
+- [x] Cross-backend golden multipath gate; visibility scenes un-skipped under CUDA.
+- [x] Stress (10 consecutive runs, no flake) — extended to diffraction accumulation
+      (`test_diffraction_accumulation_stress`).
+- [x] Torch build + `test_multipath` + opt-in Dr.Jit parity (shared headers/CMake touched, behavior
+      unchanged).
+- [ ] Orin desktop-less validation — blocked-on-hardware (Jetson Orin not available in this env).
+
+### P4 Stage D e-2 gate results (RTX 5080, sm_120, CUDA 12.9, conda `witwin3`)
+
+- **Cross-backend parity (`test_cuda_multipath` extended, 6 cases):** `accum_dfr_direct`
+  (direct+keller and suffix), `accum_dfr` (chain order 2), and `accum_dfr_coherent_direct` (simple
+  overload) run under `trace_backend='optix'` and `='cuda'` in fresh subprocesses; every discrete field
+  (direct/keller/suffix/edge-use counts, vis/utd/edge-vis rejects, grid-cell counts) is BIT-IDENTICAL,
+  and power/field match within the `field` tolerance (`5e-5`). Observed: discrete counts exactly equal;
+  `direct_field_re` / coherent field bit-identical; `chain_power` differs `~1.1e-7` rel and `suffix_power`
+  `~1e-7` rel (grid-atomic accumulation order), both well inside tolerance.
+- **AD gradient parity (`test_diffraction_accumulation_ad_parity`):** `dr.backward` through
+  `accum_dfr_direct` on both backends; `grad(src)` x/y/z bit-identical (`grad_src_z = -0.0009968862868…`
+  on both), inside the `5e-4` gradient tolerance. The AD custom op re-runs the eager forward (CUDA arm)
+  and its backend-agnostic backward tape.
+- **Stress:** 10 consecutive CUDA runs of the four-case script are deterministic (no
+  literal-materialization / `__constant__`-staging race).
+- **OptiX regression (byte-unchanged apart from the added Cuda arms):** `test_diffraction_accumulation`
+  30/30 green.

@@ -4,6 +4,11 @@ Status: Implemented and locally accepted; package publication and coordinated do
 
 Last reviewed: 2026-07-09
 
+> **Historical plan.** The task checkboxes below were not maintained during
+> execution and are almost all still unchecked even though the work shipped in
+> 0.6.0. Do not read them as outstanding work. For what actually landed, see
+> `CHANGELOG.md` and `docs/archived/rayd_improvement_execution_20260711.md`.
+
 ## Executive Decision
 
 Move the current RayDN Torch implementation into the RayD repository and make

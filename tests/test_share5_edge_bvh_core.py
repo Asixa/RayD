@@ -6,24 +6,36 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "shared/include/rayd/shared/edge"
 SHARED_SOURCE = ROOT / "shared/src/edge"
+# P3 Stage A moved the primitive-agnostic BVH machinery into shared/bvh/. The
+# edge headers now re-export it, so the pins below live on the new locations and
+# additionally assert that the edge layer keeps delegating to the core.
+BVH_CORE_INCLUDE = ROOT / "shared/include/rayd/shared/bvh"
+BVH_CORE_SOURCE = ROOT / "shared/src/bvh"
 
 
 class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_raw_and_compact_topologies_are_distinct_pods(self):
-        source = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
+        topology = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
+        edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
         for type_name in (
             "RawBvhTopologyView",
             "MutableRawBvhTopologyView",
             "CompactBvhTopologyView",
         ):
-            self.assertIn(f"struct {type_name}", source)
-            self.assertIn(f"RAYD_SHARED_EDGE_ASSERT_POD({type_name})", source)
-        self.assertIn("left_child[node] = -leaf_begin - 1", source)
-        self.assertIn("leaf_primitives", source)
-        self.assertNotIn("struct BvhTopologyView", source)
+            # The single struct definition now lives in the primitive-agnostic core.
+            self.assertIn(f"struct {type_name}", topology)
+            self.assertIn(f"RAYD_SHARED_BVH_ASSERT_POD({type_name})", topology)
+            # The edge layer re-exports it so rayd::shared::edge:: stays valid.
+            self.assertIn(f"using bvh::{type_name};", edge)
+            self.assertNotIn(f"struct {type_name}", edge)
+        self.assertIn("left_child[node] = -leaf_begin - 1", topology)
+        self.assertIn("leaf_primitives", topology)
+        self.assertNotIn("struct BvhTopologyView", topology)
+        self.assertNotIn("struct BvhTopologyView", edge)
 
     def test_product_treelet_constants_have_one_shared_definition(self):
-        shared = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
+        shared = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
+        edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
         adapter = (ROOT / "backends/drjit/include/rayd/edge/edge_bvh_config.h").read_text(
             encoding="utf-8"
         )
@@ -37,7 +49,18 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             "kBvhTraversalStackDepth = 64",
             "kBvhTopKMax = 16",
         ):
+            # Exactly one literal definition, in the shared core.
             self.assertIn(token, shared)
+            self.assertNotIn(token, edge)
+        # The edge layer re-exports the constants so shared::edge::kBvh* resolves.
+        for name in (
+            "kBvhTreeletMaxLeaves",
+            "kBvhTreeletMaxPrimitives",
+            "kBvhLeafSize",
+            "kBvhTraversalStackDepth",
+            "kBvhTopKMax",
+        ):
+            self.assertIn(f"using bvh::{name};", edge)
         self.assertGreaterEqual(adapter.count("shared::edge::kBvhTreelet"), 4)
         self.assertIn("shared::edge::kBvhLeafSize", adapter)
         scene_edge = (ROOT / "backends/drjit/src/edge/scene_edge.cpp").read_text(
@@ -59,6 +82,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_build_stages_are_shared_and_drjit_is_an_adapter(self):
         header = (SHARED_INCLUDE / "bvh_build.h").read_text(encoding="utf-8")
         shared = (SHARED_SOURCE / "bvh_build.cu").read_text(encoding="utf-8")
+        core = (BVH_CORE_SOURCE / "build.cu").read_text(encoding="utf-8")
         adapter = (ROOT / "backends/drjit/src/edge/edge_bvh.cu").read_text(encoding="utf-8")
         launchers = (
             "launch_compute_primitive_bounds_async",
@@ -71,16 +95,26 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             "launch_optimize_selected_treelets_async",
         )
         for launcher in launchers:
+            # The edge header/adapter symbol surface is unchanged.
             self.assertIn(launcher, header)
             self.assertIn(launcher, shared)
             self.assertIn(f"shared::edge::{launcher}", adapter)
         self.assertNotIn("__global__", adapter)
+        # The primitive-agnostic launchers have their one real definition in the
+        # shared BVH core, and the edge unit is a thin forwarder to it. The
+        # edge-only primitive-bounds kernel does not leak into the core.
+        self.assertNotIn("launch_compute_primitive_bounds_async", core)
+        self.assertIn("__global__", core)
+        for launcher in launchers[1:]:
+            self.assertIn(launcher, core)
+            self.assertIn(f"bvh::{launcher}", shared)
 
     def test_shared_cuda_owns_no_resources_or_host_barriers(self):
         combined = "\n".join(
             (SHARED_SOURCE / name).read_text(encoding="utf-8")
             for name in ("bvh_build.cu", "bvh_query.cu", "edge_distance.cu")
         )
+        combined += "\n" + (BVH_CORE_SOURCE / "build.cu").read_text(encoding="utf-8")
         for forbidden in (
             "cudaMalloc",
             "cudaFree",
@@ -101,6 +135,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_query_contract_freezes_masks_topk_stack_and_tie_break(self):
         header = (SHARED_INCLUDE / "bvh_query.h").read_text(encoding="utf-8")
         source = (SHARED_SOURCE / "bvh_query.cu").read_text(encoding="utf-8")
+        traversal = (BVH_CORE_INCLUDE / "traversal_common.cuh").read_text(encoding="utf-8")
         for token in (
             "CompactBvhTopologyView topology",
             "const std::uint8_t *active_mask",
@@ -114,8 +149,13 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         ):
             self.assertIn(token, header)
         self.assertIn("distance == slot_distance && edge < slot_edge", source)
-        self.assertIn("depth * scratch.query_stride + query", source)
         self.assertIn("params.scratch.overflow[query] = 1u", source)
+        # Depth-major stack indexing moved into the shared traversal helper, and
+        # the edge query consumes it rather than keeping a private copy.
+        self.assertIn("depth * scratch.query_stride + query", traversal)
+        self.assertIn("traversal_common.cuh", source)
+        self.assertIn("bvh::stack_push", source)
+        self.assertIn("bvh::stack_load", source)
 
     def test_topk_runtime_dispatch_uses_bucketed_local_state(self):
         header = (SHARED_INCLUDE / "bvh_query.h").read_text(encoding="utf-8")
@@ -176,11 +216,20 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         for unit in ("bvh_build.cu", "bvh_query.cu", "edge_distance.cu"):
             self.assertIn(f"shared/src/edge/{unit}", drjit)
             self.assertIn(f"shared/src/edge/{unit}", torch)
+        # Both backends also compile the shared primitive-agnostic BVH core.
+        self.assertIn("shared/src/bvh/build.cu", drjit)
+        self.assertIn("shared/src/bvh/build.cu", torch)
 
     def test_removed_strategies_do_not_reappear_in_shared_core(self):
+        paths = (
+            list(SHARED_INCLUDE.glob("*.h"))
+            + list(SHARED_SOURCE.glob("*.cu"))
+            + list(BVH_CORE_INCLUDE.glob("*.h"))
+            + list(BVH_CORE_INCLUDE.glob("*.cuh"))
+            + list(BVH_CORE_SOURCE.glob("*.cu"))
+        )
         combined = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in list(SHARED_INCLUDE.glob("*.h")) + list(SHARED_SOURCE.glob("*.cu"))
+            path.read_text(encoding="utf-8") for path in paths
         ).lower()
         for forbidden in (
             "hlbvh",

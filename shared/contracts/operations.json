@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "required_capability_keys": [
     "backend", "intersect", "nearest_edge_point", "nearest_edge_ray",
     "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
@@ -27,6 +27,52 @@
       "All": 7
     }
   },
+  "numeric_policy": {
+    "shared_multipath": {
+      "trace_tmin": 1e-5,
+      "trace_tmax_finite": 1e8,
+      "ray_bias": 1e-5,
+      "min_segment_length": 2e-5,
+      "epc_barycentric_slack": 1e-4,
+      "normalize_floor": 1e-12,
+      "edge_distance_epsilon": 1e-7
+    },
+    "backend_profiles": {
+      "drjit": {
+        "ray_tmin": 1e-3,
+        "shadow_tmin": 1e-3,
+        "endpoint_offset": 1e-5,
+        "parallel_epsilon": 1e-7,
+        "watertight_triangles": false,
+        "surfel_endpoint_offset": 1e-3
+      },
+      "torch": {
+        "ray_tmin": 1e-6,
+        "shadow_tmin": 1e-5,
+        "endpoint_offset": 1e-5,
+        "parallel_epsilon": 1e-7,
+        "watertight_triangles": false
+      }
+    },
+    "notes": [
+      "drjit scene intersect and shadow_test use ray_tmin = RayEpsilon (1e-3); torch intersect uses ray_tmin = SmallEpsilon (1e-6). Frozen legacy divergence.",
+      "torch has no scene-level shadow_test; its shadow_tmin (1e-5) comes from the shared segment-visibility TraceTMin used by visibility queries.",
+      "endpoint_offset is the shared segment-visibility RayBias (1e-5) on both backends.",
+      "surfel_endpoint_offset (1e-3, ShadowEpsilon) is a drjit-only exception: surfel visibility offsets both segment endpoints by ShadowEpsilon rather than the 1e-5 RayBias.",
+      "watertight_triangles is false everywhere: OptiX builtin triangles with flags 0, no watertight intersection exists in any backend."
+    ]
+  },
+  "miss_sentinels": {
+    "distance": "inf",
+    "reflection_trace_distance": 1e8,
+    "invalid_id": -1
+  },
+  "edge_topk_tie_break": {
+    "contract": "(distance_squared, global_edge_id)",
+    "implemented_in": ["shared_bvh", "torch_topk"],
+    "not_implemented_in": ["drjit_optix", "drjit_native_bvh"],
+    "note": "drjit paths traversal-order-dependent on exact ties; unification deferred to >=P3"
+  },
   "tensor_contract": {
     "vectors": {"shape": "(..., 3)", "dtype": "float32", "layout": "row-major"},
     "indices": {"dtype": "int32", "id_space": "scene-global unless documented local"},
@@ -35,6 +81,14 @@
     "ad": "fixed-winner derivatives for discrete hit, path, and edge selection"
   },
   "result_contracts": {
+    "raw_hit": {
+      "fields": [
+        "t", "bary_u", "bary_v", "global_prim_id", "shape_id", "local_prim_id"
+      ],
+      "sizeof_bytes": 24,
+      "miss": {"t": "inf", "global_prim_id": -1, "shape_id": -1, "local_prim_id": -1},
+      "blocker_fields": ["global_prim_id"]
+    },
     "intersection": {
       "canonical_fields": [
         "t", "p", "n", "geo_n", "uv", "barycentric", "shape_id",
@@ -93,6 +147,7 @@
   },
   "operations": {
     "intersect": {
+      "integration": {"drjit": ["jit_symbolic"], "torch": ["eager_native"]},
       "inputs": ["ray", "active_mask", "ray_flags"],
       "result": "intersection",
       "id_spaces": {"shape_id": "scene-shape", "local_prim_id": "shape-local", "global_prim_id": "scene-global"},
@@ -103,12 +158,14 @@
       }
     },
     "nearest_edge_point": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["point", "active_mask"],
       "result": "nearest_edge_point",
       "id_spaces": {"edge_id": "shape-local", "global_edge_id": "scene-global"},
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "nearest_edge_ray": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["ray", "active_mask"],
       "result": "nearest_edge_ray",
       "ray_domain": "[0, tmax] when tmax is finite",
@@ -116,6 +173,7 @@
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "nearest_edges_topk": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["point", "k", "active_mask", "edge_mask"],
       "result": "nearest_edge_point[k]",
       "limits": {"min_k": 1, "max_k": 16},
@@ -123,46 +181,54 @@
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "visibility": {
+      "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["start", "end", "active_mask"],
       "result": "bool",
       "ray_domain": "finite segment with endpoint offsets",
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_pair": {
+      "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["start", "end_a", "end_b", "active_mask"],
       "result": "bool_pair",
       "ray_domain": "two finite segments with endpoint offsets",
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_edge": {
+      "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
       "result": "bool",
       "limits": {"min_samples": 1, "max_samples": 16},
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_chain": {
+      "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
       "result": "chain_visibility_and_first_blocker",
       "id_space": "scene-global primitive IDs",
       "ad": "discrete result; no geometry derivative"
     },
     "reflection_trace": {
+      "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["source", "receiver", "max_depth", "active_mask"],
       "result": "reflection_chain",
       "id_space": "scene-global primitive IDs",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "reflection_accumulation": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["reflection_chain", "material", "frequency"],
       "result": "complex_field_and_power",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "diffraction_direct": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["diffraction_states", "material", "grid", "frequency"],
       "result": "diffraction_accumulation",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "diffraction_chain": {
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
       "result": "diffraction_paths_or_accumulation",
       "ad": "fixed-path forward/VJP/JVP"

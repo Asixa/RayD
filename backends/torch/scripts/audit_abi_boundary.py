@@ -48,7 +48,7 @@ def audit() -> dict[str, object]:
     digest = hashlib.sha256()
     for path in hashed:
         digest.update(path.relative_to(ROOT).as_posix().encode())
-        digest.update(path.read_bytes())
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
 
     return {
         "version": 1,
@@ -129,7 +129,7 @@ def main() -> None:
             raise SystemExit(f"ABI audit is stale: {args.output}")
         print(f"ABI audit is current: {args.output}")
         return
-    args.output.write_text(rendered, encoding="utf-8")
+    args.output.write_text(rendered, encoding="utf-8", newline="\n")
     print(f"Wrote {args.output}")
 
 

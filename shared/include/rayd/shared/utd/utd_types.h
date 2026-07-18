@@ -7,8 +7,12 @@
 #include <rayd/shared/contracts.h>
 
 #ifdef __CUDACC__
-#define UTD_DEVICE   __device__
-#define UTD_DINLINE  __device__ __forceinline__
+// host+device so the UTD helpers are callable from the shared, host-compilable
+// multipath algorithm bodies (which nvcc compiles for both passes in an object
+// unit). Device codegen for the OptiX -ptx compiles is unchanged (the device
+// pass emits the same instructions; -ptx drops the host side).
+#define UTD_DEVICE   __host__ __device__
+#define UTD_DINLINE  __host__ __device__ __forceinline__
 #define UTD_GLOBAL   __global__
 #else
 #define UTD_DEVICE
@@ -96,7 +100,7 @@ UTD_DINLINE float atan2f(float y, float x) { return ::atan2f(y, x); }
 UTD_DINLINE float roundf(float x) { return ::roundf(x); }
 UTD_DINLINE float floorf(float x) { return ::floorf(x); }
 UTD_DINLINE bool isfinite(float x) { return ::isfinite(x); }
-#ifdef __CUDACC__
+#ifdef __CUDA_ARCH__
 UTD_DINLINE void sincosf(float x, float* s, float* c) { ::sincosf(x, s, c); }
 #else
 // Host fallback keeps the pre-template behavior (separate sinf/cosf calls).
@@ -136,7 +140,7 @@ UTD_DINLINE bool isfinite(Dual x) { return ::isfinite(x.v); }
 UTD_DINLINE void sincosf(Dual x, Dual* s, Dual* c) {
     float sv;
     float cv;
-#ifdef __CUDACC__
+#ifdef __CUDA_ARCH__
     ::sincosf(x.v, &sv, &cv);
 #else
     sv = ::sinf(x.v);

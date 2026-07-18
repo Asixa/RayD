@@ -6,18 +6,12 @@
 
 #include <rayd/shared/optix/diffraction_contracts.h>
 
-#ifdef __CUDACC__
-#  include <optix.h>
-#else
-#  include <rayd/optix.h>
-#endif
-
 namespace rayd {
 
 /// Launch parameters for compact first-order diffraction path export.
 struct DfrPathParams {
-    OptixTraversableHandle primary_handle;
-    OptixTraversableHandle secondary_handle;
+    std::uint64_t primary_handle;    ///< OptiX IAS handle; 0 on the CUDA path.
+    std::uint64_t secondary_handle;  ///< Split-scene IAS handle; 0 on the CUDA path.
     int split_mode;
 
     int n_rays;

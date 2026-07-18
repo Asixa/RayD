@@ -1,13 +1,22 @@
 #pragma once
 
+#include <cstdint>
+
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/shared/optix/reflection_epc_params.h>
-#include <rayd/shared/contracts.h>
+#include <rayd/shared/multipath/reflection_epc_algo.h>
 #include <rayd/shared/optix/device_hit.h>
-#include <rayd/shared/reflection/reflection_geometry.h>
-#include <rayd/shared/reflection/epc_chain.h>
+#include <rayd/shared/optix/reflection_epc_params.h>
+#include <rayd/shared/rt/traverser.h>
+
+// OptiX entry layer for reflection EPC. The algorithm body now lives in the
+// host-compilable rayd/shared/multipath/reflection_epc_algo.h; this header keeps
+// only the OptiX-specific pieces: the mode-switched anyhit / closesthit / miss
+// programs (one SBT serves both the reflector trace and the visibility check,
+// selected by payload 5), the ReflEpcOptixTraverser (the sole home of the two
+// optixTrace sites), and the raygen entry that instantiates the traversers and
+// dispatches to the algorithm.
 
 namespace rayd::shared::optix {
 
@@ -17,379 +26,129 @@ extern __constant__ ReflEpcParams params;
 
 namespace reflection_epc_device {
 
-// Policy contract: DisableAnyHitWithoutIgnore preserves the backend's existing
-// visibility trace flags without branching in the backend-neutral program body.
+namespace algo_detail = ::rayd::shared::multipath::reflection_epc_algo_detail;
 
-constexpr float kTraceTMin = rayd::shared::GeneralEpsilon;
-constexpr float kTraceTMax = 1e8f;
-constexpr float kRayBias = rayd::shared::GeneralEpsilon;
-constexpr float kMinSegmentLength = 2e-5f;
-constexpr float kEpcTolerance = 1e-4f;
 constexpr unsigned int kInvalidPrim = rayd::shared::InvalidUnsignedId;
 constexpr unsigned int kTraceModeReflection = 0u;
 constexpr unsigned int kTraceModeVisibility = 1u;
 
-using HitPayload = TriangleHitPayload;
+/// Single-handle OptiX traverser for the EPC pipeline. The same SBT serves both
+/// ray families, switched by payload 5 (the trace mode): trace_closest runs the
+/// reflector scene trace (reflection mode, closest hit, no anyhit) and reports the
+/// mesh-local prim / shape; trace_first_blocker runs the segment visibility check
+/// (visibility mode, terminate-on-first-hit, the anyhit ignore filter) and reports
+/// the blocker's already-global prim with shape -1. `DisableAnyHitWithoutIgnore` is
+/// the compile-time layout choice of whether a visibility ray with an empty ignore
+/// list skips the anyhit.
+template <bool DisableAnyHitWithoutIgnore>
+struct ReflEpcOptixTraverser {
+    ::OptixTraversableHandle handle;
 
-static __forceinline__ __device__ float3 make_vec3(float x, float y, float z) {
-    return make_float3(x, y, z);
-}
-
-static __forceinline__ __device__ math::Vec3f to_shared(float3 value) {
-    return math::make_vec3(value.x, value.y, value.z);
-}
-
-static __forceinline__ __device__ float3 from_shared(math::Vec3f value) {
-    return make_vec3(value.x, value.y, value.z);
-}
-
-static __forceinline__ __device__ float3 operator+(float3 a, float3 b) {
-    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-static __forceinline__ __device__ float3 operator-(float3 a, float3 b) {
-    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
-}
-
-static __forceinline__ __device__ float3 operator*(float s, float3 v) {
-    return make_float3(s * v.x, s * v.y, s * v.z);
-}
-
-static __forceinline__ __device__ float dot3(float3 a, float3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
-    return make_float3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x);
-}
-
-static __forceinline__ __device__ float length3(float3 v) {
-    return sqrtf(fmaxf(dot3(v, v), 0.f));
-}
-
-static __forceinline__ __device__ float3 normalize3(float3 v) {
-    const float inv_len = rsqrtf(fmaxf(dot3(v, v), 1e-12f));
-    return inv_len * v;
-}
-
-static __forceinline__ __device__ void set_reflection_payload(const HitPayload &payload) {
-    set_triangle_hit_payload(payload);
-}
-
-static __forceinline__ __device__ int global_prim_from_hit(int shape_id, int local_prim) {
-    return global_primitive_id(
-        shape_id, local_prim, params.face_offsets, params.n_meshes);
-}
-
-static __forceinline__ __device__ bool has_surface_groups() {
-    return params.surface_group_id != nullptr &&
-           params.surface_group_size != nullptr &&
-           params.surface_group_members != nullptr &&
-           params.surface_group_count > 0 &&
-           params.surface_max_group_size > 0;
-}
-
-static __forceinline__ __device__ int surface_group_for_prim(int prim) {
-    if (!has_surface_groups() || prim < 0 || prim >= params.surface_group_id_count) {
-        return -1;
-    }
-    const int group = params.surface_group_id[prim];
-    return group >= 0 && group < params.surface_group_count ? group : -1;
-}
-
-static __forceinline__ __device__ int expected_prim_for_bounce(int slot) {
-    if (params.expected_prim_ids == nullptr ||
-        slot < 0 ||
-        slot >= params.expected_prim_count) {
-        return -1;
-    }
-    return params.expected_prim_ids[slot];
-}
-
-static __forceinline__ __device__ bool direct_plane_mode() {
-    return params.direct_plane_point_x != nullptr &&
-           params.direct_plane_point_y != nullptr &&
-           params.direct_plane_point_z != nullptr &&
-           params.direct_plane_normal_x != nullptr &&
-           params.direct_plane_normal_y != nullptr &&
-           params.direct_plane_normal_z != nullptr;
-}
-
-static __forceinline__ __device__ int final_ignore_group_for_ray(int ray_index) {
-    if (params.final_ignore_group_ids == nullptr ||
-        params.final_ignore_group_count <= 0) {
-        return -1;
-    }
-    const int index = params.final_ignore_group_count == 1 ? 0 : ray_index;
-    if (index < 0 || index >= params.final_ignore_group_count) {
-        return -1;
-    }
-    return params.final_ignore_group_ids[index];
-}
-
-static __forceinline__ __device__ void trace_reflection_handle(OptixTraversableHandle handle,
-                                                               float3 origin,
-                                                               float3 direction,
-                                                               float tmax,
-                                                               HitPayload &payload) {
-    payload.hit = 0u;
-    payload.t = __float_as_uint(kTraceTMax);
-    payload.bary_u = 0u;
-    payload.bary_v = 0u;
-    payload.prim = 0u;
-    payload.instance = kTraceModeReflection;
-    if (handle == 0ull) {
-        return;
-    }
-
-    optixTrace(handle,
-               origin,
-               direction,
-               kTraceTMin,
-               tmax,
-               0.0f,
-               255u,
-               OPTIX_RAY_FLAG_DISABLE_ANYHIT,
-               0,
-               1,
-               0,
-               payload.hit,
-               payload.t,
-               payload.bary_u,
-               payload.bary_v,
-               payload.prim,
-               payload.instance);
-}
-
-static __forceinline__ __device__ HitPayload choose_hit(const HitPayload &a,
-                                                        const HitPayload &b) {
-    return choose_nearest_hit(a, b);
-}
-
-static __forceinline__ __device__ HitPayload trace_scene(float3 origin,
-                                                         float3 direction,
-                                                         float tmax) {
-    HitPayload hit_primary;
-    trace_reflection_handle(params.primary_handle, origin, direction, tmax, hit_primary);
-    if (params.split_mode == 0) {
-        return hit_primary;
-    }
-    HitPayload hit_secondary;
-    trace_reflection_handle(params.secondary_handle, origin, direction, tmax, hit_secondary);
-    return choose_hit(hit_primary, hit_secondary);
-}
-
-template <typename Policy>
-static __forceinline__ __device__ VisibilityPayload trace_visibility_handle(
-    OptixTraversableHandle handle,
-    float3 start,
-    float3 end,
-    unsigned int ignore0,
-    unsigned int ignore1,
-    unsigned int ignore2) {
-    VisibilityPayload payload;
-    if (handle == 0ull) {
-        return payload;
-    }
-
-    float3 direction = end - start;
-    const float length = length3(direction);
-    if (length <= kMinSegmentLength) {
-        return payload;
-    }
-
-    direction = (1.f / length) * direction;
-    const float3 origin = start + kRayBias * direction;
-    const float tmax = fmaxf(length - 2.f * kRayBias, 0.f);
-    unsigned int mode = kTraceModeVisibility;
-
-    unsigned int ray_flags = OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT;
-    if constexpr (Policy::DisableAnyHitWithoutIgnore) {
-        const bool has_ignore =
-            ignore0 != kInvalidPrim || ignore1 != kInvalidPrim || ignore2 != kInvalidPrim;
-        if (!has_ignore) {
-            ray_flags |= OPTIX_RAY_FLAG_DISABLE_ANYHIT;
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_closest(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+        TriangleHitPayload payload;
+        // instance defaults to 0 == kTraceModeReflection, the mode the SBT reads.
+        clear_triangle_hit(payload, algo_detail::kTraceTMax);
+        if (handle != 0ull) {
+            optixTrace(handle,
+                       make_float3(origin.x, origin.y, origin.z),
+                       make_float3(direction.x, direction.y, direction.z),
+                       tmin,
+                       tmax,
+                       0.0f,
+                       255u,
+                       OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                       0,
+                       1,
+                       0,
+                       payload.hit,
+                       payload.t,
+                       payload.bary_u,
+                       payload.bary_v,
+                       payload.prim,
+                       payload.instance);
         }
+        ::rayd::shared::rt::TriangleHit hit;
+        hit.t = __uint_as_float(payload.t);
+        hit.bary_u = __uint_as_float(payload.bary_u);
+        hit.bary_v = __uint_as_float(payload.bary_v);
+        hit.prim = static_cast<std::int32_t>(payload.prim);
+        hit.instance = static_cast<std::int32_t>(payload.instance);
+        hit.hit = payload.hit;
+        return hit;
     }
 
-    optixTrace(handle,
-               origin,
-               direction,
-               kTraceTMin,
-               tmax,
-               0.0f,
-               255u,
-               ray_flags,
-               0,
-               1,
-               0,
-               payload.visible,
-               payload.blocker,
-               ignore0,
-               ignore1,
-               ignore2,
-               mode);
-    return payload;
-}
+    __device__ __forceinline__ ::rayd::shared::rt::TriangleHit trace_first_blocker(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
+        const std::int32_t *ignore, int ignore_count) const {
+        ::rayd::shared::rt::TriangleHit hit;
+        hit.t = tmax;
+        hit.bary_u = 0.0f;
+        hit.bary_v = 0.0f;
+        hit.prim = -1;
+        hit.instance = -1;
+        hit.hit = 0u;
+        if (handle == 0ull)
+            return hit;
 
-template <typename Policy>
-static __forceinline__ __device__ VisibilityPayload trace_visibility(float3 start,
-                                                                     float3 end,
-                                                                     int ignore0,
-                                                                     int ignore1,
-                                                                     int ignore2) {
-    const unsigned int ignore0_u = ignore0 >= 0 ? static_cast<unsigned int>(ignore0)
-                                                : kInvalidPrim;
-    const unsigned int ignore1_u = ignore1 >= 0 ? static_cast<unsigned int>(ignore1)
-                                                : kInvalidPrim;
-    const unsigned int ignore2_u = ignore2 >= 0 ? static_cast<unsigned int>(ignore2)
-                                                : kInvalidPrim;
+        std::uint32_t visible = 1u;
+        std::uint32_t blocker = 0xFFFFFFFFu;
+        unsigned int ignore0 =
+            ignore_count > 0 && ignore[0] >= 0 ? static_cast<unsigned int>(ignore[0]) : kInvalidPrim;
+        unsigned int ignore1 =
+            ignore_count > 1 && ignore[1] >= 0 ? static_cast<unsigned int>(ignore[1]) : kInvalidPrim;
+        unsigned int ignore2 =
+            ignore_count > 2 && ignore[2] >= 0 ? static_cast<unsigned int>(ignore[2]) : kInvalidPrim;
+        unsigned int mode = kTraceModeVisibility;
 
-    VisibilityPayload primary =
-        trace_visibility_handle<Policy>(
-            params.primary_handle, start, end, ignore0_u, ignore1_u, ignore2_u);
-    if (primary.visible == 0u || params.split_mode == 0) {
-        return primary;
-    }
-
-    return trace_visibility_handle<Policy>(
-        params.secondary_handle, start, end, ignore0_u, ignore1_u, ignore2_u);
-}
-
-template <typename Policy>
-static __forceinline__ __device__ VisibilityPayload trace_visibility_primary(float3 start,
-                                                                             float3 end,
-                                                                             int ignore0,
-                                                                             int ignore1,
-                                                                             int ignore2) {
-    const unsigned int ignore0_u = ignore0 >= 0 ? static_cast<unsigned int>(ignore0)
-                                                : kInvalidPrim;
-    const unsigned int ignore1_u = ignore1 >= 0 ? static_cast<unsigned int>(ignore1)
-                                                : kInvalidPrim;
-    const unsigned int ignore2_u = ignore2 >= 0 ? static_cast<unsigned int>(ignore2)
-                                                : kInvalidPrim;
-
-    return trace_visibility_handle<Policy>(
-        params.primary_handle, start, end, ignore0_u, ignore1_u, ignore2_u);
-}
-
-static __forceinline__ __device__ float3 load_triangle_p0(int prim) {
-    return make_vec3(params.tri_p0_x[prim], params.tri_p0_y[prim], params.tri_p0_z[prim]);
-}
-
-static __forceinline__ __device__ float3 load_triangle_e1(int prim) {
-    return make_vec3(params.tri_e1_x[prim], params.tri_e1_y[prim], params.tri_e1_z[prim]);
-}
-
-static __forceinline__ __device__ float3 load_triangle_e2(int prim) {
-    return make_vec3(params.tri_e2_x[prim], params.tri_e2_y[prim], params.tri_e2_z[prim]);
-}
-
-static __forceinline__ __device__ float3 load_triangle_normal(int prim) {
-    return normalize3(make_vec3(params.tri_fn_x[prim],
-                                params.tri_fn_y[prim],
-                                params.tri_fn_z[prim]));
-}
-
-static __forceinline__ __device__ bool point_inside_triangle(int prim, float3 point) {
-    if (prim < 0 || prim >= params.n_triangles) {
-        return false;
-    }
-    const float3 p0 = load_triangle_p0(prim);
-    const float3 e1 = load_triangle_e1(prim);
-    const float3 e2 = load_triangle_e2(prim);
-    const float3 vp = point - p0;
-    const float d00 = dot3(e1, e1);
-    const float d01 = dot3(e1, e2);
-    const float d11 = dot3(e2, e2);
-    const float d20 = dot3(vp, e1);
-    const float d21 = dot3(vp, e2);
-    const float denom = d00 * d11 - d01 * d01;
-    if (fabsf(denom) <= 1e-12f) {
-        return false;
-    }
-    const float plane_deviation = dot3(vp, cross3(e1, e2));
-    const float scale_sq = fmaxf(fmaxf(d00, d11), 1.f);
-    const float plane_tolerance = fmaxf(params.plane_tolerance, 0.f);
-    if (plane_deviation * plane_deviation >
-        plane_tolerance * plane_tolerance * scale_sq * denom) {
-        return false;
-    }
-    const float inv_denom = 1.f / denom;
-    const float u = (d11 * d20 - d01 * d21) * inv_denom;
-    const float v = (d00 * d21 - d01 * d20) * inv_denom;
-    return u >= -kEpcTolerance &&
-           v >= -kEpcTolerance &&
-           u + v <= 1.f + kEpcTolerance;
-}
-
-static __forceinline__ __device__ bool point_inside_surface_group(int group,
-                                                                  float3 point,
-                                                                  int &resolved_prim) {
-    resolved_prim = -1;
-    if (!has_surface_groups() ||
-        group < 0 ||
-        group >= params.surface_group_count ||
-        params.surface_max_group_size <= 0) {
-        return false;
-    }
-
-    int member_count = params.surface_group_size[group];
-    if (member_count < 0) {
-        member_count = 0;
-    }
-    if (member_count > params.surface_max_group_size) {
-        member_count = params.surface_max_group_size;
-    }
-    const int base = group * params.surface_max_group_size;
-    for (int i = 0; i < member_count; ++i) {
-        const int prim = params.surface_group_members[base + i];
-        if (prim < 0) {
-            continue;
+        unsigned int ray_flags = OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT;
+        if constexpr (DisableAnyHitWithoutIgnore) {
+            const bool has_ignore =
+                ignore0 != kInvalidPrim || ignore1 != kInvalidPrim || ignore2 != kInvalidPrim;
+            if (!has_ignore) {
+                ray_flags |= OPTIX_RAY_FLAG_DISABLE_ANYHIT;
+            }
         }
-        if (point_inside_triangle(prim, point)) {
-            resolved_prim = prim;
-            return true;
-        }
-    }
-    return false;
-}
 
-static __forceinline__ __device__ bool intersect_line_plane(float3 line_start,
-                                                            float3 line_end,
-                                                            float3 plane_point,
-                                                             float3 plane_normal,
-                                                             float3 &point) {
-    math::Vec3f shared_point = {};
-    if (!reflection::intersect_segment_plane(
-            to_shared(line_start),
-            to_shared(line_end),
-            to_shared(plane_point),
-            to_shared(plane_normal),
-            1e-7f,
-            kEpcTolerance,
-            shared_point)) {
-        return false;
+        optixTrace(handle,
+                   make_float3(origin.x, origin.y, origin.z),
+                   make_float3(direction.x, direction.y, direction.z),
+                   tmin,
+                   tmax,
+                   0.0f,
+                   255u,
+                   ray_flags,
+                   0,
+                   1,
+                   0,
+                   visible,
+                   blocker,
+                   ignore0,
+                   ignore1,
+                   ignore2,
+                   mode);
+        hit.hit = visible == 0u ? 1u : 0u;
+        hit.prim = static_cast<std::int32_t>(blocker);
+        hit.instance = -1;
+        return hit;
     }
-    point = from_shared(shared_point);
-    return isfinite(point.x) && isfinite(point.y) && isfinite(point.z);
-}
 
-static __forceinline__ __device__ void store_invalid(unsigned int ray_index,
-                                                     int bounce_count,
-                                                     int first_blocked_segment,
-                                                     int first_blocked_prim,
-                                                     int first_blocked_group) {
-    params.out_valid[ray_index] = 0u;
-    params.out_bounce_count[ray_index] = bounce_count;
-    params.out_path_length[ray_index] = __uint_as_float(0x7f800000u);
-    params.out_first_blocked_segment[ray_index] = first_blocked_segment;
-    params.out_first_blocked_prim[ray_index] = first_blocked_prim;
-    params.out_first_blocked_group[ray_index] = first_blocked_group;
-}
+    __device__ __forceinline__ bool trace_occluded_ignore(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
+        const std::int32_t *ignore, int ignore_count) const {
+        return trace_first_blocker(origin, direction, tmin, tmax, ignore, ignore_count).hit != 0u;
+    }
+
+    __device__ __forceinline__ bool trace_occluded(
+        math::Vec3f origin, math::Vec3f direction, float tmin, float tmax) const {
+        return trace_occluded_ignore(origin, direction, tmin, tmax, nullptr, 0);
+    }
+};
+
+static_assert(::rayd::shared::rt::is_traverser_v<ReflEpcOptixTraverser<false>>,
+              "ReflEpcOptixTraverser must satisfy the rt::Traverser concept.");
+static_assert(::rayd::shared::rt::is_traverser_v<ReflEpcOptixTraverser<true>>,
+              "ReflEpcOptixTraverser must satisfy the rt::Traverser concept.");
 
 // OptiX programs for the shared EPC pipeline; one raygen launch per ray. The same
 // programs serve reflection tracing and visibility checks, switched by payload 5.
@@ -401,14 +160,15 @@ static __forceinline__ __device__ void anyhit() {
     }
 
     const int shape_id = static_cast<int>(optixGetInstanceId());
-    const int global_prim =
-        global_prim_from_hit(shape_id, static_cast<int>(optixGetPrimitiveIndex()));
+    const int global_prim = algo_detail::global_primitive_id(
+        shape_id, static_cast<int>(optixGetPrimitiveIndex()),
+        params.face_offsets, params.n_meshes);
     const unsigned int ignore0 = optixGetPayload_2();
     const unsigned int ignore1 = optixGetPayload_3();
     const unsigned int ignore2 = optixGetPayload_4();
     const int candidate =
         params.visibility_ignore_mode == ReflEpcVisibilityIgnoreSurfaceGroup
-            ? surface_group_for_prim(global_prim)
+            ? algo_detail::surface_group_for_prim(params, global_prim)
             : global_prim;
     if ((ignore0 != kInvalidPrim && candidate == static_cast<int>(ignore0)) ||
         (ignore1 != kInvalidPrim && candidate == static_cast<int>(ignore1)) ||
@@ -421,14 +181,15 @@ static __forceinline__ __device__ void anyhit() {
 static __forceinline__ __device__ void closesthit() {
     if (optixGetPayload_5() == kTraceModeVisibility) {
         const int shape_id = static_cast<int>(optixGetInstanceId());
-        const int global_prim =
-            global_prim_from_hit(shape_id, static_cast<int>(optixGetPrimitiveIndex()));
+        const int global_prim = algo_detail::global_primitive_id(
+            shape_id, static_cast<int>(optixGetPrimitiveIndex()),
+            params.face_offsets, params.n_meshes);
         optixSetPayload_0(0u);
         optixSetPayload_1(static_cast<unsigned int>(global_prim));
         return;
     }
 
-    HitPayload payload;
+    TriangleHitPayload payload;
     payload.hit = 1u;
     payload.t = __float_as_uint(optixGetRayTmax());
     const float2 bary = optixGetTriangleBarycentrics();
@@ -436,7 +197,7 @@ static __forceinline__ __device__ void closesthit() {
     payload.bary_v = __float_as_uint(bary.y);
     payload.prim = optixGetPrimitiveIndex();
     payload.instance = optixGetInstanceId();
-    set_reflection_payload(payload);
+    set_triangle_hit_payload(payload);
 }
 
 /// Miss: in reflection mode mark "no hit"; in visibility mode a miss means unoccluded.
@@ -446,293 +207,16 @@ static __forceinline__ __device__ void miss() {
     }
 }
 
-/// Raygen: trace the expected reflector sequence, apply equivalent-path correction, and check
-/// segment visibility to the receiver, writing per-slot reflection geometry and per-ray validity.
+/// Raygen: instantiate the primary / secondary EPC traversers and dispatch to the
+/// shared algorithm. The same programs (above) back both trace families.
 template <typename Policy, bool DirectOnly, bool PrimaryVisibilityOnly>
 static __forceinline__ __device__ void run_reflection_epc_raygen() {
-    const unsigned int ray_index = optixGetLaunchIndex().x;
-    if (ray_index >= static_cast<unsigned int>(params.n_rays)) {
-        return;
-    }
-
-    const int B = params.max_bounces;
-    const int base = static_cast<int>(ray_index) * B;
-    for (int bounce = 0; bounce < B; ++bounce) {
-        const int slot = base + bounce;
-        params.out_point_x[slot] = 0.f;
-        params.out_point_y[slot] = 0.f;
-        params.out_point_z[slot] = 0.f;
-        params.out_trace_prim_ids[slot] = -1;
-        params.out_resolved_prim_ids[slot] = -1;
-        params.out_surface_group_ids[slot] = -1;
-        params.out_plane_normal_x[slot] = 0.f;
-        params.out_plane_normal_y[slot] = 0.f;
-        params.out_plane_normal_z[slot] = 0.f;
-    }
-
-    if (params.active_mask != nullptr && params.active_mask[ray_index] == 0u) {
-        store_invalid(ray_index, 0, -1, -1, -1);
-        return;
-    }
-
-    float3 origin = make_vec3(params.ray_ox[ray_index],
-                              params.ray_oy[ray_index],
-                              params.ray_oz[ray_index]);
-    const int rx_id = params.rx_count == 1 ? 0 : static_cast<int>(ray_index);
-    const float3 receiver = make_vec3(params.rx_x[rx_id],
-                                      params.rx_y[rx_id],
-                                      params.rx_z[rx_id]);
-
-    float3 plane_points[ReflEpcMaxBounces];
-    float3 plane_normals[ReflEpcMaxBounces];
-    int trace_prim_ids[ReflEpcMaxBounces];
-    int resolved_prim_ids[ReflEpcMaxBounces];
-    int surface_group_ids[ReflEpcMaxBounces];
-    float3 image_sources[ReflEpcMaxBounces + 1];
-    float3 reflection_points[ReflEpcMaxBounces];
-    image_sources[0] = origin;
-
-    int bounce_count = 0;
-    float3 image_source = origin;
-
-    if (direct_plane_mode()) {
-        for (int bounce = 0; bounce < B; ++bounce) {
-            const int slot = base + bounce;
-            const int expected_prim = expected_prim_for_bounce(slot);
-            const int expected_group = surface_group_for_prim(expected_prim);
-            if (expected_prim < 0 ||
-                expected_prim >= params.n_triangles ||
-                !isfinite(params.direct_plane_point_x[slot]) ||
-                !isfinite(params.direct_plane_point_y[slot]) ||
-                !isfinite(params.direct_plane_point_z[slot]) ||
-                !isfinite(params.direct_plane_normal_x[slot]) ||
-                !isfinite(params.direct_plane_normal_y[slot]) ||
-                !isfinite(params.direct_plane_normal_z[slot])) {
-                store_invalid(ray_index, bounce_count, -1, -1, -1);
-                return;
-            }
-
-            const float3 plane_point =
-                make_vec3(params.direct_plane_point_x[slot],
-                          params.direct_plane_point_y[slot],
-                          params.direct_plane_point_z[slot]);
-            const float3 plane_normal =
-                normalize3(make_vec3(params.direct_plane_normal_x[slot],
-                                     params.direct_plane_normal_y[slot],
-                                     params.direct_plane_normal_z[slot]));
-            if (length3(plane_normal) <= 0.f) {
-                store_invalid(ray_index, bounce_count, -1, -1, -1);
-                return;
-            }
-
-            image_source = from_shared(reflection::reflect_point_across_plane(
-                to_shared(image_source),
-                to_shared(plane_point),
-                to_shared(plane_normal)));
-            image_sources[bounce + 1] = image_source;
-            plane_points[bounce] = plane_point;
-            plane_normals[bounce] = plane_normal;
-            trace_prim_ids[bounce] = expected_prim;
-            resolved_prim_ids[bounce] = -1;
-            surface_group_ids[bounce] = expected_group;
-            ++bounce_count;
-        }
-    } else {
-        if constexpr (DirectOnly) {
-            store_invalid(ray_index, bounce_count, -1, -1, -1);
-            return;
-        } else {
-        float3 trace_origin = origin;
-        float3 trace_direction = normalize3(make_vec3(params.ray_dx[ray_index],
-                                                      params.ray_dy[ray_index],
-                                                      params.ray_dz[ray_index]));
-
-        for (int bounce = 0; bounce < B; ++bounce) {
-            const float tmax_input =
-                bounce == 0 && params.ray_tmax != nullptr ? params.ray_tmax[ray_index] : kTraceTMax;
-            const float trace_tmax = isfinite(tmax_input) ? tmax_input : kTraceTMax;
-            const HitPayload hit = trace_scene(trace_origin, trace_direction, trace_tmax);
-            if (hit.hit == 0u) {
-                break;
-            }
-
-            const int shape_id = static_cast<int>(hit.instance);
-            const int local_prim = static_cast<int>(hit.prim);
-            const int global_prim = global_prim_from_hit(shape_id, local_prim);
-            const int actual_group = surface_group_for_prim(global_prim);
-            const int slot = base + bounce;
-            const int expected_prim = expected_prim_for_bounce(slot);
-            const int expected_group = surface_group_for_prim(expected_prim);
-            const bool expected_matches =
-                expected_prim < 0 ||
-                (has_surface_groups()
-                     ? (actual_group >= 0 && actual_group == expected_group)
-                     : (global_prim == expected_prim));
-            if (!expected_matches) {
-                store_invalid(ray_index, bounce_count, -1, -1, -1);
-                return;
-            }
-            const float bary_u = __uint_as_float(hit.bary_u);
-            const float bary_v = __uint_as_float(hit.bary_v);
-            const float t = __uint_as_float(hit.t);
-
-            float3 hit_point = trace_origin + t * trace_direction;
-            float3 geo_normal = make_vec3(0.f, 0.f, 1.f);
-            if (global_prim >= 0 && global_prim < params.n_triangles) {
-                const float3 p0 = load_triangle_p0(global_prim);
-                const float3 e1 = load_triangle_e1(global_prim);
-                const float3 e2 = load_triangle_e2(global_prim);
-                hit_point = p0 + bary_u * e1 + bary_v * e2;
-                geo_normal = load_triangle_normal(global_prim);
-            }
-            if (dot3(trace_direction, geo_normal) > 0.f) {
-                geo_normal = -1.f * geo_normal;
-            }
-
-            const float image_distance = dot3(image_source - hit_point, geo_normal);
-            image_source = image_source - 2.f * image_distance * geo_normal;
-            image_sources[bounce + 1] = image_source;
-            plane_points[bounce] = hit_point;
-            plane_normals[bounce] = geo_normal;
-            trace_prim_ids[bounce] = global_prim;
-            resolved_prim_ids[bounce] = -1;
-            surface_group_ids[bounce] =
-                expected_group >= 0 ? expected_group : actual_group;
-            ++bounce_count;
-
-            const float ray_dot_normal = dot3(trace_direction, geo_normal);
-            trace_direction = normalize3(trace_direction - 2.f * ray_dot_normal * geo_normal);
-            trace_origin = hit_point + kRayBias * trace_direction;
-        }
-        }
-    }
-
-    if (bounce_count != B) {
-        store_invalid(ray_index, bounce_count, -1, -1, -1);
-        return;
-    }
-
-    // Shared fixed-winner back-trace and path length (reflection/epc_chain.h):
-    // one implementation feeds both this discovery kernel and the geometry
-    // adjoint, so the two cannot drift. The planes and image sources were built
-    // per discovery mode above; the geometry from here on is mode-independent.
-    math::Vec3f shared_plane_points[ReflEpcMaxBounces];
-    math::Vec3f shared_plane_normals[ReflEpcMaxBounces];
-    math::Vec3f shared_image_sources[ReflEpcMaxBounces + 1];
-    for (int bounce = 0; bounce < B; ++bounce) {
-        shared_plane_points[bounce] = to_shared(plane_points[bounce]);
-        shared_plane_normals[bounce] = to_shared(plane_normals[bounce]);
-    }
-    for (int bounce = 0; bounce <= B; ++bounce) {
-        shared_image_sources[bounce] = to_shared(image_sources[bounce]);
-    }
-    math::Vec3f shared_hits[ReflEpcMaxBounces];
-    float path_length = 0.f;
-    if (!reflection::epc_backtrace_and_length<ReflEpcMaxBounces>(
-            shared_plane_points, shared_plane_normals, shared_image_sources, B,
-            to_shared(origin), to_shared(receiver), shared_hits,
-            nullptr, nullptr, path_length)) {
-        store_invalid(ray_index, bounce_count, -1, -1, -1);
-        return;
-    }
-    for (int bounce = 0; bounce < B; ++bounce) {
-        reflection_points[bounce] = from_shared(shared_hits[bounce]);
-    }
-
-    // Freeze which primitive each interaction lands in (the discrete winner):
-    // the back-trace above is pure geometry, containment is the discovery
-    // decision, so they are separated. resolved_prim_ids feeds the visibility
-    // ignore lists below and must be fully populated before them.
-    for (int bounce = B - 1; bounce >= 0; --bounce) {
-        const float3 point = reflection_points[bounce];
-        int resolved_prim = -1;
-        bool inside;
-        if (has_surface_groups() && surface_group_ids[bounce] >= 0) {
-            inside = point_inside_surface_group(surface_group_ids[bounce],
-                                                point,
-                                                resolved_prim);
-        } else {
-            const int expected_prim = expected_prim_for_bounce(base + bounce);
-            const int containment_prim =
-                expected_prim >= 0 ? expected_prim : trace_prim_ids[bounce];
-            inside = point_inside_triangle(containment_prim, point);
-            resolved_prim = inside ? containment_prim : -1;
-        }
-        resolved_prim_ids[bounce] = resolved_prim;
-        if (!inside) {
-            store_invalid(ray_index, bounce_count, -1, -1, -1);
-            return;
-        }
-    }
-
-    bool valid = true;
-    int first_blocked_segment = -1;
-    int first_blocked_prim = -1;
-    int first_blocked_group = -1;
-    const int final_ignore_group =
-        final_ignore_group_for_ray(static_cast<int>(ray_index));
-    for (int segment = 0; segment <= B; ++segment) {
-        const float3 start = segment == 0 ? origin : reflection_points[segment - 1];
-        const float3 end = segment == B ? receiver : reflection_points[segment];
-
-        const bool ignore_surface_group =
-            params.visibility_ignore_mode == ReflEpcVisibilityIgnoreSurfaceGroup &&
-            has_surface_groups();
-        const int ignore0 = segment > 0
-                                ? (ignore_surface_group
-                                       ? surface_group_ids[segment - 1]
-                                       : resolved_prim_ids[segment - 1])
-                                : -1;
-        const int ignore1 = segment < B
-                                ? (ignore_surface_group
-                                       ? surface_group_ids[segment]
-                                       : resolved_prim_ids[segment])
-                                : -1;
-        const int ignore2 =
-            ignore_surface_group && segment == B ? final_ignore_group : -1;
-        VisibilityPayload visibility;
-        if constexpr (PrimaryVisibilityOnly) {
-            visibility =
-                trace_visibility_primary<Policy>(start, end, ignore0, ignore1, ignore2);
-        } else {
-            visibility = trace_visibility<Policy>(start, end, ignore0, ignore1, ignore2);
-        }
-        if (visibility.visible == 0u) {
-            first_blocked_segment = segment;
-            first_blocked_prim = static_cast<int>(visibility.blocker);
-            first_blocked_group = surface_group_for_prim(first_blocked_prim);
-            valid = false;
-            break;
-        }
-    }
-
-    if (!valid) {
-        store_invalid(ray_index,
-                      bounce_count,
-                      first_blocked_segment,
-                      first_blocked_prim,
-                      first_blocked_group);
-        return;
-    }
-
-    params.out_valid[ray_index] = 1u;
-    params.out_bounce_count[ray_index] = bounce_count;
-    params.out_path_length[ray_index] = path_length;
-    params.out_first_blocked_segment[ray_index] = -1;
-    params.out_first_blocked_prim[ray_index] = -1;
-    params.out_first_blocked_group[ray_index] = -1;
-    for (int bounce = 0; bounce < B; ++bounce) {
-        const int slot = base + bounce;
-        params.out_point_x[slot] = reflection_points[bounce].x;
-        params.out_point_y[slot] = reflection_points[bounce].y;
-        params.out_point_z[slot] = reflection_points[bounce].z;
-        params.out_trace_prim_ids[slot] = trace_prim_ids[bounce];
-        params.out_resolved_prim_ids[slot] = resolved_prim_ids[bounce];
-        params.out_surface_group_ids[slot] = surface_group_ids[bounce];
-        params.out_plane_normal_x[slot] = plane_normals[bounce].x;
-        params.out_plane_normal_y[slot] = plane_normals[bounce].y;
-        params.out_plane_normal_z[slot] = plane_normals[bounce].z;
-    }
+    using Traverser = ReflEpcOptixTraverser<Policy::DisableAnyHitWithoutIgnore>;
+    using Config = ::rayd::shared::rt::TraceConfig<Policy, Traverser>;
+    const Traverser primary{static_cast<::OptixTraversableHandle>(params.primary_handle)};
+    const Traverser secondary{static_cast<::OptixTraversableHandle>(params.secondary_handle)};
+    ::rayd::shared::multipath::run_reflection_epc_algo<Config, DirectOnly, PrimaryVisibilityOnly>(
+        params, optixGetLaunchIndex().x, primary, secondary);
 }
 
 } // namespace reflection_epc_device

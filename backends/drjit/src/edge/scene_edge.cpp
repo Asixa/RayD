@@ -10,6 +10,8 @@
 #include <rayd/edge/edge_bvh.h>
 #include <rayd/edge/edge_bvh_config.h>
 
+#include <rayd/shared/bvh/host_topology.h>
+
 #include <rayd/edge/scene_edge.h>
 #include <rayd/utils.h>
 
@@ -192,119 +194,9 @@ std::vector<ScalarVector3f> copy_vector3_to_host(const Vector3f &values) {
     return result;
 }
 
-std::vector<int> build_preorder_mapping(const std::vector<int> &left_child,
-                                        const std::vector<int> &right_child,
-                                        const std::vector<int> &is_leaf) {
-    const int node_count = static_cast<int>(is_leaf.size());
-    if (node_count == 0) {
-        return {};
-    }
-
-    std::vector<int> new_to_old(static_cast<size_t>(node_count), -1);
-    std::vector<int> stack;
-    stack.reserve(static_cast<size_t>(node_count));
-    stack.push_back(0);
-
-    int next_index = 0;
-    while (!stack.empty()) {
-        const int old_index = stack.back();
-        stack.pop_back();
-        new_to_old[static_cast<size_t>(next_index++)] = old_index;
-
-        if (is_leaf[static_cast<size_t>(old_index)] == 0) {
-            stack.push_back(right_child[static_cast<size_t>(old_index)]);
-            stack.push_back(left_child[static_cast<size_t>(old_index)]);
-        }
-    }
-
-    require(next_index == node_count,
-            "SceneEdge::build(): GPU LBVH traversal did not cover every node.");
-    return new_to_old;
-}
-
-int compute_subtree_leaf_count(int node_index,
-                               const std::vector<int> &left_child,
-                               const std::vector<int> &right_child,
-                               const std::vector<int> &is_leaf,
-                               std::vector<int> &subtree_leaf_counts) {
-    int &count = subtree_leaf_counts[static_cast<size_t>(node_index)];
-    if (count >= 0) {
-        return count;
-    }
-
-    if (is_leaf[static_cast<size_t>(node_index)] > 0) {
-        count = 1;
-        return count;
-    }
-
-    count = compute_subtree_leaf_count(left_child[static_cast<size_t>(node_index)],
-                                       left_child,
-                                       right_child,
-                                       is_leaf,
-                                       subtree_leaf_counts) +
-            compute_subtree_leaf_count(right_child[static_cast<size_t>(node_index)],
-                                       left_child,
-                                       right_child,
-                                       is_leaf,
-                                       subtree_leaf_counts);
-    return count;
-}
-
-int compute_subtree_primitive_count(int node_index,
-                                    const std::vector<int> &left_child,
-                                    const std::vector<int> &right_child,
-                                    const std::vector<int> &is_leaf,
-                                    std::vector<int> &subtree_primitive_counts) {
-    int &count = subtree_primitive_counts[static_cast<size_t>(node_index)];
-    if (count >= 0) {
-        return count;
-    }
-
-    if (is_leaf[static_cast<size_t>(node_index)] > 0) {
-        count = std::max(right_child[static_cast<size_t>(node_index)], 0);
-        return count;
-    }
-
-    count = compute_subtree_primitive_count(left_child[static_cast<size_t>(node_index)],
-                                            left_child,
-                                            right_child,
-                                            is_leaf,
-                                            subtree_primitive_counts) +
-            compute_subtree_primitive_count(right_child[static_cast<size_t>(node_index)],
-                                            left_child,
-                                            right_child,
-                                            is_leaf,
-                                            subtree_primitive_counts);
-    return count;
-}
-
-int compute_node_height(int node_index,
-                        const std::vector<int> &left_child,
-                        const std::vector<int> &right_child,
-                        const std::vector<int> &is_leaf,
-                        std::vector<int> &heights) {
-    int &height = heights[static_cast<size_t>(node_index)];
-    if (height >= 0) {
-        return height;
-    }
-
-    if (is_leaf[static_cast<size_t>(node_index)] > 0) {
-        height = 0;
-        return height;
-    }
-
-    height = 1 + std::max(compute_node_height(left_child[static_cast<size_t>(node_index)],
-                                              left_child,
-                                              right_child,
-                                              is_leaf,
-                                              heights),
-                          compute_node_height(right_child[static_cast<size_t>(node_index)],
-                                              left_child,
-                                              right_child,
-                                              is_leaf,
-                                              heights));
-    return height;
-}
+using shared::bvh::compute_node_height;
+using shared::bvh::compute_subtree_leaf_count;
+using shared::bvh::compute_subtree_primitive_count;
 
 float bbox_overlap_surface_area(const ScalarVector3f &a_min,
                                 const ScalarVector3f &a_max,
@@ -319,105 +211,10 @@ float bbox_overlap_surface_area(const ScalarVector3f &a_min,
     return bbox_surface_area(overlap_min, overlap_max);
 }
 
-void collect_subtree_primitives(int node_index,
-                                const std::vector<int> &left_child,
-                                const std::vector<int> &right_child,
-                                const std::vector<int> &leaf_primitive,
-                                const std::vector<int> &is_leaf,
-                                std::vector<int> &primitives) {
-    if (is_leaf[static_cast<size_t>(node_index)] > 0) {
-        primitives.push_back(leaf_primitive[static_cast<size_t>(node_index)]);
-        return;
-    }
-
-    collect_subtree_primitives(left_child[static_cast<size_t>(node_index)],
-                               left_child,
-                               right_child,
-                               leaf_primitive,
-                               is_leaf,
-                               primitives);
-    collect_subtree_primitives(right_child[static_cast<size_t>(node_index)],
-                               left_child,
-                               right_child,
-                               leaf_primitive,
-                               is_leaf,
-                               primitives);
-}
-
-/// Host-side dense BVH after compaction: topology, leaf primitives, and per-node bounds.
-struct CompactedEdgeBVH {
-    std::vector<int> left_child;
-    std::vector<int> right_child;
-    std::vector<int> is_leaf;
-    std::vector<int> primitive_leaf_nodes;
-    std::vector<int> leaf_primitives;
-    std::vector<ScalarVector3f> node_bbox_min;
-    std::vector<ScalarVector3f> node_bbox_max;
-};
-
-int emit_compacted_bvh_preorder(int old_node_index,
-                                const std::vector<int> &left_child,
-                                const std::vector<int> &right_child,
-                                const std::vector<int> &leaf_primitive,
-                                const std::vector<int> &is_leaf,
-                                const std::vector<int> &subtree_leaf_counts,
-                                const std::vector<ScalarVector3f> &node_bbox_min,
-                                const std::vector<ScalarVector3f> &node_bbox_max,
-                                CompactedEdgeBVH &compacted) {
-    const int new_node_index = static_cast<int>(compacted.is_leaf.size());
-    compacted.left_child.push_back(-1);
-    compacted.right_child.push_back(-1);
-    compacted.is_leaf.push_back(0);
-    compacted.node_bbox_min.push_back(node_bbox_min[static_cast<size_t>(old_node_index)]);
-    compacted.node_bbox_max.push_back(node_bbox_max[static_cast<size_t>(old_node_index)]);
-
-    const bool collapse_to_leaf =
-        is_leaf[static_cast<size_t>(old_node_index)] > 0 ||
-        subtree_leaf_counts[static_cast<size_t>(old_node_index)] <= EdgeBVHLeafSize;
-    if (collapse_to_leaf) {
-        compacted.is_leaf[static_cast<size_t>(new_node_index)] = 1;
-
-        std::vector<int> primitives;
-        primitives.reserve(static_cast<size_t>(subtree_leaf_counts[static_cast<size_t>(old_node_index)]));
-        collect_subtree_primitives(old_node_index,
-                                   left_child,
-                                   right_child,
-                                   leaf_primitive,
-                                   is_leaf,
-                                   primitives);
-
-        const int leaf_begin = static_cast<int>(compacted.leaf_primitives.size());
-        compacted.left_child[static_cast<size_t>(new_node_index)] = -leaf_begin - 1;
-        compacted.right_child[static_cast<size_t>(new_node_index)] = static_cast<int>(primitives.size());
-        for (int primitive : primitives) {
-            compacted.primitive_leaf_nodes[static_cast<size_t>(primitive)] = new_node_index;
-            compacted.leaf_primitives.push_back(primitive);
-        }
-        return new_node_index;
-    }
-
-    const int new_left_child = emit_compacted_bvh_preorder(left_child[static_cast<size_t>(old_node_index)],
-                                                           left_child,
-                                                           right_child,
-                                                           leaf_primitive,
-                                                           is_leaf,
-                                                           subtree_leaf_counts,
-                                                           node_bbox_min,
-                                                           node_bbox_max,
-                                                           compacted);
-    const int new_right_child = emit_compacted_bvh_preorder(right_child[static_cast<size_t>(old_node_index)],
-                                                            left_child,
-                                                            right_child,
-                                                            leaf_primitive,
-                                                            is_leaf,
-                                                            subtree_leaf_counts,
-                                                            node_bbox_min,
-                                                            node_bbox_max,
-                                                            compacted);
-    compacted.left_child[static_cast<size_t>(new_node_index)] = new_left_child;
-    compacted.right_child[static_cast<size_t>(new_node_index)] = new_right_child;
-    return new_node_index;
-}
+/// Host-side dense BVH after compaction: topology, leaf primitives, and per-node
+/// bounds. The compaction and its preorder emission are the primitive-agnostic
+/// host algorithms shared through <rayd/shared/bvh/host_topology.h>.
+using CompactedEdgeBVH = shared::bvh::HostCompactedBvh<ScalarVector3f>;
 
 float bbox_cost_inflated(const ScalarVector3f &bbox_min,
                          const ScalarVector3f &bbox_max,
@@ -1112,15 +909,16 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info,
         0, optimized_left_child, optimized_right_child, optimized_is_leaf, final_subtree_leaf_counts);
     CompactedEdgeBVH compacted;
     compacted.primitive_leaf_nodes.assign(static_cast<size_t>(primitive_count_), -1);
-    emit_compacted_bvh_preorder(0,
-                                optimized_left_child,
-                                optimized_right_child,
-                                optimized_leaf_primitive,
-                                optimized_is_leaf,
-                                final_subtree_leaf_counts,
-                                node_bbox_min,
-                                node_bbox_max,
-                                compacted);
+    shared::bvh::emit_compacted_preorder(0,
+                                         optimized_left_child,
+                                         optimized_right_child,
+                                         optimized_leaf_primitive,
+                                         optimized_is_leaf,
+                                         final_subtree_leaf_counts,
+                                         node_bbox_min,
+                                         node_bbox_max,
+                                         EdgeBVHLeafSize,
+                                         compacted);
 
     require(compacted.leaf_primitives.size() == static_cast<size_t>(primitive_count_),
             "SceneEdge::build(): compacted BVH lost edge primitives.");
