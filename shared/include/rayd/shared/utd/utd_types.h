@@ -231,6 +231,13 @@ struct PairInputsT {
     FaceMaterialParamsT<T> face0Material;
     FaceMaterialParamsT<T> face1Material;
     float   selectStationaryPoint;
+    // Discrete mode flag (like selectStationaryPoint, always float): when set on
+    // the stationary path (selectStationaryPoint > 0.5) the incident field is the
+    // frozen EXTERNAL incidentJones (a coupled image-source spherical wave)
+    // re-extrapolated from the frozen edge point to the re-anchored stationary
+    // point, instead of the direct transmitter source. Default 0 preserves the
+    // order-1 diffraction and MC callers bit-for-bit.
+    float   stationaryExternalIncident;
 };
 using PairInputs = PairInputsT<float>;
 
@@ -616,6 +623,7 @@ UTD_DINLINE PairInputsT<Dual> pair_inputs_seed(
     out.face0Material = dual_seed(value.face0Material, tangent.face0Material);
     out.face1Material = dual_seed(value.face1Material, tangent.face1Material);
     out.selectStationaryPoint = value.selectStationaryPoint;
+    out.stationaryExternalIncident = value.stationaryExternalIncident;
     return out;
 }
 

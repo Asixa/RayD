@@ -1426,21 +1426,53 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_at_angles(
     Basis3T<T> outEB,
     ComplexT<T> finiteFactor,
     T gammaOdd = T(1.f),
-    ComplexT<T> truncEven = c_const<T>(1, 0))
+    ComplexT<T> truncEven = c_const<T>(1, 0),
+    // Source-to-edge distance captured at the ORIGINAL (pre-re-anchor) edge
+    // point. Consumed only on the external-incident stationary path
+    // (stationaryExternalIncident > 0.5) to re-extrapolate the frozen incident
+    // spherical wave to the re-anchored stationary point; ignored otherwise.
+    T sPrimeFrozen = T(-1.f))
 {
     bool selectedStationary = state.selectStationaryPoint > 0.5f;
+    bool externalIncident = selectedStationary
+        && (state.stationaryExternalIncident > 0.5f);
     // Faces are finite: continue the coefficient with its grazing value at the
     // wedge boundary [0, n*pi] (nearest-boundary wrap) instead of switching to
     // an endpoint branch; blocked directions are removed by segment occlusion.
     T npi = state.wedgeN * UTD_PI;
     if (phi > npi)  phi  = (phi - npi < 2.f*UTD_PI - phi) ? npi : T(0);
     if (phiP > npi) phiP = (phiP - npi < 2.f*UTD_PI - phiP) ? npi : T(0);
-    Complex3T<T> incidentVector = selectedStationary
-        ? direct_source_vector(state.sourcePos, state.edgePos, k, mat)
-        : vector_from_jones(state.incidentJones, state.incidentBasis);
-    Complex3T<T> incidentDerivativeVector = selectedStationary
-        ? c3_zero<T>()
-        : vector_from_jones(state.incidentDerivativeJones, state.incidentBasis);
+    Complex3T<T> incidentVector;
+    Complex3T<T> incidentDerivativeVector;
+    if (externalIncident) {
+        // Coupled leg: the incident field is the frozen EXTERNAL spherical wave
+        // (an image-source field the coupled kernel projected into incidentJones
+        // on incidentBasis at the original edge point). Re-extrapolate it from
+        // the frozen edge point to the re-anchored stationary point Q* with
+        //   scale = (sPrimeFrozen / sPrimeNew) * exp(-j k (sPrimeNew - sPrimeFrozen)),
+        // which is EXACT for a spherical wave: the composite amplitude/phase
+        // become 1/(2 k sPrimeNew) and e^{-j k sPrimeNew}. The reconstructed
+        // vector keeps the original (direction-frozen) polarization and is
+        // reprojected onto the re-anchored incident basis inEB by the
+        // jones_from_vector below (same approximation order as the frozen txPol
+        // in direct_source_vector). Slope diffraction is dropped, matching the
+        // plain stationary path.
+        Complex3T<T> frozenInc =
+            vector_from_jones(state.incidentJones, state.incidentBasis);
+        T sPrimeNew = safe_length(f3_sub(state.edgePos, state.sourcePos)) + T(UTD_EPS);
+        T sPrimeOld = fmaxf(sPrimeFrozen, T(UTD_SMALL_EPS));
+        ComplexT<T> reexScale = cplx_mul_real(
+            cplx_exp_phase(-k * (sPrimeNew - sPrimeOld)), sPrimeOld / sPrimeNew);
+        incidentVector = c3_scale(frozenInc, reexScale);
+        incidentDerivativeVector = c3_zero<T>();
+    } else if (selectedStationary) {
+        incidentVector = direct_source_vector(state.sourcePos, state.edgePos, k, mat);
+        incidentDerivativeVector = c3_zero<T>();
+    } else {
+        incidentVector = vector_from_jones(state.incidentJones, state.incidentBasis);
+        incidentDerivativeVector =
+            vector_from_jones(state.incidentDerivativeJones, state.incidentBasis);
+    }
     Jones2T<T> incJE  = jones_from_vector(incidentVector, inEB);
     Jones2T<T> incDJE = jones_from_vector(incidentDerivativeVector, inEB);
     bool poleSafe = cot_pole_safe_mask(phi, phiP, state.wedgeN, 1.0e-6f);
@@ -1507,6 +1539,11 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
 {
     // Deterministic (selectStationaryPoint > 0.5) path re-anchors the edge to
     // its analytic Fermat point; MC leaves the caller-supplied Keller point.
+    // Capture the source-to-edge distance at the ORIGINAL edge point BEFORE the
+    // re-anchor so the external-incident path can re-extrapolate the frozen
+    // incident spherical wave to the re-anchored stationary point (unused
+    // otherwise).
+    T sPrimeFrozen = safe_length(f3_sub(state.edgePos, state.sourcePos));
     bool selectedStationary = false;
     bool selectedInside = false;
     bool selectedValid = true;
@@ -1554,7 +1591,7 @@ UTD_DINLINE Complex3T<T> compute_pair_vector_contribution_no_completion(PairInpu
     }
     return compute_pair_vector_at_angles(
         state, tgtPos, k, mat, phi, phiP, s, sP, sb, inEB, outEB,
-        outerFinite, gammaOdd, truncEven);
+        outerFinite, gammaOdd, truncEven, sPrimeFrozen);
 }
 
 template <typename T>
