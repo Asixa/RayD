@@ -9,13 +9,14 @@
 #include <vector>
 
 #include <rayd/torch/rf/diffraction.h>
+#include <rayd/torch/rf/scattering.h>
 #include <rayd/torch/rf/transmission.h>
 
 namespace rayd::torch {
 
 inline constexpr std::uint32_t kIntegrationApiVersion = 2;
 inline constexpr std::string_view kIntegrationHeaderIdentity =
-    "rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction";
+    "rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction.scattering-table-single-bounce";
 
 namespace detail {
 struct IntegrationAccess;

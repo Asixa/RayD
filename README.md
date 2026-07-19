@@ -316,6 +316,14 @@ rejection and supported chain-realization geometry VJP/JVP), row fusion,
 atomics, tape lifetime, and per-translation-unit compile flags. See
 [`ADR-0026`](docs/adr/0026-generic-scattering-runtime-ownership.md).
 
+The source tree now contains the dormant Phase 10A candidate for the first
+eleven operations (table evaluation/AD, table sampling/PDF, single-bounce
+ensemble/AD, and patch integral/AD). It is compiled and direct-tested in RayD
+but is not a second production owner: Channel remains authoritative until it
+pins this exact revision, activates all eleven callers atomically, and deletes
+its local implementations. The six chain operations are not part of this
+candidate and remain reserved for Phase 10B.
+
 Naming follows the public API standard in
 [`backends/drjit/API_NAMING_STANDARD.md`](backends/drjit/API_NAMING_STANDARD.md):
 `Dfr` denotes diffraction, `Refl` denotes reflection, `Epc` denotes

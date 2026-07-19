@@ -182,6 +182,39 @@ The eleven table/sampling/single-bounce/patch operations may activate before
 the six chain operations, but each row of the family table above is atomic.
 Primal and AD companions are never split between repositories.
 
+The repository's Phase 10A implementation is the dormant candidate for the
+first eleven entries: table evaluation/backward/JVP, table sample/PDF,
+single-bounce ensemble primal/backward/JVP, and patch-integral
+primal/backward/JVP. It intentionally contains no chain family or event-policy
+entry and has no Python binding. Its presence does not change production
+ownership before the Channel pin/switch/delete activation.
+
+The exact dormant candidate identity is
+`rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction.scattering-table-single-bounce`.
+The source-level pin records are SHA-256 over source bytes after CRLF and CR
+line endings are normalized to LF:
+`66d75a20be16057f03cdfb79e3b9dcc85cacec79b555cd73b019259aa510262a`
+for `rayd/torch/rf/scattering.h`,
+`38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38`
+for `rayd/shared/rf/scattering_table.cuh`, and
+`9f95ad9e8e3b790d00f8e762a3e6a09252d46afb65bfc3aba7c42325836cb1fb`
+for `rayd/torch/integration_v2.h`. The six implementation-source pins are
+`72fb84a4158652a70c5f4f17e5d1ce61371773cdd54db6835148ee065e474c50`
+for `scattering.cu`,
+`e09cb3992737b028222e205318baea1aa070d300f0126def9759edaa17ad5b7c`
+for `scattering_table_eval_ad.cu`,
+`be38ff966dd06afe3f1df46d2eb16094c97111c76534e22d5f3fec6685f1f1fc`
+for `scattering_ensemble.cu`,
+`8c094b3a6542b1da26e662e38c405ec1d90cf53aaf8934147b0549f66a8fb0ea`
+for `scattering_ensemble_ad.cu`,
+`e1d8555874a1832067e92e9f1973cee38d9ce2f18dac230b56bb1c6504c0c08b`
+for `scattering_patch_integral.cu`, and
+`0d3bffe34ecd22656f1c5bdb10a6fe903ad059803547e29ccb95f5fd390858aa`
+for `scattering_patch_integral_ad.cu`. Governance tests recompute these hashes
+and reject pybind/map shims, event/chain scope leaks, dynamic lookup, explicit
+synchronization, and accidental fast-math so a source-contract change requires
+an intentional identity and pin update.
+
 Rollback changes Channel's lock to the prior complete, accepted RayD commit.
 It never selects an owner at runtime and never adds CPU, Torch-expression,
 finite-difference, legacy-dispatch, reduced-algorithm, zero-result, or detached-
