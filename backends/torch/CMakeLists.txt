@@ -568,12 +568,18 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/rf/layer_stack.cu
         src/torch_ext/rf/transmission_sequence.cu
         src/torch_ext/rf/transmission_sequence_ad.cu
+        src/torch_ext/rf/diffraction_wedge.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
         src/torch_ext/diffraction/paths_init.cu
         src/torch_ext/common/stats.cu
         src/torch_ext/common/camera.cu
     )
+
+    set_source_files_properties(
+        src/torch_ext/rf/diffraction_wedge.cu
+        PROPERTIES
+            COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>")
 
     add_library(rayd_torch_native_core STATIC ${RAYD_TORCH_NATIVE_CORE_SOURCES})
     set_target_properties(rayd_torch_native_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -629,9 +635,30 @@ if(RAYD_TORCH_BUILD_NATIVE)
         add_test(
             NAME rayd_torch_integration_v2
             COMMAND rayd_torch_integration_v2_test)
+        add_executable(
+            rayd_torch_diffraction_wedge_test
+            tests/cpp/diffraction_wedge_test.cpp)
+        target_include_directories(
+            rayd_torch_diffraction_wedge_test
+            PRIVATE
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+                ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(
+            rayd_torch_diffraction_wedge_test
+            PRIVATE
+                rayd_torch_native_core
+                Python::Python)
+        target_compile_features(
+            rayd_torch_diffraction_wedge_test PRIVATE cxx_std_17)
+        add_test(
+            NAME rayd_torch_diffraction_wedge
+            COMMAND rayd_torch_diffraction_wedge_test)
         if(WIN32)
             set_tests_properties(
                 rayd_torch_integration_v2
+                rayd_torch_diffraction_wedge
                 PROPERTIES
                     ENVIRONMENT_MODIFICATION
                         "PATH=path_list_prepend:${TORCH_INSTALL_PREFIX}/lib;PATH=path_list_prepend:${PYTHON_ENV_ROOT};PATH=path_list_prepend:${PYTHON_ENV_ROOT}/Library/bin;PATH=path_list_prepend:${CUDAToolkit_BIN_DIR}")

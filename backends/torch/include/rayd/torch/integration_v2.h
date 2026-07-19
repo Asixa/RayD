@@ -8,13 +8,14 @@
 #include <string_view>
 #include <vector>
 
+#include <rayd/torch/rf/diffraction.h>
 #include <rayd/torch/rf/transmission.h>
 
 namespace rayd::torch {
 
 inline constexpr std::uint32_t kIntegrationApiVersion = 2;
 inline constexpr std::string_view kIntegrationHeaderIdentity =
-    "rayd.torch.integration.v2.20260719.rf-transmission-sequence";
+    "rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction";
 
 namespace detail {
 struct IntegrationAccess;
