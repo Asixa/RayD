@@ -288,10 +288,12 @@ solver policy, accumulation, and result schemas. See
 [`ADR-0002`](docs/adr/0002-shared-rf-transmission-ownership.md) for the precise
 header, fusion, stream, failure, and cross-repository activation contracts.
 
-The accepted diffraction boundary places the complete fixed-winner pure-wedge
-field primal/backward/JVP family in RayD while leaving Monte Carlo Sionna,
-coupled RD/DD operations, and BDPT estimator policy in Channel. Pure-wedge
-fast-math remains isolated to that family. See
+The accepted diffraction boundary will place the complete fixed-winner
+pure-wedge field primal/backward/JVP family in RayD after the dormant typed
+candidate is merged, pinned, validated, and activated by Channel. Until that
+switch, Channel remains the production numerical owner. Monte Carlo Sionna,
+coupled RD/DD operations, and BDPT estimator policy remain in Channel, and
+pure-wedge fast-math remains isolated to its family. See
 [`ADR-0025`](docs/adr/0025-diffraction-family-ownership.md) for the typed API,
 AD, fusion, activation, legacy-cleanup, and stop contracts.
 

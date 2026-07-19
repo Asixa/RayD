@@ -124,11 +124,18 @@ and estimator owner. A misleading Channel facade such as
 renamed to describe the RayD-produced sample tape, for example
 `rayd_diffraction_sample_tape_forward`.
 
-That rename is semantic only. It preserves the full fused RayD output,
-proposal/Jacobian/slab calculations, atomics, RNG consumption, row order, and
-output exactness. Cropping the producer to a tape-only kernel, moving estimator
-math into RayD, or changing its fusion boundary requires a separate performance
-and numerical ADR.
+That rename is semantic only. On the RayD producer side it preserves the full
+fused output, including currently unconsumed map columns, as well as its launch
+and fusion boundary, sampling/visibility decisions, RNG consumption, row order,
+and output exactness. Cropping the producer to a tape-only kernel, moving
+estimator math into RayD, or changing its fusion boundary requires a separate
+performance and numerical ADR.
+
+Separately, the Channel consumer keeps the complete fixed-tape Sionna family:
+primal, backward, and JVP; proposal and Jacobian terms; finite-thickness slab
+semantics; cell atomics; seed and RNG interpretation; row order; and output
+exactness. These consumer invariants are not properties of the RayD tape
+producer and do not move during its facade rename.
 
 ### Channel-owned diffraction and policy
 
@@ -160,11 +167,13 @@ Cleanup follows usage evidence rather than historical names:
    public import, and real BDPT end-to-end caller; if any required evidence is
    absent, delete the dead symbol, test, manifest entry, and maintenance-budget
    entry together;
-4. if `_tx_visible_diffraction_states` remains live, replace it only with a
-   complete native Channel planning/selection operation or RayD batched
-   visibility while preserving the exact `(0.02, 1/3, 2/3, 0.98)` fractions,
-   any-visible decision, selected rows, and stable row identity/order; Torch
-   geometry reconstruction is forbidden;
+4. if `_tx_visible_diffraction_states` remains live, replace the complete path
+   with one native Channel planning/selection operation. That operation owns
+   point planning, the ordered four visibility queries at exact fractions
+   `(0.02, 1/3, 2/3, 0.98)`, native any-visible reduction, and stable selected
+   row identity/order. It may invoke RayD batched visibility as its primitive,
+   but Python loops, Torch geometry or reduction, scalar extraction, host bools,
+   and host synchronization are forbidden;
 5. remove historical `RayDN/raydn` facades after all callers use the typed RayD
    owner name; delete RayD legacy C/Python surfaces only after a repository-wide
    consumer audit in the later legacy-removal phase.
@@ -242,7 +251,14 @@ The migration stops and leaves the current owner intact if:
 - parity requires a fallback, duplicate production owner, new host transfer,
   synchronization, launch, persistent tape, or detached gradient;
 - the complete typed primal/backward/JVP candidate and its direct tests are not
-  available before the Channel switch.
+  available before the Channel switch;
+- a sample-tape rename retains a historical alias, crops or reorders producer
+  columns, or changes the producer's launch, RNG, visibility, or fusion contract;
+- a retained legacy BDPT binding lacks any one of its static caller, dynamic
+  binding, public import, or real BDPT end-to-end evidence axes;
+- native visibility planning changes any of the four fixed fractions,
+  any-visible decision, selected row identity/order, or introduces a Python
+  loop, Torch geometry/reduction, scalar extraction, host bool, or host sync.
 
 Any numerical or fusion-boundary change requires its own accepted ADR and
 evidence before implementation.
