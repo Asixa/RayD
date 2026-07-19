@@ -288,6 +288,13 @@ solver policy, accumulation, and result schemas. See
 [`ADR-0002`](docs/adr/0002-shared-rf-transmission-ownership.md) for the precise
 header, fusion, stream, failure, and cross-repository activation contracts.
 
+The accepted diffraction boundary places the complete fixed-winner pure-wedge
+field primal/backward/JVP family in RayD while leaving Monte Carlo Sionna,
+coupled RD/DD operations, and BDPT estimator policy in Channel. Pure-wedge
+fast-math remains isolated to that family. See
+[`ADR-0025`](docs/adr/0025-diffraction-family-ownership.md) for the typed API,
+AD, fusion, activation, legacy-cleanup, and stop contracts.
+
 Naming follows the public API standard in
 [`backends/drjit/API_NAMING_STANDARD.md`](backends/drjit/API_NAMING_STANDARD.md):
 `Dfr` denotes diffraction, `Refl` denotes reflection, `Epc` denotes

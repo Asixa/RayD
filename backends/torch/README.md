@@ -47,6 +47,15 @@ consumer pins it, switches all callers, proves parity, and deletes its local
 implementation. See
 [`docs/adr/0002-shared-rf-transmission-ownership.md`](../../docs/adr/0002-shared-rf-transmission-ownership.md).
 
+The accepted diffraction surface also places the complete fixed-winner
+pure-wedge field primal/backward/JVP family behind the typed integration header.
+It preserves optional winner vertices, three separate native entry launches,
+current-stream execution, output schemas, and the family-local
+`--use_fast_math` contract required for order-1 exporter parity. Monte Carlo
+Sionna accumulation, coupled RD/DD operations, and BDPT estimator policy remain
+downstream-owned. See
+[`docs/adr/0025-diffraction-family-ownership.md`](../../docs/adr/0025-diffraction-family-ownership.md).
+
 ## Current Status
 
 RayD Torch now builds separate native scene, edge, reflection, and diffraction
