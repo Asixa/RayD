@@ -4,9 +4,12 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime_api.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -1174,6 +1177,304 @@ void test_coherent_diffraction_lockstep() {
     require_tensor_arrays_exact(typed_values, legacy_values, "coherent diffraction output");
 }
 
+std::array<at::Tensor, 12> layer_stack_values(
+    const rayd::torch::LayerStackResult &result) {
+    return {
+        result.r_te_real, result.r_te_imag, result.r_tm_real, result.r_tm_imag,
+        result.t_te_real, result.t_te_imag, result.t_tm_real, result.t_tm_imag,
+        result.cap_r_te, result.cap_r_tm, result.cap_t_te, result.cap_t_tm};
+}
+
+void test_layer_stack_empty_and_contracts() {
+    const auto float_options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto int_options = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    rayd::torch::LayerStackRequest primal = {
+        at::empty({0}, float_options),
+        at::empty({0}, int_options),
+        at::zeros({1}, int_options),
+        at::zeros({1}, int_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        3.5e9,
+    };
+
+    const c10::cuda::CUDAStream stream = c10::cuda::getStreamFromPool(false, 0);
+    c10::cuda::CUDAStreamGuard guard(stream);
+    const auto forward = rayd::torch::em_layer_stack_eval(primal);
+    for (const auto &tensor : layer_stack_values(forward)) {
+        require(tensor.defined(), "layer-stack empty forward output must be defined");
+        require(tensor.numel() == 0, "layer-stack empty forward output must be empty");
+        require(tensor.scalar_type() == at::kFloat, "layer-stack output dtype differs");
+        require(tensor.device() == primal.cos_theta.device(), "layer-stack output device differs");
+    }
+    require(
+        c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
+        "layer-stack forward changed the caller's active CUDA stream");
+
+    rayd::torch::LayerStackJvpRequest jvp;
+    jvp.primal = primal;
+    const auto tangent = rayd::torch::em_layer_stack_jvp(jvp);
+    for (const auto &tensor : layer_stack_values(tangent))
+        require(tensor.defined() && tensor.numel() == 0, "layer-stack empty JVP schema differs");
+
+    rayd::torch::LayerStackBackwardRequest backward;
+    backward.primal = primal;
+    backward.need_cos_theta = true;
+    backward.need_layers = true;
+    backward.need_frequency = true;
+    const auto gradients = rayd::torch::em_layer_stack_backward(backward);
+    require(gradients.grad_cos_theta.numel() == 0, "empty cos-theta gradient schema differs");
+    require(gradients.grad_layer_thickness_m.numel() == 0, "empty thickness gradient schema differs");
+    require(gradients.grad_layer_eps_r.numel() == 0, "empty eps gradient schema differs");
+    require(gradients.grad_layer_sigma_e.numel() == 0, "empty sigma gradient schema differs");
+    require(
+        gradients.grad_frequency.dim() == 1 && gradients.grad_frequency.size(0) == 1,
+        "frequency gradient schema differs");
+
+    auto invalid = primal;
+    invalid.cos_theta = invalid.cos_theta.to(at::kDouble);
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_eval(invalid); },
+        "layer-stack invalid dtype must fail loudly");
+}
+
+void test_layer_stack_nonempty_ad_and_stream() {
+    const auto float_options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto int_options = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    const c10::cuda::CUDAStream stream = c10::cuda::getStreamFromPool(false, 0);
+    c10::cuda::CUDAStreamGuard guard(stream);
+
+    rayd::torch::LayerStackRequest primal = {
+        at::tensor({0.65F}, float_options),
+        at::tensor({0}, int_options),
+        at::tensor({0}, int_options),
+        at::tensor({0}, int_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        at::empty({0}, float_options),
+        3.5e9,
+    };
+
+    const auto identity = rayd::torch::em_layer_stack_eval(primal);
+    stream.synchronize();
+    const std::array<float, 12> identity_expected = {
+        0.0F, 0.0F, 0.0F, 0.0F,
+        1.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 1.0F,
+    };
+    const auto identity_values = layer_stack_values(identity);
+    for (std::size_t index = 0; index < identity_values.size(); ++index) {
+        const float value = identity_values[index].item<float>();
+        require(
+            std::fabs(value - identity_expected[index]) <= 1.0e-6F,
+            "zero-layer identity output differs at field " + std::to_string(index));
+    }
+
+    primal.layer_count = at::tensor({1}, int_options);
+    primal.layer_thickness_m = at::tensor({0.02F}, float_options);
+    primal.layer_eps_r = at::tensor({4.0F}, float_options);
+    primal.layer_sigma_e = at::tensor({0.01F}, float_options);
+    primal.layer_mu_r = at::tensor({1.0F}, float_options);
+
+    rayd::torch::LayerStackJvpRequest jvp;
+    jvp.primal = primal;
+    jvp.tangent_cos_theta = at::tensor({0.1F}, float_options);
+    jvp.tangent_layer_thickness_m = at::tensor({0.002F}, float_options);
+    jvp.tangent_layer_eps_r = at::tensor({0.2F}, float_options);
+    jvp.tangent_layer_sigma_e = at::tensor({0.001F}, float_options);
+    jvp.tangent_frequency = 1.0e6;
+    const auto tangent = rayd::torch::em_layer_stack_jvp(jvp);
+
+    rayd::torch::LayerStackBackwardRequest backward;
+    backward.primal = primal;
+    for (std::size_t index = 0; index < backward.grad_outputs.size(); ++index)
+        backward.grad_outputs[index] =
+            at::full({1}, 0.125F * static_cast<float>(index + 1), float_options);
+    backward.need_cos_theta = true;
+    backward.need_layers = true;
+    backward.need_frequency = true;
+    const auto gradients = rayd::torch::em_layer_stack_backward(backward);
+    stream.synchronize();
+
+    double lhs = 0.0;
+    const auto tangent_values = layer_stack_values(tangent);
+    for (std::size_t index = 0; index < tangent_values.size(); ++index) {
+        const double value = tangent_values[index].item<float>();
+        require(std::isfinite(value), "nonempty layer-stack JVP must be finite");
+        lhs += value * (0.125 * static_cast<double>(index + 1));
+    }
+    double rhs =
+        static_cast<double>(gradients.grad_cos_theta.item<float>()) * 0.1 +
+        static_cast<double>(gradients.grad_layer_thickness_m.item<float>()) * 0.002 +
+        static_cast<double>(gradients.grad_layer_eps_r.item<float>()) * 0.2 +
+        static_cast<double>(gradients.grad_layer_sigma_e.item<float>()) * 0.001 +
+        static_cast<double>(gradients.grad_frequency.item<float>()) * 1.0e6;
+    require(std::isfinite(rhs), "nonempty layer-stack VJP must be finite");
+    const double duality_scale = std::fabs(lhs) > std::fabs(rhs) ? std::fabs(lhs) : std::fabs(rhs);
+    require(
+        std::fabs(lhs - rhs) <= 5.0e-4 * (duality_scale > 1.0 ? duality_scale : 1.0),
+        "layer-stack JVP/VJP dot-product duality differs");
+    require(
+        c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
+        "nonempty layer-stack entries changed the caller's active CUDA stream");
+
+    auto disabled = backward;
+    disabled.need_cos_theta = false;
+    disabled.need_layers = false;
+    disabled.need_frequency = false;
+    const auto disabled_gradients = rayd::torch::em_layer_stack_backward(disabled);
+    stream.synchronize();
+    require(
+        disabled_gradients.grad_cos_theta.item<float>() == 0.0F,
+        "disabled cos gradient must be zero");
+    require(
+        disabled_gradients.grad_layer_thickness_m.item<float>() == 0.0F,
+        "disabled thickness gradient must be zero");
+    require(
+        disabled_gradients.grad_layer_eps_r.item<float>() == 0.0F,
+        "disabled eps gradient must be zero");
+    require(
+        disabled_gradients.grad_layer_sigma_e.item<float>() == 0.0F,
+        "disabled sigma gradient must be zero");
+    require(
+        disabled_gradients.grad_frequency.item<float>() == 0.0F,
+        "disabled frequency gradient must be zero");
+
+    auto invalid_jvp = jvp;
+    invalid_jvp.tangent_cos_theta = at::tensor(
+        {0.1}, at::TensorOptions().dtype(at::kDouble).device(at::kCUDA));
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_jvp(invalid_jvp); },
+        "layer-stack invalid optional tangent dtype must fail loudly");
+}
+
+rayd::torch::LayerStackRequest lossy_layer_stack_request(bool active_layer) {
+    const auto float_options = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto int_options = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    return {
+        at::tensor({0.55F}, float_options),
+        at::tensor({0}, int_options),
+        at::tensor({0}, int_options),
+        at::tensor({active_layer ? 1 : 0}, int_options),
+        at::tensor({0.12F}, float_options),
+        at::tensor({4.0F}, float_options),
+        at::tensor({0.025F}, float_options),
+        at::tensor({1.0F}, float_options),
+        3.5e9,
+    };
+}
+
+void require_layer_stack_scalar(
+    const at::Tensor &tensor,
+    float expected,
+    const std::string &name) {
+    const float value = tensor.item<float>();
+    require(
+        std::isfinite(value) && std::fabs(value - expected) <= 3.0e-5F,
+        name + " differs from the frozen complex128 baseline");
+}
+
+void test_layer_stack_lossy_primal_and_negative_contracts() {
+    const auto request = lossy_layer_stack_request(true);
+    const auto result = rayd::torch::em_layer_stack_eval(request);
+    at::cuda::getCurrentCUDAStream(0).synchronize();
+
+    // Independent complex128 transfer-matrix baseline for this one-layer row.
+    const std::array<float, 12> expected = {
+        -0.35482694F, -0.14114616F, -0.05475237F, -0.02465952F,
+        -0.55237210F, 0.22183056F, -0.69762940F, 0.21103882F,
+        0.14582440F, 0.00360591F, 0.35432373F, 0.53122417F,
+    };
+    const auto values = layer_stack_values(result);
+    for (std::size_t index = 0; index < values.size(); ++index)
+        require_layer_stack_scalar(
+            values[index], expected[index], "lossy layer-stack field " + std::to_string(index));
+    const float rta_te = result.cap_r_te.item<float>() + result.cap_t_te.item<float>();
+    const float rta_tm = result.cap_r_tm.item<float>() + result.cap_t_tm.item<float>();
+    require(rta_te >= 0.0F && rta_te <= 1.0F + 1.0e-5F, "lossy TE R+T is outside [0,1]");
+    require(rta_tm >= 0.0F && rta_tm <= 1.0F + 1.0e-5F, "lossy TM R+T is outside [0,1]");
+
+    auto bad_shape = request;
+    bad_shape.material_id = at::tensor({0, 0}, request.material_id.options());
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_eval(bad_shape); },
+        "layer-stack row-shape mismatch must fail loudly");
+
+    auto bad_contiguous = request;
+    bad_contiguous.cos_theta =
+        at::ones({2, 2}, request.cos_theta.options()).select(1, 0);
+    bad_contiguous.material_id =
+        at::zeros({2}, request.material_id.options());
+    require(!bad_contiguous.cos_theta.is_contiguous(), "test fixture must be non-contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_eval(bad_contiguous); },
+        "layer-stack non-contiguous input must fail loudly");
+
+    rayd::torch::LayerStackBackwardRequest backward;
+    backward.primal = request;
+    backward.grad_outputs[0] =
+        at::ones({1}, request.cos_theta.options().dtype(at::kDouble));
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_backward(backward); },
+        "layer-stack backward cotangent dtype mismatch must fail loudly");
+    backward.grad_outputs[0] = at::ones({2}, request.cos_theta.options());
+    require_throws(
+        [&] { (void)rayd::torch::em_layer_stack_backward(backward); },
+        "layer-stack backward cotangent shape mismatch must fail loudly");
+
+    if (at::cuda::device_count() > 1) {
+        auto bad_device = request;
+        bad_device.layer_eps_r = bad_device.layer_eps_r.to(at::Device(at::kCUDA, 1));
+        require_throws(
+            [&] { (void)rayd::torch::em_layer_stack_eval(bad_device); },
+            "layer-stack cross-device input must fail loudly");
+    }
+}
+
+void test_layer_stack_nondefault_stream_dependency() {
+    auto request = lossy_layer_stack_request(false);
+    at::cuda::getDefaultCUDAStream().synchronize();
+    const auto producer = c10::cuda::getStreamFromPool(false, 0);
+    const auto consumer = c10::cuda::getStreamFromPool(false, 0);
+    require(producer.stream() != consumer.stream(), "stream-pool fixtures must differ");
+
+    auto scratch = at::empty(
+        {64 * 1024 * 1024}, request.cos_theta.options().dtype(at::kByte));
+    cudaEvent_t ready = nullptr;
+    C10_CUDA_CHECK(cudaEventCreateWithFlags(&ready, cudaEventDisableTiming));
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        C10_CUDA_CHECK(cudaMemsetAsync(
+            scratch.data_ptr(), iteration, static_cast<std::size_t>(scratch.numel()),
+            producer.stream()));
+    }
+    {
+        c10::cuda::CUDAStreamGuard producer_guard(producer);
+        request.layer_count.fill_(1);
+    }
+    C10_CUDA_CHECK(cudaEventRecord(ready, producer.stream()));
+    C10_CUDA_CHECK(cudaStreamWaitEvent(consumer.stream(), ready, 0));
+
+    rayd::torch::LayerStackResult result;
+    {
+        c10::cuda::CUDAStreamGuard consumer_guard(consumer);
+        result = rayd::torch::em_layer_stack_eval(request);
+        require(
+            c10::cuda::getCurrentCUDAStream(0).stream() == consumer.stream(),
+            "layer-stack changed the caller's non-default stream");
+    }
+    consumer.synchronize();
+    C10_CUDA_CHECK(cudaDeviceSynchronize());
+    C10_CUDA_CHECK(cudaEventDestroy(ready));
+
+    // A wrong default-stream launch races ahead of the delayed layer-count
+    // update and returns the transparent identity row instead of this value.
+    require_layer_stack_scalar(result.r_te_real, -0.35482694F, "stream-affinity r_te_real");
+    require_layer_stack_scalar(result.t_te_real, -0.55237210F, "stream-affinity t_te_real");
+}
+
 } // namespace
 
 int main() {
@@ -1195,6 +1496,14 @@ int main() {
         test_diffraction_accumulation_lockstep();
         std::cout << "[RUN] test_coherent_diffraction_lockstep" << std::endl;
         test_coherent_diffraction_lockstep();
+        std::cout << "[RUN] test_layer_stack_empty_and_contracts" << std::endl;
+        test_layer_stack_empty_and_contracts();
+        std::cout << "[RUN] test_layer_stack_nonempty_ad_and_stream" << std::endl;
+        test_layer_stack_nonempty_ad_and_stream();
+        std::cout << "[RUN] test_layer_stack_lossy_primal_and_negative_contracts" << std::endl;
+        test_layer_stack_lossy_primal_and_negative_contracts();
+        std::cout << "[RUN] test_layer_stack_nondefault_stream_dependency" << std::endl;
+        test_layer_stack_nondefault_stream_dependency();
         std::cout << "rayd::torch integration v2 direct contracts passed\n";
         return 0;
     } catch (const std::exception &error) {

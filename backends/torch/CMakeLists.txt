@@ -565,6 +565,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/epc_field.cu
         src/torch_ext/reflection/epc_geometry_ad.cu
         src/torch_ext/reflection/accum_reduce.cu
+        src/torch_ext/rf/layer_stack.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
         src/torch_ext/diffraction/paths_init.cu
