@@ -66,4 +66,89 @@ struct LayerStackJvpRequest {
 
 LayerStackResult em_layer_stack_jvp(const LayerStackJvpRequest &request);
 
+struct TransmissionSequenceRequest {
+    at::Tensor source;
+    at::Tensor target;
+    at::Tensor interaction_positions;
+    at::Tensor interaction_normals;
+    at::Tensor interaction_material_id;
+    at::Tensor interaction_valid;
+    at::Tensor tx_power;
+    at::Tensor tx_polarization;
+    at::Tensor rx_polarization;
+    at::Tensor layer_offset;
+    at::Tensor layer_count;
+    at::Tensor layer_thickness_m;
+    at::Tensor layer_eps_r;
+    at::Tensor layer_sigma_e;
+    at::Tensor layer_mu_r;
+    double frequency_hz = 0.0;
+};
+
+struct TransmissionSequenceResult {
+    at::Tensor field_vector;
+    at::Tensor coefficient;
+    at::Tensor path_field;
+    at::Tensor path_gain;
+    at::Tensor path_length_m;
+    at::Tensor delay_s;
+    at::Tensor direction;
+};
+
+TransmissionSequenceResult field_transmission_sequence(
+    const TransmissionSequenceRequest &request);
+
+struct TransmissionSequenceBackwardRequest {
+    TransmissionSequenceRequest primal;
+    std::optional<at::Tensor> grad_field_vector;
+    std::optional<at::Tensor> grad_coefficient;
+    std::optional<at::Tensor> grad_path_field;
+    std::optional<at::Tensor> grad_path_gain;
+    std::optional<at::Tensor> grad_path_length_m;
+    std::optional<at::Tensor> grad_delay_s;
+    bool need_grad_layer_thickness_m = false;
+    bool need_grad_layer_eps_r = false;
+    bool need_grad_layer_sigma_e = false;
+    bool need_grad_frequency = false;
+    bool need_grad_geometry = false;
+};
+
+struct TransmissionSequenceBackwardResult {
+    std::optional<at::Tensor> grad_layer_thickness_m;
+    std::optional<at::Tensor> grad_layer_eps_r;
+    std::optional<at::Tensor> grad_layer_sigma_e;
+    std::optional<at::Tensor> grad_frequency;
+    std::optional<at::Tensor> grad_source;
+    std::optional<at::Tensor> grad_target;
+    std::optional<at::Tensor> grad_interaction_positions;
+    std::optional<at::Tensor> grad_interaction_normals;
+};
+
+TransmissionSequenceBackwardResult field_transmission_sequence_backward(
+    const TransmissionSequenceBackwardRequest &request);
+
+struct TransmissionSequenceJvpRequest {
+    TransmissionSequenceRequest primal;
+    std::optional<at::Tensor> tangent_layer_thickness_m;
+    std::optional<at::Tensor> tangent_layer_eps_r;
+    std::optional<at::Tensor> tangent_layer_sigma_e;
+    double tangent_frequency = 0.0;
+    std::optional<at::Tensor> tangent_source;
+    std::optional<at::Tensor> tangent_target;
+    std::optional<at::Tensor> tangent_interaction_positions;
+    std::optional<at::Tensor> tangent_interaction_normals;
+};
+
+struct TransmissionSequenceJvpResult {
+    at::Tensor field_vector;
+    at::Tensor coefficient;
+    at::Tensor path_field;
+    at::Tensor path_gain;
+    at::Tensor path_length_m;
+    at::Tensor delay_s;
+};
+
+TransmissionSequenceJvpResult field_transmission_sequence_jvp(
+    const TransmissionSequenceJvpRequest &request);
+
 } // namespace rayd::torch

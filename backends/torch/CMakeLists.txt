@@ -566,6 +566,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/epc_geometry_ad.cu
         src/torch_ext/reflection/accum_reduce.cu
         src/torch_ext/rf/layer_stack.cu
+        src/torch_ext/rf/transmission_sequence.cu
+        src/torch_ext/rf/transmission_sequence_ad.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
         src/torch_ext/diffraction/paths_init.cu
@@ -632,7 +634,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
                 rayd_torch_integration_v2
                 PROPERTIES
                     ENVIRONMENT_MODIFICATION
-                        "PATH=path_list_prepend:${TORCH_INSTALL_PREFIX}/lib;PATH=path_list_prepend:${PYTHON_ENV_ROOT}/Library/bin;PATH=path_list_prepend:${CUDAToolkit_BIN_DIR}")
+                        "PATH=path_list_prepend:${TORCH_INSTALL_PREFIX}/lib;PATH=path_list_prepend:${PYTHON_ENV_ROOT};PATH=path_list_prepend:${PYTHON_ENV_ROOT}/Library/bin;PATH=path_list_prepend:${CUDAToolkit_BIN_DIR}")
         endif()
     endif()
 

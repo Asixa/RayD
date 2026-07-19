@@ -14,7 +14,7 @@ namespace rayd::torch {
 
 inline constexpr std::uint32_t kIntegrationApiVersion = 2;
 inline constexpr std::string_view kIntegrationHeaderIdentity =
-    "rayd.torch.integration.v2.20260719.rf-layer-stack";
+    "rayd.torch.integration.v2.20260719.rf-transmission-sequence";
 
 namespace detail {
 struct IntegrationAccess;

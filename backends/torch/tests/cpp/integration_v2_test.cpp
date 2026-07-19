@@ -8,6 +8,7 @@
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -1475,6 +1476,605 @@ void test_layer_stack_nondefault_stream_dependency() {
     require_layer_stack_scalar(result.t_te_real, -0.55237210F, "stream-affinity t_te_real");
 }
 
+rayd::torch::TransmissionSequenceRequest transmission_request(
+    bool active,
+    float eps_r = 4.0F,
+    float sigma_e = 0.05F,
+    float thickness_m = 0.1F) {
+    const auto floats = at::TensorOptions().dtype(at::kFloat).device(at::kCUDA);
+    const auto ints = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
+    const auto bools = at::TensorOptions().dtype(at::kBool).device(at::kCUDA);
+    return {
+        at::tensor({0.0F, 0.0F, 2.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 0.0F, -2.0F}, floats).reshape({1, 3}),
+        at::zeros({1, 1, 3}, floats),
+        at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
+        at::zeros({1, 1}, ints),
+        active ? at::ones({1, 1}, bools) : at::zeros({1, 1}, bools),
+        at::ones({1}, floats),
+        at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3}),
+        at::zeros({1}, ints),
+        at::ones({1}, ints),
+        at::tensor({thickness_m}, floats),
+        at::tensor({eps_r}, floats),
+        at::tensor({sigma_e}, floats),
+        at::ones({1}, floats),
+        3.5e9,
+    };
+}
+
+void require_transmission_schema(
+    const rayd::torch::TransmissionSequenceResult& result,
+    int64_t rows,
+    int expected_device = 0) {
+    require(
+        result.field_vector.sizes() == at::IntArrayRef({rows, 3}) &&
+            result.field_vector.scalar_type() == at::kComplexFloat,
+        "transmission field-vector schema differs");
+    for (const auto& tensor : {
+             result.coefficient,
+             result.path_field})
+        require(
+            tensor.sizes() == at::IntArrayRef({rows}) &&
+                tensor.scalar_type() == at::kComplexFloat,
+            "transmission complex scalar schema differs");
+    for (const auto& tensor : {
+             result.path_gain,
+             result.path_length_m,
+             result.delay_s})
+        require(
+            tensor.sizes() == at::IntArrayRef({rows}) &&
+                tensor.scalar_type() == at::kFloat,
+            "transmission real scalar schema differs");
+    require(
+        result.direction.sizes() == at::IntArrayRef({rows, 3}) &&
+            result.direction.scalar_type() == at::kFloat,
+        "transmission direction schema differs");
+    for (const auto& tensor : {
+             result.field_vector,
+             result.coefficient,
+             result.path_field,
+             result.path_gain,
+             result.path_length_m,
+             result.delay_s,
+             result.direction})
+        require(
+            tensor.is_cuda() && tensor.get_device() == expected_device &&
+                tensor.is_contiguous(),
+            "transmission output must be contiguous CUDA storage");
+}
+
+void require_transmission_jvp_schema(
+    const rayd::torch::TransmissionSequenceJvpResult& result,
+    int64_t rows,
+    int expected_device = 0) {
+    require(
+        result.field_vector.sizes() == at::IntArrayRef({rows, 3}) &&
+            result.field_vector.scalar_type() == at::kComplexFloat,
+        "transmission JVP field-vector schema differs");
+    for (const auto& tensor : {result.coefficient, result.path_field})
+        require(
+            tensor.sizes() == at::IntArrayRef({rows}) &&
+                tensor.scalar_type() == at::kComplexFloat,
+            "transmission JVP complex scalar schema differs");
+    for (const auto& tensor : {
+             result.path_gain,
+             result.path_length_m,
+             result.delay_s})
+        require(
+            tensor.sizes() == at::IntArrayRef({rows}) &&
+                tensor.scalar_type() == at::kFloat,
+            "transmission JVP real scalar schema differs");
+    for (const auto& tensor : {
+             result.field_vector,
+             result.coefficient,
+             result.path_field,
+             result.path_gain,
+             result.path_length_m,
+             result.delay_s})
+        require(
+            tensor.is_cuda() && tensor.get_device() == expected_device &&
+                tensor.is_contiguous(),
+            "transmission JVP output must be contiguous CUDA storage");
+}
+
+void test_transmission_sequence_primal_and_depth_contracts() {
+    auto empty = transmission_request(false);
+    empty.source = empty.source.narrow(0, 0, 0);
+    empty.target = empty.target.narrow(0, 0, 0);
+    empty.interaction_positions = empty.interaction_positions.narrow(0, 0, 0);
+    empty.interaction_normals = empty.interaction_normals.narrow(0, 0, 0);
+    empty.interaction_material_id = empty.interaction_material_id.narrow(0, 0, 0);
+    empty.interaction_valid = empty.interaction_valid.narrow(0, 0, 0);
+    empty.tx_power = empty.tx_power.narrow(0, 0, 0);
+    empty.tx_polarization = empty.tx_polarization.narrow(0, 0, 0);
+    empty.rx_polarization = empty.rx_polarization.narrow(0, 0, 0);
+    const auto empty_result = rayd::torch::field_transmission_sequence(empty);
+    require_transmission_schema(empty_result, 0);
+    rayd::torch::TransmissionSequenceJvpRequest empty_jvp;
+    empty_jvp.primal = empty;
+    require_transmission_jvp_schema(
+        rayd::torch::field_transmission_sequence_jvp(empty_jvp), 0);
+    rayd::torch::TransmissionSequenceBackwardRequest empty_backward;
+    empty_backward.primal = empty;
+    const auto empty_absent =
+        rayd::torch::field_transmission_sequence_backward(empty_backward);
+    require(
+        !empty_absent.grad_layer_thickness_m.has_value() &&
+            !empty_absent.grad_layer_eps_r.has_value() &&
+            !empty_absent.grad_layer_sigma_e.has_value() &&
+            !empty_absent.grad_frequency.has_value() &&
+            !empty_absent.grad_source.has_value() &&
+            !empty_absent.grad_target.has_value() &&
+            !empty_absent.grad_interaction_positions.has_value() &&
+            !empty_absent.grad_interaction_normals.has_value(),
+        "empty transmission backward disabled outputs must remain absent");
+    empty_backward.need_grad_layer_thickness_m = true;
+    empty_backward.need_grad_layer_eps_r = true;
+    empty_backward.need_grad_layer_sigma_e = true;
+    empty_backward.need_grad_frequency = true;
+    empty_backward.need_grad_geometry = true;
+    const auto empty_defined =
+        rayd::torch::field_transmission_sequence_backward(empty_backward);
+    require(
+        empty_defined.grad_layer_thickness_m.has_value() &&
+            empty_defined.grad_layer_eps_r.has_value() &&
+            empty_defined.grad_layer_sigma_e.has_value() &&
+            empty_defined.grad_frequency.has_value() &&
+            empty_defined.grad_source.has_value() &&
+            empty_defined.grad_target.has_value() &&
+            !empty_defined.grad_interaction_positions.has_value() &&
+            empty_defined.grad_interaction_normals.has_value() &&
+            empty_defined.grad_layer_thickness_m->sizes() ==
+                at::IntArrayRef({empty.layer_thickness_m.size(0)}) &&
+            empty_defined.grad_layer_eps_r->sizes() ==
+                at::IntArrayRef({empty.layer_eps_r.size(0)}) &&
+            empty_defined.grad_layer_sigma_e->sizes() ==
+                at::IntArrayRef({empty.layer_sigma_e.size(0)}) &&
+            empty_defined.grad_frequency->sizes() == at::IntArrayRef({1}) &&
+            empty_defined.grad_source->sizes() == at::IntArrayRef({0, 3}) &&
+            empty_defined.grad_target->sizes() == at::IntArrayRef({0, 3}) &&
+            empty_defined.grad_interaction_normals->sizes() ==
+                at::IntArrayRef({0, 1, 3}),
+        "empty transmission backward requested-output schema differs");
+    for (const auto& tensor : {
+             *empty_defined.grad_layer_thickness_m,
+             *empty_defined.grad_layer_eps_r,
+             *empty_defined.grad_layer_sigma_e,
+             *empty_defined.grad_frequency,
+             *empty_defined.grad_source,
+             *empty_defined.grad_target,
+             *empty_defined.grad_interaction_normals})
+        require(
+            tensor.is_cuda() &&
+                tensor.get_device() == empty.source.get_device() &&
+                tensor.scalar_type() == at::kFloat && tensor.is_contiguous() &&
+                at::count_nonzero(tensor).item<int64_t>() == 0,
+            "empty transmission requested gradient must be a CUDA zero tensor");
+
+    const auto inactive = rayd::torch::field_transmission_sequence(
+        transmission_request(false));
+    const auto lossy = rayd::torch::field_transmission_sequence(
+        transmission_request(true));
+    at::cuda::getCurrentCUDAStream(0).synchronize();
+    require_transmission_schema(lossy, 1);
+    require(
+        std::fabs(lossy.path_length_m.item<float>() - 4.0F) <= 1.0e-6F,
+        "transmission full straight path length differs");
+    require(
+        std::fabs(
+            lossy.delay_s.item<float>() -
+            4.0F / 299792458.0F) <=
+            1.0e-12F,
+        "transmission delay differs");
+    require(
+        at::allclose(
+            lossy.direction,
+            at::tensor(
+                {0.0F, 0.0F, -1.0F}, lossy.direction.options()).reshape({1, 3}),
+            0.0,
+            0.0),
+        "transmission direction differs");
+    require(
+        lossy.path_gain.item<float>() < inactive.path_gain.item<float>(),
+        "lossy transmission must attenuate the inactive-wall field");
+
+    const auto vacuum = rayd::torch::field_transmission_sequence(
+        transmission_request(true, 1.0F, 0.0F, 0.3F));
+    at::cuda::getCurrentCUDAStream(0).synchronize();
+    require(
+        at::allclose(vacuum.field_vector, inactive.field_vector, 1.0e-4, 1.0e-9),
+        "vacuum wall must reproduce the no-wall field");
+
+    auto depth_nine = transmission_request(false);
+    depth_nine.interaction_positions = at::zeros(
+        {1, 9, 3}, depth_nine.source.options());
+    depth_nine.interaction_normals = at::zeros(
+        {1, 9, 3}, depth_nine.source.options());
+    depth_nine.interaction_material_id = at::zeros(
+        {1, 9}, depth_nine.layer_offset.options());
+    depth_nine.interaction_valid = at::zeros(
+        {1, 9}, depth_nine.interaction_valid.options());
+    require_transmission_schema(
+        rayd::torch::field_transmission_sequence(depth_nine), 1);
+    rayd::torch::TransmissionSequenceJvpRequest too_deep_jvp;
+    too_deep_jvp.primal = depth_nine;
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence_jvp(too_deep_jvp); },
+        "transmission JVP must reject D > 8 while primal remains valid");
+}
+
+void test_transmission_sequence_ad_duality_and_optional_schema() {
+    auto primal = transmission_request(true);
+    const auto floats = primal.source.options();
+    rayd::torch::TransmissionSequenceJvpRequest jvp;
+    jvp.primal = primal;
+    jvp.tangent_layer_thickness_m = at::tensor({0.002F}, floats);
+    jvp.tangent_layer_eps_r = at::tensor({0.2F}, floats);
+    jvp.tangent_layer_sigma_e = at::tensor({0.001F}, floats);
+    jvp.tangent_frequency = 1.0e6;
+    jvp.tangent_source =
+        at::tensor({0.01F, -0.02F, 0.03F}, floats).reshape({1, 3});
+    jvp.tangent_target =
+        at::tensor({-0.01F, 0.01F, -0.02F}, floats).reshape({1, 3});
+    jvp.tangent_interaction_positions = at::ones({1, 1, 3}, floats);
+    jvp.tangent_interaction_normals =
+        at::tensor({0.02F, 0.01F, 0.0F}, floats).reshape({1, 1, 3});
+    const auto tangents = rayd::torch::field_transmission_sequence_jvp(jvp);
+    require_transmission_jvp_schema(tangents, 1);
+
+    rayd::torch::TransmissionSequenceBackwardRequest backward;
+    backward.primal = primal;
+    const auto complex_options = floats.dtype(at::kComplexFloat);
+    backward.grad_field_vector = at::ones({1, 3}, complex_options);
+    backward.grad_coefficient = at::ones({1}, complex_options);
+    backward.grad_path_field = at::ones({1}, complex_options);
+    backward.grad_path_gain = at::ones({1}, floats);
+    backward.grad_path_length_m = at::ones({1}, floats);
+    backward.grad_delay_s = at::ones({1}, floats);
+    backward.need_grad_layer_thickness_m = true;
+    backward.need_grad_layer_eps_r = true;
+    backward.need_grad_layer_sigma_e = true;
+    backward.need_grad_frequency = true;
+    backward.need_grad_geometry = true;
+    const auto gradients =
+        rayd::torch::field_transmission_sequence_backward(backward);
+    at::cuda::getCurrentCUDAStream(0).synchronize();
+
+    const double lhs =
+        at::view_as_real(tangents.field_vector).select(-1, 0).sum().item<double>() +
+        at::view_as_real(tangents.coefficient).select(-1, 0).sum().item<double>() +
+        at::view_as_real(tangents.path_field).select(-1, 0).sum().item<double>() +
+        tangents.path_gain.sum().item<double>() +
+        tangents.path_length_m.sum().item<double>() +
+        tangents.delay_s.sum().item<double>();
+    double rhs =
+        ((*gradients.grad_layer_thickness_m) *
+         (*jvp.tangent_layer_thickness_m)).sum().item<double>() +
+        ((*gradients.grad_layer_eps_r) *
+         (*jvp.tangent_layer_eps_r)).sum().item<double>() +
+        ((*gradients.grad_layer_sigma_e) *
+         (*jvp.tangent_layer_sigma_e)).sum().item<double>() +
+        gradients.grad_frequency->item<double>() * jvp.tangent_frequency +
+        ((*gradients.grad_source) * (*jvp.tangent_source)).sum().item<double>() +
+        ((*gradients.grad_target) * (*jvp.tangent_target)).sum().item<double>() +
+        ((*gradients.grad_interaction_normals) *
+         (*jvp.tangent_interaction_normals)).sum().item<double>();
+    const double scale = std::max({1.0, std::fabs(lhs), std::fabs(rhs)});
+    require(
+        std::isfinite(lhs) && std::isfinite(rhs) &&
+            std::fabs(lhs - rhs) <= 2.0e-3 * scale,
+        "transmission JVP/VJP dot-product duality differs");
+    require(
+        !gradients.grad_interaction_positions.has_value(),
+        "transmission crossing-position gradient must remain absent");
+
+    rayd::torch::TransmissionSequenceBackwardRequest disabled;
+    disabled.primal = primal;
+    const auto disabled_result =
+        rayd::torch::field_transmission_sequence_backward(disabled);
+    require(
+        !disabled_result.grad_layer_thickness_m.has_value() &&
+            !disabled_result.grad_layer_eps_r.has_value() &&
+            !disabled_result.grad_layer_sigma_e.has_value() &&
+            !disabled_result.grad_frequency.has_value() &&
+            !disabled_result.grad_source.has_value() &&
+            !disabled_result.grad_target.has_value() &&
+            !disabled_result.grad_interaction_positions.has_value() &&
+            !disabled_result.grad_interaction_normals.has_value(),
+        "disabled transmission backward outputs must remain absent");
+
+    rayd::torch::TransmissionSequenceBackwardRequest zero_cotangents;
+    zero_cotangents.primal = primal;
+    zero_cotangents.need_grad_layer_thickness_m = true;
+    zero_cotangents.need_grad_layer_eps_r = true;
+    zero_cotangents.need_grad_layer_sigma_e = true;
+    zero_cotangents.need_grad_frequency = true;
+    zero_cotangents.need_grad_geometry = true;
+    const auto zero_gradients =
+        rayd::torch::field_transmission_sequence_backward(zero_cotangents);
+    require(
+        zero_gradients.grad_layer_thickness_m.has_value() &&
+            zero_gradients.grad_layer_eps_r.has_value() &&
+            zero_gradients.grad_layer_sigma_e.has_value() &&
+            zero_gradients.grad_frequency.has_value() &&
+            zero_gradients.grad_source.has_value() &&
+            zero_gradients.grad_target.has_value() &&
+            !zero_gradients.grad_interaction_positions.has_value() &&
+            zero_gradients.grad_interaction_normals.has_value(),
+        "requested transmission gradients must remain defined without cotangents");
+    for (const auto& tensor : {
+             *zero_gradients.grad_layer_thickness_m,
+             *zero_gradients.grad_layer_eps_r,
+             *zero_gradients.grad_layer_sigma_e,
+             *zero_gradients.grad_frequency,
+             *zero_gradients.grad_source,
+             *zero_gradients.grad_target,
+             *zero_gradients.grad_interaction_normals})
+        require(
+            at::count_nonzero(tensor).item<int64_t>() == 0,
+            "transmission gradient without cotangents must be zero");
+}
+
+void test_transmission_sequence_negative_and_stream_contracts() {
+    auto primal = transmission_request(true);
+    const auto stream = c10::cuda::getStreamFromPool(false, 0);
+    c10::cuda::CUDAStreamGuard guard(stream);
+    const auto result = rayd::torch::field_transmission_sequence(primal);
+    rayd::torch::TransmissionSequenceJvpRequest jvp;
+    jvp.primal = primal;
+    const auto tangent = rayd::torch::field_transmission_sequence_jvp(jvp);
+    rayd::torch::TransmissionSequenceBackwardRequest backward;
+    backward.primal = primal;
+    backward.grad_path_gain = at::ones({1}, primal.source.options());
+    backward.need_grad_geometry = true;
+    const auto gradients =
+        rayd::torch::field_transmission_sequence_backward(backward);
+    require(
+        c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
+        "transmission entries changed the caller's active CUDA stream");
+    stream.synchronize();
+    require(result.path_gain.item<float>() >= 0.0F, "stream primal is invalid");
+    require(tangent.path_gain.item<float>() == 0.0F, "zero JVP must be zero");
+    require(gradients.grad_source.has_value(), "requested geometry gradient missing");
+
+    auto bad_dtype = primal;
+    bad_dtype.source = bad_dtype.source.to(at::kDouble);
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_dtype); },
+        "transmission wrong dtype must fail loudly");
+    auto cpu_primal = primal;
+    cpu_primal.source = cpu_primal.source.cpu();
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(cpu_primal); },
+        "transmission CPU primal must fail loudly");
+    auto noncontiguous_primal = primal;
+    noncontiguous_primal.source =
+        at::zeros({1, 3, 2}, primal.source.options()).select(2, 0);
+    require(
+        !noncontiguous_primal.source.is_contiguous(),
+        "noncontiguous transmission fixture unexpectedly became contiguous");
+    require_throws(
+        [&] {
+            (void)rayd::torch::field_transmission_sequence(
+                noncontiguous_primal);
+        },
+        "transmission noncontiguous primal must fail loudly");
+    auto bad_rows = primal;
+    bad_rows.target = at::zeros({2, 3}, primal.target.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_rows); },
+        "transmission row mismatch must fail loudly");
+    auto bad_csr = primal;
+    bad_csr.layer_count = at::ones({2}, primal.layer_count.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_csr); },
+        "transmission CSR material-count mismatch must fail loudly");
+    auto bad_depth = primal;
+    bad_depth.interaction_positions = at::empty(
+        {1, 0, 3}, primal.source.options());
+    bad_depth.interaction_normals = at::empty(
+        {1, 0, 3}, primal.source.options());
+    bad_depth.interaction_material_id = at::empty(
+        {1, 0}, primal.layer_offset.options());
+    bad_depth.interaction_valid = at::empty(
+        {1, 0}, primal.interaction_valid.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_depth); },
+        "transmission D=0 must fail loudly");
+    auto bad_frequency = primal;
+    bad_frequency.frequency_hz = 0.0;
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_frequency); },
+        "transmission non-positive frequency must fail loudly");
+    auto bad_material = primal;
+    bad_material.interaction_material_id =
+        bad_material.interaction_material_id.clone();
+    bad_material.interaction_material_id.fill_(1);
+    const auto invalid_material =
+        rayd::torch::field_transmission_sequence(bad_material);
+    require(
+        invalid_material.path_gain.item<float>() == 0.0F,
+        "transmission out-of-range material id must invalidate the path");
+    auto inactive_invalid = transmission_request(false);
+    const auto inactive_reference =
+        rayd::torch::field_transmission_sequence(inactive_invalid);
+    inactive_invalid.interaction_material_id =
+        inactive_invalid.interaction_material_id.clone();
+    inactive_invalid.interaction_material_id.fill_(1);
+    const auto inactive_with_invalid_material =
+        rayd::torch::field_transmission_sequence(inactive_invalid);
+    require(
+        at::allclose(
+            inactive_with_invalid_material.coefficient,
+            inactive_reference.coefficient,
+            0.0,
+            0.0),
+        "inactive transmission slot must ignore its material id");
+    auto bad_jvp = jvp;
+    bad_jvp.tangent_source = at::ones({2, 3}, primal.source.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence_jvp(bad_jvp); },
+        "transmission tangent shape mismatch must fail loudly");
+    auto noncontiguous_jvp = jvp;
+    noncontiguous_jvp.tangent_source =
+        at::ones({1, 3, 2}, primal.source.options()).select(2, 0);
+    require(
+        !noncontiguous_jvp.tangent_source->is_contiguous(),
+        "noncontiguous tangent fixture unexpectedly became contiguous");
+    require_transmission_jvp_schema(
+        rayd::torch::field_transmission_sequence_jvp(noncontiguous_jvp), 1);
+    auto bad_backward = backward;
+    bad_backward.grad_path_gain = at::ones(
+        {1}, primal.source.options().dtype(at::kDouble));
+    require_throws(
+        [&] {
+            (void)rayd::torch::field_transmission_sequence_backward(
+                bad_backward);
+        },
+        "transmission cotangent dtype mismatch must fail loudly");
+    auto noncontiguous_backward = backward;
+    noncontiguous_backward.grad_field_vector = at::ones(
+        {1, 3, 2},
+        primal.source.options().dtype(at::kComplexFloat)).select(2, 0);
+    noncontiguous_backward.need_grad_layer_thickness_m = true;
+    require(
+        !noncontiguous_backward.grad_field_vector->is_contiguous(),
+        "noncontiguous cotangent fixture unexpectedly became contiguous");
+    require(
+        rayd::torch::field_transmission_sequence_backward(
+            noncontiguous_backward).grad_layer_thickness_m.has_value(),
+        "noncontiguous transmission cotangent must be accepted");
+    auto too_deep = primal;
+    too_deep.interaction_positions = at::zeros(
+        {1, 9, 3}, primal.interaction_positions.options());
+    too_deep.interaction_normals = at::zeros(
+        {1, 9, 3}, primal.interaction_normals.options());
+    too_deep.interaction_material_id = at::zeros(
+        {1, 9}, primal.interaction_material_id.options());
+    too_deep.interaction_valid = at::zeros(
+        {1, 9}, primal.interaction_valid.options());
+    auto too_deep_backward = backward;
+    too_deep_backward.primal = too_deep;
+    require_throws(
+        [&] {
+            (void)rayd::torch::field_transmission_sequence_backward(
+                too_deep_backward);
+        },
+        "transmission backward must reject D > 8");
+    if (at::cuda::device_count() > 1) {
+        auto bad_device = primal;
+        bad_device.layer_eps_r = bad_device.layer_eps_r.to(
+            at::Device(at::kCUDA, 1));
+        require_throws(
+            [&] {
+                (void)rayd::torch::field_transmission_sequence(bad_device);
+            },
+            "transmission cross-device primal must fail loudly");
+        auto bad_tangent_device = jvp;
+        bad_tangent_device.tangent_source = at::ones(
+            {1, 3},
+            primal.source.options().device(at::Device(at::kCUDA, 1)));
+        require_throws(
+            [&] {
+                (void)rayd::torch::field_transmission_sequence_jvp(
+                    bad_tangent_device);
+            },
+            "transmission cross-device tangent must fail loudly");
+        auto bad_cotangent_device = backward;
+        bad_cotangent_device.grad_path_gain = at::ones(
+            {1},
+            primal.source.options().device(at::Device(at::kCUDA, 1)));
+        require_throws(
+            [&] {
+                (void)rayd::torch::field_transmission_sequence_backward(
+                    bad_cotangent_device);
+            },
+            "transmission cross-device cotangent must fail loudly");
+    }
+}
+
+void test_transmission_sequence_nondefault_stream_dependency() {
+    auto request = transmission_request(false);
+    const auto reference_request = transmission_request(true);
+    rayd::torch::TransmissionSequenceJvpRequest reference_jvp;
+    reference_jvp.primal = reference_request;
+    reference_jvp.tangent_layer_thickness_m =
+        at::ones({1}, reference_request.layer_thickness_m.options());
+    rayd::torch::TransmissionSequenceBackwardRequest reference_backward;
+    reference_backward.primal = reference_request;
+    reference_backward.grad_path_gain =
+        at::ones({1}, reference_request.tx_power.options());
+    reference_backward.need_grad_layer_thickness_m = true;
+    const auto reference =
+        rayd::torch::field_transmission_sequence(reference_request);
+    const auto reference_tangent =
+        rayd::torch::field_transmission_sequence_jvp(reference_jvp);
+    const auto reference_gradient =
+        rayd::torch::field_transmission_sequence_backward(reference_backward);
+    at::cuda::getDefaultCUDAStream().synchronize();
+
+    const auto producer = c10::cuda::getStreamFromPool(false, 0);
+    const auto consumer = c10::cuda::getStreamFromPool(false, 0);
+    require(producer.stream() != consumer.stream(), "stream-pool fixtures must differ");
+    auto scratch = at::empty(
+        {64 * 1024 * 1024}, request.source.options().dtype(at::kByte));
+    cudaEvent_t ready = nullptr;
+    C10_CUDA_CHECK(cudaEventCreateWithFlags(&ready, cudaEventDisableTiming));
+    for (int iteration = 0; iteration < 32; ++iteration) {
+        C10_CUDA_CHECK(cudaMemsetAsync(
+            scratch.data_ptr(), iteration, static_cast<std::size_t>(scratch.numel()),
+            producer.stream()));
+    }
+    {
+        c10::cuda::CUDAStreamGuard producer_guard(producer);
+        request.interaction_valid.fill_(true);
+    }
+    C10_CUDA_CHECK(cudaEventRecord(ready, producer.stream()));
+    C10_CUDA_CHECK(cudaStreamWaitEvent(consumer.stream(), ready, 0));
+
+    rayd::torch::TransmissionSequenceResult result;
+    rayd::torch::TransmissionSequenceJvpResult tangent;
+    rayd::torch::TransmissionSequenceBackwardResult gradient;
+    {
+        c10::cuda::CUDAStreamGuard consumer_guard(consumer);
+        result = rayd::torch::field_transmission_sequence(request);
+        rayd::torch::TransmissionSequenceJvpRequest jvp;
+        jvp.primal = request;
+        jvp.tangent_layer_thickness_m =
+            at::ones({1}, request.layer_thickness_m.options());
+        tangent = rayd::torch::field_transmission_sequence_jvp(jvp);
+        rayd::torch::TransmissionSequenceBackwardRequest backward;
+        backward.primal = request;
+        backward.grad_path_gain = at::ones({1}, request.tx_power.options());
+        backward.need_grad_layer_thickness_m = true;
+        gradient = rayd::torch::field_transmission_sequence_backward(backward);
+        require(
+            c10::cuda::getCurrentCUDAStream(0).stream() == consumer.stream(),
+            "transmission entries changed the caller's non-default stream");
+    }
+    consumer.synchronize();
+    C10_CUDA_CHECK(cudaDeviceSynchronize());
+    C10_CUDA_CHECK(cudaEventDestroy(ready));
+
+    require(
+        at::allclose(result.path_gain, reference.path_gain, 1.0e-6, 1.0e-12),
+        "transmission primal ignored producer-consumer stream dependency");
+    require(
+        at::allclose(
+            tangent.path_gain, reference_tangent.path_gain, 1.0e-6, 1.0e-12),
+        "transmission JVP ignored producer-consumer stream dependency");
+    require(
+        gradient.grad_layer_thickness_m.has_value() &&
+            at::allclose(
+                *gradient.grad_layer_thickness_m,
+                *reference_gradient.grad_layer_thickness_m,
+                1.0e-6,
+                1.0e-12),
+        "transmission backward ignored producer-consumer stream dependency");
+}
+
 } // namespace
 
 int main() {
@@ -1504,6 +2104,14 @@ int main() {
         test_layer_stack_lossy_primal_and_negative_contracts();
         std::cout << "[RUN] test_layer_stack_nondefault_stream_dependency" << std::endl;
         test_layer_stack_nondefault_stream_dependency();
+        std::cout << "[RUN] test_transmission_sequence_primal_and_depth_contracts" << std::endl;
+        test_transmission_sequence_primal_and_depth_contracts();
+        std::cout << "[RUN] test_transmission_sequence_ad_duality_and_optional_schema" << std::endl;
+        test_transmission_sequence_ad_duality_and_optional_schema();
+        std::cout << "[RUN] test_transmission_sequence_negative_and_stream_contracts" << std::endl;
+        test_transmission_sequence_negative_and_stream_contracts();
+        std::cout << "[RUN] test_transmission_sequence_nondefault_stream_dependency" << std::endl;
+        test_transmission_sequence_nondefault_stream_dependency();
         std::cout << "rayd::torch integration v2 direct contracts passed\n";
         return 0;
     } catch (const std::exception &error) {
