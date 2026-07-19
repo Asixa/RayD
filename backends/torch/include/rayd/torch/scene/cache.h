@@ -142,6 +142,7 @@ int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_num_meshes(c10::intrusive_ptr<SceneHandle> scene);
 int64_t scene_edge_count(c10::intrusive_ptr<SceneHandle> scene);
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene);
+std::vector<at::Tensor> scene_edge_records(SceneCache &scene);
 std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> scene);
 at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene);
 void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene, at::Tensor mask);

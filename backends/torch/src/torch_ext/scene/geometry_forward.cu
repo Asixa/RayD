@@ -275,6 +275,9 @@ IntersectForwardOutputs intersect_forward_cuda(
     out.tape_barycentric = out.barycentric;
     out.tape_t = out.t;
 
+    if (ray_count == 0)
+        return out;
+
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     launch_intersect_optix(
         scene,
@@ -345,6 +348,9 @@ IntersectForwardOutputs intersect_forward_flags_cuda(
     out.tape_prim_id = out.global_prim_id;
     out.tape_barycentric = out.barycentric;
     out.tape_t = out.t;
+
+    if (ray_count == 0)
+        return out;
 
     at::Tensor optix_shape_id = want_geometric || want_shading || want_uv
         ? at::empty({ray_count}, iopts)
@@ -435,6 +441,9 @@ IntersectForwardOutputs intersect_forward_ad_flags_cuda(
     out.tape_barycentric = optix_bary_uv;
     out.tape_t = out.t;
 
+    if (ray_count == 0)
+        return out;
+
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     launch_intersect_optix(
         scene,
@@ -495,6 +504,9 @@ IntersectForwardOutputs intersect_forward_tape_cuda(
     out.tape_barycentric = at::Tensor();
     out.tape_t = out.t;
 
+    if (ray_count == 0)
+        return out;
+
     launch_intersect_optix(
         scene,
         ray_o,
@@ -519,6 +531,8 @@ at::Tensor intersect_forward_t_only_cuda(
     const int64_t ray_count = ray_o.size(0);
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     at::Tensor out_t = at::empty({ray_count}, scene.global_vertices.options());
+    if (ray_count == 0)
+        return out_t;
     launch_intersect_optix(
         scene,
         ray_o,

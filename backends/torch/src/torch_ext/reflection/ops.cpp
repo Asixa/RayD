@@ -48,6 +48,8 @@ void require_same_batch(const at::Tensor &a, const at::Tensor &b, const char *na
 }
 
 void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count, const char *name) {
+    if (!ray_tmax.defined())
+        return;
     require_scalar_f(ray_tmax, "ray_tmax");
     if (ray_tmax.numel() != 0 && ray_tmax.size(0) != ray_count)
         throw std::runtime_error(std::string(name) + " ray_tmax must be empty or match the ray batch size.");
@@ -446,6 +448,14 @@ void require_scene_device(
 
 void require_scene_device(
     const SceneCache &scene,
+    const at::Tensor *value,
+    const char *name) {
+    if (value != nullptr)
+        require_scene_device(scene, *value, name);
+}
+
+void require_scene_device(
+    const SceneCache &scene,
     const c10::optional<at::Tensor> &value,
     const char *name) {
     if (value.has_value())
@@ -503,7 +513,7 @@ struct SegmentVisibilityNativeOutputs {
 };
 
 SegmentVisibilityNativeOutputs visibility_forward_native_impl(
-    int64_t scene_handle,
+    SceneCache &scene,
     at::Tensor start,
     at::Tensor end,
     const at::Tensor *active_ptr) {
@@ -512,7 +522,6 @@ SegmentVisibilityNativeOutputs visibility_forward_native_impl(
     require_same_batch(start, end, "visibility");
     at::Tensor active = optional_active_from_tensor(active_ptr, start.size(0), "active");
 
-    SceneCache &scene = get_scene(scene_handle);
     require_scene_device(scene, start, "start");
     require_scene_device(scene, end, "end");
     require_scene_device(scene, active, "active");
@@ -551,7 +560,8 @@ py::tuple visibility_forward_op(
     py::object active_obj) {
     at::Tensor active_storage;
     const at::Tensor *active = optional_tensor(active_obj, active_storage);
-    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(scene_handle, start, end, active);
+    SegmentVisibilityNativeOutputs out =
+        visibility_forward_native_impl(get_scene(scene_handle), start, end, active);
     return py::make_tuple(out.visible, out.blocker_prim, out.tape_t);
 }
 
@@ -565,7 +575,8 @@ extern "C" void rayd_torch_native_visibility_forward(
     at::Tensor *tape_t) {
     if (start == nullptr || end == nullptr || visible == nullptr || blocker_prim == nullptr || tape_t == nullptr)
         throw std::runtime_error("rayd_torch_native_visibility_forward received a null tensor pointer");
-    SegmentVisibilityNativeOutputs out = visibility_forward_native_impl(scene_handle, *start, *end, active);
+    SegmentVisibilityNativeOutputs out =
+        visibility_forward_native_impl(get_scene(scene_handle), *start, *end, active);
     *visible = out.visible;
     *blocker_prim = out.blocker_prim;
     *tape_t = out.tape_t;
@@ -775,7 +786,7 @@ std::vector<at::Tensor> visible_chain_forward_impl(
 }
 
 std::vector<at::Tensor> trace_reflections_forward_native_impl(
-    int64_t scene_handle,
+    SceneCache &scene,
     at::Tensor ray_o,
     at::Tensor ray_d,
     at::Tensor ray_tmax,
@@ -798,7 +809,11 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(
     if (max_bounces < 1)
         throw std::runtime_error("max_bounces must be at least 1.");
 
-    SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, active_ptr, "active");
+
     const int64_t ray_count = ray_o.size(0);
     auto fopts = ray_o.options();
     auto iopts = scene.global_faces.options();
@@ -837,7 +852,8 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
-    at::Tensor ray_tmax_contig = ray_tmax.numel() == 0 ? ray_tmax : ray_tmax.contiguous();
+    at::Tensor ray_tmax_contig =
+        !ray_tmax.defined() || ray_tmax.numel() == 0 ? ray_tmax : ray_tmax.contiguous();
     at::Tensor active_contig = active;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
@@ -867,7 +883,9 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(
     params.n_triangles = tri.n_triangles;
     params.ray_o_aos = ray_o.data_ptr<float>();
     params.ray_d_aos = ray_d.data_ptr<float>();
-    params.ray_tmax = ray_tmax_contig.numel() == 0 ? nullptr : ray_tmax_contig.data_ptr<float>();
+    params.ray_tmax = !ray_tmax_contig.defined() || ray_tmax_contig.numel() == 0
+        ? nullptr
+        : ray_tmax_contig.data_ptr<float>();
     params.active_mask = optional_mask_ptr(active_contig);
     params.n_rays = static_cast<int32_t>(ray_count);
     params.max_bounces = static_cast<int32_t>(max_bounces);
@@ -926,7 +944,7 @@ py::tuple trace_reflections_forward_op(
     at::Tensor active_storage;
     const at::Tensor *active_ptr = optional_tensor(active, active_storage);
     return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         ray_o,
         ray_d,
         ray_tmax,
@@ -946,7 +964,7 @@ py::tuple trace_reflections_forward_noad_op(
     at::Tensor active_storage;
     const at::Tensor *active_ptr = optional_tensor(active, active_storage);
     return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         ray_o,
         ray_d,
         ray_tmax,
@@ -966,7 +984,7 @@ py::tuple trace_reflections_forward_reduced_op(
     at::Tensor active_storage;
     const at::Tensor *active_ptr = optional_tensor(active, active_storage);
     return tensor_vector_to_tuple(trace_reflections_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         ray_o,
         ray_d,
         ray_tmax,
@@ -997,7 +1015,7 @@ extern "C" int64_t rayd_torch_native_trace_reflections_forward(
         throw std::runtime_error("rayd_torch_native_trace_reflections_forward output capacity is too small");
 
     std::vector<at::Tensor> result = trace_reflections_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         required(ray_o, "ray_o"),
         required(ray_d, "ray_d"),
         required(ray_tmax, "ray_tmax"),
@@ -1030,7 +1048,7 @@ extern "C" int64_t rayd_torch_native_trace_reflections_forward_tape(
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_trace_reflections_forward_tape output capacity is too small");
     std::vector<at::Tensor> result = trace_reflections_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         required(ray_o, "ray_o"),
         required(ray_d, "ray_d"),
         required(ray_tmax, "ray_tmax"),
@@ -1043,6 +1061,128 @@ extern "C" int64_t rayd_torch_native_trace_reflections_forward_tape(
     for (int64_t i = 0; i < kOutputCount; ++i)
         outputs[i] = std::move(result[static_cast<size_t>(i)]);
     return kOutputCount;
+}
+
+ReflectionBackwardOutputs integration_trace_reflections_backward_impl(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_hit_points,
+    const at::Tensor &tape_normals,
+    const at::Tensor &image_sources,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_image_sources) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    const int64_t ray_count = ray_o.size(0);
+    require_ray_batch(ray_d, ray_count, "ray_d");
+    if (ray_tmax != nullptr && ray_tmax->defined())
+        require_ray_tmax(*ray_tmax, ray_count, "trace_reflections_backward");
+    require_optional_active(active, ray_count);
+    require_chain_tape_prim_id(tape_prim_id, ray_count);
+    const int64_t bounce_count = tape_prim_id.size(1);
+    require_chain_tape_barycentric(tape_barycentric, ray_count, bounce_count);
+    require_chain_tape_vec3(tape_hit_points, ray_count, bounce_count, "tape_hit_points");
+    require_chain_tape_vec3(tape_normals, ray_count, bounce_count, "tape_normals");
+    require_chain_tape_vec3(image_sources, ray_count, bounce_count, "image_sources");
+    require_optional_chain_grad_t(maybe(grad_t), ray_count, bounce_count);
+    require_optional_chain_grad_image_sources(maybe(grad_image_sources), ray_count, bounce_count);
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_hit_points, "tape_hit_points");
+    require_scene_device(scene, tape_normals, "tape_normals");
+    require_scene_device(scene, image_sources, "image_sources");
+    require_scene_device(scene, grad_t, "grad_t");
+    require_scene_device(scene, grad_image_sources, "grad_image_sources");
+    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    return reflection_chain_backward_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        ray_tmax_storage,
+        active_storage,
+        tape_prim_id,
+        tape_barycentric,
+        tape_hit_points,
+        tape_normals,
+        image_sources,
+        maybe(grad_t),
+        maybe(grad_image_sources));
+}
+
+ReflectionJvpOutputs integration_trace_reflections_jvp_impl(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor *active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor &tape_hit_points,
+    const at::Tensor &tape_normals,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    const at::Tensor &image_sources) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    const int64_t ray_count = ray_o.size(0);
+    require_ray_batch(ray_d, ray_count, "ray_d");
+    require_optional_active(active, ray_count);
+    require_chain_tape_prim_id(tape_prim_id, ray_count);
+    const int64_t bounce_count = tape_prim_id.size(1);
+    require_chain_tape_barycentric(tape_barycentric, ray_count, bounce_count);
+    require_chain_tape_vec3(tape_hit_points, ray_count, bounce_count, "tape_hit_points");
+    require_chain_tape_vec3(tape_normals, ray_count, bounce_count, "tape_normals");
+    require_chain_tape_vec3(image_sources, ray_count, bounce_count, "image_sources");
+    require_optional_tangent_vertices(maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad_vec(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
+    require_optional_grad_vec(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tape_hit_points, "tape_hit_points");
+    require_scene_device(scene, tape_normals, "tape_normals");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_ray_o, "tangent_ray_o");
+    require_scene_device(scene, tangent_ray_d, "tangent_ray_d");
+    require_scene_device(scene, image_sources, "image_sources");
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    return reflection_chain_jvp_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        active_storage,
+        tape_prim_id,
+        tape_barycentric,
+        tape_hit_points,
+        tape_normals,
+        maybe(tangent_vertices),
+        maybe(tangent_ray_o),
+        maybe(tangent_ray_d),
+        image_sources);
 }
 
 extern "C" int64_t rayd_torch_native_trace_reflections_backward(
@@ -1065,53 +1205,25 @@ extern "C" int64_t rayd_torch_native_trace_reflections_backward(
             throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_backward received null ") + name);
         return *tensor;
     };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
     constexpr int64_t kOutputCount = 4;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_trace_reflections_backward output capacity is too small");
     const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
     const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    require_vec3f(ray_o_checked, "ray_o");
-    require_vec3f(ray_d_checked, "ray_d");
-    const int64_t ray_count = ray_o_checked.size(0);
-    require_ray_batch(ray_d_checked, ray_count, "ray_d");
-    if (ray_tmax != nullptr && ray_tmax->defined())
-        require_ray_tmax(*ray_tmax, ray_count, "trace_reflections_backward");
-    require_optional_active(active, ray_count);
     const at::Tensor &tape_prim_id_checked = required(tape_prim_id, "tape_prim_id");
-    require_chain_tape_prim_id(tape_prim_id_checked, ray_count);
-    const int64_t bounce_count = tape_prim_id_checked.size(1);
-    require_chain_tape_barycentric(
-        required(tape_barycentric, "tape_barycentric"), ray_count, bounce_count);
-    require_chain_tape_vec3(
-        required(tape_hit_points, "tape_hit_points"), ray_count, bounce_count, "tape_hit_points");
-    require_chain_tape_vec3(
-        required(tape_normals, "tape_normals"), ray_count, bounce_count, "tape_normals");
-    require_chain_tape_vec3(
-        required(image_sources, "image_sources"), ray_count, bounce_count, "image_sources");
-    require_optional_chain_grad_t(maybe(grad_t), ray_count, bounce_count);
-    require_optional_chain_grad_image_sources(maybe(grad_image_sources), ray_count, bounce_count);
-    SceneCache &scene = get_scene(scene_handle);
-    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    ReflectionBackwardOutputs out = reflection_chain_backward_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    ReflectionBackwardOutputs out = integration_trace_reflections_backward_impl(
+        get_scene(scene_handle),
         ray_o_checked,
         ray_d_checked,
-        ray_tmax_storage,
-        active_storage,
+        ray_tmax,
+        active,
         tape_prim_id_checked,
-        *tape_barycentric,
-        *tape_hit_points,
-        *tape_normals,
-        *image_sources,
-        maybe(grad_t),
-        maybe(grad_image_sources));
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_hit_points, "tape_hit_points"),
+        required(tape_normals, "tape_normals"),
+        required(image_sources, "image_sources"),
+        grad_t,
+        grad_image_sources);
     outputs[0] = out.grad_vertices;
     outputs[1] = out.grad_ray_o;
     outputs[2] = out.grad_ray_d;
@@ -1139,52 +1251,25 @@ extern "C" int64_t rayd_torch_native_trace_reflections_jvp(
             throw std::runtime_error(std::string("rayd_torch_native_trace_reflections_jvp received null ") + name);
         return *tensor;
     };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
     constexpr int64_t kOutputCount = 2;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_trace_reflections_jvp output capacity is too small");
     const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
     const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    require_vec3f(ray_o_checked, "ray_o");
-    require_vec3f(ray_d_checked, "ray_d");
-    const int64_t ray_count = ray_o_checked.size(0);
-    require_ray_batch(ray_d_checked, ray_count, "ray_d");
-    require_optional_active(active, ray_count);
     const at::Tensor &tape_prim_id_checked = required(tape_prim_id, "tape_prim_id");
-    require_chain_tape_prim_id(tape_prim_id_checked, ray_count);
-    const int64_t bounce_count = tape_prim_id_checked.size(1);
-    require_chain_tape_barycentric(
-        required(tape_barycentric, "tape_barycentric"), ray_count, bounce_count);
-    require_chain_tape_vec3(
-        required(tape_hit_points, "tape_hit_points"), ray_count, bounce_count, "tape_hit_points");
-    require_chain_tape_vec3(
-        required(tape_normals, "tape_normals"), ray_count, bounce_count, "tape_normals");
-    require_chain_tape_vec3(
-        required(image_sources, "image_sources"), ray_count, bounce_count, "image_sources");
-    SceneCache &scene = get_scene(scene_handle);
-    require_optional_tangent_vertices(
-        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
-    require_optional_grad_vec(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
-    require_optional_grad_vec(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    ReflectionJvpOutputs out = reflection_chain_jvp_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    ReflectionJvpOutputs out = integration_trace_reflections_jvp_impl(
+        get_scene(scene_handle),
         ray_o_checked,
         ray_d_checked,
-        active_storage,
+        active,
         tape_prim_id_checked,
-        *tape_barycentric,
-        *tape_hit_points,
-        *tape_normals,
-        maybe(tangent_vertices),
-        maybe(tangent_ray_o),
-        maybe(tangent_ray_d),
-        *image_sources);
+        required(tape_barycentric, "tape_barycentric"),
+        required(tape_hit_points, "tape_hit_points"),
+        required(tape_normals, "tape_normals"),
+        tangent_vertices,
+        tangent_ray_o,
+        tangent_ray_d,
+        required(image_sources, "image_sources"));
     outputs[0] = out.tangent_t;
     outputs[1] = out.tangent_image_sources;
     return kOutputCount;
@@ -1544,7 +1629,7 @@ py::tuple trace_refl_epc_field_forward_op(
 }
 
 std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
-    int64_t scene_handle,
+    SceneCache &scene,
     const at::Tensor &source,
     const at::Tensor &receiver,
     const at::Tensor *active_ptr,
@@ -1593,7 +1678,15 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
         throw std::runtime_error("surface_group_members must be padded to group_count * max_group_size.");
 
     at::Tensor active = optional_active_from_tensor(active_ptr, source.size(0), "active");
-    SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, active_ptr, "active");
+    require_scene_device(scene, expected_prim_ids, "expected_prim_ids");
+    require_scene_device(scene, direct_plane_points, "direct_plane_points");
+    require_scene_device(scene, direct_plane_normals, "direct_plane_normals");
+    require_scene_device(scene, surface_group_id, "surface_group_id");
+    require_scene_device(scene, surface_group_size, "surface_group_size");
+    require_scene_device(scene, surface_group_members, "surface_group_members");
     const int64_t ray_count = source.size(0);
     const int64_t slot_count = ray_count * max_bounces;
     auto fopts = source.options();
@@ -1768,7 +1861,7 @@ py::tuple reflection_epc_paths_forward_op(
     at::Tensor active_storage;
     const at::Tensor *active = optional_tensor(active_obj, active_storage);
     return tensor_vector_to_tuple(reflection_epc_paths_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         source,
         receiver,
         active,
@@ -2020,12 +2113,33 @@ py::tuple reflection_dedup_forward_op(
         out_representative);
 }
 
-py::tuple reflection_accumulation_forward_op(
-    int64_t scene_handle,
+struct ReflectionAccumulationNativeOutputs {
+    at::Tensor power;
+    at::Tensor field_x_re;
+    at::Tensor field_x_im;
+    at::Tensor field_y_re;
+    at::Tensor field_y_im;
+    at::Tensor field_z_re;
+    at::Tensor field_z_im;
+    at::Tensor reflection_count;
+    at::Tensor wedge_count;
+    at::Tensor wedge_ray_index;
+    at::Tensor wedge_hit;
+    at::Tensor wedge_normal;
+    at::Tensor wedge_prim_id;
+    at::Tensor wedge_direction;
+    at::Tensor wedge_source;
+    at::Tensor wedge_source_power;
+    at::Tensor wedge_initial_direction;
+    at::Tensor wedge_bounce_depth;
+};
+
+ReflectionAccumulationNativeOutputs reflection_accumulation_forward_native_impl(
+    SceneCache &scene,
     at::Tensor ray_o,
     at::Tensor ray_d,
     at::Tensor ray_tmax,
-    at::Tensor active,
+    const at::Tensor *active,
     at::Tensor tx,
     at::Tensor tx_pol,
     at::Tensor material_eta_r,
@@ -2056,7 +2170,8 @@ py::tuple reflection_accumulation_forward_op(
     require_vec3f(ray_o, "ray_o");
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0), "reflection_accumulation");
-    require_mask(active, "active");
+    if (active != nullptr)
+        require_mask(*active, "active");
     require_vec3f(tx, "tx");
     require_vec3f(tx_pol, "tx_pol");
     require_flat_f32(material_eta_r, "material_eta_r");
@@ -2067,7 +2182,7 @@ py::tuple reflection_accumulation_forward_op(
     require_same_batch(ray_o, ray_d, "reflection_accumulation");
     require_same_batch(ray_o, tx, "reflection_accumulation");
     require_same_batch(ray_o, tx_pol, "reflection_accumulation");
-    if (active.size(0) != ray_o.size(0))
+    if (active != nullptr && active->numel() != 0 && active->size(0) != ray_o.size(0))
         throw std::runtime_error("ray_tmax and active must match the ray batch size.");
     if (max_bounces < 0)
         throw std::runtime_error("max_bounces must be non-negative.");
@@ -2088,7 +2203,26 @@ py::tuple reflection_accumulation_forward_op(
     if (compact_min_samples < 0 || staged_min_samples_per_cell < 0 || procedural_sample_count < 0)
         throw std::runtime_error("accumulation thresholds and procedural_sample_count must be non-negative.");
 
-    SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tx, "tx");
+    require_scene_device(scene, tx_pol, "tx_pol");
+    require_scene_device(scene, material_eta_r, "material_eta_r");
+    require_scene_device(scene, material_sigma, "material_sigma");
+    require_scene_device(scene, material_mu_r, "material_mu_r");
+    require_scene_device(scene, material_gain, "material_gain");
+    require_scene_device(scene, material_valid, "material_valid");
+    const int64_t material_count = material_eta_r.size(0);
+    if (material_count != scene.global_faces.size(0) ||
+        material_sigma.size(0) != material_count ||
+        material_mu_r.size(0) != material_count ||
+        material_gain.size(0) != material_count ||
+        material_valid.size(0) != material_count) {
+        throw std::runtime_error("reflection material payload must match the scene triangle count.");
+    }
+
     const int64_t ray_count = ray_o.size(0);
     const int64_t cell_count = grid_resolution0 * grid_resolution1;
     const int32_t max_bounces_i = checked_i32(max_bounces, "max_bounces");
@@ -2145,7 +2279,7 @@ py::tuple reflection_accumulation_forward_op(
     at::Tensor wedge_initial_dir_y = at::zeros({wedge_capacity64}, fopts);
     at::Tensor wedge_initial_dir_z = at::zeros({wedge_capacity64}, fopts);
     if (ray_count == 0) {
-        return py::make_tuple(
+        return {
             power.reshape({grid_resolution1, grid_resolution0}),
             field_x_re.reshape({grid_resolution1, grid_resolution0}),
             field_x_im.reshape({grid_resolution1, grid_resolution0}),
@@ -2163,7 +2297,7 @@ py::tuple reflection_accumulation_forward_op(
             stack_vec3(wedge_source_x, wedge_source_y, wedge_source_z),
             wedge_source_power,
             stack_vec3(wedge_initial_dir_x, wedge_initial_dir_y, wedge_initial_dir_z),
-            wedge_bounce_depth);
+            wedge_bounce_depth};
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
@@ -2171,16 +2305,9 @@ py::tuple reflection_accumulation_forward_op(
     Vec3SoA ray_d_soa = split_vec3(ray_d);
     Vec3SoA tx_soa = split_vec3(tx);
     Vec3SoA tx_pol_soa = split_vec3(tx_pol);
-    at::Tensor ray_tmax_contig = ray_tmax.numel() == 0 ? ray_tmax : ray_tmax.contiguous();
-    at::Tensor active_contig = active.contiguous();
-    const int64_t material_count = material_eta_r.size(0);
-    if (material_count != tri.n_triangles ||
-        material_sigma.size(0) != material_count ||
-        material_mu_r.size(0) != material_count ||
-        material_gain.size(0) != material_count ||
-        material_valid.size(0) != material_count) {
-        throw std::runtime_error("reflection material payload must match the scene triangle count.");
-    }
+    at::Tensor ray_tmax_contig =
+        !ray_tmax.defined() || ray_tmax.numel() == 0 ? ray_tmax : ray_tmax.contiguous();
+    at::Tensor active_contig = active == nullptr ? at::Tensor() : active->contiguous();
     at::Tensor stage_cell = staged_accum
         ? at::full({stage_sample_count}, -1, iopts)
         : at::Tensor();
@@ -2213,7 +2340,9 @@ py::tuple reflection_accumulation_forward_op(
     params.ray_dx = ray_d_soa.x.data_ptr<float>();
     params.ray_dy = ray_d_soa.y.data_ptr<float>();
     params.ray_dz = ray_d_soa.z.data_ptr<float>();
-    params.ray_tmax = ray_tmax_contig.numel() == 0 ? nullptr : ray_tmax_contig.data_ptr<float>();
+    params.ray_tmax = !ray_tmax_contig.defined() || ray_tmax_contig.numel() == 0
+        ? nullptr
+        : ray_tmax_contig.data_ptr<float>();
     params.active_mask = optional_mask_ptr(active_contig);
     params.n_rays = static_cast<int32_t>(ray_count);
     params.include_los = include_los ? 1 : 0;
@@ -2304,7 +2433,7 @@ py::tuple reflection_accumulation_forward_op(
             field_z_im,
             reflection_count);
     }
-    return py::make_tuple(
+    return {
         power.reshape({grid_resolution1, grid_resolution0}),
         field_x_re.reshape({grid_resolution1, grid_resolution0}),
         field_x_im.reshape({grid_resolution1, grid_resolution0}),
@@ -2322,7 +2451,94 @@ py::tuple reflection_accumulation_forward_op(
         stack_vec3(wedge_source_x, wedge_source_y, wedge_source_z),
         wedge_source_power,
         stack_vec3(wedge_initial_dir_x, wedge_initial_dir_y, wedge_initial_dir_z),
-        wedge_bounce_depth);
+        wedge_bounce_depth};
+}
+
+py::tuple reflection_accumulation_forward_op(
+    int64_t scene_handle,
+    at::Tensor ray_o,
+    at::Tensor ray_d,
+    at::Tensor ray_tmax,
+    at::Tensor active,
+    at::Tensor tx,
+    at::Tensor tx_pol,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
+    at::Tensor material_gain,
+    at::Tensor material_valid,
+    int64_t max_bounces,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double wavelength,
+    double solid_angle_per_ray,
+    bool collect_wedges,
+    bool collect_wedge_prefixes,
+    int64_t wedge_capacity,
+    int64_t wedge_sample_stride,
+    int64_t accumulation_strategy,
+    int64_t compact_min_samples,
+    int64_t staged_min_samples_per_cell,
+    int64_t procedural_sample_count,
+    bool include_los) {
+    ReflectionAccumulationNativeOutputs out = reflection_accumulation_forward_native_impl(
+        get_scene(scene_handle),
+        std::move(ray_o),
+        std::move(ray_d),
+        std::move(ray_tmax),
+        &active,
+        std::move(tx),
+        std::move(tx_pol),
+        std::move(material_eta_r),
+        std::move(material_sigma),
+        std::move(material_mu_r),
+        std::move(material_gain),
+        std::move(material_valid),
+        max_bounces,
+        grid_axis,
+        grid_position,
+        grid_coord0_min,
+        grid_coord0_max,
+        grid_coord1_min,
+        grid_coord1_max,
+        grid_resolution0,
+        grid_resolution1,
+        wavelength,
+        solid_angle_per_ray,
+        collect_wedges,
+        collect_wedge_prefixes,
+        wedge_capacity,
+        wedge_sample_stride,
+        accumulation_strategy,
+        compact_min_samples,
+        staged_min_samples_per_cell,
+        procedural_sample_count,
+        include_los);
+    return py::make_tuple(
+        out.power,
+        out.field_x_re,
+        out.field_x_im,
+        out.field_y_re,
+        out.field_y_im,
+        out.field_z_re,
+        out.field_z_im,
+        out.reflection_count,
+        out.wedge_count,
+        out.wedge_ray_index,
+        out.wedge_hit,
+        out.wedge_normal,
+        out.wedge_prim_id,
+        out.wedge_direction,
+        out.wedge_source,
+        out.wedge_source_power,
+        out.wedge_initial_direction,
+        out.wedge_bounce_depth);
 }
 
 extern "C" int64_t rayd_torch_native_reflection_accumulation_forward(
@@ -2368,12 +2584,12 @@ extern "C" int64_t rayd_torch_native_reflection_accumulation_forward(
     constexpr int64_t kOutputCount = 18;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_reflection_accumulation_forward output capacity is too small");
-    py::tuple result = reflection_accumulation_forward_op(
-        scene_handle,
+    ReflectionAccumulationNativeOutputs result = reflection_accumulation_forward_native_impl(
+        get_scene(scene_handle),
         required(ray_o, "ray_o"),
         required(ray_d, "ray_d"),
         required(ray_tmax, "ray_tmax"),
-        required(active, "active"),
+        &required(active, "active"),
         required(tx, "tx"),
         required(tx_pol, "tx_pol"),
         required(material_eta_r, "material_eta_r"),
@@ -2401,10 +2617,24 @@ extern "C" int64_t rayd_torch_native_reflection_accumulation_forward(
         staged_min_samples_per_cell,
         procedural_sample_count,
         include_los);
-    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
-        throw std::runtime_error("rayd_torch_native_reflection_accumulation_forward returned an unexpected output count");
-    for (int64_t i = 0; i < kOutputCount; ++i)
-        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    outputs[0] = result.power;
+    outputs[1] = result.field_x_re;
+    outputs[2] = result.field_x_im;
+    outputs[3] = result.field_y_re;
+    outputs[4] = result.field_y_im;
+    outputs[5] = result.field_z_re;
+    outputs[6] = result.field_z_im;
+    outputs[7] = result.reflection_count;
+    outputs[8] = result.wedge_count;
+    outputs[9] = result.wedge_ray_index;
+    outputs[10] = result.wedge_hit;
+    outputs[11] = result.wedge_normal;
+    outputs[12] = result.wedge_prim_id;
+    outputs[13] = result.wedge_direction;
+    outputs[14] = result.wedge_source;
+    outputs[15] = result.wedge_source_power;
+    outputs[16] = result.wedge_initial_direction;
+    outputs[17] = result.wedge_bounce_depth;
     return kOutputCount;
 }
 
@@ -2433,7 +2663,7 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_reflection_epc_paths_forward output capacity is too small");
     std::vector<at::Tensor> result = reflection_epc_paths_forward_native_impl(
-        scene_handle,
+        get_scene(scene_handle),
         required(source, "source"),
         required(receiver, "receiver"),
         active,
@@ -2451,6 +2681,107 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_forward(
     for (int64_t i = 0; i < kOutputCount; ++i)
         outputs[i] = std::move(result[static_cast<size_t>(i)]);
     return kOutputCount;
+}
+
+ReflEpcPathsBackwardOutputs integration_reflection_epc_paths_backward_impl(
+    SceneCache &scene,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &sequence,
+    const at::Tensor &plane_points,
+    const at::Tensor &plane_normals,
+    const at::Tensor &valid,
+    const at::Tensor &bounce_count,
+    const at::Tensor *grad_points,
+    const at::Tensor *grad_normals,
+    const at::Tensor *grad_path_length,
+    bool need_grad_vertices,
+    bool need_grad_source,
+    bool need_grad_receiver) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    const int64_t ray_count = require_epc_paths_frozen_winner(
+        source, receiver, sequence, plane_points, plane_normals, valid, bounce_count);
+    const int64_t bounce_width = sequence.size(1);
+    require_optional_chain_grad_vec3(maybe(grad_points), ray_count, bounce_width, "grad_points");
+    require_optional_chain_grad_vec3(maybe(grad_normals), ray_count, bounce_width, "grad_normals");
+    require_optional_grad_vec(maybe(grad_path_length), ray_count, 0, "grad_path_length");
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, sequence, "sequence");
+    require_scene_device(scene, plane_points, "plane_points");
+    require_scene_device(scene, plane_normals, "plane_normals");
+    require_scene_device(scene, valid, "valid");
+    require_scene_device(scene, bounce_count, "bounce_count");
+    require_scene_device(scene, grad_points, "grad_points");
+    require_scene_device(scene, grad_normals, "grad_normals");
+    require_scene_device(scene, grad_path_length, "grad_path_length");
+    return reflection_epc_paths_backward_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        source,
+        receiver,
+        sequence,
+        plane_points,
+        plane_normals,
+        valid,
+        bounce_count,
+        maybe(grad_points),
+        maybe(grad_normals),
+        maybe(grad_path_length),
+        need_grad_vertices,
+        need_grad_source,
+        need_grad_receiver);
+}
+
+ReflEpcPathsJvpOutputs integration_reflection_epc_paths_jvp_impl(
+    SceneCache &scene,
+    const at::Tensor &source,
+    const at::Tensor &receiver,
+    const at::Tensor &sequence,
+    const at::Tensor &plane_points,
+    const at::Tensor &plane_normals,
+    const at::Tensor &valid,
+    const at::Tensor &bounce_count,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_source,
+    const at::Tensor *tangent_receiver) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    const int64_t ray_count = require_epc_paths_frozen_winner(
+        source, receiver, sequence, plane_points, plane_normals, valid, bounce_count);
+    require_optional_tangent_vertices(maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad_vec(maybe(tangent_source), ray_count, 3, "tangent_source");
+    require_optional_grad_vec(maybe(tangent_receiver), ray_count, 3, "tangent_receiver");
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, sequence, "sequence");
+    require_scene_device(scene, plane_points, "plane_points");
+    require_scene_device(scene, plane_normals, "plane_normals");
+    require_scene_device(scene, valid, "valid");
+    require_scene_device(scene, bounce_count, "bounce_count");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_source, "tangent_source");
+    require_scene_device(scene, tangent_receiver, "tangent_receiver");
+    return reflection_epc_paths_jvp_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        source,
+        receiver,
+        sequence,
+        plane_points,
+        plane_normals,
+        valid,
+        bounce_count,
+        maybe(tangent_vertices),
+        maybe(tangent_source),
+        maybe(tangent_receiver));
 }
 
 extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
@@ -2475,11 +2806,6 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
             throw std::runtime_error(std::string("rayd_torch_native_reflection_epc_paths_backward received null ") + name);
         return *tensor;
     };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
     constexpr int64_t kOutputCount = 3;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_reflection_epc_paths_backward output capacity is too small");
@@ -2490,25 +2816,8 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
     const at::Tensor &plane_normals_checked = required(plane_normals, "plane_normals");
     const at::Tensor &valid_checked = required(valid, "valid");
     const at::Tensor &bounce_count_checked = required(bounce_count, "bounce_count");
-    const int64_t ray_count = require_epc_paths_frozen_winner(
-        source_checked,
-        receiver_checked,
-        sequence_checked,
-        plane_points_checked,
-        plane_normals_checked,
-        valid_checked,
-        bounce_count_checked);
-    const int64_t bounce_width = sequence_checked.size(1);
-    require_optional_chain_grad_vec3(
-        maybe(grad_points), ray_count, bounce_width, "grad_points");
-    require_optional_chain_grad_vec3(
-        maybe(grad_normals), ray_count, bounce_width, "grad_normals");
-    require_optional_grad_vec(
-        maybe(grad_path_length), ray_count, 0, "grad_path_length");
-    SceneCache &scene = get_scene(scene_handle);
-    ReflEpcPathsBackwardOutputs out = reflection_epc_paths_backward_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    ReflEpcPathsBackwardOutputs out = integration_reflection_epc_paths_backward_impl(
+        get_scene(scene_handle),
         source_checked,
         receiver_checked,
         sequence_checked,
@@ -2516,9 +2825,9 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_backward(
         plane_normals_checked,
         valid_checked,
         bounce_count_checked,
-        maybe(grad_points),
-        maybe(grad_normals),
-        maybe(grad_path_length),
+        grad_points,
+        grad_normals,
+        grad_path_length,
         need_grad_vertices,
         need_grad_source,
         need_grad_receiver);
@@ -2547,11 +2856,6 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
             throw std::runtime_error(std::string("rayd_torch_native_reflection_epc_paths_jvp received null ") + name);
         return *tensor;
     };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
     constexpr int64_t kOutputCount = 3;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_reflection_epc_paths_jvp output capacity is too small");
@@ -2562,24 +2866,8 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
     const at::Tensor &plane_normals_checked = required(plane_normals, "plane_normals");
     const at::Tensor &valid_checked = required(valid, "valid");
     const at::Tensor &bounce_count_checked = required(bounce_count, "bounce_count");
-    const int64_t ray_count = require_epc_paths_frozen_winner(
-        source_checked,
-        receiver_checked,
-        sequence_checked,
-        plane_points_checked,
-        plane_normals_checked,
-        valid_checked,
-        bounce_count_checked);
-    SceneCache &scene = get_scene(scene_handle);
-    require_optional_tangent_vertices(
-        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
-    require_optional_grad_vec(
-        maybe(tangent_source), ray_count, 3, "tangent_source");
-    require_optional_grad_vec(
-        maybe(tangent_receiver), ray_count, 3, "tangent_receiver");
-    ReflEpcPathsJvpOutputs out = reflection_epc_paths_jvp_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    ReflEpcPathsJvpOutputs out = integration_reflection_epc_paths_jvp_impl(
+        get_scene(scene_handle),
         source_checked,
         receiver_checked,
         sequence_checked,
@@ -2587,13 +2875,37 @@ extern "C" int64_t rayd_torch_native_reflection_epc_paths_jvp(
         plane_normals_checked,
         valid_checked,
         bounce_count_checked,
-        maybe(tangent_vertices),
-        maybe(tangent_source),
-        maybe(tangent_receiver));
+        tangent_vertices,
+        tangent_source,
+        tangent_receiver);
     outputs[0] = out.tangent_points;
     outputs[1] = out.tangent_normals;
     outputs[2] = out.tangent_path_length;
     return kOutputCount;
+}
+
+at::Tensor integration_scene_face_normals_backward_impl(
+    SceneCache &scene,
+    const at::Tensor &grad_face_normals) {
+    require_cuda(grad_face_normals, "grad_face_normals");
+    require_dtype(grad_face_normals, at::kFloat, "grad_face_normals");
+    require_rank(grad_face_normals, 2, "grad_face_normals");
+    require_last_dim(grad_face_normals, 3, "grad_face_normals");
+    require_scene_device(scene, grad_face_normals, "grad_face_normals");
+    if (grad_face_normals.size(0) != scene.global_faces.size(0))
+        throw std::runtime_error("grad_face_normals must match the scene global face table.");
+    return scene_face_normals_backward_cuda(
+        scene.global_vertices, scene.global_faces, grad_face_normals);
+}
+
+at::Tensor integration_scene_face_normals_jvp_impl(
+    SceneCache &scene,
+    const at::Tensor &tangent_vertices) {
+    require_optional_tangent_vertices(
+        &tangent_vertices, scene.global_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    return scene_face_normals_jvp_cuda(
+        scene.global_vertices, scene.global_faces, tangent_vertices);
 }
 
 extern "C" int64_t rayd_torch_native_scene_face_normals_backward(
@@ -2606,15 +2918,8 @@ extern "C" int64_t rayd_torch_native_scene_face_normals_backward(
         throw std::runtime_error("rayd_torch_native_scene_face_normals_backward output capacity is too small");
     if (grad_face_normals == nullptr)
         throw std::runtime_error("rayd_torch_native_scene_face_normals_backward received null grad_face_normals");
-    SceneCache &scene = get_scene(scene_handle);
-    require_cuda(*grad_face_normals, "grad_face_normals");
-    require_dtype(*grad_face_normals, at::kFloat, "grad_face_normals");
-    require_rank(*grad_face_normals, 2, "grad_face_normals");
-    require_last_dim(*grad_face_normals, 3, "grad_face_normals");
-    if (grad_face_normals->size(0) != scene.global_faces.size(0))
-        throw std::runtime_error("grad_face_normals must match the scene global face table.");
-    outputs[0] = scene_face_normals_backward_cuda(
-        scene.global_vertices, scene.global_faces, *grad_face_normals);
+    outputs[0] = integration_scene_face_normals_backward_impl(
+        get_scene(scene_handle), *grad_face_normals);
     return kOutputCount;
 }
 
@@ -2628,12 +2933,295 @@ extern "C" int64_t rayd_torch_native_scene_face_normals_jvp(
         throw std::runtime_error("rayd_torch_native_scene_face_normals_jvp output capacity is too small");
     if (tangent_vertices == nullptr)
         throw std::runtime_error("rayd_torch_native_scene_face_normals_jvp received null tangent_vertices");
-    SceneCache &scene = get_scene(scene_handle);
-    require_optional_tangent_vertices(
-        tangent_vertices, scene.global_vertices, "tangent_vertices");
-    outputs[0] = scene_face_normals_jvp_cuda(
-        scene.global_vertices, scene.global_faces, *tangent_vertices);
+    outputs[0] = integration_scene_face_normals_jvp_impl(
+        get_scene(scene_handle), *tangent_vertices);
     return kOutputCount;
 }
 
 } // namespace rayd::torch_backend
+
+#include "../integration_v2_internal.h"
+
+namespace rayd::torch {
+
+namespace {
+
+const at::Tensor *present_optional(const std::optional<at::Tensor> &value) {
+    if (!value.has_value() || !value->defined())
+        return nullptr;
+    return &*value;
+}
+
+template <std::size_t N>
+void require_output_count(const std::vector<at::Tensor> &values, const char *operation) {
+    if (values.size() != N)
+        throw std::runtime_error(std::string(operation) + " returned an unexpected output count");
+}
+
+} // namespace
+
+VisibilityResult visibility_forward(
+    const SceneResource &scene,
+    const VisibilityRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto out = torch_backend::visibility_forward_native_impl(
+        cache,
+        request.start,
+        request.end,
+        present_optional(request.active));
+    return {out.visible, out.blocker_prim, out.tape_t};
+}
+
+ReflectionTraceResult trace_reflections_forward(
+    const SceneResource &scene,
+    const ReflectionTraceRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    at::Tensor ray_tmax = present_optional(request.rays.ray_tmax) == nullptr
+        ? at::Tensor()
+        : *request.rays.ray_tmax;
+    std::vector<at::Tensor> values = torch_backend::trace_reflections_forward_native_impl(
+        cache,
+        request.rays.ray_o,
+        request.rays.ray_d,
+        ray_tmax,
+        present_optional(request.rays.active),
+        request.max_bounces,
+        false,
+        false);
+    require_output_count<3>(values, "rayd::torch::trace_reflections_forward");
+    return {values[0], values[1], values[2]};
+}
+
+ReflectionTraceTapeResult trace_reflections_forward_tape(
+    const SceneResource &scene,
+    const ReflectionTraceRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    at::Tensor ray_tmax = present_optional(request.rays.ray_tmax) == nullptr
+        ? at::Tensor()
+        : *request.rays.ray_tmax;
+    std::vector<at::Tensor> values = torch_backend::trace_reflections_forward_native_impl(
+        cache,
+        request.rays.ray_o,
+        request.rays.ray_d,
+        ray_tmax,
+        present_optional(request.rays.active),
+        request.max_bounces,
+        true,
+        true);
+    require_output_count<9>(values, "rayd::torch::trace_reflections_forward_tape");
+    return {
+        values[0],
+        values[1],
+        values[2],
+        values[3],
+        values[4],
+        values[5],
+        values[6],
+        values[7],
+        values[8],
+    };
+}
+
+ReflectionTraceBackwardResult trace_reflections_backward(
+    const SceneResource &scene,
+    const ReflectionTraceBackwardRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto ptr = [](const std::optional<at::Tensor> &value) -> const at::Tensor * {
+        if (!value.has_value() || !value->defined())
+            return nullptr;
+        return &*value;
+    };
+    const at::Tensor *ray_tmax = present_optional(request.rays.ray_tmax);
+    auto out = torch_backend::integration_trace_reflections_backward_impl(
+        cache,
+        request.rays.ray_o,
+        request.rays.ray_d,
+        ray_tmax,
+        ptr(request.rays.active),
+        request.tape_prim_id,
+        request.tape_barycentric,
+        request.tape_hit_points,
+        request.tape_normals,
+        request.image_sources,
+        ptr(request.grad_t),
+        ptr(request.grad_image_sources));
+    return {out.grad_vertices, out.grad_ray_o, out.grad_ray_d, out.grad_ray_tmax};
+}
+
+ReflectionTraceJvpResult trace_reflections_jvp(
+    const SceneResource &scene,
+    const ReflectionTraceJvpRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto ptr = [](const std::optional<at::Tensor> &value) -> const at::Tensor * {
+        if (!value.has_value() || !value->defined())
+            return nullptr;
+        return &*value;
+    };
+    auto out = torch_backend::integration_trace_reflections_jvp_impl(
+        cache,
+        request.ray_o,
+        request.ray_d,
+        ptr(request.active),
+        request.tape_prim_id,
+        request.tape_barycentric,
+        request.tape_hit_points,
+        request.tape_normals,
+        ptr(request.tangent_vertices),
+        ptr(request.tangent_ray_o),
+        ptr(request.tangent_ray_d),
+        request.image_sources);
+    return {out.tangent_t, out.tangent_image_sources};
+}
+
+ReflectionAccumulationResult reflection_accumulation_forward(
+    const SceneResource &scene,
+    const ReflectionAccumulationConfig &config) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    at::Tensor ray_tmax = present_optional(config.rays.ray_tmax) == nullptr
+        ? at::Tensor()
+        : *config.rays.ray_tmax;
+    auto out = torch_backend::reflection_accumulation_forward_native_impl(
+        cache,
+        config.rays.ray_o,
+        config.rays.ray_d,
+        ray_tmax,
+        present_optional(config.rays.active),
+        config.tx,
+        config.tx_pol,
+        config.material.eta_r,
+        config.material.sigma,
+        config.material.mu_r,
+        config.material.gain,
+        config.material.valid,
+        config.max_bounces,
+        config.grid.axis,
+        config.grid.position,
+        config.grid.coord0_min,
+        config.grid.coord0_max,
+        config.grid.coord1_min,
+        config.grid.coord1_max,
+        config.grid.resolution0,
+        config.grid.resolution1,
+        config.wavelength,
+        config.solid_angle_per_ray,
+        config.collect_wedges,
+        config.collect_wedge_prefixes,
+        config.wedge_capacity,
+        config.wedge_sample_stride,
+        config.accumulation_strategy,
+        config.compact_min_samples,
+        config.staged_min_samples_per_cell,
+        config.procedural_sample_count,
+        config.include_los);
+    return {
+        out.power,
+        out.field_x_re,
+        out.field_x_im,
+        out.field_y_re,
+        out.field_y_im,
+        out.field_z_re,
+        out.field_z_im,
+        out.reflection_count,
+        out.wedge_count,
+        out.wedge_ray_index,
+        out.wedge_hit,
+        out.wedge_normal,
+        out.wedge_prim_id,
+        out.wedge_direction,
+        out.wedge_source,
+        out.wedge_source_power,
+        out.wedge_initial_direction,
+        out.wedge_bounce_depth,
+    };
+}
+
+ReflectionEpcResult reflection_epc_paths_forward(
+    const SceneResource &scene,
+    const ReflectionEpcRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    std::vector<at::Tensor> values = torch_backend::reflection_epc_paths_forward_native_impl(
+        cache,
+        request.source,
+        request.receiver,
+        present_optional(request.active),
+        request.expected_prim_ids,
+        request.direct_plane_points,
+        request.direct_plane_normals,
+        request.surface_group_id,
+        request.surface_group_size,
+        request.surface_group_members,
+        request.max_bounces,
+        request.visibility_ignore_mode,
+        request.plane_tolerance);
+    require_output_count<6>(values, "rayd::torch::reflection_epc_paths_forward");
+    return {values[0], values[1], values[2], values[3], values[4], values[5]};
+}
+
+at::Tensor scene_face_normals_backward(
+    const SceneResource &scene,
+    const at::Tensor &grad_face_normals) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    return torch_backend::integration_scene_face_normals_backward_impl(
+        cache, grad_face_normals);
+}
+
+at::Tensor scene_face_normals_jvp(
+    const SceneResource &scene,
+    const at::Tensor &tangent_vertices) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    return torch_backend::integration_scene_face_normals_jvp_impl(
+        cache, tangent_vertices);
+}
+
+ReflectionEpcBackwardResult reflection_epc_paths_backward(
+    const SceneResource &scene,
+    const ReflectionEpcBackwardRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto ptr = [](const std::optional<at::Tensor> &value) -> const at::Tensor * {
+        if (!value.has_value() || !value->defined())
+            return nullptr;
+        return &*value;
+    };
+    auto out = torch_backend::integration_reflection_epc_paths_backward_impl(
+        cache,
+        request.source,
+        request.receiver,
+        request.sequence,
+        request.plane_points,
+        request.plane_normals,
+        request.valid,
+        request.bounce_count,
+        ptr(request.grad_points),
+        ptr(request.grad_normals),
+        ptr(request.grad_path_length),
+        request.need_grad_vertices,
+        request.need_grad_source,
+        request.need_grad_receiver);
+    return {out.grad_vertices, out.grad_source, out.grad_receiver};
+}
+
+ReflectionEpcJvpResult reflection_epc_paths_jvp(
+    const SceneResource &scene,
+    const ReflectionEpcJvpRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto ptr = [](const std::optional<at::Tensor> &value) -> const at::Tensor * {
+        if (!value.has_value() || !value->defined())
+            return nullptr;
+        return &*value;
+    };
+    auto out = torch_backend::integration_reflection_epc_paths_jvp_impl(
+        cache,
+        request.source,
+        request.receiver,
+        request.sequence,
+        request.plane_points,
+        request.plane_normals,
+        request.valid,
+        request.bounce_count,
+        ptr(request.tangent_vertices),
+        ptr(request.tangent_source),
+        ptr(request.tangent_receiver));
+    return {out.tangent_points, out.tangent_normals, out.tangent_path_length};
+}
+
+} // namespace rayd::torch

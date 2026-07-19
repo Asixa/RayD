@@ -1127,8 +1127,7 @@ void ensure_custom_edge_bvh(SceneCache &scene) {
     bvh.valid = true;
 }
 
-std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene_handle) {
-    SceneCache &scene = get_scene(scene_handle->handle);
+std::vector<at::Tensor> scene_edge_records(SceneCache &scene) {
     at::Tensor edge_shape_index = scene.edge_shape_id.to(at::kLong);
     at::Tensor face_offsets = scene.face_offsets.index_select(0, edge_shape_index);
     at::Tensor edge_face0_global = scene.edge_face0 + face_offsets;
@@ -1151,6 +1150,10 @@ std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene
         scene.edge_local_id,
         scene.edge_opposite,
     };
+}
+
+std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene_handle) {
+    return scene_edge_records(get_scene(scene_handle->handle));
 }
 
 std::vector<at::Tensor> scene_global_geometry(

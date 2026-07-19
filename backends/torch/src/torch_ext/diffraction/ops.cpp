@@ -33,6 +33,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace rayd::torch_backend {
 
@@ -394,10 +395,48 @@ std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
         config);
 }
 
+void require_scene_device(
+    const SceneCache &scene,
+    const at::Tensor &value,
+    const char *name) {
+    if (value.defined() && value.get_device() != scene.device_index)
+        throw std::runtime_error(
+            std::string(name) + " must be on the same CUDA device as the scene.");
+}
+
+void require_scene_device(
+    const SceneCache &scene,
+    const c10::optional<at::Tensor> &value,
+    const char *name) {
+    if (value.has_value())
+        require_scene_device(scene, *value, name);
+}
+
 } // namespace
 
-py::tuple diffraction_paths_order1_forward_op(
-    int64_t scene_handle,
+struct DiffractionPathOutputs {
+    at::Tensor count;
+    at::Tensor valid;
+    at::Tensor tx_id;
+    at::Tensor rx_id;
+    at::Tensor order;
+    at::Tensor edge0;
+    at::Tensor edge1;
+    at::Tensor edge2;
+    at::Tensor delay;
+    at::Tensor field_x_re;
+    at::Tensor field_x_im;
+    at::Tensor field_y_re;
+    at::Tensor field_y_im;
+    at::Tensor field_z_re;
+    at::Tensor field_z_im;
+    at::Tensor p0;
+    at::Tensor p1;
+    at::Tensor p2;
+};
+
+DiffractionPathOutputs diffraction_paths_order1_forward_impl(
+    SceneCache &scene,
     at::Tensor tx_pos,
     at::Tensor tx_pol,
     at::Tensor rx_pos,
@@ -451,8 +490,6 @@ py::tuple diffraction_paths_order1_forward_op(
     if (!(wavelength > 0.0))
         throw std::runtime_error("wavelength must be positive.");
 
-    SceneCache &scene = get_scene(scene_handle);
-
     const int64_t tx_count = tx_pos.size(0);
     if (tx_pol.size(0) != 1 && tx_pol.size(0) != tx_count)
         throw std::runtime_error("tx_pol width must be 1 or match tx_pos.");
@@ -487,10 +524,34 @@ py::tuple diffraction_paths_order1_forward_op(
     const int32_t n_rays = checked_i32(n_rays64, "n_rays");
     const int32_t capacity_i32 = checked_i32(capacity, "capacity");
 
+    require_scene_device(scene, tx_pos, "tx_pos");
+    require_scene_device(scene, tx_pol, "tx_pol");
+    require_scene_device(scene, rx_pos, "rx_pos");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, state_edge_index, "state_edge_index");
+    require_scene_device(scene, state_edge_pos, "state_edge_pos");
+    require_scene_device(scene, state_edge_dir, "state_edge_dir");
+    require_scene_device(scene, state_edge_t_min, "state_edge_t_min");
+    require_scene_device(scene, state_edge_t_max, "state_edge_t_max");
+    require_scene_device(scene, state_n0, "state_n0");
+    require_scene_device(scene, state_n1, "state_n1");
+    require_scene_device(scene, state_prim0, "state_prim0");
+    require_scene_device(scene, state_prim1, "state_prim1");
+    require_scene_device(scene, state_exterior_angle, "state_exterior_angle");
+    require_scene_device(scene, state_src, "state_src");
+    require_scene_device(scene, state_src_power, "state_src_power");
+    require_scene_device(scene, material_eta_r, "material_eta_r");
+    require_scene_device(scene, material_sigma, "material_sigma");
+    require_scene_device(scene, material_mu_r, "material_mu_r");
+    require_scene_device(scene, material_gain, "material_gain");
+    require_scene_device(scene, material_valid, "material_valid");
+
     auto fopts = tx_pos.options();
     auto iopts = state_edge_index.options();
     auto bopts = state_edge_index.options().dtype(at::kBool);
-    at::Tensor out_count = at::empty({1}, iopts);
+    at::Tensor out_count = capacity_i32 == 0
+        ? at::zeros({1}, iopts)
+        : at::empty({1}, iopts);
     at::Tensor out_valid = at::empty({capacity}, bopts);
     at::Tensor out_tx_id = at::empty({capacity}, iopts);
     at::Tensor out_rx_id = at::empty({capacity}, iopts);
@@ -508,6 +569,27 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor out_p0 = at::empty({capacity, 3}, fopts);
     at::Tensor out_p1 = at::empty({capacity, 3}, fopts);
     at::Tensor out_p2 = at::empty({capacity, 3}, fopts);
+    if (capacity_i32 == 0) {
+        return {
+            out_count,
+            out_valid,
+            out_tx_id,
+            out_rx_id,
+            out_order,
+            out_edge0,
+            out_edge1,
+            out_edge2,
+            out_delay,
+            out_field_x_re,
+            out_field_x_im,
+            out_field_y_re,
+            out_field_y_im,
+            out_field_z_re,
+            out_field_z_im,
+            out_p0,
+            out_p1,
+            out_p2};
+    }
     init_dfr_path_outputs_cuda(
         capacity,
         out_count,
@@ -528,8 +610,8 @@ py::tuple diffraction_paths_order1_forward_op(
         out_p0,
         out_p1,
         out_p2);
-    if (n_rays == 0 || capacity_i32 == 0) {
-        return py::make_tuple(
+    if (n_rays == 0) {
+        return {
             out_count,
             out_valid,
             out_tx_id,
@@ -547,7 +629,7 @@ py::tuple diffraction_paths_order1_forward_op(
             out_field_z_im,
             out_p0,
             out_p1,
-            out_p2);
+            out_p2};
     }
 
     at::Tensor active_view;
@@ -685,7 +767,7 @@ py::tuple diffraction_paths_order1_forward_op(
     auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
     pipeline->launch(0, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
 
-    return py::make_tuple(
+    return {
         out_count,
         out_valid,
         out_tx_id,
@@ -703,7 +785,85 @@ py::tuple diffraction_paths_order1_forward_op(
         out_field_z_im,
         out_p0,
         out_p1,
-        out_p2);
+        out_p2};
+}
+
+py::tuple diffraction_path_outputs_to_tuple(const DiffractionPathOutputs &result) {
+    return py::make_tuple(
+        result.count,
+        result.valid,
+        result.tx_id,
+        result.rx_id,
+        result.order,
+        result.edge0,
+        result.edge1,
+        result.edge2,
+        result.delay,
+        result.field_x_re,
+        result.field_x_im,
+        result.field_y_re,
+        result.field_y_im,
+        result.field_z_re,
+        result.field_z_im,
+        result.p0,
+        result.p1,
+        result.p2);
+}
+
+py::tuple diffraction_paths_order1_forward_op(
+    int64_t scene_handle,
+    at::Tensor tx_pos,
+    at::Tensor tx_pol,
+    at::Tensor rx_pos,
+    c10::optional<at::Tensor> active,
+    at::Tensor state_edge_index,
+    at::Tensor state_edge_pos,
+    at::Tensor state_edge_dir,
+    at::Tensor state_edge_t_min,
+    at::Tensor state_edge_t_max,
+    at::Tensor state_n0,
+    at::Tensor state_n1,
+    at::Tensor state_prim0,
+    at::Tensor state_prim1,
+    at::Tensor state_exterior_angle,
+    at::Tensor state_src,
+    at::Tensor state_src_power,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
+    at::Tensor material_gain,
+    at::Tensor material_valid,
+    int64_t state_limit,
+    int64_t capacity,
+    double wavelength,
+    double isb_taper_width_scale) {
+    return diffraction_path_outputs_to_tuple(diffraction_paths_order1_forward_impl(
+        get_scene(scene_handle),
+        std::move(tx_pos),
+        std::move(tx_pol),
+        std::move(rx_pos),
+        std::move(active),
+        std::move(state_edge_index),
+        std::move(state_edge_pos),
+        std::move(state_edge_dir),
+        std::move(state_edge_t_min),
+        std::move(state_edge_t_max),
+        std::move(state_n0),
+        std::move(state_n1),
+        std::move(state_prim0),
+        std::move(state_prim1),
+        std::move(state_exterior_angle),
+        std::move(state_src),
+        std::move(state_src_power),
+        std::move(material_eta_r),
+        std::move(material_sigma),
+        std::move(material_mu_r),
+        std::move(material_gain),
+        std::move(material_valid),
+        state_limit,
+        capacity,
+        wavelength,
+        isb_taper_width_scale));
 }
 
 extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
@@ -745,8 +905,8 @@ extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
         throw std::runtime_error("rayd_torch_native_diffraction_paths_order1_forward output capacity is too small");
     c10::optional<at::Tensor> active_opt =
         active == nullptr || !active->defined() ? c10::nullopt : c10::optional<at::Tensor>(*active);
-    py::tuple result = diffraction_paths_order1_forward_op(
-        scene_handle,
+    DiffractionPathOutputs result = diffraction_paths_order1_forward_impl(
+        get_scene(scene_handle),
         required(tx_pos, "tx_pos"),
         required(tx_pol, "tx_pol"),
         required(rx_pos, "rx_pos"),
@@ -772,15 +932,51 @@ extern "C" int64_t rayd_torch_native_diffraction_paths_order1_forward(
         capacity,
         wavelength,
         isb_taper_width_scale);
-    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
-        throw std::runtime_error("rayd_torch_native_diffraction_paths_order1_forward returned an unexpected output count");
-    for (int64_t i = 0; i < kOutputCount; ++i)
-        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    outputs[0] = std::move(result.count);
+    outputs[1] = std::move(result.valid);
+    outputs[2] = std::move(result.tx_id);
+    outputs[3] = std::move(result.rx_id);
+    outputs[4] = std::move(result.order);
+    outputs[5] = std::move(result.edge0);
+    outputs[6] = std::move(result.edge1);
+    outputs[7] = std::move(result.edge2);
+    outputs[8] = std::move(result.delay);
+    outputs[9] = std::move(result.field_x_re);
+    outputs[10] = std::move(result.field_x_im);
+    outputs[11] = std::move(result.field_y_re);
+    outputs[12] = std::move(result.field_y_im);
+    outputs[13] = std::move(result.field_z_re);
+    outputs[14] = std::move(result.field_z_im);
+    outputs[15] = std::move(result.p0);
+    outputs[16] = std::move(result.p1);
+    outputs[17] = std::move(result.p2);
     return kOutputCount;
 }
 
-py::tuple diffraction_accumulation_forward_op(
-    int64_t scene_handle,
+struct DiffractionAccumulationOutputs {
+    at::Tensor power;
+    at::Tensor field_x_re;
+    at::Tensor field_x_im;
+    at::Tensor field_y_re;
+    at::Tensor field_y_im;
+    at::Tensor field_z_re;
+    at::Tensor field_z_im;
+    at::Tensor direct_count;
+    at::Tensor keller_count;
+    at::Tensor suffix_count;
+    at::Tensor visibility_rejects;
+    at::Tensor edge_visibility_rejects;
+    at::Tensor utd_rejects;
+    at::Tensor edge_uses;
+    at::Tensor tape_active;
+    at::Tensor tape_state_idx;
+    at::Tensor tape_cell;
+    at::Tensor tape_material_idx;
+    at::Tensor tape_edge_u;
+};
+
+DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
+    SceneCache &scene,
     c10::optional<at::Tensor> active,
     at::Tensor state_edge_index,
     at::Tensor state_edge_pos,
@@ -875,7 +1071,6 @@ py::tuple diffraction_accumulation_forward_op(
     if (recursive_state_limit_arg < 0)
         throw std::runtime_error("recursive_state_limit must be non-negative.");
 
-    SceneCache &scene = get_scene(scene_handle);
     const int64_t state_physical_count = state_edge_index.size(0);
     if (state_limit_arg > state_physical_count)
         throw std::runtime_error("state_limit must not exceed state_edge_index width.");
@@ -981,6 +1176,39 @@ py::tuple diffraction_accumulation_forward_op(
         if (sample_edge_weight->size(0) < launch_count)
             throw std::runtime_error("sample_edge_weight must cover launch_count.");
     }
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, state_edge_index, "state_edge_index");
+    require_scene_device(scene, state_edge_pos, "state_edge_pos");
+    require_scene_device(scene, state_edge_dir, "state_edge_dir");
+    require_scene_device(scene, state_edge_t_min, "state_edge_t_min");
+    require_scene_device(scene, state_edge_t_max, "state_edge_t_max");
+    require_scene_device(scene, state_n0, "state_n0");
+    require_scene_device(scene, state_n1, "state_n1");
+    require_scene_device(scene, state_prim0, "state_prim0");
+    require_scene_device(scene, state_prim1, "state_prim1");
+    require_scene_device(scene, state_exterior_angle, "state_exterior_angle");
+    require_scene_device(scene, state_src, "state_src");
+    require_scene_device(scene, state_src_power, "state_src_power");
+    require_scene_device(scene, state_wi, "state_wi");
+    require_scene_device(scene, state_d0, "state_d0");
+    require_scene_device(scene, material_eta_r, "material_eta_r");
+    require_scene_device(scene, material_sigma, "material_sigma");
+    require_scene_device(scene, material_mu_r, "material_mu_r");
+    require_scene_device(scene, material_gain, "material_gain");
+    require_scene_device(scene, material_valid, "material_valid");
+    require_scene_device(scene, recursive_active, "recursive_active");
+    require_scene_device(scene, recursive_state_edge_index, "recursive_state_edge_index");
+    require_scene_device(scene, recursive_state_edge_pos, "recursive_state_edge_pos");
+    require_scene_device(scene, recursive_state_edge_dir, "recursive_state_edge_dir");
+    require_scene_device(scene, recursive_state_edge_t_min, "recursive_state_edge_t_min");
+    require_scene_device(scene, recursive_state_edge_t_max, "recursive_state_edge_t_max");
+    require_scene_device(scene, recursive_state_n0, "recursive_state_n0");
+    require_scene_device(scene, recursive_state_n1, "recursive_state_n1");
+    require_scene_device(scene, recursive_state_prim0, "recursive_state_prim0");
+    require_scene_device(scene, recursive_state_prim1, "recursive_state_prim1");
+    require_scene_device(scene, recursive_state_exterior_angle, "recursive_state_exterior_angle");
+    require_scene_device(scene, sample_state_index, "sample_state_index");
+    require_scene_device(scene, sample_edge_weight, "sample_edge_weight");
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     auto bopts = state_edge_index.options().dtype(at::kBool);
@@ -1058,7 +1286,7 @@ py::tuple diffraction_accumulation_forward_op(
     }
     init_dfr_accum_outputs_cuda(init_args, torch_ctx.stream);
     if (state_count == 0 || launch_count == 0) {
-        return py::make_tuple(
+        return {
             power.reshape({grid_resolution1, grid_resolution0}),
             field_x_re.reshape({grid_resolution1, grid_resolution0}),
             field_x_im.reshape({grid_resolution1, grid_resolution0}),
@@ -1077,7 +1305,7 @@ py::tuple diffraction_accumulation_forward_op(
             tape_state_idx,
             tape_cell,
             tape_material_idx,
-            tape_edge_u);
+            tape_edge_u};
     }
 
     TriangleSoA tri = make_scene_triangle_soa(scene);
@@ -1313,7 +1541,7 @@ py::tuple diffraction_accumulation_forward_op(
         }
     }
 
-    return py::make_tuple(
+    return {
         power.reshape({grid_resolution1, grid_resolution0}),
         field_x_re.reshape({grid_resolution1, grid_resolution0}),
         field_x_im.reshape({grid_resolution1, grid_resolution0}),
@@ -1332,7 +1560,139 @@ py::tuple diffraction_accumulation_forward_op(
         tape_state_idx,
         tape_cell,
         tape_material_idx,
-        tape_edge_u);
+        tape_edge_u};
+}
+
+py::tuple diffraction_accumulation_outputs_to_tuple(
+    const DiffractionAccumulationOutputs &result) {
+    return py::make_tuple(
+        result.power,
+        result.field_x_re,
+        result.field_x_im,
+        result.field_y_re,
+        result.field_y_im,
+        result.field_z_re,
+        result.field_z_im,
+        result.direct_count,
+        result.keller_count,
+        result.suffix_count,
+        result.visibility_rejects,
+        result.edge_visibility_rejects,
+        result.utd_rejects,
+        result.edge_uses,
+        result.tape_active,
+        result.tape_state_idx,
+        result.tape_cell,
+        result.tape_material_idx,
+        result.tape_edge_u);
+}
+
+py::tuple diffraction_accumulation_forward_op(
+    int64_t scene_handle,
+    c10::optional<at::Tensor> active,
+    at::Tensor state_edge_index,
+    at::Tensor state_edge_pos,
+    at::Tensor state_edge_dir,
+    at::Tensor state_edge_t_min,
+    at::Tensor state_edge_t_max,
+    at::Tensor state_n0,
+    at::Tensor state_n1,
+    at::Tensor state_prim0,
+    at::Tensor state_prim1,
+    at::Tensor state_exterior_angle,
+    at::Tensor state_src,
+    at::Tensor state_src_power,
+    c10::optional<at::Tensor> state_wi,
+    c10::optional<at::Tensor> state_d0,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
+    at::Tensor material_gain,
+    at::Tensor material_valid,
+    int64_t state_limit,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double grid_cell_area,
+    double wavelength,
+    int64_t direct_samples,
+    int64_t keller_samples,
+    int64_t suffix_samples,
+    int64_t seed,
+    int64_t max_order,
+    int64_t recursive_state_limit,
+    c10::optional<at::Tensor> recursive_active,
+    c10::optional<at::Tensor> recursive_state_edge_index,
+    c10::optional<at::Tensor> recursive_state_edge_pos,
+    c10::optional<at::Tensor> recursive_state_edge_dir,
+    c10::optional<at::Tensor> recursive_state_edge_t_min,
+    c10::optional<at::Tensor> recursive_state_edge_t_max,
+    c10::optional<at::Tensor> recursive_state_n0,
+    c10::optional<at::Tensor> recursive_state_n1,
+    c10::optional<at::Tensor> recursive_state_prim0,
+    c10::optional<at::Tensor> recursive_state_prim1,
+    c10::optional<at::Tensor> recursive_state_exterior_angle,
+    int64_t export_tape,
+    c10::optional<at::Tensor> sample_state_index,
+    c10::optional<at::Tensor> sample_edge_weight) {
+    return diffraction_accumulation_outputs_to_tuple(diffraction_accumulation_forward_impl(
+        get_scene(scene_handle),
+        active,
+        state_edge_index,
+        state_edge_pos,
+        state_edge_dir,
+        state_edge_t_min,
+        state_edge_t_max,
+        state_n0,
+        state_n1,
+        state_prim0,
+        state_prim1,
+        state_exterior_angle,
+        state_src,
+        state_src_power,
+        state_wi,
+        state_d0,
+        material_eta_r,
+        material_sigma,
+        material_mu_r,
+        material_gain,
+        material_valid,
+        state_limit,
+        grid_axis,
+        grid_position,
+        grid_coord0_min,
+        grid_coord0_max,
+        grid_coord1_min,
+        grid_coord1_max,
+        grid_resolution0,
+        grid_resolution1,
+        grid_cell_area,
+        wavelength,
+        direct_samples,
+        keller_samples,
+        suffix_samples,
+        seed,
+        max_order,
+        recursive_state_limit,
+        recursive_active,
+        recursive_state_edge_index,
+        recursive_state_edge_pos,
+        recursive_state_edge_dir,
+        recursive_state_edge_t_min,
+        recursive_state_edge_t_max,
+        recursive_state_n0,
+        recursive_state_n1,
+        recursive_state_prim0,
+        recursive_state_prim1,
+        recursive_state_exterior_angle,
+        export_tape,
+        sample_state_index,
+        sample_edge_weight));
 }
 
 extern "C" int64_t rayd_torch_native_diffraction_accumulation_forward(
@@ -1403,8 +1763,8 @@ extern "C" int64_t rayd_torch_native_diffraction_accumulation_forward(
     constexpr int64_t kOutputCount = 19;
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_diffraction_accumulation_forward output capacity is too small");
-    py::tuple result = diffraction_accumulation_forward_op(
-        scene_handle, optional(active),
+    DiffractionAccumulationOutputs result = diffraction_accumulation_forward_impl(
+        get_scene(scene_handle), optional(active),
         required(state_edge_index, "state_edge_index"), required(state_edge_pos, "state_edge_pos"),
         required(state_edge_dir, "state_edge_dir"), required(state_edge_t_min, "state_edge_t_min"),
         required(state_edge_t_max, "state_edge_t_max"), required(state_n0, "state_n0"),
@@ -1424,10 +1784,25 @@ extern "C" int64_t rayd_torch_native_diffraction_accumulation_forward(
         optional(recursive_state_n1), optional(recursive_state_prim0),
         optional(recursive_state_prim1), optional(recursive_state_exterior_angle),
         export_tape, optional(sample_state_index), optional(sample_edge_weight));
-    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
-        throw std::runtime_error("rayd_torch_native_diffraction_accumulation_forward returned an unexpected output count");
-    for (int64_t i = 0; i < kOutputCount; ++i)
-        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    outputs[0] = std::move(result.power);
+    outputs[1] = std::move(result.field_x_re);
+    outputs[2] = std::move(result.field_x_im);
+    outputs[3] = std::move(result.field_y_re);
+    outputs[4] = std::move(result.field_y_im);
+    outputs[5] = std::move(result.field_z_re);
+    outputs[6] = std::move(result.field_z_im);
+    outputs[7] = std::move(result.direct_count);
+    outputs[8] = std::move(result.keller_count);
+    outputs[9] = std::move(result.suffix_count);
+    outputs[10] = std::move(result.visibility_rejects);
+    outputs[11] = std::move(result.edge_visibility_rejects);
+    outputs[12] = std::move(result.utd_rejects);
+    outputs[13] = std::move(result.edge_uses);
+    outputs[14] = std::move(result.tape_active);
+    outputs[15] = std::move(result.tape_state_idx);
+    outputs[16] = std::move(result.tape_cell);
+    outputs[17] = std::move(result.tape_material_idx);
+    outputs[18] = std::move(result.tape_edge_u);
     return kOutputCount;
 }
 
@@ -2491,8 +2866,27 @@ py::tuple diffraction_accumulation_chain_jvp_op(
         dot_zero.reshape({grid_resolution1, grid_resolution0}));
 }
 
-py::tuple diffraction_coherent_accumulation_forward_op(
-    int64_t scene_handle,
+struct CoherentDiffractionOutputs {
+    at::Tensor direct_x_re;
+    at::Tensor direct_x_im;
+    at::Tensor direct_y_re;
+    at::Tensor direct_y_im;
+    at::Tensor direct_z_re;
+    at::Tensor direct_z_im;
+    at::Tensor multi_x_re;
+    at::Tensor multi_x_im;
+    at::Tensor multi_y_re;
+    at::Tensor multi_y_im;
+    at::Tensor multi_z_re;
+    at::Tensor multi_z_im;
+    at::Tensor direct_count;
+    at::Tensor multi_count;
+    at::Tensor visibility_reject_count;
+    at::Tensor utd_reject_count;
+};
+
+CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
+    SceneCache &scene,
     c10::optional<at::Tensor> active,
     at::Tensor state_edge_index,
     at::Tensor state_edge_pos,
@@ -2559,7 +2953,6 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     if (!(wavelength > 0.0))
         throw std::runtime_error("wavelength must be positive.");
 
-    SceneCache &scene = get_scene(scene_handle);
     const int64_t state_physical_count = state_edge_index.size(0);
     if (state_limit_arg > state_physical_count)
         throw std::runtime_error("state_limit must not exceed state_edge_index width.");
@@ -2590,6 +2983,26 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     const int64_t cell_count = grid_resolution0 * grid_resolution1;
     const int64_t launch_count64 = state_count * cell_count;
     const int32_t launch_count = checked_i32(launch_count64, "launch_count");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, state_edge_index, "state_edge_index");
+    require_scene_device(scene, state_edge_pos, "state_edge_pos");
+    require_scene_device(scene, state_edge_dir, "state_edge_dir");
+    require_scene_device(scene, state_edge_t_min, "state_edge_t_min");
+    require_scene_device(scene, state_edge_t_max, "state_edge_t_max");
+    require_scene_device(scene, state_n0, "state_n0");
+    require_scene_device(scene, state_n1, "state_n1");
+    require_scene_device(scene, state_prim0, "state_prim0");
+    require_scene_device(scene, state_prim1, "state_prim1");
+    require_scene_device(scene, state_exterior_angle, "state_exterior_angle");
+    require_scene_device(scene, state_src, "state_src");
+    require_scene_device(scene, state_src_power, "state_src_power");
+    require_scene_device(scene, state_wi, "state_wi");
+    require_scene_device(scene, state_d0, "state_d0");
+    require_scene_device(scene, material_eta_r, "material_eta_r");
+    require_scene_device(scene, material_sigma, "material_sigma");
+    require_scene_device(scene, material_mu_r, "material_mu_r");
+    require_scene_device(scene, material_gain, "material_gain");
+    require_scene_device(scene, material_valid, "material_valid");
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     at::Tensor direct_x_re = at::zeros({cell_count}, fopts);
@@ -2609,10 +3022,10 @@ py::tuple diffraction_coherent_accumulation_forward_op(
     at::Tensor visibility_reject_count = at::zeros({cell_count}, iopts);
     at::Tensor utd_reject_count = at::zeros({cell_count}, iopts);
     if (state_count == 0 || launch_count == 0) {
-        return py::make_tuple(
+        return {
             direct_x_re, direct_x_im, direct_y_re, direct_y_im, direct_z_re, direct_z_im,
             multi_x_re, multi_x_im, multi_y_re, multi_y_im, multi_z_re, multi_z_im,
-            direct_count, multi_count, visibility_reject_count, utd_reject_count);
+            direct_count, multi_count, visibility_reject_count, utd_reject_count};
     }
     const bool staged_coherent_accum =
         launch_count64 >= kStagedDfrAccumMinSamples &&
@@ -2776,7 +3189,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
             multi_count);
     }
 
-    return py::make_tuple(
+    return {
         direct_x_re.reshape({grid_resolution1, grid_resolution0}),
         direct_x_im.reshape({grid_resolution1, grid_resolution0}),
         direct_y_re.reshape({grid_resolution1, grid_resolution0}),
@@ -2792,7 +3205,99 @@ py::tuple diffraction_coherent_accumulation_forward_op(
         direct_count.reshape({grid_resolution1, grid_resolution0}),
         multi_count.reshape({grid_resolution1, grid_resolution0}),
         visibility_reject_count.reshape({grid_resolution1, grid_resolution0}),
-        utd_reject_count.reshape({grid_resolution1, grid_resolution0}));
+        utd_reject_count.reshape({grid_resolution1, grid_resolution0})};
+}
+
+py::tuple coherent_diffraction_outputs_to_tuple(const CoherentDiffractionOutputs &result) {
+    return py::make_tuple(
+        result.direct_x_re,
+        result.direct_x_im,
+        result.direct_y_re,
+        result.direct_y_im,
+        result.direct_z_re,
+        result.direct_z_im,
+        result.multi_x_re,
+        result.multi_x_im,
+        result.multi_y_re,
+        result.multi_y_im,
+        result.multi_z_re,
+        result.multi_z_im,
+        result.direct_count,
+        result.multi_count,
+        result.visibility_reject_count,
+        result.utd_reject_count);
+}
+
+py::tuple diffraction_coherent_accumulation_forward_op(
+    int64_t scene_handle,
+    c10::optional<at::Tensor> active,
+    at::Tensor state_edge_index,
+    at::Tensor state_edge_pos,
+    at::Tensor state_edge_dir,
+    at::Tensor state_edge_t_min,
+    at::Tensor state_edge_t_max,
+    at::Tensor state_n0,
+    at::Tensor state_n1,
+    at::Tensor state_prim0,
+    at::Tensor state_prim1,
+    at::Tensor state_exterior_angle,
+    at::Tensor state_src,
+    at::Tensor state_src_power,
+    c10::optional<at::Tensor> state_wi,
+    c10::optional<at::Tensor> state_d0,
+    at::Tensor material_eta_r,
+    at::Tensor material_sigma,
+    at::Tensor material_mu_r,
+    at::Tensor material_gain,
+    at::Tensor material_valid,
+    int64_t state_limit,
+    int64_t grid_axis,
+    double grid_position,
+    double grid_coord0_min,
+    double grid_coord0_max,
+    double grid_coord1_min,
+    double grid_coord1_max,
+    int64_t grid_resolution0,
+    int64_t grid_resolution1,
+    double grid_cell_area,
+    double wavelength,
+    bool select_diffraction_point,
+    bool prefilter_visibility) {
+    return coherent_diffraction_outputs_to_tuple(diffraction_coherent_accumulation_forward_impl(
+        get_scene(scene_handle),
+        active,
+        state_edge_index,
+        state_edge_pos,
+        state_edge_dir,
+        state_edge_t_min,
+        state_edge_t_max,
+        state_n0,
+        state_n1,
+        state_prim0,
+        state_prim1,
+        state_exterior_angle,
+        state_src,
+        state_src_power,
+        state_wi,
+        state_d0,
+        material_eta_r,
+        material_sigma,
+        material_mu_r,
+        material_gain,
+        material_valid,
+        state_limit,
+        grid_axis,
+        grid_position,
+        grid_coord0_min,
+        grid_coord0_max,
+        grid_coord1_min,
+        grid_coord1_max,
+        grid_resolution0,
+        grid_resolution1,
+        grid_cell_area,
+        wavelength,
+        select_diffraction_point,
+        prefilter_visibility));
 }
 
 extern "C" int64_t rayd_torch_native_diffraction_coherent_accumulation_forward(
@@ -2847,8 +3352,8 @@ extern "C" int64_t rayd_torch_native_diffraction_coherent_accumulation_forward(
     if (outputs == nullptr || output_capacity < kOutputCount)
         throw std::runtime_error(
             "rayd_torch_native_diffraction_coherent_accumulation_forward output capacity is too small");
-    py::tuple result = diffraction_coherent_accumulation_forward_op(
-        scene_handle,
+    CoherentDiffractionOutputs result = diffraction_coherent_accumulation_forward_impl(
+        get_scene(scene_handle),
         optional(active),
         required(state_edge_index, "state_edge_index"),
         required(state_edge_pos, "state_edge_pos"),
@@ -2882,13 +3387,269 @@ extern "C" int64_t rayd_torch_native_diffraction_coherent_accumulation_forward(
         wavelength,
         select_diffraction_point,
         prefilter_visibility);
-    if (static_cast<int64_t>(py::len(result)) != kOutputCount)
-        throw std::runtime_error(
-            "rayd_torch_native_diffraction_coherent_accumulation_forward returned an unexpected output count");
-    for (int64_t i = 0; i < kOutputCount; ++i)
-        outputs[i] = result[static_cast<size_t>(i)].cast<at::Tensor>();
+    outputs[0] = std::move(result.direct_x_re);
+    outputs[1] = std::move(result.direct_x_im);
+    outputs[2] = std::move(result.direct_y_re);
+    outputs[3] = std::move(result.direct_y_im);
+    outputs[4] = std::move(result.direct_z_re);
+    outputs[5] = std::move(result.direct_z_im);
+    outputs[6] = std::move(result.multi_x_re);
+    outputs[7] = std::move(result.multi_x_im);
+    outputs[8] = std::move(result.multi_y_re);
+    outputs[9] = std::move(result.multi_y_im);
+    outputs[10] = std::move(result.multi_z_re);
+    outputs[11] = std::move(result.multi_z_im);
+    outputs[12] = std::move(result.direct_count);
+    outputs[13] = std::move(result.multi_count);
+    outputs[14] = std::move(result.visibility_reject_count);
+    outputs[15] = std::move(result.utd_reject_count);
     return kOutputCount;
 }
 
 
 } // namespace rayd::torch_backend
+
+#include "../integration_v2_internal.h"
+
+namespace rayd::torch {
+
+namespace {
+
+c10::optional<at::Tensor> optional_defined_tensor(
+    const std::optional<at::Tensor> &tensor) {
+    if (!tensor.has_value() || !tensor->defined())
+        return c10::nullopt;
+    return *tensor;
+}
+
+} // namespace
+
+DiffractionPathResult diffraction_paths_order1_forward(
+    const SceneResource &scene,
+    const DiffractionPathConfig &config) {
+    torch_backend::SceneCache &scene_cache = detail::IntegrationAccess::scene_cache(scene);
+    auto result = torch_backend::diffraction_paths_order1_forward_impl(
+        scene_cache,
+        config.tx_pos,
+        config.tx_pol,
+        config.rx_pos,
+        optional_defined_tensor(config.active),
+        config.state.edge_index,
+        config.state.edge_pos,
+        config.state.edge_dir,
+        config.state.edge_t_min,
+        config.state.edge_t_max,
+        config.state.n0,
+        config.state.n1,
+        config.state.prim0,
+        config.state.prim1,
+        config.state.exterior_angle,
+        config.state.src,
+        config.state.src_power,
+        config.material.eta_r,
+        config.material.sigma,
+        config.material.mu_r,
+        config.material.gain,
+        config.material.valid,
+        config.state_limit,
+        config.capacity,
+        config.wavelength,
+        config.isb_taper_width_scale);
+    return {
+        result.count,
+        result.valid,
+        result.tx_id,
+        result.rx_id,
+        result.order,
+        result.edge0,
+        result.edge1,
+        result.edge2,
+        result.delay,
+        result.field_x_re,
+        result.field_x_im,
+        result.field_y_re,
+        result.field_y_im,
+        result.field_z_re,
+        result.field_z_im,
+        result.p0,
+        result.p1,
+        result.p2};
+}
+
+DiffractionAccumulationResult diffraction_accumulation_forward(
+    const SceneResource &scene,
+    const DiffractionAccumulationConfig &config) {
+    torch_backend::SceneCache &scene_cache = detail::IntegrationAccess::scene_cache(scene);
+
+    std::int64_t recursive_state_limit = 0;
+    c10::optional<at::Tensor> recursive_active;
+    c10::optional<at::Tensor> recursive_edge_index;
+    c10::optional<at::Tensor> recursive_edge_pos;
+    c10::optional<at::Tensor> recursive_edge_dir;
+    c10::optional<at::Tensor> recursive_edge_t_min;
+    c10::optional<at::Tensor> recursive_edge_t_max;
+    c10::optional<at::Tensor> recursive_n0;
+    c10::optional<at::Tensor> recursive_n1;
+    c10::optional<at::Tensor> recursive_prim0;
+    c10::optional<at::Tensor> recursive_prim1;
+    c10::optional<at::Tensor> recursive_exterior_angle;
+    if (config.recursive_state.has_value()) {
+        const RecursiveDiffractionState &recursive = *config.recursive_state;
+        recursive_state_limit = recursive.state_limit;
+        recursive_active = optional_defined_tensor(recursive.active);
+        if (recursive.edge_index.defined())
+            recursive_edge_index = recursive.edge_index;
+        if (recursive.edge_pos.defined())
+            recursive_edge_pos = recursive.edge_pos;
+        if (recursive.edge_dir.defined())
+            recursive_edge_dir = recursive.edge_dir;
+        if (recursive.edge_t_min.defined())
+            recursive_edge_t_min = recursive.edge_t_min;
+        if (recursive.edge_t_max.defined())
+            recursive_edge_t_max = recursive.edge_t_max;
+        if (recursive.n0.defined())
+            recursive_n0 = recursive.n0;
+        if (recursive.n1.defined())
+            recursive_n1 = recursive.n1;
+        if (recursive.prim0.defined())
+            recursive_prim0 = recursive.prim0;
+        if (recursive.prim1.defined())
+            recursive_prim1 = recursive.prim1;
+        if (recursive.exterior_angle.defined())
+            recursive_exterior_angle = recursive.exterior_angle;
+    }
+
+    auto result = torch_backend::diffraction_accumulation_forward_impl(
+        scene_cache,
+        optional_defined_tensor(config.active),
+        config.state.edge_index,
+        config.state.edge_pos,
+        config.state.edge_dir,
+        config.state.edge_t_min,
+        config.state.edge_t_max,
+        config.state.n0,
+        config.state.n1,
+        config.state.prim0,
+        config.state.prim1,
+        config.state.exterior_angle,
+        config.state.src,
+        config.state.src_power,
+        optional_defined_tensor(config.state.wi),
+        optional_defined_tensor(config.state.d0),
+        config.material.eta_r,
+        config.material.sigma,
+        config.material.mu_r,
+        config.material.gain,
+        config.material.valid,
+        config.state_limit,
+        config.grid.axis,
+        config.grid.position,
+        config.grid.coord0_min,
+        config.grid.coord0_max,
+        config.grid.coord1_min,
+        config.grid.coord1_max,
+        config.grid.resolution0,
+        config.grid.resolution1,
+        config.grid.cell_area,
+        config.wavelength,
+        config.direct_samples,
+        config.keller_samples,
+        config.suffix_samples,
+        config.seed,
+        config.max_order,
+        recursive_state_limit,
+        recursive_active,
+        recursive_edge_index,
+        recursive_edge_pos,
+        recursive_edge_dir,
+        recursive_edge_t_min,
+        recursive_edge_t_max,
+        recursive_n0,
+        recursive_n1,
+        recursive_prim0,
+        recursive_prim1,
+        recursive_exterior_angle,
+        config.export_tape ? 1 : 0,
+        optional_defined_tensor(config.sample_state_index),
+        optional_defined_tensor(config.sample_edge_weight));
+    return {
+        result.power,
+        result.field_x_re,
+        result.field_x_im,
+        result.field_y_re,
+        result.field_y_im,
+        result.field_z_re,
+        result.field_z_im,
+        result.direct_count,
+        result.keller_count,
+        result.suffix_count,
+        result.visibility_rejects,
+        result.edge_visibility_rejects,
+        result.utd_rejects,
+        result.edge_uses,
+        result.tape_active,
+        result.tape_state_idx,
+        result.tape_cell,
+        result.tape_material_idx,
+        result.tape_edge_u};
+}
+
+CoherentDiffractionResult diffraction_coherent_accumulation_forward(
+    const SceneResource &scene,
+    const CoherentDiffractionConfig &config) {
+    torch_backend::SceneCache &scene_cache = detail::IntegrationAccess::scene_cache(scene);
+    auto result = torch_backend::diffraction_coherent_accumulation_forward_impl(
+        scene_cache,
+        optional_defined_tensor(config.active),
+        config.state.edge_index,
+        config.state.edge_pos,
+        config.state.edge_dir,
+        config.state.edge_t_min,
+        config.state.edge_t_max,
+        config.state.n0,
+        config.state.n1,
+        config.state.prim0,
+        config.state.prim1,
+        config.state.exterior_angle,
+        config.state.src,
+        config.state.src_power,
+        optional_defined_tensor(config.state.wi),
+        optional_defined_tensor(config.state.d0),
+        config.material.eta_r,
+        config.material.sigma,
+        config.material.mu_r,
+        config.material.gain,
+        config.material.valid,
+        config.state_limit,
+        config.grid.axis,
+        config.grid.position,
+        config.grid.coord0_min,
+        config.grid.coord0_max,
+        config.grid.coord1_min,
+        config.grid.coord1_max,
+        config.grid.resolution0,
+        config.grid.resolution1,
+        config.grid.cell_area,
+        config.wavelength,
+        config.select_diffraction_point,
+        config.prefilter_visibility);
+    return {
+        result.direct_x_re,
+        result.direct_x_im,
+        result.direct_y_re,
+        result.direct_y_im,
+        result.direct_z_re,
+        result.direct_z_im,
+        result.multi_x_re,
+        result.multi_x_im,
+        result.multi_y_re,
+        result.multi_y_im,
+        result.multi_z_re,
+        result.multi_z_im,
+        result.direct_count,
+        result.multi_count,
+        result.visibility_reject_count,
+        result.utd_reject_count};
+}
+
+} // namespace rayd::torch

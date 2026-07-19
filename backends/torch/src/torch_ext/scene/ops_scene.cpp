@@ -2,6 +2,9 @@
 #include <rayd/torch/scene/cache_kernels.h>
 #include <rayd/torch/common/tensor_check.h>
 #include <rayd/torch/integration.h>
+#include <rayd/torch/integration_v2.h>
+
+#include "../integration_v2_internal.h"
 
 #include <torch/extension.h>
 
@@ -24,6 +27,27 @@ void require_mesh_vertex_tangent(const at::Tensor &tensor, const MeshRecord &mes
 
 } // namespace
 
+MeshRecord integration_mesh_record(
+    at::Tensor vertices,
+    at::Tensor faces,
+    at::Tensor uv,
+    at::Tensor face_uv,
+    at::Tensor to_world_left,
+    at::Tensor to_world_right,
+    int64_t flags) {
+    MeshRecord record;
+    record.vertices = std::move(vertices);
+    record.faces = std::move(faces);
+    record.uv = std::move(uv);
+    record.face_uv = std::move(face_uv);
+    record.to_world_left = std::move(to_world_left);
+    record.to_world_right = std::move(to_world_right);
+    record.use_face_normals = (flags & kMeshUseFaceNormals) != 0;
+    record.edges_enabled = (flags & kMeshEdgesEnabled) != 0;
+    record.dynamic = (flags & kMeshDynamic) != 0;
+    return record;
+}
+
 c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
     std::vector<at::Tensor> vertices,
     std::vector<at::Tensor> faces,
@@ -44,18 +68,14 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
     std::vector<MeshRecord> meshes;
     meshes.reserve(mesh_count);
     for (size_t i = 0; i < mesh_count; ++i) {
-        MeshRecord record;
-        record.vertices = vertices[i];
-        record.faces = faces[i];
-        record.uv = uv[i];
-        record.face_uv = face_uv[i];
-        record.to_world_left = to_world_left[i];
-        record.to_world_right = to_world_right[i];
-        const int64_t flags = mesh_flags[i];
-        record.use_face_normals = (flags & kMeshUseFaceNormals) != 0;
-        record.edges_enabled = (flags & kMeshEdgesEnabled) != 0;
-        record.dynamic = (flags & kMeshDynamic) != 0;
-        meshes.push_back(record);
+        meshes.push_back(integration_mesh_record(
+            std::move(vertices[i]),
+            std::move(faces[i]),
+            std::move(uv[i]),
+            std::move(face_uv[i]),
+            std::move(to_world_left[i]),
+            std::move(to_world_right[i]),
+            mesh_flags[i]));
     }
     const int64_t handle = create_scene(std::move(meshes));
     return c10::make_intrusive<SceneHandle>(handle);
@@ -78,18 +98,14 @@ extern "C" int64_t rayd_torch_native_scene_create(
     std::vector<MeshRecord> meshes;
     meshes.reserve(static_cast<size_t>(mesh_count));
     for (int64_t i = 0; i < mesh_count; ++i) {
-        MeshRecord record;
-        record.vertices = vertices[i];
-        record.faces = faces[i];
-        record.uv = uv[i];
-        record.face_uv = face_uv[i];
-        record.to_world_left = to_world_left[i];
-        record.to_world_right = to_world_right[i];
-        const int64_t flags = mesh_flags[i];
-        record.use_face_normals = (flags & kMeshUseFaceNormals) != 0;
-        record.edges_enabled = (flags & kMeshEdgesEnabled) != 0;
-        record.dynamic = (flags & kMeshDynamic) != 0;
-        meshes.push_back(std::move(record));
+        meshes.push_back(integration_mesh_record(
+            vertices[i],
+            faces[i],
+            uv[i],
+            face_uv[i],
+            to_world_left[i],
+            to_world_right[i],
+            mesh_flags[i]));
     }
     return create_scene(std::move(meshes));
 }
@@ -221,3 +237,82 @@ at::Tensor pack_scene_vertex_tangents(
 }
 
 } // namespace rayd::torch_backend
+
+namespace rayd::torch {
+
+class SceneResource::Impl final {
+public:
+    explicit Impl(std::unique_ptr<torch_backend::SceneCache> scene)
+        : scene(std::move(scene)) {}
+
+    std::unique_ptr<torch_backend::SceneCache> scene;
+};
+
+SceneResource::SceneResource(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+SceneResource::SceneResource(SceneResource &&) noexcept = default;
+SceneResource &SceneResource::operator=(SceneResource &&) noexcept = default;
+SceneResource::~SceneResource() noexcept = default;
+
+bool SceneResource::valid() const noexcept {
+    return impl_ != nullptr && impl_->scene != nullptr;
+}
+
+int SceneResource::device_index() const {
+    return static_cast<int>(detail::IntegrationAccess::scene_cache(*this).device_index);
+}
+
+torch_backend::SceneCache &detail::IntegrationAccess::scene_cache(const SceneResource &scene) {
+    if (!scene.impl_ || !scene.impl_->scene)
+        throw std::runtime_error("rayd::torch v2 operation received an invalid SceneResource");
+    return *scene.impl_->scene;
+}
+
+SceneResource create_scene(std::vector<MeshInput> meshes) {
+    if (meshes.empty())
+        throw std::runtime_error("rayd::torch::create_scene requires at least one mesh");
+    std::vector<torch_backend::MeshRecord> records;
+    records.reserve(meshes.size());
+    for (MeshInput &mesh : meshes) {
+        int64_t flags = 0;
+        if (mesh.use_face_normals)
+            flags |= 1;
+        if (mesh.edges_enabled)
+            flags |= 2;
+        if (mesh.dynamic)
+            flags |= 4;
+        records.push_back(torch_backend::integration_mesh_record(
+            std::move(mesh.vertices),
+            std::move(mesh.faces),
+            std::move(mesh.uv),
+            std::move(mesh.face_uv),
+            std::move(mesh.to_world_left),
+            std::move(mesh.to_world_right),
+            flags));
+    }
+    auto owner = torch_backend::create_scene_cache(std::move(records));
+    return SceneResource(std::make_unique<SceneResource::Impl>(std::move(owner)));
+}
+
+SceneEdgeRecordsResult scene_edge_records(const SceneResource &scene) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    std::vector<at::Tensor> values = torch_backend::scene_edge_records(cache);
+    if (values.size() != 12)
+        throw std::runtime_error("rayd::torch::scene_edge_records returned an unexpected output count");
+    return {
+        values[0],
+        values[1],
+        values[2],
+        values[3],
+        values[4],
+        values[5],
+        values[6],
+        values[7],
+        values[8],
+        values[9],
+        values[10],
+        values[11],
+    };
+}
+
+} // namespace rayd::torch

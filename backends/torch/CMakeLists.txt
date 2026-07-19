@@ -27,7 +27,12 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 option(RAYD_TORCH_BUILD_NATIVE "Build the RayD Torch extension." ON)
 option(RAYD_TORCH_BUILD_PYTHON_MODULE "Build the rayd.torch Python extension module." ON)
+option(RAYD_TORCH_BUILD_CPP_TESTS "Build direct C++ tests for the typed integration API." OFF)
 option(RAYD_TORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
+include(CTest)
+if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
+    find_package(Python COMPONENTS Development.Embed REQUIRED)
+endif()
 
 set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)
 if(RAYD_TORCH_OPTIX_FAST_MATH)
@@ -67,8 +72,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
         message(FATAL_ERROR "Could not locate PyTorch CMake prefix. Install torch in the build environment.")
     endif()
     list(PREPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX}")
-    if(WIN32 AND NOT EXISTS "${TORCH_CMAKE_PREFIX}/Torch/TorchConfig.cmake")
+    if(WIN32)
         get_filename_component(PYTHON_ENV_ROOT "${Python_EXECUTABLE}" DIRECTORY)
+    endif()
+    if(WIN32 AND NOT EXISTS "${TORCH_CMAKE_PREFIX}/Torch/TorchConfig.cmake")
         list(PREPEND CMAKE_PREFIX_PATH
             "${PYTHON_ENV_ROOT}/Library"
             "${PYTHON_ENV_ROOT}/Lib/site-packages")
@@ -598,6 +605,35 @@ if(RAYD_TORCH_BUILD_NATIVE)
             CUDA::cudart
             CUDA::cuda_driver)
     target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
+
+    if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
+        add_executable(
+            rayd_torch_integration_v2_test
+            tests/cpp/integration_v2_test.cpp)
+        target_include_directories(
+            rayd_torch_integration_v2_test
+            PRIVATE
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+                ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(
+            rayd_torch_integration_v2_test
+            PRIVATE
+                rayd_torch_native_core
+                Python::Python)
+        target_compile_features(rayd_torch_integration_v2_test PRIVATE cxx_std_17)
+        add_test(
+            NAME rayd_torch_integration_v2
+            COMMAND rayd_torch_integration_v2_test)
+        if(WIN32)
+            set_tests_properties(
+                rayd_torch_integration_v2
+                PROPERTIES
+                    ENVIRONMENT_MODIFICATION
+                        "PATH=path_list_prepend:${TORCH_INSTALL_PREFIX}/lib;PATH=path_list_prepend:${PYTHON_ENV_ROOT}/Library/bin;PATH=path_list_prepend:${CUDAToolkit_BIN_DIR}")
+        endif()
+    endif()
 
     if(RAYD_TORCH_BUILD_PYTHON_MODULE)
         add_library(

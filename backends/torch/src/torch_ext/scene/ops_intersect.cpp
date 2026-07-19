@@ -163,6 +163,8 @@ at::Tensor optional_active_from_optional(
 }
 
 void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
+    if (!ray_tmax.defined())
+        return;
     require_scalar_f(ray_tmax, "ray_tmax");
     if (ray_tmax.numel() != 0 && ray_tmax.size(0) != ray_count)
         throw std::runtime_error("ray_tmax must be empty or match the ray batch size.");
@@ -183,6 +185,22 @@ void require_optional_active(const at::Tensor *active, int64_t ray_count) {
     require_mask(*active, "active");
     if (active->numel() != 0 && active->size(0) != ray_count)
         throw std::runtime_error("active must be empty or match the ray batch size.");
+}
+
+void require_scene_device(
+    const SceneCache &scene,
+    const at::Tensor *tensor,
+    const char *name) {
+    if (tensor != nullptr && tensor->defined() && tensor->get_device() != scene.device_index)
+        throw std::runtime_error(
+            std::string(name) + " must be on the same CUDA device as the scene.");
+}
+
+void require_scene_device(
+    const SceneCache &scene,
+    const at::Tensor &tensor,
+    const char *name) {
+    require_scene_device(scene, &tensor, name);
 }
 
 void require_tape_prim_id_1d(const at::Tensor &tape_prim_id, int64_t ray_count) {
@@ -750,6 +768,157 @@ py::tuple intersect_forward_flags_op(
     return intersection_public_tuple(out);
 }
 
+IntersectForwardOutputs integration_intersect_forward_impl(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor *active,
+    int64_t flags) {
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    require_ray_tmax(ray_tmax, ray_o.size(0));
+    at::Tensor active_storage;
+    if (active != nullptr) {
+        require_mask(*active, "active");
+        if (active->numel() != 0 && active->size(0) != ray_o.size(0))
+            throw std::runtime_error("active must be empty or match the ray batch size.");
+        active_storage = *active;
+    }
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, active, "active");
+    IntersectForwardOutputs out =
+        intersect_forward_flags_cuda(scene, ray_o, ray_d, ray_tmax, active_storage, flags);
+    return out;
+}
+
+IntersectBackwardOutputs integration_intersect_backward_impl(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor *ray_tmax,
+    const at::Tensor *active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor *grad_t,
+    const at::Tensor *grad_p,
+    const at::Tensor *grad_n,
+    const at::Tensor *grad_geo_n,
+    const at::Tensor *grad_uv,
+    const at::Tensor *grad_barycentric,
+    bool need_grad_vertices,
+    bool need_grad_ray_o,
+    bool need_grad_ray_d,
+    bool need_grad_ray_tmax) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    const int64_t ray_count = ray_o.size(0);
+    require_ray_batch(ray_d, ray_count, "ray_d");
+    if (ray_tmax != nullptr && ray_tmax->defined())
+        require_ray_tmax(*ray_tmax, ray_count);
+    require_optional_active(active, ray_count);
+    require_tape_prim_id_1d(tape_prim_id, ray_count);
+    require_tape_barycentric_2d(tape_barycentric, ray_count, /*allow_empty=*/true);
+    require_optional_grad(maybe(grad_t), ray_count, 0, "grad_t");
+    require_optional_grad(maybe(grad_p), ray_count, 3, "grad_p");
+    require_optional_grad(maybe(grad_n), ray_count, 3, "grad_n");
+    require_optional_grad(maybe(grad_geo_n), ray_count, 3, "grad_geo_n");
+    require_optional_grad(maybe(grad_uv), ray_count, 2, "grad_uv");
+    require_optional_grad(maybe(grad_barycentric), ray_count, 3, "grad_barycentric");
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, ray_tmax, "ray_tmax");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, grad_t, "grad_t");
+    require_scene_device(scene, grad_p, "grad_p");
+    require_scene_device(scene, grad_n, "grad_n");
+    require_scene_device(scene, grad_geo_n, "grad_geo_n");
+    require_scene_device(scene, grad_uv, "grad_uv");
+    require_scene_device(scene, grad_barycentric, "grad_barycentric");
+    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    IntersectBackwardOutputs out = intersect_backward_optional_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        ray_tmax_storage,
+        active_storage,
+        tape_prim_id,
+        tape_barycentric,
+        maybe(grad_t),
+        maybe(grad_p),
+        maybe(grad_n),
+        maybe(grad_geo_n),
+        maybe(grad_uv),
+        maybe(grad_barycentric),
+        need_grad_vertices,
+        need_grad_ray_o,
+        need_grad_ray_d,
+        need_grad_ray_tmax);
+    return out;
+}
+
+IntersectJvpOutputs integration_intersect_jvp_impl(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor *active,
+    const at::Tensor &tape_prim_id,
+    const at::Tensor &tape_barycentric,
+    const at::Tensor *tangent_vertices,
+    const at::Tensor *tangent_ray_o,
+    const at::Tensor *tangent_ray_d,
+    int64_t flags) {
+    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
+        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
+            return nullptr;
+        return tensor;
+    };
+    require_vec3f(ray_o, "ray_o");
+    require_vec3f(ray_d, "ray_d");
+    const int64_t ray_count = ray_o.size(0);
+    require_ray_batch(ray_d, ray_count, "ray_d");
+    require_optional_active(active, ray_count);
+    require_tape_prim_id_1d(tape_prim_id, ray_count);
+    require_tape_barycentric_2d(
+        tape_barycentric, ray_count, /*allow_empty=*/ray_count == 0);
+    require_optional_tangent_vertices(maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
+    require_optional_grad(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
+    require_optional_grad(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
+    require_scene_device(scene, ray_o, "ray_o");
+    require_scene_device(scene, ray_d, "ray_d");
+    require_scene_device(scene, active, "active");
+    require_scene_device(scene, tape_prim_id, "tape_prim_id");
+    require_scene_device(scene, tape_barycentric, "tape_barycentric");
+    require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    require_scene_device(scene, tangent_ray_o, "tangent_ray_o");
+    require_scene_device(scene, tangent_ray_d, "tangent_ray_d");
+    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    IntersectJvpOutputs out = intersect_jvp_optional_cuda(
+        scene.global_vertices,
+        scene.global_faces,
+        ray_o,
+        ray_d,
+        active_storage,
+        tape_prim_id,
+        tape_barycentric,
+        maybe(tangent_vertices),
+        maybe(tangent_ray_o),
+        maybe(tangent_ray_d),
+        flags);
+    return out;
+}
+
 extern "C" int64_t rayd_torch_native_intersect_forward(
     int64_t scene_handle,
     const at::Tensor *ray_o,
@@ -764,19 +933,13 @@ extern "C" int64_t rayd_torch_native_intersect_forward(
     constexpr int64_t kOutputCount = 10;
     if (output_capacity < kOutputCount)
         throw std::runtime_error("rayd_torch_native_intersect_forward output capacity is too small");
-    require_vec3f(*ray_o, "ray_o");
-    require_vec3f(*ray_d, "ray_d");
-    require_ray_tmax(*ray_tmax, ray_o->size(0));
-    at::Tensor active_storage;
-    if (active != nullptr) {
-        require_mask(*active, "active");
-        if (active->numel() != 0 && active->size(0) != ray_o->size(0))
-            throw std::runtime_error("active must be empty or match the ray batch size.");
-        active_storage = *active;
-    }
-    SceneCache &scene = get_scene(scene_handle);
-    IntersectForwardOutputs out =
-        intersect_forward_flags_cuda(scene, *ray_o, *ray_d, *ray_tmax, active_storage, flags);
+    IntersectForwardOutputs out = integration_intersect_forward_impl(
+        get_scene(scene_handle),
+        *ray_o,
+        *ray_d,
+        *ray_tmax,
+        active,
+        flags);
     outputs[0] = out.t;
     outputs[1] = out.p;
     outputs[2] = out.n;
@@ -825,41 +988,20 @@ extern "C" int64_t rayd_torch_native_intersect_backward(
         throw std::runtime_error("rayd_torch_native_intersect_backward output capacity is too small");
     const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
     const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    require_vec3f(ray_o_checked, "ray_o");
-    require_vec3f(ray_d_checked, "ray_d");
-    const int64_t ray_count = ray_o_checked.size(0);
-    require_ray_batch(ray_d_checked, ray_count, "ray_d");
-    if (ray_tmax != nullptr && ray_tmax->defined())
-        require_ray_tmax(*ray_tmax, ray_count);
-    require_optional_active(active, ray_count);
-    require_tape_prim_id_1d(required(tape_prim_id, "tape_prim_id"), ray_count);
-    // An empty barycentric tape selects the backward width-0 recompute path.
-    require_tape_barycentric_2d(
-        required(tape_barycentric, "tape_barycentric"), ray_count, /*allow_empty=*/true);
-    require_optional_grad(maybe(grad_t), ray_count, 0, "grad_t");
-    require_optional_grad(maybe(grad_p), ray_count, 3, "grad_p");
-    require_optional_grad(maybe(grad_n), ray_count, 3, "grad_n");
-    require_optional_grad(maybe(grad_geo_n), ray_count, 3, "grad_geo_n");
-    require_optional_grad(maybe(grad_uv), ray_count, 2, "grad_uv");
-    require_optional_grad(maybe(grad_barycentric), ray_count, 3, "grad_barycentric");
-    SceneCache &scene = get_scene(scene_handle);
-    at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    IntersectBackwardOutputs out = intersect_backward_optional_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    IntersectBackwardOutputs out = integration_intersect_backward_impl(
+        get_scene(scene_handle),
         ray_o_checked,
         ray_d_checked,
-        ray_tmax_storage,
-        active_storage,
-        *tape_prim_id,
-        *tape_barycentric,
-        maybe(grad_t),
-        maybe(grad_p),
-        maybe(grad_n),
-        maybe(grad_geo_n),
-        maybe(grad_uv),
-        maybe(grad_barycentric),
+        ray_tmax,
+        active,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        grad_t,
+        grad_p,
+        grad_n,
+        grad_geo_n,
+        grad_uv,
+        grad_barycentric,
         need_grad_vertices,
         need_grad_ray_o,
         need_grad_ray_d,
@@ -899,36 +1041,16 @@ extern "C" int64_t rayd_torch_native_intersect_jvp(
         throw std::runtime_error("rayd_torch_native_intersect_jvp output capacity is too small");
     const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
     const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    require_vec3f(ray_o_checked, "ray_o");
-    require_vec3f(ray_d_checked, "ray_d");
-    const int64_t ray_count = ray_o_checked.size(0);
-    require_ray_batch(ray_d_checked, ray_count, "ray_d");
-    require_optional_active(active, ray_count);
-    require_tape_prim_id_1d(required(tape_prim_id, "tape_prim_id"), ray_count);
-    // Unlike backward, the jvp kernel has no width-0 recompute path, so a
-    // defined-but-empty barycentric tape is rejected for a nonzero ray batch
-    // (see rayd/torch/integration.h).
-    require_tape_barycentric_2d(
-        required(tape_barycentric, "tape_barycentric"),
-        ray_count,
-        /*allow_empty=*/ray_count == 0);
-    SceneCache &scene = get_scene(scene_handle);
-    require_optional_tangent_vertices(
-        maybe(tangent_vertices), scene.global_vertices, "tangent_vertices");
-    require_optional_grad(maybe(tangent_ray_o), ray_count, 3, "tangent_ray_o");
-    require_optional_grad(maybe(tangent_ray_d), ray_count, 3, "tangent_ray_d");
-    at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
-    IntersectJvpOutputs out = intersect_jvp_optional_cuda(
-        scene.global_vertices,
-        scene.global_faces,
+    IntersectJvpOutputs out = integration_intersect_jvp_impl(
+        get_scene(scene_handle),
         ray_o_checked,
         ray_d_checked,
-        active_storage,
-        *tape_prim_id,
-        *tape_barycentric,
-        maybe(tangent_vertices),
-        maybe(tangent_ray_o),
-        maybe(tangent_ray_d),
+        active,
+        required(tape_prim_id, "tape_prim_id"),
+        required(tape_barycentric, "tape_barycentric"),
+        tangent_vertices,
+        tangent_ray_o,
+        tangent_ray_d,
         flags);
     outputs[0] = out.tangent_t;
     outputs[1] = out.tangent_p;
@@ -1509,3 +1631,99 @@ py::tuple intersect_jvp_optional_op(
 }
 
 } // namespace rayd::torch_backend
+
+#include "../integration_v2_internal.h"
+
+namespace rayd::torch {
+
+namespace {
+
+const at::Tensor *present_optional(const std::optional<at::Tensor> &value) {
+    if (!value.has_value() || !value->defined())
+        return nullptr;
+    return &*value;
+}
+
+} // namespace
+
+IntersectResult intersect_forward(
+    const SceneResource &scene,
+    const RayBatch &rays,
+    std::int64_t flags) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    at::Tensor ray_tmax = present_optional(rays.ray_tmax) == nullptr
+        ? at::Tensor()
+        : *rays.ray_tmax;
+    auto out = torch_backend::integration_intersect_forward_impl(
+        cache,
+        rays.ray_o,
+        rays.ray_d,
+        ray_tmax,
+        present_optional(rays.active),
+        flags);
+    return {
+        out.t,
+        out.p,
+        out.n,
+        out.geo_n,
+        out.uv,
+        out.barycentric,
+        out.shape_id,
+        out.prim_id,
+        out.local_prim_id,
+        out.global_prim_id,
+    };
+}
+
+IntersectBackwardResult intersect_backward(
+    const SceneResource &scene,
+    const IntersectBackwardRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    const at::Tensor *ray_tmax = present_optional(request.rays.ray_tmax);
+    auto out = torch_backend::integration_intersect_backward_impl(
+        cache,
+        request.rays.ray_o,
+        request.rays.ray_d,
+        ray_tmax,
+        present_optional(request.rays.active),
+        request.tape_prim_id,
+        request.tape_barycentric,
+        present_optional(request.grad_t),
+        present_optional(request.grad_p),
+        present_optional(request.grad_n),
+        present_optional(request.grad_geo_n),
+        present_optional(request.grad_uv),
+        present_optional(request.grad_barycentric),
+        request.need_grad_vertices,
+        request.need_grad_ray_o,
+        request.need_grad_ray_d,
+        request.need_grad_ray_tmax);
+    return {out.grad_vertices, out.grad_ray_o, out.grad_ray_d, out.grad_ray_tmax};
+}
+
+IntersectJvpResult intersect_jvp(
+    const SceneResource &scene,
+    const IntersectJvpRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    auto out = torch_backend::integration_intersect_jvp_impl(
+        cache,
+        request.ray_o,
+        request.ray_d,
+        present_optional(request.active),
+        request.tape_prim_id,
+        request.tape_barycentric,
+        present_optional(request.tangent_vertices),
+        present_optional(request.tangent_ray_o),
+        present_optional(request.tangent_ray_d),
+        request.flags);
+    return {
+        out.tangent_t,
+        out.tangent_p,
+        out.tangent_n,
+        out.tangent_geo_n,
+        out.tangent_uv,
+        out.tangent_barycentric,
+    };
+}
+
+} // namespace rayd::torch
