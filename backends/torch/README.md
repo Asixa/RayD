@@ -22,6 +22,31 @@ Intersection, edge, reflection, EPC, and diffraction operators use a fixed-winne
 
 The native operators support Torch reverse-mode VJP and forward-mode JVP for the supported continuous inputs where explicit kernels have been implemented. CUDA work is launched on the current Torch CUDA stream.
 
+## Native Source Integration
+
+Native downstream projects built in the same CMake/LibTorch graph use the
+versioned typed C++ surface in `rayd/torch/integration_v2.h`; they do not load a
+second RayD Python extension or use a dynamic symbol registry. Solver-neutral
+RF device math is exposed through `rayd/shared/rf/*.cuh`. Torch-specific field
+AD helpers remain under `rayd/torch/rf/` because they use Torch complex types.
+
+The accepted transmission surface consists of complete primal/backward/JVP
+families for resident CSR layer-stack evaluation and complete-row Jones field
+transport. These operations preserve precise-math compilation, row fusion,
+atomic layer-gradient order, and the no-persistent-tape contract. Inputs are
+validated before launch, work runs on the caller's current Torch CUDA stream,
+and invalid shape/dtype/device/ABI state or CUDA failure raises immediately;
+there is no CPU, Torch-expression, finite-difference, or legacy-dispatch
+fallback.
+
+RayD owns the numerical primitives and typed native operations, not a
+downstream application's material encoding, topology selection, solver
+estimator policy, RNG/MIS, accumulation, metadata, or result schema. A newly
+merged transmission implementation may remain a dormant candidate until the
+consumer pins it, switches all callers, proves parity, and deletes its local
+implementation. See
+[`docs/adr/0002-shared-rf-transmission-ownership.md`](../../docs/adr/0002-shared-rf-transmission-ownership.md).
+
 ## Current Status
 
 RayD Torch now builds separate native scene, edge, reflection, and diffraction

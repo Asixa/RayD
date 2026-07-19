@@ -64,6 +64,8 @@ RayD focuses on geometry and wave-propagation primitives:
 - segment visibility and reflection-path tracing
 - equivalent-path correction (EPC) primitives
 - reflection and diffraction field accumulation
+- shared RF device primitives for complex media, Fresnel terms, resident
+  layer stacks, and Jones field transport
 - Dr.Jit and PyTorch reverse/forward automatic differentiation
 - source-level integration for native downstream CMake projects
 
@@ -279,6 +281,13 @@ reduce contributions into aggregate outputs such as receiver-grid cells. RayD
 does not choose the source model, receiver model, material policy, objective,
 or final channel representation for the caller.
 
+The accepted source-level RF ownership boundary also places the complete
+layer-stack and row-fused transmission primal/backward/JVP families in RayD.
+Downstream consumers keep their material encodings, topology, estimators,
+solver policy, accumulation, and result schemas. See
+[`ADR-0002`](docs/adr/0002-shared-rf-transmission-ownership.md) for the precise
+header, fusion, stream, failure, and cross-repository activation contracts.
+
 Naming follows the public API standard in
 [`backends/drjit/API_NAMING_STANDARD.md`](backends/drjit/API_NAMING_STANDARD.md):
 `Dfr` denotes diffraction, `Refl` denotes reflection, `Epc` denotes
@@ -383,9 +392,14 @@ The multi-architecture CUDA matrix is reserved for release CI. Pass
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations
 are provided by
-[`backends/torch/include/rayd/torch/integration.h`](backends/torch/include/rayd/torch/integration.h).
+[`backends/torch/include/rayd/torch/integration_v2.h`](backends/torch/include/rayd/torch/integration_v2.h).
 This interface is intended for projects built in the same CMake/libtorch graph;
 it is not a stable binary ABI across unrelated libtorch builds.
+
+Shared RF device headers are public source-level contracts under
+`shared/include/rayd/shared/rf`. Transmission families are introduced as
+dormant RayD candidates before a downstream pin and switch; dormancy does not
+create a second production owner or authorize runtime fallback dispatch.
 
 ## Repository Layout
 
