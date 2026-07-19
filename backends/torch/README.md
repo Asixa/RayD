@@ -58,6 +58,26 @@ required for order-1 exporter parity. Monte Carlo Sionna accumulation, coupled
 RD/DD operations, and BDPT estimator policy remain downstream-owned. See
 [`docs/adr/0025-diffraction-family-ownership.md`](../../docs/adr/0025-diffraction-family-ownership.md).
 
+The accepted generic-scattering surface consists of exactly seventeen typed
+operations in six complete families: resident table evaluation AD, resident
+table sampling/PDF, single-bounce ensemble, phase-screen patch integral, v2
+chain ensemble, and v2 chain realization. RayD evaluates caller-owned resident
+CUDA tensors but does not own table construction, cache/version policy,
+phase-screen seed/lifecycle, topology, estimator, RNG/MIS, accumulation, or
+result policy. A high-level BSDF/material framework remains out of scope;
+solver-neutral RF scattering primitives are in scope.
+
+The migration preserves the existing AD asymmetry: chain-ensemble continuous
+geometry supports JVP but reverse-mode requests fail loudly, while
+chain-realization supports its existing continuous-geometry VJP and JVP.
+Complete row fusion, launch count, recomputation/tape lifetime, backward
+atomics, output schemas, and the source-TU compile split are frozen: table
+primal/sample/PDF uses default CUDA flags, while the audited table-AD,
+ensemble, patch, and chain lockstep TUs retain `--fmad=false`. A merged RayD
+implementation remains dormant until Channel pins it, switches a complete
+family with parity evidence, and deletes the local implementation. See
+[`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
+
 ## Current Status
 
 RayD Torch now builds separate native scene, edge, reflection, and diffraction

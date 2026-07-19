@@ -66,17 +66,24 @@ RayD focuses on geometry and wave-propagation primitives:
 - reflection and diffraction field accumulation
 - shared RF device primitives for complex media, Fresnel terms, resident
   layer stacks, and Jones field transport
+- solver-neutral RF scattering table, sampling, ensemble, and phase-screen
+  evaluation primitives over caller-owned resident tensors
 - Dr.Jit and PyTorch reverse/forward automatic differentiation
 - source-level integration for native downstream CMake projects
 
 RayD intentionally does not provide:
 
-- BSDFs or emitters
+- a high-level BSDF or material-model framework, or emitters
 - rendering integrators
 - scene loaders
 - bitmap or image I/O
 - a material-light-integrator framework
 - implicit conversions between Dr.Jit and Torch objects
+
+The exclusion of a high-level BSDF framework does not exclude low-level,
+solver-neutral RF scattering primitives. RayD evaluates caller-owned resident
+tensors; it does not acquire table builders, material policy, solver state, or
+resource lifecycle through those operations.
 
 ## Why RayD?
 
@@ -296,6 +303,18 @@ coupled RD/DD operations, and BDPT estimator policy remain in Channel, and
 pure-wedge fast-math remains isolated to its family. See
 [`ADR-0025`](docs/adr/0025-diffraction-family-ownership.md) for the typed API,
 AD, fusion, activation, legacy-cleanup, and stop contracts.
+
+The accepted generic-scattering boundary will place seventeen operations in
+six complete table-evaluation, table-sampling, single-bounce, patch-integral,
+chain-ensemble, and chain-realization families in RayD. Candidates remain
+dormant until Channel pins, validates, atomically switches, and deletes its
+local implementation. RayD consumes caller-owned resident table and
+phase-screen tensors; Channel retains their construction/lifecycle plus
+topology, estimator, RNG/MIS, accumulation, and result policy. The move also
+preserves family-specific AD (including loud chain-ensemble geometry-VJP
+rejection and supported chain-realization geometry VJP/JVP), row fusion,
+atomics, tape lifetime, and per-translation-unit compile flags. See
+[`ADR-0026`](docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 Naming follows the public API standard in
 [`backends/drjit/API_NAMING_STANDARD.md`](backends/drjit/API_NAMING_STANDARD.md):
