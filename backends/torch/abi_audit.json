@@ -131,8 +131,11 @@
       "camera_world_to_sample",
       "camera_world_to_sample_backward",
       "intersection_valid"
-    ]
+    ],
+    "typed_native_candidates": {
+      "axial_edge_visibility_forward": "dormant_same_graph_exact_optix_source_integration"
+    }
   },
-  "source_sha256": "8c8361593b188b351c3baaeb0e89670b86c8abc8ffeb959e36afa7605e2d2418",
+  "source_sha256": "65b8a25bca7f8d0bc26fac6c745d9cf7c61d38dc6db0c6ee78879fdfccbeded1",
   "version": 2
 }

@@ -142,6 +142,15 @@ RayD is not a full renderer and intentionally does not include:
 This exclusion does not prohibit low-level, solver-neutral RF scattering
 table/sample/integral primitives governed by ADR-0026.
 
+The dormant typed axial-edge visibility candidate governed by ADR-0029 owns
+only its exact four-sample OptiX numerical primitive. Keep its Params/PTX/
+pipeline separate from legacy segment visibility, inherit the legacy OptiX
+compile policy for traversal, and lock only point construction with inline PTX
+round-to-nearest add/subtract/multiply instructions without FTZ or FMA. Do not
+bind it to Python or the legacy dispatcher. Activation requires an atomic
+downstream pin, switch, parity proof, and deletion of the former numerical
+owner.
+
 ## Tests
 
 ```bash

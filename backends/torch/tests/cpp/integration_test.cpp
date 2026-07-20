@@ -10,10 +10,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -23,6 +25,10 @@ namespace {
 
 static_assert(rayd::torch::kIntegrationApiVersion == 2);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
+static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
+static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);
+static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[2] == 0x3f2aaaabu);
+static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[3] == 0x3f7ae148u);
 
 [[noreturn]] void fail(const std::string &message) {
     throw std::runtime_error(message);
@@ -550,6 +556,314 @@ void test_visibility_trace_and_face_normal_typed_contracts() {
         face_tangent,
         at::zeros({1, 3}, floats),
         "face-normal rigid-translation tangent");
+}
+
+void test_axial_edge_visibility_typed_contracts() {
+    MeshFixture mesh = make_triangle();
+    auto scene = rayd::torch::create_scene({mesh_input(mesh)});
+    const auto floats = mesh.vertices.options();
+    const auto bools = floats.dtype(at::kBool);
+
+    rayd::torch::AxialEdgeVisibilityRequest request = {
+        at::tensor({0.25F, 0.25F, -1.0F}, floats),
+        at::tensor(
+            {
+                -2.0F, 0.25F, 1.0F,
+                0.25F, 0.25F, 1.0F,
+                1.0F, 0.25F, 1.0F,
+            },
+            floats).reshape({3, 3}),
+        at::tensor(
+            {
+                0.0F, 0.0F, 0.0F,
+                0.0F, 0.0F, 0.0F,
+                1.0F, 0.0F, 0.0F,
+            },
+            floats).reshape({3, 3}),
+        at::zeros({3}, floats),
+        at::ones({3}, floats),
+        std::nullopt,
+        {},
+    };
+
+    const auto result =
+        rayd::torch::axial_edge_visibility_forward(scene, request);
+    require_tensor_exact(
+        result.any_visible,
+        at::tensor({1, 0, 1}, mesh.faces.options()).to(at::kBool),
+        "axial-edge visibility all/partial mask");
+    require(result.any_visible.is_contiguous(), "axial-edge output must be contiguous");
+
+    auto active_request = request;
+    active_request.active =
+        at::tensor({1, 1, 0}, mesh.faces.options()).to(at::kBool);
+    require_tensor_exact(
+        rayd::torch::axial_edge_visibility_forward(scene, active_request).any_visible,
+        at::tensor({1, 0, 0}, mesh.faces.options()).to(at::kBool),
+        "axial-edge active mask");
+
+    rayd::torch::AxialEdgeVisibilityRequest empty_request = {
+        request.tx,
+        at::empty({0, 3}, floats),
+        at::empty({0, 3}, floats),
+        at::empty({0}, floats),
+        at::empty({0}, floats),
+        at::empty({0}, bools),
+        {},
+    };
+    const auto empty =
+        rayd::torch::axial_edge_visibility_forward(scene, empty_request);
+    require_tensor_contract(
+        empty.any_visible,
+        {0},
+        at::kBool,
+        mesh.vertices.device(),
+        "empty axial-edge visibility");
+    require(empty.any_visible.is_contiguous(), "empty axial-edge output must be contiguous");
+
+    auto nonfinite_request = request;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    nonfinite_request.edge_position = at::tensor(
+        {
+            nan, 0.25F, 1.0F,
+            -2.0F, 0.25F, 1.0F,
+            -2.0F, 0.25F, 1.0F,
+        },
+        floats).reshape({3, 3});
+    nonfinite_request.edge_direction = at::tensor(
+        {
+            0.0F, 0.0F, 0.0F,
+            inf, 0.0F, 0.0F,
+            0.0F, 0.0F, 0.0F,
+        },
+        floats).reshape({3, 3});
+    nonfinite_request.edge_t_max = at::tensor({1.0F, 1.0F, inf}, floats);
+    require_tensor_exact(
+        rayd::torch::axial_edge_visibility_forward(scene, nonfinite_request).any_visible,
+        at::zeros({3}, bools),
+        "axial-edge nonfinite lanes");
+
+    auto nonfinite_tx = request;
+    nonfinite_tx.tx = at::tensor({nan, 0.25F, -1.0F}, floats);
+    require_tensor_exact(
+        rayd::torch::axial_edge_visibility_forward(scene, nonfinite_tx).any_visible,
+        at::zeros({3}, bools),
+        "axial-edge nonfinite transmitter");
+
+    const std::array<bool, 4> fraction_visibility = {false, true, true, true};
+    for (std::size_t fraction_index = 0;
+         fraction_index < fraction_visibility.size();
+         ++fraction_index) {
+        auto fraction_request = request;
+        fraction_request.edge_position = request.edge_position.narrow(0, 2, 1);
+        fraction_request.edge_direction = request.edge_direction.narrow(0, 2, 1);
+        fraction_request.edge_t_min = request.edge_t_min.narrow(0, 2, 1);
+        fraction_request.edge_t_max = request.edge_t_max.narrow(0, 2, 1);
+        fraction_request.config.sample_fraction_bits.fill(
+            rayd::torch::kDiffractionTxAxialEdgeFractionBits[fraction_index]);
+        require_tensor_exact(
+            rayd::torch::axial_edge_visibility_forward(scene, fraction_request)
+                .any_visible,
+            fraction_visibility[fraction_index]
+                ? at::ones({1}, bools)
+                : at::zeros({1}, bools),
+            "axial-edge fraction boundary");
+    }
+
+    auto bad_tx_view = request;
+    bad_tx_view.tx = at::zeros({3, 2}, floats).select(1, 0);
+    require(!bad_tx_view.tx.is_contiguous(), "tx noncontiguous fixture is contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, bad_tx_view); },
+        "axial-edge noncontiguous tx must fail loudly");
+
+    auto bad_edge_view = request;
+    bad_edge_view.edge_position = at::zeros({3, 3, 2}, floats).select(2, 0);
+    require(
+        !bad_edge_view.edge_position.is_contiguous(),
+        "edge noncontiguous fixture is contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, bad_edge_view); },
+        "axial-edge noncontiguous edge tensor must fail loudly");
+
+    auto bad_scalar_view = request;
+    bad_scalar_view.edge_t_min = at::zeros({3, 2}, floats).select(1, 0);
+    require(
+        !bad_scalar_view.edge_t_min.is_contiguous(),
+        "scalar noncontiguous fixture is contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, bad_scalar_view); },
+        "axial-edge noncontiguous scalar tensor must fail loudly");
+
+    auto bad_active_view = request;
+    bad_active_view.active = at::zeros({3, 2}, bools).select(1, 0);
+    require(
+        !bad_active_view.active->is_contiguous(),
+        "active noncontiguous fixture is contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, bad_active_view); },
+        "axial-edge noncontiguous active tensor must fail loudly");
+
+    auto bad_fraction = request;
+    bad_fraction.config.sample_fraction_bits[0] = 0x7f800000u;
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, bad_fraction); },
+        "axial-edge nonfinite fraction must fail loudly");
+
+    auto cpu_tx = request;
+    cpu_tx.tx = cpu_tx.tx.cpu();
+    require_throws(
+        [&] { (void)rayd::torch::axial_edge_visibility_forward(scene, cpu_tx); },
+        "axial-edge CPU tx must fail loudly");
+
+    const auto stream = c10::cuda::getStreamFromPool(false, 0);
+    {
+        c10::cuda::CUDAStreamGuard guard(stream);
+        const auto streamed =
+            rayd::torch::axial_edge_visibility_forward(scene, request);
+        require(
+            c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
+            "axial-edge visibility changed the caller's CUDA stream");
+        stream.synchronize();
+        require_tensor_exact(
+            streamed.any_visible,
+            at::tensor({1, 0, 1}, mesh.faces.options()).to(at::kBool),
+            "axial-edge current-stream result");
+    }
+}
+
+float test_float_from_bits(std::uint32_t bits) {
+    float value = 0.0F;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+std::array<float, 3> exact_axial_sample_host(
+    const std::array<float, 3> &position,
+    const std::array<float, 3> &direction,
+    float t_min,
+    float t_max,
+    float fraction) {
+    volatile float span = t_max - t_min;
+    volatile float scaled_fraction = fraction * span;
+    volatile float t = t_min + scaled_fraction;
+    std::array<float, 3> point{};
+    for (std::size_t component = 0; component < point.size(); ++component) {
+        volatile float scaled_direction = t * direction[component];
+        volatile float value = position[component] + scaled_direction;
+        point[component] = value;
+    }
+    return point;
+}
+
+void test_axial_edge_visibility_legacy_parity() {
+    MeshFixture mesh = make_triangle();
+    auto scene = rayd::torch::create_scene({mesh_input(mesh)});
+    constexpr std::size_t random_count = 257;
+    constexpr std::size_t boundary_count = 3;
+    constexpr std::size_t state_count = boundary_count + random_count;
+
+    std::vector<std::array<float, 3>> positions(state_count);
+    std::vector<std::array<float, 3>> directions(state_count);
+    std::vector<float> t_min(state_count);
+    std::vector<float> t_max(state_count);
+    positions[0] = {-2.0F, 0.25F, 1.0F};
+    positions[1] = {0.25F, 0.25F, 1.0F};
+    positions[2] = {1.0F, 0.25F, 1.0F};
+    directions[0] = {0.0F, 0.0F, 0.0F};
+    directions[1] = {0.0F, 0.0F, 0.0F};
+    directions[2] = {1.0F, 0.0F, 0.0F};
+    t_min[0] = t_min[1] = t_min[2] = 0.0F;
+    t_max[0] = t_max[1] = t_max[2] = 1.0F;
+
+    std::mt19937 generator(0x29A81u);
+    std::uniform_real_distribution<float> position_distribution(-2.0F, 2.0F);
+    std::uniform_real_distribution<float> direction_distribution(-1.0F, 1.0F);
+    std::uniform_real_distribution<float> minimum_distribution(-0.5F, 0.5F);
+    std::uniform_real_distribution<float> span_distribution(0.01F, 2.0F);
+    for (std::size_t row = boundary_count; row < state_count; ++row) {
+        positions[row] = {
+            position_distribution(generator),
+            position_distribution(generator),
+            position_distribution(generator) + 1.0F,
+        };
+        directions[row] = {
+            direction_distribution(generator),
+            direction_distribution(generator),
+            direction_distribution(generator),
+        };
+        t_min[row] = minimum_distribution(generator);
+        t_max[row] = t_min[row] + span_distribution(generator);
+    }
+
+    std::vector<float> position_aos;
+    std::vector<float> direction_aos;
+    position_aos.reserve(state_count * 3);
+    direction_aos.reserve(state_count * 3);
+    for (std::size_t row = 0; row < state_count; ++row) {
+        position_aos.insert(position_aos.end(), positions[row].begin(), positions[row].end());
+        direction_aos.insert(direction_aos.end(), directions[row].begin(), directions[row].end());
+    }
+
+    const auto cpu_floats = at::TensorOptions().dtype(at::kFloat).device(at::kCPU);
+    const auto device = mesh.vertices.device();
+    const auto to_device_matrix = [&](std::vector<float> &values) {
+        return at::from_blob(
+                   values.data(),
+                   {static_cast<int64_t>(state_count), 3},
+                   cpu_floats)
+            .clone()
+            .to(device);
+    };
+    const auto to_device_vector = [&](std::vector<float> &values) {
+        return at::from_blob(
+                   values.data(),
+                   {static_cast<int64_t>(state_count)},
+                   cpu_floats)
+            .clone()
+            .to(device);
+    };
+    const at::Tensor tx =
+        at::tensor({0.25F, 0.25F, -1.0F}, cpu_floats).to(device);
+    rayd::torch::AxialEdgeVisibilityRequest request = {
+        tx,
+        to_device_matrix(position_aos),
+        to_device_matrix(direction_aos),
+        to_device_vector(t_min),
+        to_device_vector(t_max),
+        std::nullopt,
+        {},
+    };
+    const at::Tensor single_launch =
+        rayd::torch::axial_edge_visibility_forward(scene, request).any_visible;
+
+    std::vector<float> starts_aos;
+    starts_aos.reserve(state_count * 3);
+    for (std::size_t row = 0; row < state_count; ++row)
+        starts_aos.insert(starts_aos.end(), {0.25F, 0.25F, -1.0F});
+    const at::Tensor starts = to_device_matrix(starts_aos);
+    at::Tensor four_launches = at::zeros(
+        {static_cast<int64_t>(state_count)}, mesh.vertices.options().dtype(at::kBool));
+    for (const std::uint32_t fraction_bits :
+         rayd::torch::kDiffractionTxAxialEdgeFractionBits) {
+        const float fraction = test_float_from_bits(fraction_bits);
+        std::vector<float> ends_aos;
+        ends_aos.reserve(state_count * 3);
+        for (std::size_t row = 0; row < state_count; ++row) {
+            const auto point = exact_axial_sample_host(
+                positions[row], directions[row], t_min[row], t_max[row], fraction);
+            ends_aos.insert(ends_aos.end(), point.begin(), point.end());
+        }
+        const auto visibility = rayd::torch::visibility_forward(
+            scene, {starts, to_device_matrix(ends_aos), std::nullopt});
+        four_launches.bitwise_or_(visibility.visible);
+    }
+    require_tensor_exact(
+        single_launch,
+        four_launches,
+        "single axial launch versus four segment launches boundary/random parity");
 }
 
 void test_reflection_accumulation_and_epc_typed_contracts() {
@@ -1904,6 +2218,10 @@ int main() {
         test_empty_and_stream_contracts();
         std::cout << "[RUN] test_visibility_trace_and_face_normal_typed_contracts" << std::endl;
         test_visibility_trace_and_face_normal_typed_contracts();
+        std::cout << "[RUN] test_axial_edge_visibility_typed_contracts" << std::endl;
+        test_axial_edge_visibility_typed_contracts();
+        std::cout << "[RUN] test_axial_edge_visibility_legacy_parity" << std::endl;
+        test_axial_edge_visibility_legacy_parity();
         std::cout << "[RUN] test_reflection_accumulation_and_epc_typed_contracts" << std::endl;
         test_reflection_accumulation_and_epc_typed_contracts();
         std::cout << "[RUN] test_error_and_lifecycle_contracts" << std::endl;

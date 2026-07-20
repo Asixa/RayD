@@ -193,6 +193,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
     set(RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/reflection_trace_optix_ptx.h")
     set(RAYD_TORCH_SEGMENT_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility_optix.ptx")
     set(RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/segment_visibility_optix_ptx.h")
+    set(RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/axial_edge_visibility_optix.ptx")
+    set(RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/axial_edge_visibility_optix_ptx.h")
     set(RAYD_TORCH_REFLECTION_EPC_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_optix.ptx")
     set(RAYD_TORCH_REFLECTION_EPC_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/reflection_epc_optix_ptx.h")
     set(RAYD_TORCH_REFLECTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation_optix.ptx")
@@ -386,6 +388,44 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/embed_ptx.py
     )
     add_custom_target(rayd_torch_segment_visibility_optix_ptx DEPENDS "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/axial_edge_visibility_optix.cu"
+            -o "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
+        DEPENDS
+            src/torch_ext/reflection/axial_edge_visibility_optix.cu
+            include/rayd/torch/reflection/axial_edge_visibility_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
+            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}"
+            rayd_torch_axial_edge_visibility_optix_ptx
+        DEPENDS
+            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(
+        rayd_torch_axial_edge_visibility_optix_ptx
+        DEPENDS "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}")
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX}"
         COMMAND
@@ -628,6 +668,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_edge_optix_ptx
         rayd_torch_reflection_trace_optix_ptx
         rayd_torch_segment_visibility_optix_ptx
+        rayd_torch_axial_edge_visibility_optix_ptx
         rayd_torch_reflection_epc_optix_ptx
         rayd_torch_reflection_accumulation_optix_ptx
         rayd_torch_diffraction_paths_optix_ptx

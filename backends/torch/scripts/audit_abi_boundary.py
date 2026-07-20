@@ -84,6 +84,11 @@ def audit() -> dict[str, object]:
         },
         "migration": {
             "stable": stable_ops,
+            "typed_native_candidates": {
+                "axial_edge_visibility_forward": (
+                    "dormant_same_graph_exact_optix_source_integration"
+                ),
+            },
             "legacy_retained": {
                 "scene_custom_class_and_stateful_queries": (
                     "Scene ownership, OptiX handles, intrusive_ptr custom classes, and "

@@ -1,6 +1,7 @@
 #include <rayd/torch/reflection/pipeline.h>
 
 #include <rayd/torch/reflection/accum_params.h>
+#include <rayd/torch/reflection/axial_edge_visibility_params.h>
 #include <rayd/torch/reflection/epc_params.h>
 #include <rayd/torch/reflection/trace_params.h>
 #include <rayd/torch/reflection/visibility_params.h>
@@ -9,6 +10,7 @@
 #include <rayd/torch/reflection_epc_optix_ptx.h>
 #include <rayd/torch/reflection_trace_optix_ptx.h>
 #include <rayd/torch/segment_visibility_optix_ptx.h>
+#include <rayd/torch/axial_edge_visibility_optix_ptx.h>
 
 namespace rayd::torch_backend {
 
@@ -39,6 +41,18 @@ OptixPipelineConfig refl_visibility_pipeline_config() {
     config.anyhit_entry = "__anyhit__segment_visibility";
     config.num_payload_values = shared::optix::VisibilityPayloadCount;
     config.params_size = sizeof(SegmentVisibilityParams);
+    return config;
+}
+
+OptixPipelineConfig axial_edge_visibility_pipeline_config() {
+    OptixPipelineConfig config;
+    config.ptx = rayd_torch_axial_edge_visibility_optix_ptx;
+    config.ptx_size = sizeof(rayd_torch_axial_edge_visibility_optix_ptx);
+    config.raygen_entries = {"__raygen__axial_edge_visibility_exact"};
+    config.miss_entry = "__miss__axial_edge_visibility_exact";
+    config.closesthit_entry = "__closesthit__axial_edge_visibility_exact";
+    config.num_payload_values = shared::optix::VisibilityPayloadCount;
+    config.params_size = sizeof(AxialEdgeVisibilityParams);
     return config;
 }
 

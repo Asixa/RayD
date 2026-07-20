@@ -84,6 +84,19 @@ No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
 
+The typed boundary also carries a dormant axial-edge visibility candidate for
+device-resident diffraction state selection. It consumes broadcast TX and
+contiguous AoS edge tensors, evaluates the four exact binary32 fractions in one
+separate OptiX launch on the caller's current CUDA stream, and returns a
+resident boolean state mask. Its traversal inherits the legacy OptiX compile
+policy while inline PTX locks
+only point construction to non-FTZ, non-FMA round-to-nearest operations. The
+legacy visibility dispatcher is unchanged and cannot select this entry. The
+operation adds no synchronization beyond the existing common launch-parameter
+staging path; removing that staging path's host event wait is a separate
+optimization.
+See [`docs/adr/0029-typed-axial-edge-visibility.md`](../../docs/adr/0029-typed-axial-edge-visibility.md).
+
 RayD Torch carries all seventeen typed operations. Channel has activated the
 Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.
 The six Phase 10B chain entries are source-linked into the native core and

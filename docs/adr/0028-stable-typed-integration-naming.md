@@ -36,7 +36,7 @@ consumers include the stable header directly and still link
 dynamic lookup, or stable cross-LibTorch binary ABI.
 
 The normalized-LF SHA-256 of the accepted stable header is
-`e88626c4486b99a88737d39dc3ec3d277a5b554b9bd664ba9c384577cd141c86`.
+`65ae4e8e35cf6067cb320a770a1945e2685feab6af44a2233d4db0cfe6b1f435`.
 
 ## Historical evidence
 

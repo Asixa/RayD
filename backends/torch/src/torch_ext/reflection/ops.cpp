@@ -13,6 +13,7 @@
 #include <rayd/torch/common/optix_context.h>
 #include <rayd/torch/reflection/accum_reduce.h>
 #include <rayd/torch/reflection/accum_params.h>
+#include <rayd/torch/reflection/axial_edge_visibility_params.h>
 #include <rayd/torch/reflection/dedup.h>
 #include <rayd/torch/reflection/epc_field.h>
 #include <rayd/torch/reflection/epc_params.h>
@@ -27,7 +28,9 @@
 #include <torch/extension.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -1039,6 +1042,91 @@ ReflectionBackwardOutputs integration_trace_reflections_backward_impl(
         image_sources,
         maybe(grad_t),
         maybe(grad_image_sources));
+}
+
+float float_from_bits(std::uint32_t bits) {
+    float value = 0.0F;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+at::Tensor axial_edge_visibility_forward_native_impl(
+    SceneCache &scene,
+    const at::Tensor &tx,
+    const at::Tensor &edge_position,
+    const at::Tensor &edge_direction,
+    const at::Tensor &edge_t_min,
+    const at::Tensor &edge_t_max,
+    const at::Tensor *active,
+    const std::array<std::uint32_t, AxialEdgeVisibilitySampleCount>
+        &sample_fraction_bits) {
+    require_cuda(tx, "tx");
+    require_contiguous(tx, "tx");
+    require_dtype(tx, at::kFloat, "tx");
+    require_rank(tx, 1, "tx");
+    if (tx.size(0) != 3)
+        throw std::runtime_error("tx must have shape (3,).");
+    require_vec3f(edge_position, "edge_position");
+    require_vec3f(edge_direction, "edge_direction");
+    require_flat_f32(edge_t_min, "edge_t_min");
+    require_flat_f32(edge_t_max, "edge_t_max");
+    const int64_t state_count = edge_position.size(0);
+    if (edge_direction.size(0) != state_count ||
+        edge_t_min.size(0) != state_count ||
+        edge_t_max.size(0) != state_count) {
+        throw std::runtime_error(
+            "axial-edge visibility inputs must have the same state count.");
+    }
+    if (active != nullptr) {
+        require_mask(*active, "active");
+        require_contiguous(*active, "active");
+        if (active->size(0) != state_count) {
+            throw std::runtime_error(
+                "active must match the axial-edge state count.");
+        }
+    }
+
+    require_scene_device(scene, tx, "tx");
+    require_scene_device(scene, edge_position, "edge_position");
+    require_scene_device(scene, edge_direction, "edge_direction");
+    require_scene_device(scene, edge_t_min, "edge_t_min");
+    require_scene_device(scene, edge_t_max, "edge_t_max");
+    if (active != nullptr)
+        require_scene_device(scene, *active, "active");
+
+    std::array<float, AxialEdgeVisibilitySampleCount> sample_fractions{};
+    for (std::size_t index = 0; index < sample_fractions.size(); ++index) {
+        sample_fractions[index] = float_from_bits(sample_fraction_bits[index]);
+        if (!std::isfinite(sample_fractions[index])) {
+            throw std::runtime_error(
+                "axial-edge visibility fraction bits must encode finite float32 values.");
+        }
+    }
+
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
+    at::Tensor any_visible =
+        at::empty({state_count}, edge_position.options().dtype(at::kBool));
+    if (state_count == 0)
+        return any_visible;
+
+    AxialEdgeVisibilityParams params = {};
+    params.trace.handle = scene.triangle_ias.traversable;
+    params.tx = tx.data_ptr<float>();
+    params.edge_position = edge_position.data_ptr<float>();
+    params.edge_direction = edge_direction.data_ptr<float>();
+    params.edge_t_min = edge_t_min.data_ptr<float>();
+    params.edge_t_max = edge_t_max.data_ptr<float>();
+    params.active = active == nullptr ? nullptr : mask_ptr(*active);
+    params.state_count = checked_i32(state_count, "state_count");
+    for (std::size_t index = 0; index < sample_fractions.size(); ++index)
+        params.sample_fractions[index] = sample_fractions[index];
+    params.out_any_visible = mutable_mask_ptr(any_visible);
+
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    optix_pipeline_for_scene(scene, axial_edge_visibility_pipeline_config())
+        ->launch(0, params, static_cast<unsigned int>(state_count), torch_ctx.stream);
+    return any_visible;
 }
 
 ReflectionJvpOutputs integration_trace_reflections_jvp_impl(
@@ -2578,6 +2666,21 @@ ReflectionTraceTapeResult trace_reflections_forward_tape(
         values[7],
         values[8],
     };
+}
+
+AxialEdgeVisibilityResult axial_edge_visibility_forward(
+    const SceneResource &scene,
+    const AxialEdgeVisibilityRequest &request) {
+    auto &cache = detail::IntegrationAccess::scene_cache(scene);
+    return {torch_backend::axial_edge_visibility_forward_native_impl(
+        cache,
+        request.tx,
+        request.edge_position,
+        request.edge_direction,
+        request.edge_t_min,
+        request.edge_t_max,
+        present_optional(request.active),
+        request.config.sample_fraction_bits)};
 }
 
 ReflectionTraceBackwardResult trace_reflections_backward(

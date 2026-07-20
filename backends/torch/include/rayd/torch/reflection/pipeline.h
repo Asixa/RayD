@@ -6,6 +6,7 @@ namespace rayd::torch_backend {
 
 OptixPipelineConfig refl_trace_pipeline_config();
 OptixPipelineConfig refl_visibility_pipeline_config();
+OptixPipelineConfig axial_edge_visibility_pipeline_config();
 OptixPipelineConfig refl_epc_pipeline_config();
 OptixPipelineConfig refl_accum_pipeline_config();
 
