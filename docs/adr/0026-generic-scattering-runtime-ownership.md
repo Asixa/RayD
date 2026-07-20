@@ -235,6 +235,36 @@ hashes and reject pybind/map shims, event/solver scope leaks, dynamic lookup,
 explicit synchronization, and accidental fast-math so a source-contract
 change requires an intentional identity and pin update.
 
+ADR-0030 advances the live typed capacity-row contract to API version 3 while
+preserving the operation families and numerical owners above. Its normalized-LF
+successor pins are
+`7a29ff216f11a08256ee271ef5dcad817e4b8379d88bc07772685fa3da439aa9`
+for `scattering.h`,
+`aae7d33ae78d8886c8d1d1a665336e9027d35a3b2ba180a85b7211cd3ee22e21`
+for `scattering.cu`,
+`fe2046c2a3ba45bb073cb43272a89282593c0c2a1659f4cc7e85d2ebd5335039`
+for `scattering_table_eval_ad.cu`,
+`ed6f9225e1d987b8624062dafce617755a793d5646f8866bc6106637e8c4d492`
+for `scattering_ensemble.cu`,
+`3951fef2cac6759c05b57167a4491cdf421f575843ca33a9e1d761c713237573`
+for `scattering_ensemble_ad.cu`,
+`a37459f03879199cb0365a20b0cc06fca5fc24369a7efda858e189d11822af33`
+for `scattering_patch_integral.cu`,
+`bf40adb74e029a520162363383ca16c39e4829ee9e0ff3252816b0bcf04bff82`
+for `scattering_patch_integral_ad.cu`,
+`f848b268bbca8835ac091bc49f223d0f64532925361090bb1409c93d1d50278c`
+for `scattering_chain_checks.h`,
+`1121a2f276d982bb2bf6efe3e20aa0d82eb7251e224b7efea8c1099c92e9afe7`
+for `scattering_chain_ensemble.cu`,
+`554a6ad5cdfd1aac37913e3526e8c5d252ec514db6992eafd7d43882a14956bc`
+for `scattering_chain_ensemble_ad.cu`,
+`e61dd957af9a2fdc9a5035040c874a12b3834a00cb8285b64e921f1d01cb72b3`
+for `scattering_chain_realization.cu`, and
+`63cf0704157d591307eb788b9de08c22aadd919177f8545e8cb4f8b037bb27bd`
+for `scattering_chain_realization_ad.cu`. The unchanged shared table and chain-AD
+helper pins remain those recorded above. Historical Phase 10B hashes remain
+evidence only; governance pins the live API version 3 successors.
+
 Rollback changes Channel's lock to the prior complete, accepted RayD commit.
 It never selects an owner at runtime and never adds CPU, Torch-expression,
 finite-difference, legacy-dispatch, reduced-algorithm, zero-result, or detached-

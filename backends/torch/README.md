@@ -79,10 +79,18 @@ family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 The stable source-level boundary is named `rayd/torch/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version remains `2`.
+identity is `rayd.torch.integration`, and its numeric API version is `3`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
+
+API version 3 makes row validity explicit for pure-wedge diffraction,
+transmission sequences, and all generic scattering requests. The required
+device boolean tensor is checked before any row payload or ID is read; invalid
+primal/JVP rows and supported row gradients are bitwise zero and cannot
+contribute shared-gradient atomics. AD companions inherit the mask from their
+nested primal request. See
+[`docs/adr/0030-typed-capacity-row-validity.md`](../../docs/adr/0030-typed-capacity-row-validity.md).
 
 The typed boundary also carries a dormant axial-edge visibility candidate for
 device-resident diffraction state selection. It consumes broadcast TX and

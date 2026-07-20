@@ -7,6 +7,7 @@
 namespace rayd::torch {
 
 struct DiffractionWedgeRequest {
+    at::Tensor valid;
     at::Tensor source;
     at::Tensor target;
     at::Tensor edge_position;

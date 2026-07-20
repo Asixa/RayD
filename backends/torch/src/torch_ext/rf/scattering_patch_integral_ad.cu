@@ -289,6 +289,7 @@ __device__ __forceinline__ RowCoef assemble_coef(
 
 __global__ void patch_integral_backward_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris,
     const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
@@ -328,6 +329,24 @@ __global__ void patch_integral_backward_kernel(
 
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            if (need_jones) {
+                grad_r_te[row] = {0.0f, 0.0f};
+                grad_r_tm[row] = {0.0f, 0.0f};
+            }
+            if (need_geometry) {
+                grad_r1[row] = 0.0f;
+                grad_r2[row] = 0.0f;
+            }
+        }
+        if (need_geometry && threadIdx.x < 3) {
+            grad_d_i[row * 3 + threadIdx.x] = 0.0f;
+            grad_d_o[row * 3 + threadIdx.x] = 0.0f;
+            grad_centroids[row * 3 + threadIdx.x] = 0.0f;
+        }
+        return;
+    }
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -484,6 +503,7 @@ __global__ void patch_integral_backward_kernel(
 
 __global__ void patch_integral_jvp_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris,
     const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
@@ -520,6 +540,10 @@ __global__ void patch_integral_jvp_kernel(
 
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) {
+        if (threadIdx.x == 0) out_t_row_value[row] = {0.0f, 0.0f};
+        return;
+    }
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -669,7 +693,7 @@ __global__ void patch_integral_jvp_total_kernel(
 // --------------------------- validation -----------------------------------
 
 int64_t check_patch_inputs(
-    const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
+    const at::Tensor& valid, const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
     const at::Tensor& rows, const at::Tensor& d_i, const at::Tensor& d_o,
     const at::Tensor& n_rows, const at::Tensor& r_te, const at::Tensor& r_tm,
     const at::Tensor& pol_t, const at::Tensor& pol_r, const at::Tensor& r1_rows,
@@ -688,6 +712,8 @@ int64_t check_patch_inputs(
                 "patch_uvs must have shape (P, 3, 2)");
     check_flat_tensor(rows, "rows", at::kLong);
     const int64_t row_count = rows.size(0);
+    check_flat_tensor(valid, "valid", at::kBool);
+    TORCH_CHECK(valid.size(0) == row_count, "valid must have shape (R,)");
     check_vec3_table(d_i, "d_i");
     check_vec3_table(d_o, "d_o");
     check_vec3_table(n_rows, "n_rows");
@@ -712,7 +738,7 @@ int64_t check_patch_inputs(
                     r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
                     r2_rows.size(0) == row_count && centroids.size(0) == row_count,
                 "per-row arrays must match rows");
-    for (const auto& tref : {patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
+    for (const auto& tref : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
                              pol_r, r1_rows, r2_rows, centroids, heights, quad_a,
                              quad_b, quad_w}) {
         TORCH_CHECK(tref.get_device() == patch_tris.get_device(),
@@ -754,6 +780,7 @@ at::Tensor zero_filled(at::IntArrayRef sizes, const at::TensorOptions& options) 
 }  // namespace
 
 rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral_eval_backward_impl(
+    at::Tensor valid,
     at::Tensor patch_tris,
     at::Tensor patch_uvs,
     at::Tensor rows,
@@ -778,7 +805,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
     bool need_grad_geometry,
     bool need_grad_k0) {
     const int64_t row_count = check_patch_inputs(
-        patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
+        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
         r1_rows, r2_rows, centroids, heights, quad_a, quad_b, quad_w);
     using rayd::torch::detail::check_tensor;
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
@@ -811,6 +838,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
             at::cuda::getCurrentCUDAStream(patch_tris.get_device()).stream();
         patch_integral_backward_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
@@ -846,6 +874,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
 }
 
 rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval_jvp_impl(
+    at::Tensor valid,
     at::Tensor patch_tris,
     at::Tensor patch_uvs,
     at::Tensor rows,
@@ -874,7 +903,7 @@ rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval
     std::optional<at::Tensor> t_centroids,
     double tangent_k0) {
     const int64_t row_count = check_patch_inputs(
-        patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
+        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
         r1_rows, r2_rows, centroids, heights, quad_a, quad_b, quad_w);
 
     at::Tensor storage[8];
@@ -908,6 +937,7 @@ rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval
             {row_count}, patch_tris.options().dtype(at::kComplexFloat));
         patch_integral_jvp_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
@@ -938,7 +968,7 @@ rayd::torch::scattering_patch_integral_eval_backward(
     const ScatteringPatchIntegralEvalBackwardRequest& request) {
     const auto& p = request.primal;
     return scattering_patch_integral_eval_backward_impl(
-        p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
+        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
         p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
         p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0,
         request.grad_total, request.need_grad_heights, request.need_grad_jones,
@@ -950,7 +980,7 @@ rayd::torch::scattering_patch_integral_eval_jvp(
     const ScatteringPatchIntegralEvalJvpRequest& request) {
     const auto& p = request.primal;
     return scattering_patch_integral_eval_jvp_impl(
-        p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
+        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
         p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
         p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0,
         request.tangent_heights, request.tangent_r_te, request.tangent_r_tm,

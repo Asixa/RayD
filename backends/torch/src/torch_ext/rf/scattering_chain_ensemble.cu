@@ -142,6 +142,7 @@ __device__ __forceinline__ field::Complex3 transport_leg(
 
 __global__ void chain_ensemble_eval_kernel(
     int64_t count,
+    const bool* __restrict__ valid,
     const float* __restrict__ tx_pol,
     const float* __restrict__ rx_pol,
     const float* __restrict__ source,
@@ -190,6 +191,13 @@ __global__ void chain_ensemble_eval_kernel(
     bool* __restrict__ out_keep) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            out_gain[row] = 0.0f;
+            out_amplitude[row] = 0.0f;
+            out_length[row] = 0.0f;
+            out_keep[row] = false;
+            continue;
+        }
         const int d1 = c1_depth[row];
         const int d2 = c2_depth[row];
         const field::float3a n = load3f(n_o, row);
@@ -313,6 +321,7 @@ void check_chain_ensemble_primal(
 }  // namespace
 
 rayd::torch::ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval_impl(
+    at::Tensor valid,
     at::Tensor tx_pol,
     at::Tensor rx_pol,
     at::Tensor source,
@@ -404,6 +413,7 @@ rayd::torch::ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval_im
             at::cuda::getCurrentCUDAStream(tx_pol.get_device()).stream();
         chain_ensemble_eval_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count,
+            valid.data_ptr<bool>(),
             tx_pol.data_ptr<float>(), rx_pol.data_ptr<float>(),
             source.data_ptr<float>(), vertex.data_ptr<float>(),
             target.data_ptr<float>(),
@@ -439,7 +449,7 @@ ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(
     const ScatteringChainEnsembleEvalRequest& r) {
     detail::check_scattering_chain_ensemble_request(r);
     return scattering_chain_ensemble_eval_impl(
-        r.tx_pol, r.rx_pol, r.source, r.vertex, r.target,
+        r.valid, r.tx_pol, r.rx_pol, r.source, r.vertex, r.target,
         r.c1_positions, r.c1_normals, r.c1_eps_r, r.c1_sigma_e, r.c1_mu_r,
         r.c1_gain, r.c1_thickness, r.c1_depth,
         r.c2_positions, r.c2_normals, r.c2_eps_r, r.c2_sigma_e, r.c2_mu_r,

@@ -217,6 +217,7 @@ struct TangentSeed {
 __global__ void transmission_sequence_backward_kernel(
     int64_t count,
     int64_t depth,
+    const bool* path_valid,
     const float* source,
     const float* target,
     const float* interaction_normals,
@@ -259,6 +260,8 @@ __global__ void transmission_sequence_backward_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!path_valid[index])
+            continue;
         TransmissionChain chain;
         transmission_chain_eval(
             index, depth, source, target, interaction_normals,
@@ -447,6 +450,7 @@ __global__ void transmission_sequence_backward_kernel(
 __global__ void transmission_sequence_jvp_kernel(
     int64_t count,
     int64_t depth,
+    const bool* path_valid,
     const float* source,
     const float* target,
     const float* interaction_normals,
@@ -490,6 +494,18 @@ __global__ void transmission_sequence_jvp_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        const int64_t base = index * 3;
+        if (!path_valid[index]) {
+            t_field_vector[base] = c10::complex<float>(0.0F, 0.0F);
+            t_field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
+            t_field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
+            t_coefficient[index] = c10::complex<float>(0.0F, 0.0F);
+            t_path_field[index] = c10::complex<float>(0.0F, 0.0F);
+            t_path_gain[index] = 0.0F;
+            t_path_length[index] = 0.0F;
+            t_delay[index] = 0.0F;
+            continue;
+        }
         TransmissionChain chain;
         transmission_chain_eval(
             index, depth, source, target, interaction_normals,
@@ -623,6 +639,7 @@ void check_flat_tensor(
 std::pair<int64_t, int64_t> check_transmission_primal(
     const rayd::torch::TransmissionSequenceRequest& request) {
     const auto& source = request.source;
+    const auto& path_valid = request.path_valid;
     const auto& target = request.target;
     const auto& interaction_positions = request.interaction_positions;
     const auto& interaction_normals = request.interaction_normals;
@@ -639,6 +656,7 @@ std::pair<int64_t, int64_t> check_transmission_primal(
     const auto& layer_mu_r = request.layer_mu_r;
 
     check_vec3_table(source, "source");
+    check_flat_tensor(path_valid, "path_valid", at::kBool);
     check_vec3_table(target, "target");
     check_tensor(
         interaction_positions, "interaction_positions", at::kFloat, 3);
@@ -675,6 +693,9 @@ std::pair<int64_t, int64_t> check_transmission_primal(
             interaction_valid.size(1) == depth,
         "transmission event tensors must have shape (N, D)");
     TORCH_CHECK(
+        path_valid.size(0) == count,
+        "path_valid must match source rows");
+    TORCH_CHECK(
         target.size(0) == count && tx_power.size(0) == count &&
             tx_polarization.size(0) == count &&
             rx_polarization.size(0) == count,
@@ -690,6 +711,7 @@ std::pair<int64_t, int64_t> check_transmission_primal(
             tensor.size(0) == layer_total,
             "layer parameter tensors must match layer_thickness_m rows");
     for (const auto& tensor : {
+             path_valid,
              target,
              interaction_positions,
              interaction_normals,
@@ -831,6 +853,7 @@ rayd::torch::field_transmission_sequence_backward(
             launch_blocks(count), kBlockSize, 0, stream>>>(
                 count,
                 depth,
+                primal.path_valid.data_ptr<bool>(),
                 primal.source.data_ptr<float>(),
                 primal.target.data_ptr<float>(),
                 primal.interaction_normals.data_ptr<float>(),
@@ -958,6 +981,7 @@ rayd::torch::field_transmission_sequence_jvp(
             launch_blocks(count), kBlockSize, 0, stream>>>(
                 count,
                 depth,
+                primal.path_valid.data_ptr<bool>(),
                 primal.source.data_ptr<float>(),
                 primal.target.data_ptr<float>(),
                 primal.interaction_normals.data_ptr<float>(),

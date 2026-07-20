@@ -58,6 +58,7 @@ rayd::torch::DiffractionWedgeRequest wedge_request(
     const auto floats = float_options(device);
     const auto masks = bool_options(device);
     rayd::torch::DiffractionWedgeRequest request;
+    request.valid = at::ones({1}, masks);
     request.source = at::tensor(
         {-1.2F, -0.8F, 0.2F}, floats).reshape({1, 3});
     request.target = at::tensor(
@@ -101,6 +102,7 @@ rayd::torch::DiffractionWedgeRequest wedge_request(
 rayd::torch::DiffractionWedgeRequest empty_wedge_request() {
     auto request = wedge_request(true);
 #define EMPTY_ROWS(name) request.name = request.name.narrow(0, 0, 0)
+    EMPTY_ROWS(valid);
     EMPTY_ROWS(source);
     EMPTY_ROWS(target);
     EMPTY_ROWS(edge_position);
@@ -350,6 +352,17 @@ void test_primal_ad_duality_need_and_zero() {
 }
 
 void test_negative_contracts() {
+    auto bad_valid_dtype = wedge_request(true);
+    bad_valid_dtype.valid = at::ones({1}, bad_valid_dtype.source.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_diffraction_wedge(bad_valid_dtype); },
+        "wrong wedge valid dtype must fail");
+    auto bad_valid_shape = wedge_request(true);
+    bad_valid_shape.valid = at::ones({2}, bad_valid_shape.valid.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_diffraction_wedge(bad_valid_shape); },
+        "wrong wedge valid shape must fail");
+
     auto bad_shape = wedge_request(true);
     bad_shape.target = at::zeros({1, 2}, bad_shape.target.options());
     require_throws(
@@ -509,6 +522,38 @@ void test_nondefault_stream_dependency() {
         "wedge backward ignored stream dependency");
 }
 
+void test_invalid_row_short_circuits_poison() {
+    auto primal = wedge_request(true);
+    primal.valid.zero_();
+    primal.source.fill_(std::numeric_limits<float>::quiet_NaN());
+    primal.edge_direction.fill_(std::numeric_limits<float>::quiet_NaN());
+    primal.face0_eps_r.fill_(std::numeric_limits<float>::quiet_NaN());
+    primal.vertex_v0->fill_(std::numeric_limits<float>::quiet_NaN());
+    const auto forward = rayd::torch::field_diffraction_wedge(primal);
+    require(
+        at::count_nonzero(forward.field_vector).item<int64_t>() == 0 &&
+            at::count_nonzero(forward.direction).item<int64_t>() == 0,
+        "invalid poisoned wedge primal outputs must be exactly zero");
+
+    rayd::torch::DiffractionWedgeJvpRequest jvp;
+    jvp.primal = primal;
+    jvp.tangent_frequency = 1.0;
+    const auto tangent = rayd::torch::field_diffraction_wedge_jvp(jvp);
+    require(
+        at::count_nonzero(tangent.tangent_field_vector).item<int64_t>() == 0 &&
+            at::count_nonzero(tangent.tangent_direction).item<int64_t>() == 0,
+        "invalid poisoned wedge JVP outputs must be exactly zero");
+
+    rayd::torch::DiffractionWedgeBackwardRequest backward;
+    backward.primal = primal;
+    backward.grad_field_vector = at::ones(
+        {1, 3}, primal.source.options().dtype(at::kComplexFloat));
+    backward.grad_direction = at::ones({1, 3}, primal.source.options());
+    enable_all_gradients(backward);
+    require_all_gradients_zero(
+        rayd::torch::field_diffraction_wedge_backward(backward));
+}
+
 } // namespace
 
 int main() {
@@ -522,6 +567,8 @@ int main() {
         test_negative_contracts();
         std::cout << "[RUN] test_nondefault_stream_dependency\n";
         test_nondefault_stream_dependency();
+        std::cout << "[RUN] test_invalid_row_short_circuits_poison\n";
+        test_invalid_row_short_circuits_poison();
         std::cout << "rayd::torch pure-wedge direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

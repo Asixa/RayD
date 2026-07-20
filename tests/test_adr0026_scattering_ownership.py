@@ -13,7 +13,7 @@ STABLE_INTEGRATION_HEADER = (
     "backends/torch/include/rayd/torch/integration.h"
 )
 STABLE_INTEGRATION_HEADER_HASH = (
-    "65ae4e8e35cf6067cb320a770a1945e2685feab6af44a2233d4db0cfe6b1f435"
+    "88162039770e3258b3534e6d4d73fe33af432f1bddd352cb5f24be78d42afdf3"
 )
 
 EXPECTED_FAMILIES = {
@@ -50,33 +50,33 @@ EXPECTED_FAMILIES = {
 
 PHASE10B_CONTRACT_HASHES = {
     "backends/torch/include/rayd/torch/rf/scattering.h":
-        "ac95c418860d109aeaa96623131592e4df8887992e5fc25ecab71b4ddbf1f55b",
+        "7a29ff216f11a08256ee271ef5dcad817e4b8379d88bc07772685fa3da439aa9",
     "shared/include/rayd/shared/rf/scattering_table.cuh":
         "38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38",
     "backends/torch/src/torch_ext/rf/scattering.cu":
-        "72fb84a4158652a70c5f4f17e5d1ce61371773cdd54db6835148ee065e474c50",
+        "aae7d33ae78d8886c8d1d1a665336e9027d35a3b2ba180a85b7211cd3ee22e21",
     "backends/torch/src/torch_ext/rf/scattering_table_eval_ad.cu":
-        "e09cb3992737b028222e205318baea1aa070d300f0126def9759edaa17ad5b7c",
+        "fe2046c2a3ba45bb073cb43272a89282593c0c2a1659f4cc7e85d2ebd5335039",
     "backends/torch/src/torch_ext/rf/scattering_ensemble.cu":
-        "be38ff966dd06afe3f1df46d2eb16094c97111c76534e22d5f3fec6685f1f1fc",
+        "ed6f9225e1d987b8624062dafce617755a793d5646f8866bc6106637e8c4d492",
     "backends/torch/src/torch_ext/rf/scattering_ensemble_ad.cu":
-        "8c094b3a6542b1da26e662e38c405ec1d90cf53aaf8934147b0549f66a8fb0ea",
+        "3951fef2cac6759c05b57167a4491cdf421f575843ca33a9e1d761c713237573",
     "backends/torch/src/torch_ext/rf/scattering_patch_integral.cu":
-        "e1d8555874a1832067e92e9f1973cee38d9ce2f18dac230b56bb1c6504c0c08b",
+        "a37459f03879199cb0365a20b0cc06fca5fc24369a7efda858e189d11822af33",
     "backends/torch/src/torch_ext/rf/scattering_patch_integral_ad.cu":
-        "0d3bffe34ecd22656f1c5bdb10a6fe903ad059803547e29ccb95f5fd390858aa",
+        "bf40adb74e029a520162363383ca16c39e4829ee9e0ff3252816b0bcf04bff82",
     "backends/torch/src/torch_ext/rf/scattering_chain_ad_common.cuh":
         "2551c33533dc7ea0a0c1680d67e5432587f8c2f77833d5a717fcb2d20597b507",
     "backends/torch/src/torch_ext/rf/scattering_chain_checks.h":
-        "4f61082059d08112d675613e2e0ff0d8b7489753ffb96aec152aa17ac2409b73",
+        "f848b268bbca8835ac091bc49f223d0f64532925361090bb1409c93d1d50278c",
     "backends/torch/src/torch_ext/rf/scattering_chain_ensemble.cu":
-        "6293c9238fa5c251d23408493fffd0b88cc557f50de84c90519ec1115ca7d9fd",
+        "1121a2f276d982bb2bf6efe3e20aa0d82eb7251e224b7efea8c1099c92e9afe7",
     "backends/torch/src/torch_ext/rf/scattering_chain_ensemble_ad.cu":
-        "a207dbf58b62286b8a58d7f22535900b198f187c7d0bffb2bacce728eaae306e",
+        "554a6ad5cdfd1aac37913e3526e8c5d252ec514db6992eafd7d43882a14956bc",
     "backends/torch/src/torch_ext/rf/scattering_chain_realization.cu":
-        "be9601740ad1dce283708446ebc596b5fd5aca1da8f12421cc077d0dac99d424",
+        "e61dd957af9a2fdc9a5035040c874a12b3834a00cb8285b64e921f1d01cb72b3",
     "backends/torch/src/torch_ext/rf/scattering_chain_realization_ad.cu":
-        "970c579cc9d0c384d28e7aaa8f32200800a1de159de9a0338b2f0bad75f7fa93",
+        "63cf0704157d591307eb788b9de08c22aadd919177f8545e8cb4f8b037bb27bd",
 }
 
 PHASE10B_CUDA_SOURCES = tuple(

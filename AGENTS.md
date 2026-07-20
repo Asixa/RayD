@@ -76,11 +76,18 @@ matrix, resource boundary, activation gates, and stop conditions.
 
 The same-graph Torch C++ boundary has one durable name:
 `rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 2`. Do not add an `integration_v2` forwarding
+numeric `kIntegrationApiVersion = 3`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
 `docs/adr/0028-stable-typed-integration-naming.md`.
+
+Capacity-shaped row operations require a CUDA boolean validity tensor in the
+top-level primal request. Kernels must test it before reading any row payload or
+ID. Invalid primal/JVP rows and supported row gradients are bitwise zero, while
+invalid rows contribute no shared-gradient atomics. Backward and JVP requests
+inherit validity only through their nested primal request; an optional mask or
+implicit all-valid path is forbidden.
 
 ## OptiX Pipeline Guardrail
 

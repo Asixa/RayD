@@ -67,6 +67,7 @@ struct LayerStackJvpRequest {
 LayerStackResult em_layer_stack_jvp(const LayerStackJvpRequest &request);
 
 struct TransmissionSequenceRequest {
+    at::Tensor path_valid;
     at::Tensor source;
     at::Tensor target;
     at::Tensor interaction_positions;

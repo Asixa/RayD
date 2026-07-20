@@ -85,6 +85,10 @@ void require_finite(const at::Tensor& tensor, const std::string& message) {
     require(at::isfinite(tensor).all().item<bool>(), message);
 }
 
+void require_exact_zero(const at::Tensor& tensor, const std::string& message) {
+    require(at::count_nonzero(tensor).item<int64_t>() == 0, message);
+}
+
 template <typename Fn>
 void require_throws(Fn&& fn, const std::string& message) {
     try {
@@ -102,6 +106,7 @@ at::TensorOptions cuda_options(c10::ScalarType dtype) {
 ScatteringTableEvalRequest empty_table_request() {
     const auto options = cuda_options(at::kFloat);
     return {
+        at::empty({0}, cuda_options(at::kBool)),
         at::empty({0, 3}, options),
         at::empty({0, 3}, options),
         at::zeros({2, 2, 2, 2}, options),
@@ -116,6 +121,7 @@ ScatteringEnsembleEvalRequest empty_ensemble_request() {
     const auto vec3 = at::empty({0, 3}, floats);
     const auto f32 = at::empty({0}, floats);
     return {
+        at::empty({0}, cuda_options(at::kBool)),
         vec3,
         f32,
         f32,
@@ -148,6 +154,7 @@ ScatteringPatchIntegralEvalRequest empty_patch_request() {
     const auto longs = cuda_options(at::kLong);
     const auto complex = cuda_options(at::kComplexFloat);
     return {
+        at::empty({0}, cuda_options(at::kBool)),
         at::empty({0, 3, 3}, floats),
         at::empty({0, 3, 2}, floats),
         at::empty({0}, longs),
@@ -172,6 +179,7 @@ ScatteringPatchIntegralEvalRequest empty_patch_request() {
 ScatteringTableEvalRequest nonempty_table_request() {
     const auto floats = cuda_options(at::kFloat);
     return {
+        at::ones({1}, cuda_options(at::kBool)),
         at::tensor({0.8660254F, 0.0F, 0.5F}, floats).reshape({1, 3}),
         at::tensor({0.0F, 0.8660254F, 0.5F}, floats).reshape({1, 3}),
         at::full({2, 2, 2, 2}, 2.0F, floats),
@@ -184,6 +192,7 @@ ScatteringEnsembleEvalRequest nonempty_ensemble_request() {
     const auto ints = cuda_options(at::kInt);
     const auto longs = cuda_options(at::kLong);
     return {
+        at::ones({1}, cuda_options(at::kBool)),
         at::tensor({1.0F, 0.0F, 0.0F}, floats).reshape({1, 3}),
         at::ones({1}, floats),
         at::full({1}, 0.5F, floats),
@@ -216,6 +225,7 @@ ScatteringPatchIntegralEvalRequest nonempty_patch_request() {
     const auto longs = cuda_options(at::kLong);
     const auto complex = cuda_options(at::kComplexFloat);
     return {
+        at::ones({1}, cuda_options(at::kBool)),
         at::tensor(
             {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
             floats).reshape({1, 3, 3}),
@@ -271,6 +281,7 @@ void test_table_empty_contracts() {
 
     const auto floats = cuda_options(at::kFloat);
     ScatteringTableSampleRequest sample{
+        primal.valid,
         primal.wi,
         at::empty({0, 2}, floats),
         at::zeros({2, 2, 2}, floats),
@@ -284,7 +295,7 @@ void test_table_empty_contracts() {
             "empty table sample schema differs");
 
     const auto pdf = scattering_table_pdf(
-        {primal.wi, primal.wo, sample.sample_density, false});
+        {primal.valid, primal.wi, primal.wo, sample.sample_density, false});
     require(pdf.pdf.sizes() == at::IntArrayRef({0}),
             "empty table PDF schema differs");
 }
@@ -394,9 +405,9 @@ void test_table_nonempty_primal_ad_sample_pdf() {
     const auto uniforms = at::tensor({0.25F, 0.25F}, primal.wi.options())
                               .reshape({1, 2});
     const auto sampled = scattering_table_sample(
-        {primal.wi, uniforms, marginal, conditional, density});
+        {primal.valid, primal.wi, uniforms, marginal, conditional, density});
     const auto pdf = scattering_table_pdf(
-        {primal.wi, primal.wo, density, false});
+        {primal.valid, primal.wi, primal.wo, density, false});
 
     c10::cuda::getCurrentCUDAStream(0).synchronize();
     require_close(forward.f_te.item<float>(), 2.0F, "nonempty table TE differs");
@@ -533,7 +544,120 @@ void test_nondefault_stream_dependency() {
         "scattering table eval ignored a non-default-stream dependency");
 }
 
+void test_invalid_rows_short_circuit_poison() {
+    auto table = nonempty_table_request();
+    table.valid.zero_();
+    table.wi.fill_(std::numeric_limits<float>::quiet_NaN());
+    table.wo.fill_(std::numeric_limits<float>::quiet_NaN());
+    const auto table_out = scattering_table_eval(table);
+    require_exact_zero(table_out.f_te, "invalid table TE must be exactly zero");
+    require_exact_zero(table_out.f_tm, "invalid table TM must be exactly zero");
+    ScatteringTableEvalBackwardRequest table_backward;
+    table_backward.primal = table;
+    table_backward.grad_f_te = at::ones({1}, table.wi.options());
+    table_backward.grad_f_tm = at::ones({1}, table.wi.options());
+    table_backward.need_grad_directions = true;
+    table_backward.need_grad_tables = true;
+    const auto table_grad = scattering_table_eval_backward(table_backward);
+    require_exact_zero(*table_grad.grad_wi, "invalid table wi gradient must be zero");
+    require_exact_zero(*table_grad.grad_wo, "invalid table wo gradient must be zero");
+    require_exact_zero(*table_grad.grad_f_te, "invalid table storage gradient must be zero");
+    require_exact_zero(*table_grad.grad_f_tm, "invalid table storage gradient must be zero");
+    ScatteringTableEvalJvpRequest table_jvp;
+    table_jvp.primal = table;
+    table_jvp.tangent_wi = at::full_like(table.wi, 1.0F);
+    table_jvp.tangent_wo = at::full_like(table.wo, 1.0F);
+    const auto table_tangent = scattering_table_eval_jvp(table_jvp);
+    require_exact_zero(table_tangent.tangent_f_te, "invalid table TE JVP must be zero");
+    require_exact_zero(table_tangent.tangent_f_tm, "invalid table TM JVP must be zero");
+
+    const auto marginal = at::ones({2, 2, 2}, table.wi.options());
+    const auto density = at::ones({2, 2, 2, 2}, table.wi.options());
+    const auto uniforms = at::full({1, 2}, std::numeric_limits<float>::quiet_NaN(), table.wi.options());
+    const auto sampled = scattering_table_sample(
+        {table.valid, table.wi, uniforms, marginal, density, density});
+    require_exact_zero(sampled.wo, "invalid table sample direction must be zero");
+    require_exact_zero(sampled.pdf_forward, "invalid table sample PDF must be zero");
+    require_exact_zero(sampled.pdf_reverse, "invalid reverse table sample PDF must be zero");
+    const auto pdf = scattering_table_pdf(
+        {table.valid, table.wi, table.wo, density, false});
+    require_exact_zero(pdf.pdf, "invalid table PDF must be zero");
+
+    auto ensemble = nonempty_ensemble_request();
+    ensemble.valid.zero_();
+    ensemble.material_id.fill_(std::numeric_limits<int>::max());
+    ensemble.wo_rows.fill_(std::numeric_limits<float>::quiet_NaN());
+    const auto ensemble_out = scattering_ensemble_eval(ensemble);
+    require_exact_zero(ensemble_out.gain, "invalid ensemble gain must be zero");
+    require_exact_zero(ensemble_out.amplitude, "invalid ensemble amplitude must be zero");
+    require_exact_zero(ensemble_out.length, "invalid ensemble length must be zero");
+    require_exact_zero(ensemble_out.keep, "invalid ensemble keep must be false");
+    ScatteringEnsembleEvalBackwardRequest ensemble_backward;
+    ensemble_backward.primal = ensemble;
+    ensemble_backward.grad_gain = at::ones({1}, ensemble.wo_rows.options());
+    ensemble_backward.need_grad_rows = true;
+    ensemble_backward.need_grad_samples = true;
+    ensemble_backward.need_grad_tables = true;
+    ensemble_backward.need_grad_coefficient = true;
+    const auto ensemble_grad = scattering_ensemble_eval_backward(ensemble_backward);
+    require_exact_zero(*ensemble_grad.grad_wo_rows, "invalid ensemble row gradient must be zero");
+    require_exact_zero(*ensemble_grad.grad_n_o, "invalid ensemble sample gradient must be zero");
+    require_exact_zero(*ensemble_grad.grad_f_te, "invalid ensemble table gradient must be zero");
+    require_exact_zero(*ensemble_grad.grad_coefficient, "invalid ensemble coefficient gradient must be zero");
+    ScatteringEnsembleEvalJvpRequest ensemble_jvp;
+    ensemble_jvp.primal = ensemble;
+    ensemble_jvp.tangent_coefficient = 1.0;
+    const auto ensemble_tangent = scattering_ensemble_eval_jvp(ensemble_jvp);
+    require_exact_zero(ensemble_tangent.tangent_gain, "invalid ensemble gain JVP must be zero");
+    require_exact_zero(ensemble_tangent.tangent_amplitude, "invalid ensemble amplitude JVP must be zero");
+    require_exact_zero(ensemble_tangent.tangent_length, "invalid ensemble length JVP must be zero");
+
+    auto patch = nonempty_patch_request();
+    patch.valid.zero_();
+    patch.rows.fill_(std::numeric_limits<int64_t>::max());
+    patch.d_i.fill_(std::numeric_limits<float>::quiet_NaN());
+    const auto patch_out = scattering_patch_integral_eval(patch);
+    require_exact_zero(patch_out.total, "invalid patch total must be zero");
+    require_exact_zero(patch_out.integral, "invalid patch integral must be zero");
+    require_exact_zero(patch_out.row_value, "invalid patch row value must be zero");
+    ScatteringPatchIntegralEvalBackwardRequest patch_backward;
+    patch_backward.primal = patch;
+    patch_backward.grad_total = at::ones({}, cuda_options(at::kComplexFloat));
+    patch_backward.need_grad_heights = true;
+    patch_backward.need_grad_jones = true;
+    patch_backward.need_grad_geometry = true;
+    patch_backward.need_grad_k0 = true;
+    const auto patch_grad = scattering_patch_integral_eval_backward(patch_backward);
+    require_exact_zero(*patch_grad.grad_heights, "invalid patch height gradient must be zero");
+    require_exact_zero(*patch_grad.grad_r_te, "invalid patch Jones gradient must be zero");
+    require_exact_zero(*patch_grad.grad_d_i, "invalid patch geometry gradient must be zero");
+    require_exact_zero(*patch_grad.grad_k0, "invalid patch k0 gradient must be zero");
+    ScatteringPatchIntegralEvalJvpRequest patch_jvp;
+    patch_jvp.primal = patch;
+    patch_jvp.tangent_k0 = 1.0;
+    const auto patch_tangent = scattering_patch_integral_eval_jvp(patch_jvp);
+    require_exact_zero(patch_tangent.tangent_total, "invalid patch JVP must be zero");
+}
+
 void test_invalid_contracts_fail_loudly() {
+    auto bad_table_valid_dtype = nonempty_table_request();
+    bad_table_valid_dtype.valid = at::ones({1}, bad_table_valid_dtype.wi.options());
+    require_throws(
+        [&] { (void)scattering_table_eval(bad_table_valid_dtype); },
+        "wrong table valid dtype must fail loudly");
+    auto bad_ensemble_valid_shape = nonempty_ensemble_request();
+    bad_ensemble_valid_shape.valid = at::ones(
+        {2}, bad_ensemble_valid_shape.valid.options());
+    require_throws(
+        [&] { (void)scattering_ensemble_eval(bad_ensemble_valid_shape); },
+        "wrong ensemble valid shape must fail loudly");
+    auto bad_patch_valid_shape = nonempty_patch_request();
+    bad_patch_valid_shape.valid = at::ones(
+        {2}, bad_patch_valid_shape.valid.options());
+    require_throws(
+        [&] { (void)scattering_patch_integral_eval(bad_patch_valid_shape); },
+        "wrong patch valid shape must fail loudly");
+
     auto cpu = empty_table_request();
     cpu.wi = cpu.wi.cpu();
     require_throws(
@@ -659,6 +783,8 @@ int main() {
         test_patch_nonempty_primal_ad();
         std::cout << "[RUN] test_nondefault_stream_dependency\n";
         test_nondefault_stream_dependency();
+        std::cout << "[RUN] test_invalid_rows_short_circuit_poison\n";
+        test_invalid_rows_short_circuit_poison();
         std::cout << "[RUN] test_invalid_contracts_fail_loudly\n";
         test_invalid_contracts_fail_loudly();
         std::cout << "rayd::torch scattering direct contracts passed\n";

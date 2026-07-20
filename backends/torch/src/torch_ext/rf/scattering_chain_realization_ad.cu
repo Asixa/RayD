@@ -389,6 +389,7 @@ struct TangentSeed {
 
 __global__ void chain_realization_backward_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris,
     const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
@@ -448,6 +449,7 @@ __global__ void chain_realization_backward_kernel(
 
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) return;
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -891,6 +893,7 @@ __device__ void dual_transport_leg(
 
 __global__ void chain_realization_jvp_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris, const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
     const float* __restrict__ d_i, const float* __restrict__ d_o,
@@ -941,6 +944,14 @@ __global__ void chain_realization_jvp_kernel(
 
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_t_row_value[row] = {0.0f, 0.0f};
+            out_t_path_field[row] = {0.0f, 0.0f};
+            out_t_path_gain[row] = 0.0f;
+        }
+        return;
+    }
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -1177,6 +1188,7 @@ __global__ void chain_realization_jvp_total_kernel(
 // Declared in scattering_chain_realization.cu (shared forward validation).
 int64_t scattering_chain_realization_check(
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&,
+    const at::Tensor&,
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&,
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&,
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&,
@@ -1189,6 +1201,7 @@ int64_t scattering_chain_realization_check(
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
 
 rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_realization_eval_backward_impl(
+    at::Tensor valid,
     at::Tensor patch_tris, at::Tensor patch_uvs, at::Tensor rows,
     at::Tensor d_i, at::Tensor d_o, at::Tensor n_rows,
     at::Tensor source, at::Tensor vertex, at::Tensor target,
@@ -1212,7 +1225,7 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
     bool need_grad_chain2, bool need_grad_geometry, bool need_grad_k0,
     bool need_grad_frequency) {
     const int64_t row_count = scattering_chain_realization_check(
-        patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
+        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
         c1_positions, c1_normals, c1_eps_r, c1_sigma_e, c1_mu_r, c1_gain,
         c1_thickness, c1_depth, c2_positions, c2_normals, c2_eps_r, c2_sigma_e,
         c2_mu_r, c2_gain, c2_thickness, c2_depth, tx_pol, rx_pol, l1_rows,
@@ -1272,6 +1285,7 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
         auto fp = [](at::Tensor& t) { return t.defined() ? t.data_ptr<float>() : nullptr; };
         chain_realization_backward_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), source.data_ptr<float>(),
@@ -1333,6 +1347,7 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
 }
 
 rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realization_eval_jvp_impl(
+    at::Tensor valid,
     at::Tensor patch_tris, at::Tensor patch_uvs, at::Tensor rows,
     at::Tensor d_i, at::Tensor d_o, at::Tensor n_rows,
     at::Tensor source, at::Tensor vertex, at::Tensor target,
@@ -1364,7 +1379,7 @@ rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realizatio
     std::optional<at::Tensor> t_centroids,
     double tangent_k0, double tangent_frequency) {
     const int64_t row_count = scattering_chain_realization_check(
-        patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
+        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
         c1_positions, c1_normals, c1_eps_r, c1_sigma_e, c1_mu_r, c1_gain,
         c1_thickness, c1_depth, c2_positions, c2_normals, c2_eps_r, c2_sigma_e,
         c2_mu_r, c2_gain, c2_thickness, c2_depth, tx_pol, rx_pol, l1_rows,
@@ -1407,6 +1422,7 @@ rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realizatio
         auto t_row_value = at::empty({row_count}, complex_options);
         chain_realization_jvp_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), source.data_ptr<float>(),
@@ -1459,7 +1475,7 @@ ScatteringChainRealizationEvalBackwardResult scattering_chain_realization_eval_b
     const ScatteringChainRealizationEvalBackwardRequest& q) {
     const auto& r = q.primal;
     return scattering_chain_realization_eval_backward_impl(
-        r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
+        r.valid, r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
         r.source, r.vertex, r.target,
         r.c1_positions, r.c1_normals, r.c1_eps_r, r.c1_sigma_e, r.c1_mu_r,
         r.c1_gain, r.c1_thickness, r.c1_depth,
@@ -1479,7 +1495,7 @@ ScatteringChainRealizationEvalJvpResult scattering_chain_realization_eval_jvp(
     const ScatteringChainRealizationEvalJvpRequest& q) {
     const auto& r = q.primal;
     return scattering_chain_realization_eval_jvp_impl(
-        r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
+        r.valid, r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
         r.source, r.vertex, r.target,
         r.c1_positions, r.c1_normals, r.c1_eps_r, r.c1_sigma_e, r.c1_mu_r,
         r.c1_gain, r.c1_thickness, r.c1_depth,

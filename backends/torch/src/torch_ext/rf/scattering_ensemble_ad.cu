@@ -201,6 +201,7 @@ __device__ __forceinline__ void recompute_row(
 
 __global__ void ensemble_eval_backward_kernel(
     int64_t count, float coef,
+    const bool* __restrict__ valid,
     const float* __restrict__ wo_rows,
     const float* __restrict__ r2_rows,
     const float* __restrict__ cos_o_rows,
@@ -244,6 +245,16 @@ __global__ void ensemble_eval_backward_kernel(
     bool need_rows, bool need_samples, bool need_tables, bool need_coef) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            if (need_rows) {
+                out_grad_wo_rows[row * 3] = 0.0f;
+                out_grad_wo_rows[row * 3 + 1] = 0.0f;
+                out_grad_wo_rows[row * 3 + 2] = 0.0f;
+                out_grad_r2_rows[row] = 0.0f;
+                out_grad_cos_o_rows[row] = 0.0f;
+            }
+            continue;
+        }
         RowPrimal p;
         recompute_row(row, coef, wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r,
                       wi_local, cos_i, r1, a_te2, a_tm2, weights, material_id,
@@ -352,6 +363,7 @@ __global__ void ensemble_eval_backward_kernel(
 
 __global__ void ensemble_eval_jvp_kernel(
     int64_t count, float coef, float tangent_coef,
+    const bool* __restrict__ valid,
     const float* __restrict__ wo_rows,
     const float* __restrict__ r2_rows,
     const float* __restrict__ cos_o_rows,
@@ -393,6 +405,12 @@ __global__ void ensemble_eval_jvp_kernel(
     float* __restrict__ out_tangent_length) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            out_tangent_gain[row] = 0.0f;
+            out_tangent_amplitude[row] = 0.0f;
+            out_tangent_length[row] = 0.0f;
+            continue;
+        }
         RowPrimal p;
         recompute_row(row, coef, wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r,
                       wi_local, cos_i, r1, a_te2, a_tm2, weights, material_id,
@@ -484,7 +502,7 @@ __global__ void ensemble_eval_jvp_kernel(
 // Mirror the forward entry's validation of the 22 primal tensors, returning the
 // row/sample counts.
 void check_ensemble_inputs(
-    const at::Tensor& wo_rows, const at::Tensor& r2_rows, const at::Tensor& cos_o_rows,
+    const at::Tensor& valid, const at::Tensor& wo_rows, const at::Tensor& r2_rows, const at::Tensor& cos_o_rows,
     const at::Tensor& n_o, const at::Tensor& t1r, const at::Tensor& t2r,
     const at::Tensor& wi_local, const at::Tensor& cos_i, const at::Tensor& r1,
     const at::Tensor& a_te2, const at::Tensor& a_tm2, const at::Tensor& weights,
@@ -497,6 +515,7 @@ void check_ensemble_inputs(
     using rayd::torch::detail::check_tensor;
     using rayd::torch::detail::check_flat_tensor;
     using rayd::torch::detail::check_vec3_table;
+    check_flat_tensor(valid, "valid", at::kBool);
     check_vec3_table(wo_rows, "wo_rows");
     count = wo_rows.size(0);
     check_flat_tensor(r2_rows, "r2_rows", at::kFloat);
@@ -522,7 +541,7 @@ void check_ensemble_inputs(
     check_tensor(table_dims, "table_dims", at::kInt, 2);
     check_flat_tensor(material_slot, "material_slot", at::kInt);
     TORCH_CHECK(
-        r2_rows.size(0) == count && cos_o_rows.size(0) == count &&
+        valid.size(0) == count && r2_rows.size(0) == count && cos_o_rows.size(0) == count &&
             rc_idx.size(0) == count && sc_idx.size(0) == count,
         "per-row arrays must match wo_rows rows");
     TORCH_CHECK(
@@ -533,7 +552,7 @@ void check_ensemble_inputs(
             material_id.size(0) == samples && backup_axis.size(0) == samples,
         "per-sample arrays must match n_o rows");
     TORCH_CHECK(table_dims.size(1) == 4, "table_dims must have shape (M, 4)");
-    for (const auto& t : {r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local, cos_i, r1,
+    for (const auto& t : {valid, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local, cos_i, r1,
                           a_te2, a_tm2, weights, material_id, backup_axis, rx_pol,
                           rc_idx, sc_idx, fte_flat, ftm_flat, table_offset,
                           table_dims, material_slot}) {
@@ -545,6 +564,7 @@ void check_ensemble_inputs(
 }  // namespace
 
 rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backward_impl(
+    at::Tensor valid,
     at::Tensor wo_rows,
     at::Tensor r2_rows,
     at::Tensor cos_o_rows,
@@ -578,7 +598,7 @@ rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backw
     bool need_grad_coef) {
     (void)threshold;  // topology (keep) is frozen non-differentiable.
     int64_t count = 0, samples = 0;
-    check_ensemble_inputs(wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local,
+    check_ensemble_inputs(valid, wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local,
                           cos_i, r1, a_te2, a_tm2, weights, material_id,
                           backup_axis, rx_pol, rc_idx, sc_idx, fte_flat, ftm_flat,
                           table_offset, table_dims, material_slot, count, samples);
@@ -622,6 +642,7 @@ rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backw
             at::cuda::getCurrentCUDAStream(wo_rows.get_device()).stream();
         ensemble_eval_backward_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, static_cast<float>(coef),
+            valid.data_ptr<bool>(),
             wo_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
             cos_o_rows.data_ptr<float>(), n_o.data_ptr<float>(),
             t1r.data_ptr<float>(), t2r.data_ptr<float>(),
@@ -671,6 +692,7 @@ rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backw
 }
 
 rayd::torch::ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp_impl(
+    at::Tensor valid,
     at::Tensor wo_rows,
     at::Tensor r2_rows,
     at::Tensor cos_o_rows,
@@ -712,7 +734,7 @@ rayd::torch::ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp_impl(
     double tangent_coef) {
     (void)threshold;  // topology (keep) is frozen non-differentiable.
     int64_t count = 0, samples = 0;
-    check_ensemble_inputs(wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local,
+    check_ensemble_inputs(valid, wo_rows, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local,
                           cos_i, r1, a_te2, a_tm2, weights, material_id,
                           backup_axis, rx_pol, rc_idx, sc_idx, fte_flat, ftm_flat,
                           table_offset, table_dims, material_slot, count, samples);
@@ -754,6 +776,7 @@ rayd::torch::ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp_impl(
             at::cuda::getCurrentCUDAStream(wo_rows.get_device()).stream();
         ensemble_eval_jvp_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, static_cast<float>(coef), static_cast<float>(tangent_coef),
+            valid.data_ptr<bool>(),
             wo_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
             cos_o_rows.data_ptr<float>(), n_o.data_ptr<float>(),
             t1r.data_ptr<float>(), t2r.data_ptr<float>(),
@@ -782,6 +805,7 @@ rayd::torch::scattering_ensemble_eval_backward(
     const ScatteringEnsembleEvalBackwardRequest& request) {
     const auto& p = request.primal;
     return scattering_ensemble_eval_backward_impl(
+        p.valid,
         p.wo_rows, p.r2_rows, p.cos_o_rows, p.n_o, p.t1r, p.t2r,
         p.wi_local, p.cos_i, p.r1, p.a_te2, p.a_tm2, p.weights,
         p.material_id, p.backup_axis, p.rx_pol, p.rc_idx, p.sc_idx,
@@ -797,6 +821,7 @@ rayd::torch::scattering_ensemble_eval_jvp(
     const ScatteringEnsembleEvalJvpRequest& request) {
     const auto& p = request.primal;
     return scattering_ensemble_eval_jvp_impl(
+        p.valid,
         p.wo_rows, p.r2_rows, p.cos_o_rows, p.n_o, p.t1r, p.t2r,
         p.wi_local, p.cos_i, p.r1, p.a_te2, p.a_tm2, p.weights,
         p.material_id, p.backup_axis, p.rx_pol, p.rc_idx, p.sc_idx,

@@ -55,6 +55,7 @@ __device__ __forceinline__ c10::complex<float> to_complex(
 __global__ void transmission_sequence_kernel(
     int64_t count,
     int64_t depth,
+    const bool* path_valid,
     const float* source,
     const float* target,
     const float* interaction_normals,
@@ -81,6 +82,21 @@ __global__ void transmission_sequence_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        const int64_t base = index * 3;
+        if (!path_valid[index]) {
+            field_vector[base] = c10::complex<float>(0.0F, 0.0F);
+            field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
+            field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
+            coefficient[index] = c10::complex<float>(0.0F, 0.0F);
+            path_field[index] = c10::complex<float>(0.0F, 0.0F);
+            path_gain[index] = 0.0F;
+            path_length[index] = 0.0F;
+            delay[index] = 0.0F;
+            direction_out[base] = 0.0F;
+            direction_out[base + 1] = 0.0F;
+            direction_out[base + 2] = 0.0F;
+            continue;
+        }
         const field::float3a source_value = load3(source, index);
         const field::float3a target_value = load3(target, index);
         const field::float3a offset = field::f3_sub(target_value, source_value);
@@ -93,14 +109,14 @@ __global__ void transmission_sequence_kernel(
         field::Complex3 value = field::cplx_scale_real(
             tx_axis, field::cplx(1.0f, 0.0f));
         float carrier_length = total_length;
-        bool path_valid = true;
+        bool chain_valid = true;
         for (int64_t wall = 0; wall < depth; ++wall) {
             const int64_t scalar = index * depth + wall;
             if (!interaction_valid[scalar])
                 continue;
             const int material = interaction_material_id[scalar];
             if (material < 0 || static_cast<int64_t>(material) >= material_count) {
-                path_valid = false;
+                chain_valid = false;
                 break;
             }
             // s/p basis of the wall; outgoing direction equals incident
@@ -147,9 +163,8 @@ __global__ void transmission_sequence_kernel(
                 transport::precise_neg_kd(wave_number, carrier_length)),
             amplitude);
         value = field::c3_scale(value, propagation);
-        if (!path_valid)
+        if (!chain_valid)
             value = field::c3_zero();
-        const int64_t base = index * 3;
         field_vector[base] = to_complex(value.x);
         field_vector[base + 1] = to_complex(value.y);
         field_vector[base + 2] = to_complex(value.z);
@@ -194,6 +209,7 @@ void check_flat_tensor(
 std::pair<int64_t, int64_t> check_transmission_primal(
     const rayd::torch::TransmissionSequenceRequest& request) {
     check_vec3_table(request.source, "source");
+    check_flat_tensor(request.path_valid, "path_valid", at::kBool);
     check_vec3_table(request.target, "target");
     check_tensor(
         request.interaction_positions, "interaction_positions", at::kFloat, 3);
@@ -238,6 +254,9 @@ std::pair<int64_t, int64_t> check_transmission_primal(
             request.interaction_valid.size(1) == depth,
         "interaction_valid must have shape (N, D)");
     TORCH_CHECK(
+        request.path_valid.size(0) == count,
+        "path_valid must match source rows");
+    TORCH_CHECK(
         request.target.size(0) == count &&
             request.tx_power.size(0) == count &&
             request.tx_polarization.size(0) == count &&
@@ -256,6 +275,7 @@ std::pair<int64_t, int64_t> check_transmission_primal(
             tensor.size(0) == layer_total,
             "layer parameter tensors must match layer_thickness_m rows");
     for (const auto& tensor : {
+             request.path_valid,
              request.target,
              request.interaction_positions,
              request.interaction_normals,
@@ -303,6 +323,7 @@ rayd::torch::field_transmission_sequence(
             launch_blocks(count), kBlockSize, 0, stream>>>(
                 count,
                 depth,
+                request.path_valid.data_ptr<bool>(),
                 request.source.data_ptr<float>(),
                 request.target.data_ptr<float>(),
                 request.interaction_normals.data_ptr<float>(),

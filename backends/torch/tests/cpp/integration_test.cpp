@@ -23,7 +23,7 @@
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 2);
+static_assert(rayd::torch::kIntegrationApiVersion == 3);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);
@@ -1617,6 +1617,7 @@ rayd::torch::TransmissionSequenceRequest transmission_request(
     const auto ints = at::TensorOptions().dtype(at::kInt).device(at::kCUDA);
     const auto bools = at::TensorOptions().dtype(at::kBool).device(at::kCUDA);
     return {
+        at::ones({1}, bools),
         at::tensor({0.0F, 0.0F, 2.0F}, floats).reshape({1, 3}),
         at::tensor({0.0F, 0.0F, -2.0F}, floats).reshape({1, 3}),
         at::zeros({1, 1, 3}, floats),
@@ -1713,6 +1714,7 @@ void require_transmission_jvp_schema(
 
 void test_transmission_sequence_primal_and_depth_contracts() {
     auto empty = transmission_request(false);
+    empty.path_valid = empty.path_valid.narrow(0, 0, 0);
     empty.source = empty.source.narrow(0, 0, 0);
     empty.target = empty.target.narrow(0, 0, 0);
     empty.interaction_positions = empty.interaction_positions.narrow(0, 0, 0);
@@ -1951,6 +1953,16 @@ void test_transmission_sequence_ad_duality_and_optional_schema() {
 
 void test_transmission_sequence_negative_and_stream_contracts() {
     auto primal = transmission_request(true);
+    auto bad_path_valid_dtype = primal;
+    bad_path_valid_dtype.path_valid = at::ones({1}, primal.source.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_path_valid_dtype); },
+        "transmission path_valid dtype mismatch must fail loudly");
+    auto bad_path_valid_shape = primal;
+    bad_path_valid_shape.path_valid = at::ones({2}, primal.path_valid.options());
+    require_throws(
+        [&] { (void)rayd::torch::field_transmission_sequence(bad_path_valid_shape); },
+        "transmission path_valid shape mismatch must fail loudly");
     const auto stream = c10::cuda::getStreamFromPool(false, 0);
     c10::cuda::CUDAStreamGuard guard(stream);
     const auto result = rayd::torch::field_transmission_sequence(primal);
@@ -2207,6 +2219,60 @@ void test_transmission_sequence_nondefault_stream_dependency() {
         "transmission backward ignored producer-consumer stream dependency");
 }
 
+void test_transmission_path_valid_short_circuits_poison() {
+    auto primal = transmission_request(true);
+    primal.path_valid.zero_();
+    primal.source.fill_(std::numeric_limits<float>::quiet_NaN());
+    primal.interaction_material_id.fill_(std::numeric_limits<int>::max());
+    primal.layer_offset.fill_(std::numeric_limits<int>::max());
+    const auto forward = rayd::torch::field_transmission_sequence(primal);
+    at::cuda::getCurrentCUDAStream().synchronize();
+    for (const auto& tensor : {
+             forward.field_vector, forward.coefficient, forward.path_field,
+             forward.path_gain, forward.path_length_m, forward.delay_s,
+             forward.direction})
+        require(
+            at::count_nonzero(tensor).item<int64_t>() == 0,
+            "invalid poisoned transmission primal output must be exactly zero");
+
+    rayd::torch::TransmissionSequenceJvpRequest jvp;
+    jvp.primal = primal;
+    jvp.tangent_frequency = 1.0;
+    const auto tangent = rayd::torch::field_transmission_sequence_jvp(jvp);
+    at::cuda::getCurrentCUDAStream().synchronize();
+    for (const auto& tensor : {
+             tangent.field_vector, tangent.coefficient, tangent.path_field,
+             tangent.path_gain, tangent.path_length_m, tangent.delay_s})
+        require(
+            at::count_nonzero(tensor).item<int64_t>() == 0,
+            "invalid poisoned transmission JVP output must be exactly zero");
+
+    rayd::torch::TransmissionSequenceBackwardRequest backward;
+    backward.primal = primal;
+    backward.grad_field_vector = at::ones(
+        {1, 3}, primal.source.options().dtype(at::kComplexFloat));
+    backward.grad_path_gain = at::ones({1}, primal.source.options());
+    backward.need_grad_layer_thickness_m = true;
+    backward.need_grad_layer_eps_r = true;
+    backward.need_grad_layer_sigma_e = true;
+    backward.need_grad_frequency = true;
+    backward.need_grad_geometry = true;
+    const auto gradients =
+        rayd::torch::field_transmission_sequence_backward(backward);
+    at::cuda::getCurrentCUDAStream().synchronize();
+    require(
+        !gradients.grad_interaction_positions.has_value(),
+        "transmission interaction-position VJP remains intentionally unsupported");
+    for (const auto* tensor : {
+             &*gradients.grad_layer_thickness_m, &*gradients.grad_layer_eps_r,
+             &*gradients.grad_layer_sigma_e, &*gradients.grad_frequency,
+             &*gradients.grad_source, &*gradients.grad_target,
+             &*gradients.grad_interaction_normals})
+        require(
+            at::count_nonzero(*tensor).item<int64_t>() == 0,
+            "invalid poisoned transmission gradient must be exactly zero");
+}
+
 } // namespace
 
 int main() {
@@ -2248,6 +2314,8 @@ int main() {
         test_transmission_sequence_negative_and_stream_contracts();
         std::cout << "[RUN] test_transmission_sequence_nondefault_stream_dependency" << std::endl;
         test_transmission_sequence_nondefault_stream_dependency();
+        std::cout << "[RUN] test_transmission_path_valid_short_circuits_poison" << std::endl;
+        test_transmission_path_valid_short_circuits_poison();
         std::cout << "rayd::torch integration direct contracts passed\n";
         return 0;
     } catch (const std::exception &error) {

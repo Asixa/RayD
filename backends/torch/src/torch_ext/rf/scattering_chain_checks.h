@@ -39,6 +39,8 @@ inline int64_t check_scattering_chain_ensemble_request(
     const ScatteringChainEnsembleEvalRequest& r) {
     check_vec3_table(r.tx_pol, "tx_pol");
     const int64_t rows = r.tx_pol.size(0);
+    check_flat_tensor(r.valid, "valid", at::kBool);
+    TORCH_CHECK(r.valid.size(0) == rows, "valid must have shape (R,)");
     for (const auto& tensor : {
              r.rx_pol, r.source, r.vertex, r.target, r.n_o, r.t1r, r.t2r,
              r.backup_axis, r.wi_local, r.d_i, r.d_o}) {
@@ -74,7 +76,7 @@ inline int64_t check_scattering_chain_ensemble_request(
     TORCH_CHECK(r.frequency_hz > 0.0, "frequency_hz must be positive");
 
     for (const auto& tensor : {
-             r.rx_pol, r.source, r.vertex, r.target,
+             r.valid, r.rx_pol, r.source, r.vertex, r.target,
              r.c1_positions, r.c1_normals, r.c1_eps_r, r.c1_sigma_e,
              r.c1_mu_r, r.c1_gain, r.c1_thickness, r.c1_depth,
              r.c2_positions, r.c2_normals, r.c2_eps_r, r.c2_sigma_e,

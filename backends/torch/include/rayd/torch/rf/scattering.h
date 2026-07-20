@@ -7,6 +7,7 @@
 namespace rayd::torch {
 
 struct ScatteringTableEvalRequest {
+    at::Tensor valid;
     at::Tensor wi;
     at::Tensor wo;
     at::Tensor f_te;
@@ -56,6 +57,7 @@ ScatteringTableEvalJvpResult scattering_table_eval_jvp(
     const ScatteringTableEvalJvpRequest& request);
 
 struct ScatteringTableSampleRequest {
+    at::Tensor valid;
     at::Tensor wi;
     at::Tensor uniforms;
     at::Tensor marginal_cdf;
@@ -73,6 +75,7 @@ ScatteringTableSampleResult scattering_table_sample(
     const ScatteringTableSampleRequest& request);
 
 struct ScatteringTablePdfRequest {
+    at::Tensor valid;
     at::Tensor wi;
     at::Tensor wo;
     at::Tensor sample_density;
@@ -87,6 +90,7 @@ ScatteringTablePdfResult scattering_table_pdf(
     const ScatteringTablePdfRequest& request);
 
 struct ScatteringEnsembleEvalRequest {
+    at::Tensor valid;
     at::Tensor wo_rows;
     at::Tensor r2_rows;
     at::Tensor cos_o_rows;
@@ -184,6 +188,7 @@ ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp(
     const ScatteringEnsembleEvalJvpRequest& request);
 
 struct ScatteringPatchIntegralEvalRequest {
+    at::Tensor valid;
     at::Tensor patch_tris;
     at::Tensor patch_uvs;
     at::Tensor rows;
@@ -258,6 +263,7 @@ ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval_jvp(
     const ScatteringPatchIntegralEvalJvpRequest& request);
 
 struct ScatteringChainEnsembleEvalRequest {
+    at::Tensor valid;
     at::Tensor tx_pol;
     at::Tensor rx_pol;
     at::Tensor source;
@@ -380,6 +386,7 @@ ScatteringChainEnsembleEvalJvpResult scattering_chain_ensemble_eval_jvp(
     const ScatteringChainEnsembleEvalJvpRequest& request);
 
 struct ScatteringChainRealizationEvalRequest {
+    at::Tensor valid;
     at::Tensor patch_tris;
     at::Tensor patch_uvs;
     at::Tensor rows;

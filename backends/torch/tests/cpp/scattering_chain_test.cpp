@@ -10,6 +10,7 @@
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -67,6 +68,10 @@ void require_finite(const at::Tensor& tensor, const std::string& message) {
     require(at::isfinite(tensor).all().item<bool>(), message);
 }
 
+void require_exact_zero(const at::Tensor& tensor, const std::string& message) {
+    require(at::count_nonzero(tensor).item<int64_t>() == 0, message);
+}
+
 at::TensorOptions cuda_options(c10::ScalarType dtype) {
     return at::TensorOptions().dtype(dtype).device(at::Device(at::kCUDA, 0));
 }
@@ -90,6 +95,7 @@ ScatteringChainEnsembleEvalRequest ensemble_request(int64_t rows = 1) {
     const auto depth = at::zeros({rows}, i32);
     const auto scalar_one = at::ones({rows}, f32);
     return {
+        at::ones({rows}, cuda_options(at::kBool)),
         repeated_vec3({1.0F, 0.0F, 0.0F}, rows),
         repeated_vec3({1.0F, 0.0F, 0.0F}, rows),
         repeated_vec3({0.0F, 0.0F, 1.0F}, rows),
@@ -134,6 +140,7 @@ ScatteringChainRealizationEvalRequest realization_request(int64_t rows = 1) {
         {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
         f32).reshape({1, 3, 2});
     return {
+        at::ones({rows}, cuda_options(at::kBool)),
         patch_tris, patch_uvs, at::zeros({rows}, i64),
         repeated_vec3({0.0F, 0.0F, -1.0F}, rows),
         repeated_vec3({0.0F, 0.0F, 1.0F}, rows),
@@ -444,6 +451,19 @@ void test_zero_rows() {
 }
 
 void test_dmax_and_optional_contracts_fail_loudly() {
+    auto bad_ensemble_valid_dtype = ensemble_request();
+    bad_ensemble_valid_dtype.valid = at::ones(
+        {1}, bad_ensemble_valid_dtype.tx_pol.options());
+    require_throws(
+        [&] { (void)scattering_chain_ensemble_eval(bad_ensemble_valid_dtype); },
+        "wrong chain ensemble valid dtype must fail loudly");
+    auto bad_realization_valid_shape = realization_request();
+    bad_realization_valid_shape.valid = at::ones(
+        {2}, bad_realization_valid_shape.valid.options());
+    require_throws(
+        [&] { (void)scattering_chain_realization_eval(bad_realization_valid_shape); },
+        "wrong chain realization valid shape must fail loudly");
+
     auto ensemble = ensemble_request();
     ensemble.c1_positions = at::zeros({1, 9, 3}, ensemble.tx_pol.options());
     require_throws(
@@ -567,6 +587,82 @@ void test_nondefault_stream_dependency() {
             "chain ensemble ignored a non-default-stream dependency");
 }
 
+void test_sparse_invalid_rows_short_circuit_poison() {
+    auto ensemble = ensemble_request(2);
+    ensemble.valid.select(0, 1).fill_(false);
+    ensemble.source.select(0, 1).fill_(std::numeric_limits<float>::quiet_NaN());
+    ensemble.material_id.select(0, 1).fill_(std::numeric_limits<int>::max());
+    const auto ensemble_forward = scattering_chain_ensemble_eval(ensemble);
+    require_finite(ensemble_forward.gain.select(0, 0), "valid sparse ensemble row must be finite");
+    require_exact_zero(ensemble_forward.gain.select(0, 1), "invalid sparse ensemble gain must be zero");
+    require_exact_zero(ensemble_forward.amplitude.select(0, 1), "invalid sparse ensemble amplitude must be zero");
+    require_exact_zero(ensemble_forward.length.select(0, 1), "invalid sparse ensemble length must be zero");
+    require_exact_zero(ensemble_forward.keep.select(0, 1), "invalid sparse ensemble keep must be false");
+    ScatteringChainEnsembleEvalBackwardRequest ensemble_backward;
+    ensemble_backward.primal = ensemble;
+    ensemble_backward.grad_gain = at::ones({2}, ensemble.tx_pol.options());
+    ensemble_backward.need_grad_chain1 = true;
+    ensemble_backward.need_grad_chain2 = true;
+    ensemble_backward.need_grad_tables = true;
+    ensemble_backward.need_grad_coefficient = true;
+    ensemble_backward.need_grad_frequency = true;
+    const auto ensemble_grad = scattering_chain_ensemble_eval_backward(ensemble_backward);
+    for (const auto* tensor : {
+             &*ensemble_grad.grad_c1_eps_r, &*ensemble_grad.grad_c2_eps_r,
+             &*ensemble_grad.grad_f_te, &*ensemble_grad.grad_f_tm,
+             &*ensemble_grad.grad_coefficient, &*ensemble_grad.grad_frequency})
+        require_finite(*tensor, "invalid sparse ensemble row contaminated a shared gradient");
+    require_exact_zero(
+        ensemble_grad.grad_c1_eps_r->select(0, 1),
+        "invalid sparse ensemble chain gradient must be zero");
+    ScatteringChainEnsembleEvalJvpRequest ensemble_jvp;
+    ensemble_jvp.primal = ensemble;
+    ensemble_jvp.tangent_coefficient = 1.0;
+    const auto ensemble_tangent = scattering_chain_ensemble_eval_jvp(ensemble_jvp);
+    require_exact_zero(ensemble_tangent.tangent_gain.select(0, 1), "invalid sparse ensemble gain JVP must be zero");
+    require_exact_zero(ensemble_tangent.tangent_amplitude.select(0, 1), "invalid sparse ensemble amplitude JVP must be zero");
+    require_exact_zero(ensemble_tangent.tangent_length.select(0, 1), "invalid sparse ensemble length JVP must be zero");
+
+    auto realization = realization_request(2);
+    realization.valid.select(0, 1).fill_(false);
+    realization.rows.select(0, 1).fill_(std::numeric_limits<int64_t>::max());
+    realization.d_i.select(0, 1).fill_(std::numeric_limits<float>::quiet_NaN());
+    realization.material_id.select(0, 1).fill_(std::numeric_limits<int>::max());
+    const auto realization_forward = scattering_chain_realization_eval(realization);
+    require_finite(realization_forward.total, "invalid sparse realization row contaminated total");
+    require_exact_zero(realization_forward.path_field.select(0, 1), "invalid sparse realization field must be zero");
+    require_exact_zero(realization_forward.path_gain.select(0, 1), "invalid sparse realization gain must be zero");
+    require_exact_zero(realization_forward.integral.select(0, 1), "invalid sparse realization integral must be zero");
+    require_exact_zero(realization_forward.row_value.select(0, 1), "invalid sparse realization value must be zero");
+    ScatteringChainRealizationEvalBackwardRequest realization_backward;
+    realization_backward.primal = realization;
+    realization_backward.grad_total = at::ones({}, realization.heights.options().dtype(at::kComplexFloat));
+    realization_backward.grad_path_gain = at::ones({2}, realization.heights.options());
+    realization_backward.need_grad_heights = true;
+    realization_backward.need_grad_layers = true;
+    realization_backward.need_grad_chain1 = true;
+    realization_backward.need_grad_chain2 = true;
+    realization_backward.need_grad_geometry = true;
+    realization_backward.need_grad_k0 = true;
+    realization_backward.need_grad_frequency = true;
+    const auto realization_grad = scattering_chain_realization_eval_backward(realization_backward);
+    for (const auto* tensor : {
+             &*realization_grad.grad_heights, &*realization_grad.grad_layer_eps_r,
+             &*realization_grad.grad_c1_eps_r, &*realization_grad.grad_c2_eps_r,
+             &*realization_grad.grad_d_i, &*realization_grad.grad_k0,
+             &*realization_grad.grad_frequency})
+        require_finite(*tensor, "invalid sparse realization row contaminated a gradient");
+    require_exact_zero(realization_grad.grad_d_i->select(0, 1), "invalid sparse realization geometry gradient must be zero");
+    require_exact_zero(realization_grad.grad_l1->select(0, 1), "invalid sparse realization length gradient must be zero");
+    ScatteringChainRealizationEvalJvpRequest realization_jvp;
+    realization_jvp.primal = realization;
+    realization_jvp.tangent_k0 = 1.0;
+    const auto realization_tangent = scattering_chain_realization_eval_jvp(realization_jvp);
+    require_finite(realization_tangent.tangent_total, "invalid sparse realization row contaminated JVP total");
+    require_exact_zero(realization_tangent.tangent_path_field.select(0, 1), "invalid sparse realization field JVP must be zero");
+    require_exact_zero(realization_tangent.tangent_path_gain.select(0, 1), "invalid sparse realization gain JVP must be zero");
+}
+
 }  // namespace
 
 int main() {
@@ -587,6 +683,8 @@ int main() {
         test_dmax_and_optional_contracts_fail_loudly();
         std::cout << "[RUN] test_nondefault_stream_dependency\n";
         test_nondefault_stream_dependency();
+        std::cout << "[RUN] test_sparse_invalid_rows_short_circuit_poison\n";
+        test_sparse_invalid_rows_short_circuit_poison();
         std::cout << "rayd::torch chain scattering direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

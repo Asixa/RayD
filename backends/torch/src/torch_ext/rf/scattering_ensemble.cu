@@ -56,6 +56,7 @@ __device__ __forceinline__ V3 cross3(V3 a, V3 b) {
 
 __global__ void ensemble_eval_kernel(
     int64_t count,
+    const bool* __restrict__ valid,
     const float* __restrict__ wo_rows,
     const float* __restrict__ r2_rows,
     const float* __restrict__ cos_o_rows,
@@ -85,6 +86,13 @@ __global__ void ensemble_eval_kernel(
     bool* __restrict__ out_keep) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            out_gain[row] = 0.0f;
+            out_amplitude[row] = 0.0f;
+            out_length[row] = 0.0f;
+            out_keep[row] = false;
+            continue;
+        }
         const int64_t s = sc_idx[row];
         const int64_t c = rc_idx[row];
         const V3 n = load3(n_o, s);
@@ -153,6 +161,7 @@ __global__ void ensemble_eval_kernel(
 }  // namespace
 
 rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
+    at::Tensor valid,
     at::Tensor wo_rows,
     at::Tensor r2_rows,
     at::Tensor cos_o_rows,
@@ -180,6 +189,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
     using rayd::torch::detail::check_tensor;
     using rayd::torch::detail::check_flat_tensor;
     using rayd::torch::detail::check_vec3_table;
+    check_flat_tensor(valid, "valid", at::kBool);
     check_vec3_table(wo_rows, "wo_rows");
     const int64_t count = wo_rows.size(0);
     check_flat_tensor(r2_rows, "r2_rows", at::kFloat);
@@ -205,7 +215,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
     check_tensor(table_dims, "table_dims", at::kInt, 2);
     check_flat_tensor(material_slot, "material_slot", at::kInt);
     TORCH_CHECK(
-        r2_rows.size(0) == count && cos_o_rows.size(0) == count &&
+        valid.size(0) == count && r2_rows.size(0) == count && cos_o_rows.size(0) == count &&
             rc_idx.size(0) == count && sc_idx.size(0) == count,
         "per-row arrays must match wo_rows rows");
     TORCH_CHECK(
@@ -216,7 +226,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
             material_id.size(0) == samples && backup_axis.size(0) == samples,
         "per-sample arrays must match n_o rows");
     TORCH_CHECK(table_dims.size(1) == 4, "table_dims must have shape (M, 4)");
-    for (const auto& t : {r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local, cos_i, r1,
+    for (const auto& t : {valid, r2_rows, cos_o_rows, n_o, t1r, t2r, wi_local, cos_i, r1,
                           a_te2, a_tm2, weights, material_id, backup_axis, rx_pol,
                           rc_idx, sc_idx, fte_flat, ftm_flat, table_offset,
                           table_dims, material_slot}) {
@@ -232,6 +242,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
             at::cuda::getCurrentCUDAStream(wo_rows.get_device()).stream();
         ensemble_eval_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count,
+            valid.data_ptr<bool>(),
             wo_rows.data_ptr<float>(), r2_rows.data_ptr<float>(),
             cos_o_rows.data_ptr<float>(), n_o.data_ptr<float>(),
             t1r.data_ptr<float>(), t2r.data_ptr<float>(),
@@ -254,6 +265,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
 rayd::torch::ScatteringEnsembleEvalResult rayd::torch::scattering_ensemble_eval(
     const ScatteringEnsembleEvalRequest& request) {
     return scattering_ensemble_eval_impl(
+        request.valid,
         request.wo_rows,
         request.r2_rows,
         request.cos_o_rows,

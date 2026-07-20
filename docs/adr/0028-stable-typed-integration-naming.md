@@ -27,7 +27,7 @@ The sole current typed source-integration boundary is:
 - CMake executable and CTest names: `rayd_torch_integration_test` and
   `rayd_torch_integration`;
 - exact header identity: `rayd.torch.integration`;
-- numeric compile-time version: `kIntegrationApiVersion = 2`.
+- numeric compile-time version: `kIntegrationApiVersion = 3`.
 
 There is no forwarding `integration_v2.h`, internal alias, old CMake target,
 alternate identity, runtime selector, or compatibility shim. Same-graph native
@@ -36,7 +36,7 @@ consumers include the stable header directly and still link
 dynamic lookup, or stable cross-LibTorch binary ABI.
 
 The normalized-LF SHA-256 of the accepted stable header is
-`65ae4e8e35cf6067cb320a770a1945e2685feab6af44a2233d4db0cfe6b1f435`.
+`88162039770e3258b3534e6d4d73fe33af432f1bddd352cb5f24be78d42afdf3`.
 
 ## Historical evidence
 
@@ -59,7 +59,7 @@ second live integration name.
    long-form identity, or a `v2` operation/family label.
 2. `integration.h` is the only typed aggregate header, exposes the same request,
    result, RAII scene, RF, AD, stream, and failure contracts, and retains numeric
-   API version `2`.
+   API version `3`.
 3. The stable CMake target builds and the stable CTest direct contract passes.
 4. ABI governance and ownership tests pin the stable path, identity, and header
    bytes; no legacy extern-C or Python integration surface reappears.

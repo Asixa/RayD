@@ -80,6 +80,7 @@ const T* opt_ptr(const at::Tensor* tensor) {
 
 __global__ void table_eval_backward_kernel(
     int64_t count, int nti, int npi, int nto, int npo,
+    const bool* __restrict__ valid,
     const float* __restrict__ wi,
     const float* __restrict__ wo,
     const float* __restrict__ fte,
@@ -93,6 +94,16 @@ __global__ void table_eval_backward_kernel(
     bool need_grad_dirs, bool need_grad_tables) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            if (need_grad_dirs) {
+#pragma unroll
+                for (int i = 0; i < 3; ++i) {
+                    out_grad_wi[row * 3 + i] = 0.0f;
+                    out_grad_wo[row * 3 + i] = 0.0f;
+                }
+            }
+            continue;
+        }
         st::TableEvalGrad g;
         st::eval_te_tm_grad(
             fte, ftm, nti, npi, nto, npo, wi + row * 3, wo + row * 3, g);
@@ -120,6 +131,7 @@ __global__ void table_eval_backward_kernel(
 
 __global__ void table_eval_jvp_kernel(
     int64_t count, int nti, int npi, int nto, int npo,
+    const bool* __restrict__ valid,
     const float* __restrict__ wi,
     const float* __restrict__ wo,
     const float* __restrict__ fte,
@@ -132,6 +144,11 @@ __global__ void table_eval_jvp_kernel(
     float* __restrict__ out_tangent_f_tm) {
     for (int64_t row = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          row < count; row += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        if (!valid[row]) {
+            out_tangent_f_te[row] = 0.0f;
+            out_tangent_f_tm[row] = 0.0f;
+            continue;
+        }
         st::TableEvalGrad g;
         st::eval_te_tm_grad(
             fte, ftm, nti, npi, nto, npo, wi + row * 3, wo + row * 3, g);
@@ -172,20 +189,23 @@ __global__ void table_eval_jvp_kernel(
 
 // Validate the four primal tensors of the table eval, returning row/table dims.
 void check_table_eval_inputs(
-    const at::Tensor& wi, const at::Tensor& wo,
+    const at::Tensor& valid, const at::Tensor& wi, const at::Tensor& wo,
     const at::Tensor& f_te, const at::Tensor& f_tm,
     int64_t& count, int& nti, int& npi, int& nto, int& npo) {
     using rayd::torch::detail::check_tensor;
     using rayd::torch::detail::check_vec3_table;
+    check_tensor(valid, "valid", at::kBool, 1);
     check_vec3_table(wi, "wi");
     check_vec3_table(wo, "wo");
     count = wi.size(0);
+    TORCH_CHECK(valid.size(0) == count, "valid must match wi rows");
     TORCH_CHECK(wo.size(0) == count, "wi and wo must have matching rows");
     check_tensor(f_te, "f_te", at::kFloat, 4);
     check_tensor(f_tm, "f_tm", at::kFloat, 4);
     TORCH_CHECK(f_te.sizes() == f_tm.sizes(), "f_te and f_tm must share shape");
     TORCH_CHECK(
-        wo.get_device() == wi.get_device() &&
+        valid.get_device() == wi.get_device() &&
+            wo.get_device() == wi.get_device() &&
             f_te.get_device() == wi.get_device() &&
             f_tm.get_device() == wi.get_device(),
         "table eval tensors must share device");
@@ -198,6 +218,7 @@ void check_table_eval_inputs(
 }  // namespace
 
 rayd::torch::ScatteringTableEvalBackwardResult scattering_table_eval_backward_impl(
+    at::Tensor valid,
     at::Tensor wi,
     at::Tensor wo,
     at::Tensor f_te,
@@ -208,7 +229,7 @@ rayd::torch::ScatteringTableEvalBackwardResult scattering_table_eval_backward_im
     bool need_grad_tables) {
     int64_t count = 0;
     int nti = 0, npi = 0, nto = 0, npo = 0;
-    check_table_eval_inputs(wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
+    check_table_eval_inputs(valid, wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
 
     at::Tensor storage[2];
     const at::Tensor* g_te = optional_arg(
@@ -232,6 +253,7 @@ rayd::torch::ScatteringTableEvalBackwardResult scattering_table_eval_backward_im
             at::cuda::getCurrentCUDAStream(wi.get_device()).stream();
         table_eval_backward_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, nti, npi, nto, npo,
+            valid.data_ptr<bool>(),
             wi.data_ptr<float>(), wo.data_ptr<float>(),
             f_te.data_ptr<float>(), f_tm.data_ptr<float>(),
             opt_ptr<float>(g_te), opt_ptr<float>(g_tm),
@@ -255,6 +277,7 @@ rayd::torch::ScatteringTableEvalBackwardResult scattering_table_eval_backward_im
 }
 
 rayd::torch::ScatteringTableEvalJvpResult scattering_table_eval_jvp_impl(
+    at::Tensor valid,
     at::Tensor wi,
     at::Tensor wo,
     at::Tensor f_te,
@@ -265,7 +288,7 @@ rayd::torch::ScatteringTableEvalJvpResult scattering_table_eval_jvp_impl(
     std::optional<at::Tensor> t_f_tm) {
     int64_t count = 0;
     int nti = 0, npi = 0, nto = 0, npo = 0;
-    check_table_eval_inputs(wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
+    check_table_eval_inputs(valid, wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
 
     at::Tensor storage[4];
     const at::Tensor* tw_wi = optional_arg(
@@ -284,6 +307,7 @@ rayd::torch::ScatteringTableEvalJvpResult scattering_table_eval_jvp_impl(
             at::cuda::getCurrentCUDAStream(wi.get_device()).stream();
         table_eval_jvp_kernel<<<launch_blocks(count), kBlockSize, 0, stream>>>(
             count, nti, npi, nto, npo,
+            valid.data_ptr<bool>(),
             wi.data_ptr<float>(), wo.data_ptr<float>(),
             f_te.data_ptr<float>(), f_tm.data_ptr<float>(),
             opt_ptr<float>(tw_wi), opt_ptr<float>(tw_wo),
@@ -299,6 +323,7 @@ rayd::torch::scattering_table_eval_backward(
     const ScatteringTableEvalBackwardRequest& request) {
     const auto& primal = request.primal;
     return scattering_table_eval_backward_impl(
+        primal.valid,
         primal.wi,
         primal.wo,
         primal.f_te,
@@ -314,6 +339,7 @@ rayd::torch::scattering_table_eval_jvp(
     const ScatteringTableEvalJvpRequest& request) {
     const auto& primal = request.primal;
     return scattering_table_eval_jvp_impl(
+        primal.valid,
         primal.wi,
         primal.wo,
         primal.f_te,

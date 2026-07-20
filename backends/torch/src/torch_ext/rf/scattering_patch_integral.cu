@@ -115,6 +115,7 @@ __device__ __forceinline__ void sp_basis(
 
 __global__ void patch_integral_rows_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris,
     const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
@@ -140,6 +141,13 @@ __global__ void patch_integral_rows_kernel(
     __shared__ float sh_im[kQuadPoints];
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_integral[row] = {0.0f, 0.0f};
+            out_row_value[row] = {0.0f, 0.0f};
+        }
+        return;
+    }
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -284,6 +292,7 @@ __global__ void patch_integral_total_kernel(
 }  // namespace
 
 rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_impl(
+    at::Tensor valid,
     at::Tensor patch_tris,
     at::Tensor patch_uvs,
     at::Tensor rows,
@@ -314,6 +323,8 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
                 "patch_uvs must have shape (P, 3, 2)");
     check_flat_tensor(rows, "rows", at::kLong);
     const int64_t row_count = rows.size(0);
+    check_flat_tensor(valid, "valid", at::kBool);
+    TORCH_CHECK(valid.size(0) == row_count, "valid must have shape (R,)");
     check_vec3_table(d_i, "d_i");
     check_vec3_table(d_o, "d_o");
     check_vec3_table(n_rows, "n_rows");
@@ -338,7 +349,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
                     r_tm.size(0) == row_count && r1_rows.size(0) == row_count &&
                     r2_rows.size(0) == row_count && centroids.size(0) == row_count,
                 "per-row arrays must match rows");
-    for (const auto& t : {patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
+    for (const auto& t : {valid, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t,
                           pol_r, r1_rows, r2_rows, centroids, heights, quad_a,
                           quad_b, quad_w}) {
         TORCH_CHECK(t.get_device() == patch_tris.get_device(),
@@ -353,6 +364,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
     if (row_count > 0) {
         patch_integral_rows_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), r_te.data_ptr<cfloat>(), r_tm.data_ptr<cfloat>(),
@@ -378,7 +390,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult
 rayd::torch::scattering_patch_integral_eval(
     const ScatteringPatchIntegralEvalRequest& p) {
     return scattering_patch_integral_eval_impl(
-        p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
+        p.valid, p.patch_tris, p.patch_uvs, p.rows, p.d_i, p.d_o, p.n_rows,
         p.r_te, p.r_tm, p.pol_t, p.pol_r, p.r1_rows, p.r2_rows,
         p.centroids, p.heights, p.quad_a, p.quad_b, p.quad_w, p.k0);
 }

@@ -393,7 +393,8 @@ __device__ __forceinline__ WedgeRowInputs load_wedge_row(
 }
 
 #define WEDGE_ROW_PARAMS                                                      \
-    const float* source, const float* target, const float* edge_position,    \
+    const bool* valid, const float* source, const float* target,              \
+        const float* edge_position,                                           \
         const float* edge_direction, const float* edge_t_min,                 \
         const float* edge_t_max, const float* edge_n0, const float* edge_n1,  \
         const float* exterior_angle, const bool* face0_valid,                 \
@@ -422,10 +423,19 @@ __global__ void diffraction_wedge_forward_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        const int64_t base = index * 3;
+        if (!valid[index]) {
+            field_vector[base] = c10::complex<float>(0.0F, 0.0F);
+            field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
+            field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
+            direction[base] = 0.0F;
+            direction[base + 1] = 0.0F;
+            direction[base + 2] = 0.0F;
+            continue;
+        }
         const WedgeRowInputs in = load_wedge_row(WEDGE_ROW_ARGS(index));
         const WedgeRowOutputs<float> out =
             wedge_row_eval<float>(in, wedge_seeds_zero());
-        const int64_t base = index * 3;
         field_vector[base] = to_c10(out.field_vector.x);
         field_vector[base + 1] = to_c10(out.field_vector.y);
         field_vector[base + 2] = to_c10(out.field_vector.z);
@@ -477,9 +487,47 @@ __global__ void diffraction_wedge_backward_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        const int64_t base = index * 3;
+        if (!valid[index]) {
+            if (grad_source != nullptr) {
+                grad_source[base] = 0.0F;
+                grad_source[base + 1] = 0.0F;
+                grad_source[base + 2] = 0.0F;
+            }
+            if (grad_target != nullptr) {
+                grad_target[base] = 0.0F;
+                grad_target[base + 1] = 0.0F;
+                grad_target[base + 2] = 0.0F;
+            }
+            float* scalar_gradients[6] = {
+                grad_face0_eps_r,
+                grad_face0_sigma_e,
+                grad_face0_gain,
+                grad_face1_eps_r,
+                grad_face1_sigma_e,
+                grad_face1_gain,
+            };
+            for (float* gradient : scalar_gradients) {
+                if (gradient != nullptr)
+                    gradient[index] = 0.0F;
+            }
+            float* vertex_gradients[4] = {
+                grad_vertex_v0,
+                grad_vertex_v1,
+                grad_vertex_opp0,
+                grad_vertex_opp1,
+            };
+            for (float* gradient : vertex_gradients) {
+                if (gradient != nullptr) {
+                    gradient[base] = 0.0F;
+                    gradient[base + 1] = 0.0F;
+                    gradient[base + 2] = 0.0F;
+                }
+            }
+            continue;
+        }
         const WedgeRowInputs in = load_wedge_row(WEDGE_ROW_ARGS(index));
         WedgeRowSeeds seeds = wedge_seeds_zero();
-        const int64_t base = index * 3;
         if (grad_source != nullptr) {
             float* slots[3] = {&seeds.source.x, &seeds.source.y, &seeds.source.z};
             for (int axis = 0; axis < 3; ++axis) {
@@ -579,6 +627,16 @@ __global__ void diffraction_wedge_jvp_kernel(
     for (int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          index < count;
          index += static_cast<int64_t>(blockDim.x) * gridDim.x) {
+        const int64_t base = index * 3;
+        if (!valid[index]) {
+            tangent_field_vector[base] = c10::complex<float>(0.0F, 0.0F);
+            tangent_field_vector[base + 1] = c10::complex<float>(0.0F, 0.0F);
+            tangent_field_vector[base + 2] = c10::complex<float>(0.0F, 0.0F);
+            tangent_direction[base] = 0.0F;
+            tangent_direction[base + 1] = 0.0F;
+            tangent_direction[base + 2] = 0.0F;
+            continue;
+        }
         const WedgeRowInputs in = load_wedge_row(WEDGE_ROW_ARGS(index));
         WedgeRowSeeds seeds = wedge_seeds_zero();
         if (tangent_source != nullptr)
@@ -608,7 +666,6 @@ __global__ void diffraction_wedge_jvp_kernel(
         seeds.frequency = tangent_frequency;
         const WedgeRowOutputs<Dual> out = wedge_row_eval<Dual>(in, seeds);
         const field::Complex3 tangent = field::dual_tangent(out.field_vector);
-        const int64_t base = index * 3;
         tangent_field_vector[base] = to_c10(tangent.x);
         tangent_field_vector[base + 1] = to_c10(tangent.y);
         tangent_field_vector[base + 2] = to_c10(tangent.z);
@@ -641,6 +698,9 @@ void check_wedge_primal(const rayd::torch::DiffractionWedgeRequest& request) {
 
     require_vec3f(request.source, "source");
     const int64_t count = request.source.size(0);
+    require_mask(request.valid, "valid");
+    require_rows(request.valid, count, "valid");
+    require_same_device(request.valid, request.source, "valid");
     for (const auto& named :
          std::array<std::pair<const at::Tensor*, const char*>, 5>{{
              {&request.target, "target"},
@@ -758,7 +818,8 @@ T* opt_mut_ptr(at::Tensor* tensor) {
 } // namespace
 
 #define WEDGE_HOST_ARGS                                                       \
-    primal.source.data_ptr<float>(), primal.target.data_ptr<float>(),         \
+    primal.valid.data_ptr<bool>(), primal.source.data_ptr<float>(),           \
+        primal.target.data_ptr<float>(),                                      \
         primal.edge_position.data_ptr<float>(),                               \
         primal.edge_direction.data_ptr<float>(),                              \
         primal.edge_t_min.data_ptr<float>(),                                  \

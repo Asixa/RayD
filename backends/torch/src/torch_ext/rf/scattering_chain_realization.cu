@@ -224,6 +224,7 @@ __device__ __forceinline__ field::Complex chain_jones(
 
 __global__ void chain_realization_rows_kernel(
     int64_t row_count,
+    const bool* __restrict__ valid,
     const float* __restrict__ patch_tris,
     const float* __restrict__ patch_uvs,
     const int64_t* __restrict__ rows,
@@ -279,6 +280,15 @@ __global__ void chain_realization_rows_kernel(
     __shared__ float sh_im[kQuadPoints];
     const int row = blockIdx.x;
     if (row >= row_count) return;
+    if (!valid[row]) {
+        if (threadIdx.x == 0) {
+            out_integral[row] = {0.0f, 0.0f};
+            out_row_value[row] = {0.0f, 0.0f};
+            out_path_field[row] = {0.0f, 0.0f};
+            out_path_gain[row] = 0.0f;
+        }
+        return;
+    }
     const int64_t patch = rows[row];
     const int t = threadIdx.x;
 
@@ -422,7 +432,7 @@ void check_leg_block(
 
 // Exposed for the AD companions (same-family validation reuse).
 int64_t scattering_chain_realization_check(
-    const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
+    const at::Tensor& valid, const at::Tensor& patch_tris, const at::Tensor& patch_uvs,
     const at::Tensor& rows, const at::Tensor& d_i, const at::Tensor& d_o,
     const at::Tensor& n_rows, const at::Tensor& source, const at::Tensor& vertex,
     const at::Tensor& target,
@@ -455,6 +465,8 @@ int64_t scattering_chain_realization_check(
                 "patch_uvs must have shape (P, 3, 2)");
     check_flat_tensor(rows, "rows", at::kLong);
     const int64_t row_count = rows.size(0);
+    check_flat_tensor(valid, "valid", at::kBool);
+    TORCH_CHECK(valid.size(0) == row_count, "valid must have shape (R,)");
     check_vec3_table(d_i, "d_i");
     check_vec3_table(d_o, "d_o");
     check_vec3_table(n_rows, "n_rows");
@@ -504,7 +516,7 @@ int64_t scattering_chain_realization_check(
         TORCH_CHECK(tref.size(0) == layer_total,
                     "layer parameter tensors must match layer_thickness_m rows");
     for (const auto& tref : {
-             patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
+             valid, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
              c1_positions, c1_normals, c1_eps_r, c1_sigma_e, c1_mu_r,
              c1_gain, c1_thickness, c1_depth,
              c2_positions, c2_normals, c2_eps_r, c2_sigma_e, c2_mu_r,
@@ -519,6 +531,7 @@ int64_t scattering_chain_realization_check(
 }
 
 rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_eval_impl(
+    at::Tensor valid,
     at::Tensor patch_tris,
     at::Tensor patch_uvs,
     at::Tensor rows,
@@ -566,7 +579,7 @@ rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_e
     double k0,
     double frequency_hz) {
     const int64_t row_count = scattering_chain_realization_check(
-        patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
+        valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, source, vertex, target,
         c1_positions, c1_normals, c1_eps_r, c1_sigma_e, c1_mu_r, c1_gain,
         c1_thickness, c1_depth, c2_positions, c2_normals, c2_eps_r, c2_sigma_e,
         c2_mu_r, c2_gain, c2_thickness, c2_depth, tx_pol, rx_pol, l1_rows,
@@ -587,6 +600,7 @@ rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_e
     if (row_count > 0) {
         chain_realization_rows_kernel<<<static_cast<int>(row_count), kQuadPoints, 0, stream>>>(
             row_count,
+            valid.data_ptr<bool>(),
             patch_tris.data_ptr<float>(), patch_uvs.data_ptr<float>(),
             rows.data_ptr<int64_t>(), d_i.data_ptr<float>(), d_o.data_ptr<float>(),
             n_rows.data_ptr<float>(), source.data_ptr<float>(),
@@ -630,7 +644,7 @@ namespace rayd::torch {
 ScatteringChainRealizationEvalResult scattering_chain_realization_eval(
     const ScatteringChainRealizationEvalRequest& r) {
     return scattering_chain_realization_eval_impl(
-        r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
+        r.valid, r.patch_tris, r.patch_uvs, r.rows, r.d_i, r.d_o, r.n_rows,
         r.source, r.vertex, r.target,
         r.c1_positions, r.c1_normals, r.c1_eps_r, r.c1_sigma_e, r.c1_mu_r,
         r.c1_gain, r.c1_thickness, r.c1_depth,
