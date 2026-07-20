@@ -1,4 +1,4 @@
-#include <rayd/torch/integration_v2.h>
+#include <rayd/torch/integration.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -21,8 +21,7 @@ using namespace rayd::torch;
 static_assert(
     kIntegrationHeaderIdentity ==
     std::string_view(
-        "rayd.torch.integration.v2.20260719.rf-transmission-sequence."
-        "pure-wedge-diffraction.scattering-table-single-bounce.scattering-chains"));
+        "rayd.torch.integration"));
 
 static_assert(std::is_same_v<
               decltype(&scattering_table_eval),

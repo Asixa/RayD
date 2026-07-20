@@ -72,6 +72,16 @@ metadata, and public results.
 See `docs/adr/0026-generic-scattering-runtime-ownership.md` for the exact symbol
 matrix, resource boundary, activation gates, and stop conditions.
 
+## Stable Typed Integration Naming
+
+The same-graph Torch C++ boundary has one durable name:
+`rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
+numeric `kIntegrationApiVersion = 2`. Do not add an `integration_v2` forwarding
+header, target alias, alternate identity, dispatcher, or compatibility shim.
+Historical Phase 10B identity/hash evidence may retain its former label but is
+not a live include path. See
+`docs/adr/0028-stable-typed-integration-naming.md`.
+
 ## OptiX Pipeline Guardrail
 
 - If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.

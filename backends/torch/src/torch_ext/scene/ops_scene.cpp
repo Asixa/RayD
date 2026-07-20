@@ -1,9 +1,9 @@
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/scene/cache_kernels.h>
 #include <rayd/torch/common/tensor_check.h>
-#include <rayd/torch/integration_v2.h>
+#include <rayd/torch/integration.h>
 
-#include "../integration_v2_internal.h"
+#include "../integration_internal.h"
 
 #include <torch/extension.h>
 
@@ -212,7 +212,7 @@ int SceneResource::device_index() const {
 
 torch_backend::SceneCache &detail::IntegrationAccess::scene_cache(const SceneResource &scene) {
     if (!scene.impl_ || !scene.impl_->scene)
-        throw std::runtime_error("rayd::torch v2 operation received an invalid SceneResource");
+        throw std::runtime_error("rayd::torch operation received an invalid SceneResource");
     return *scene.impl_->scene;
 }
 

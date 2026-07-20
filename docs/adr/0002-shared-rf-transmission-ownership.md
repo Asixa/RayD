@@ -63,7 +63,7 @@ RayD owns the native numerical implementation of these complete families:
 
 The typed C++ declarations live in
 `backends/torch/include/rayd/torch/rf/transmission.h`, which is included by
-`rayd/torch/integration_v2.h`. They use `at::Tensor`,
+`rayd/torch/integration.h`. They use `at::Tensor`,
 `std::optional<at::Tensor>`, and named request/result structures. They are
 source-level interfaces for consumers built in the same CMake/LibTorch graph,
 not a cross-build stable binary ABI and not a second Python extension surface.

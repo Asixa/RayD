@@ -25,7 +25,7 @@ The native operators support Torch reverse-mode VJP and forward-mode JVP for the
 ## Native Source Integration
 
 Native downstream projects built in the same CMake/LibTorch graph use the
-versioned typed C++ surface in `rayd/torch/integration_v2.h`; they do not load a
+versioned typed C++ surface in `rayd/torch/integration.h`; they do not load a
 second RayD Python extension or use a dynamic symbol registry. Solver-neutral
 RF device math is exposed through `rayd/shared/rf/*.cuh`. Torch-specific field
 AD helpers remain under `rayd/torch/rf/` because they use Torch complex types.
@@ -60,8 +60,8 @@ RD/DD operations, and BDPT estimator policy remain downstream-owned. See
 
 The accepted generic-scattering surface consists of exactly seventeen typed
 operations in six complete families: resident table evaluation AD, resident
-table sampling/PDF, single-bounce ensemble, phase-screen patch integral, v2
-chain ensemble, and v2 chain realization. RayD evaluates caller-owned resident
+table sampling/PDF, single-bounce ensemble, phase-screen patch integral,
+chain ensemble, and chain realization. RayD evaluates caller-owned resident
 CUDA tensors but does not own table construction, cache/version policy,
 phase-screen seed/lifecycle, topology, estimator, RNG/MIS, accumulation, or
 result policy. A high-level BSDF/material framework remains out of scope;
@@ -77,6 +77,12 @@ ensemble, patch, and chain lockstep TUs retain `--fmad=false`. A merged RayD
 implementation remains dormant until Channel pins it, switches a complete
 family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
+
+The stable source-level boundary is named `rayd/torch/integration.h`, its exact
+identity is `rayd.torch.integration`, and its numeric API version remains `2`.
+No `integration_v2` forwarding header, CMake target alias, or alternate
+identity is supported. See
+[`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
 
 RayD Torch carries all seventeen typed operations. Channel has activated the
 Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.

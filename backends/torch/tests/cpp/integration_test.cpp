@@ -1,4 +1,4 @@
-#include <rayd/torch/integration_v2.h>
+#include <rayd/torch/integration.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -1930,10 +1930,10 @@ int main() {
         test_transmission_sequence_negative_and_stream_contracts();
         std::cout << "[RUN] test_transmission_sequence_nondefault_stream_dependency" << std::endl;
         test_transmission_sequence_nondefault_stream_dependency();
-        std::cout << "rayd::torch integration v2 direct contracts passed\n";
+        std::cout << "rayd::torch integration direct contracts passed\n";
         return 0;
     } catch (const std::exception &error) {
-        std::cerr << "rayd::torch integration v2 direct contract failure: " << error.what() << '\n';
+        std::cerr << "rayd::torch integration direct contract failure: " << error.what() << '\n';
         return 1;
     }
 }

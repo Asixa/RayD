@@ -3106,7 +3106,7 @@ py::tuple diffraction_coherent_accumulation_forward_op(
 
 } // namespace rayd::torch_backend
 
-#include "../integration_v2_internal.h"
+#include "../integration_internal.h"
 
 namespace rayd::torch {
 

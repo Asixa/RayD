@@ -1492,7 +1492,7 @@ py::tuple intersect_jvp_optional_op(
 
 } // namespace rayd::torch_backend
 
-#include "../integration_v2_internal.h"
+#include "../integration_internal.h"
 
 namespace rayd::torch {
 

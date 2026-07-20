@@ -427,7 +427,7 @@ The multi-architecture CUDA matrix is reserved for release CI. Pass
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations
 are provided by
-[`backends/torch/include/rayd/torch/integration_v2.h`](backends/torch/include/rayd/torch/integration_v2.h).
+[`backends/torch/include/rayd/torch/integration.h`](backends/torch/include/rayd/torch/integration.h).
 This interface is intended for projects built in the same CMake/libtorch graph;
 it is not a stable binary ABI across unrelated libtorch builds.
 

@@ -643,24 +643,24 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
         add_executable(
-            rayd_torch_integration_v2_test
-            tests/cpp/integration_v2_test.cpp)
+            rayd_torch_integration_test
+            tests/cpp/integration_test.cpp)
         target_include_directories(
-            rayd_torch_integration_v2_test
+            rayd_torch_integration_test
             PRIVATE
                 ${Python_INCLUDE_DIRS}
                 "${TORCH_INSTALL_PREFIX}/include"
                 "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
                 ${CUDAToolkit_INCLUDE_DIRS})
         target_link_libraries(
-            rayd_torch_integration_v2_test
+            rayd_torch_integration_test
             PRIVATE
                 rayd_torch_native_core
                 Python::Python)
-        target_compile_features(rayd_torch_integration_v2_test PRIVATE cxx_std_17)
+        target_compile_features(rayd_torch_integration_test PRIVATE cxx_std_17)
         add_test(
-            NAME rayd_torch_integration_v2
-            COMMAND rayd_torch_integration_v2_test)
+            NAME rayd_torch_integration
+            COMMAND rayd_torch_integration_test)
         add_executable(
             rayd_torch_diffraction_wedge_test
             tests/cpp/diffraction_wedge_test.cpp)
@@ -723,7 +723,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             COMMAND rayd_torch_scattering_chain_test)
         if(WIN32)
             set_tests_properties(
-                rayd_torch_integration_v2
+                rayd_torch_integration
                 rayd_torch_diffraction_wedge
                 rayd_torch_scattering
                 rayd_torch_scattering_chain

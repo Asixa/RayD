@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/torch/integration_v2.h>
+#include <rayd/torch/integration.h>
 #include <rayd/torch/scene/cache.h>
 
 namespace rayd::torch::detail {

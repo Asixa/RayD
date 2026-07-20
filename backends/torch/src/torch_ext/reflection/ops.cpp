@@ -2498,7 +2498,7 @@ at::Tensor integration_scene_face_normals_jvp_impl(
 
 } // namespace rayd::torch_backend
 
-#include "../integration_v2_internal.h"
+#include "../integration_internal.h"
 
 namespace rayd::torch {
 

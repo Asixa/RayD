@@ -34,8 +34,8 @@ these seventeen typed operations in six families:
 | resident table sampling | `scattering_table_sample`, `scattering_table_pdf` | 2 |
 | single-bounce ensemble | `scattering_ensemble_eval`, `scattering_ensemble_eval_backward`, `scattering_ensemble_eval_jvp` | 3 |
 | phase-screen patch integral | `scattering_patch_integral_eval`, `scattering_patch_integral_eval_backward`, `scattering_patch_integral_eval_jvp` | 3 |
-| v2 chain ensemble | `scattering_chain_ensemble_eval`, `scattering_chain_ensemble_eval_backward`, `scattering_chain_ensemble_eval_jvp` | 3 |
-| v2 chain realization | `scattering_chain_realization_eval`, `scattering_chain_realization_eval_backward`, `scattering_chain_realization_eval_jvp` | 3 |
+| chain ensemble | `scattering_chain_ensemble_eval`, `scattering_chain_ensemble_eval_backward`, `scattering_chain_ensemble_eval_jvp` | 3 |
+| chain realization | `scattering_chain_realization_eval`, `scattering_chain_realization_eval_backward`, `scattering_chain_realization_eval_jvp` | 3 |
 
 Primal, backward/VJP, and JVP companions move together where they exist. Table
 sampling and PDF evaluation are the complete two-operation sampling family;
@@ -46,7 +46,7 @@ this ADR does not invent derivative entries for discrete sampling decisions.
 
 The seventeen declarations belong in the single public source-level typed
 header `backends/torch/include/rayd/torch/rf/scattering.h`, included by
-`rayd/torch/integration_v2.h`. Requests and named results use `at::Tensor`,
+`rayd/torch/integration.h`. Requests and named results use `at::Tensor`,
 `std::optional<at::Tensor>` where applicable, requested-gradient flags, and the
 caller-current Torch CUDA stream. This is a same-CMake/LibTorch-graph C++
 surface, not a cross-build stable binary ABI and not a second Python extension.
@@ -191,6 +191,10 @@ candidate with no Python binding. Channel remains the production numerical
 owner of both chain families until it pins this exact revision and atomically
 switches and deletes all four local chain translation units. No event-policy
 entry moves in either wave.
+
+The exact dormant-candidate identity and hashes below are historical Phase 10B
+activation evidence. They intentionally retain the then-current `integration_v2`
+name and bytes; ADR-0028 governs the current stable boundary and pin.
 
 The exact dormant candidate identity is
 `rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction.scattering-table-single-bounce.scattering-chains`.

@@ -97,7 +97,7 @@ def audit() -> dict[str, object]:
             "retired": {
                 "plan13_extern_c_integration": (
                     "All same-graph native consumers use the versioned typed "
-                    "rayd::torch integration_v2 surface."
+                    "rayd::torch integration surface."
                 ),
             },
         },

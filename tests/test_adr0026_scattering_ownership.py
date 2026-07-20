@@ -6,6 +6,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "adr" / "0026-generic-scattering-runtime-ownership.md"
+STABLE_INTEGRATION_ADR = (
+    ROOT / "docs" / "adr" / "0028-stable-typed-integration-naming.md"
+)
+STABLE_INTEGRATION_HEADER = (
+    "backends/torch/include/rayd/torch/integration.h"
+)
+STABLE_INTEGRATION_HEADER_HASH = (
+    "e88626c4486b99a88737d39dc3ec3d277a5b554b9bd664ba9c384577cd141c86"
+)
 
 EXPECTED_FAMILIES = {
     "resident table evaluation AD": {
@@ -27,12 +36,12 @@ EXPECTED_FAMILIES = {
         "scattering_patch_integral_eval_backward",
         "scattering_patch_integral_eval_jvp",
     },
-    "v2 chain ensemble": {
+    "chain ensemble": {
         "scattering_chain_ensemble_eval",
         "scattering_chain_ensemble_eval_backward",
         "scattering_chain_ensemble_eval_jvp",
     },
-    "v2 chain realization": {
+    "chain realization": {
         "scattering_chain_realization_eval",
         "scattering_chain_realization_eval_backward",
         "scattering_chain_realization_eval_jvp",
@@ -44,8 +53,6 @@ PHASE10B_CONTRACT_HASHES = {
         "ac95c418860d109aeaa96623131592e4df8887992e5fc25ecab71b4ddbf1f55b",
     "shared/include/rayd/shared/rf/scattering_table.cuh":
         "38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38",
-    "backends/torch/include/rayd/torch/integration_v2.h":
-        "0608bfbaf022379bc03442f9baa777ec05cfe3f6ab9b964e2385ec12a7b6c654",
     "backends/torch/src/torch_ext/rf/scattering.cu":
         "72fb84a4158652a70c5f4f17e5d1ce61371773cdd54db6835148ee065e474c50",
     "backends/torch/src/torch_ext/rf/scattering_table_eval_ad.cu":
@@ -81,6 +88,9 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = ADR.read_text(encoding="utf-8")
+        cls.stable_integration_text = STABLE_INTEGRATION_ADR.read_text(
+            encoding="utf-8"
+        )
 
     def test_accepted_adr_freezes_exact_six_family_seventeen_symbol_matrix(self):
         self.assertIn("- Status: Accepted", self.text)
@@ -131,13 +141,11 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
             / "include"
             / "rayd"
             / "torch"
-            / "integration_v2.h"
+            / "integration.h"
         ).read_text(encoding="utf-8")
         self.assertIn("#include <rayd/torch/rf/scattering.h>", header)
         self.assertIn(
-            "rayd.torch.integration.v2.20260719.rf-transmission-sequence."
-            "pure-wedge-diffraction.scattering-table-single-bounce."
-            "scattering-chains",
+            "rayd.torch.integration",
             header,
         )
 
@@ -223,6 +231,22 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 )
                 self.assertEqual(hashlib.sha256(data).hexdigest(), expected_hash)
                 self.assertIn(expected_hash, self.text)
+
+    def test_stable_integration_header_hash_is_pinned(self):
+        data = (
+            (ROOT / STABLE_INTEGRATION_HEADER)
+            .read_bytes()
+            .replace(b"\r\n", b"\n")
+            .replace(b"\r", b"\n")
+        )
+        self.assertEqual(
+            hashlib.sha256(data).hexdigest(),
+            STABLE_INTEGRATION_HEADER_HASH,
+        )
+        self.assertIn(
+            STABLE_INTEGRATION_HEADER_HASH,
+            self.stable_integration_text,
+        )
 
     def test_phase10b_cuda_sources_have_no_shim_fallback_or_scope_leak(self):
         forbidden = (

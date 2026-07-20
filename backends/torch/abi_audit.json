@@ -121,7 +121,7 @@
       "scene_custom_class_and_stateful_queries": "Scene ownership, OptiX handles, intrusive_ptr custom classes, and ATen tensor ABI require the matched Python/LibTorch build."
     },
     "retired": {
-      "plan13_extern_c_integration": "All same-graph native consumers use the versioned typed rayd::torch integration_v2 surface."
+      "plan13_extern_c_integration": "All same-graph native consumers use the versioned typed rayd::torch integration surface."
     },
     "stable": [
       "camera_sample_ray",
@@ -133,6 +133,6 @@
       "intersection_valid"
     ]
   },
-  "source_sha256": "ad25f7c3bfd140e41ad0391e59df7ab81599da751046e208822a67fc8ef8d8aa",
+  "source_sha256": "8c8361593b188b351c3baaeb0e89670b86c8abc8ffeb959e36afa7605e2d2418",
   "version": 2
 }
