@@ -74,14 +74,20 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIn("_NATIVE_AVAILABLE = _legacy.AVAILABLE or _legacy.is_registered()", source)
         self.assertIn("_C = (_compat_extension or _compat) if _NATIVE_AVAILABLE else None", source)
 
-    def test_integration_header_does_not_claim_independent_stable_c_abi(self):
-        source = (TORCH / "include" / "rayd" / "torch" / "integration.h").read_text(
-            encoding="utf-8"
+    def test_plan13_extern_c_integration_surface_is_retired(self):
+        include = TORCH / "include" / "rayd" / "torch"
+        self.assertFalse((include / "integration.h").exists())
+        typed = (include / "integration_v2.h").read_text(encoding="utf-8")
+        self.assertIn("namespace rayd::torch", typed)
+        self.assertIn("kIntegrationApiVersion = 2", typed)
+        self.assertIn("at::Tensor", typed)
+
+        native_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (TORCH / "src" / "torch_ext").rglob("*")
+            if path.suffix in {".h", ".cpp", ".cu"}
         )
-        self.assertIn("SAME CMake", source)
-        self.assertIn("NOT an independently binary-stable C ABI", source)
-        self.assertIn('`extern "C"` only fixes symbol name mangling', source)
-        self.assertIn("at::Tensor", source)
+        self.assertNotIn("rayd_torch_native_", native_sources)
 
     def test_audit_records_retained_abi_boundaries(self):
         audit = json.loads((TORCH / "abi_audit.json").read_text(encoding="utf-8"))
@@ -93,8 +99,12 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertEqual(set(audit["migration"]["legacy_retained"]), {
             "scene_custom_class_and_stateful_queries",
             "geometry_ad_and_multipath",
-            "integration_h",
         })
+        self.assertNotIn("integration_h", audit["artifacts"])
+        self.assertEqual(
+            set(audit["migration"]["retired"]),
+            {"plan13_extern_c_integration"},
+        )
 
 
 if __name__ == "__main__":

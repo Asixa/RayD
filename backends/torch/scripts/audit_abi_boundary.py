@@ -22,7 +22,6 @@ def _ops(source: str) -> list[str]:
 def audit() -> dict[str, object]:
     library = _text("src/torch_ext/library.cpp")
     module = _text("src/torch_ext/module.cpp")
-    integration = _text("include/rayd/torch/integration.h")
     stable_sources = sorted((ROOT / "src/stable").glob("*.cu"))
     stable_text = "\n".join(path.read_text(encoding="utf-8") for path in stable_sources)
     legacy_ops = _ops(library)
@@ -38,7 +37,6 @@ def audit() -> dict[str, object]:
 
     hashed = [
         ROOT / "CMakeLists.txt",
-        ROOT / "include/rayd/torch/integration.h",
         ROOT / "src/torch_ext/library.cpp",
         ROOT / "src/torch_ext/module.cpp",
         ROOT / "python/rayd/torch/_legacy.py",
@@ -51,13 +49,12 @@ def audit() -> dict[str, object]:
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
 
     return {
-        "version": 1,
+        "version": 2,
         "source_sha256": digest.hexdigest(),
         "decision": {
             "_C": "minimal_metadata_compatibility_shim",
             "_stable_ops": "independent_libtorch_stable_abi_dispatcher",
             "_legacy_ops": "python_and_libtorch_abi_bound_dispatcher_and_custom_classes",
-            "integration_h": "same_cmake_graph_source_contract_only",
         },
         "artifacts": {
             "_C": {
@@ -84,11 +81,6 @@ def audit() -> dict[str, object]:
                 "links_native_core": True,
                 "links_torch_python": True,
             },
-            "integration_h": {
-                "extern_c_entry_count": len(re.findall(r'extern "C"', integration)),
-                "contains_aten_tensor": "at::Tensor" in integration,
-                "independent_stable_c_abi": False,
-            },
         },
         "migration": {
             "stable": stable_ops,
@@ -101,9 +93,11 @@ def audit() -> dict[str, object]:
                     "Implementations share rayd_torch_native_core ATen/autograd objects and "
                     "py::object optional adapters; port kernel-by-kernel before moving."
                 ),
-                "integration_h": (
-                    "at::Tensor pointers and C++ exceptions are valid only inside the same "
-                    "CMake graph; C linkage does not make them a stable C ABI."
+            },
+            "retired": {
+                "plan13_extern_c_integration": (
+                    "All same-graph native consumers use the versioned typed "
+                    "rayd::torch integration_v2 surface."
                 ),
             },
         },

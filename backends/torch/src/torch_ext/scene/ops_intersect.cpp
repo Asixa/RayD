@@ -1,7 +1,6 @@
 #include <rayd/torch/scene/geometry_kernels.h>
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
-#include <rayd/torch/integration.h>
 
 #include <torch/csrc/autograd/custom_function.h>
 #include <torch/extension.h>
@@ -171,7 +170,7 @@ void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
 }
 
 // Host-side validation for the differentiable C ABI entry points
-// (rayd_torch_native_intersect_backward / _jvp). These run off the hot
+// (rayd::torch::intersect_backward / intersect_jvp). These run off the hot
 // forward path; the existing forward entries are untouched.
 
 void require_ray_batch(const at::Tensor &tensor, int64_t ray_count, const char *name) {
@@ -919,147 +918,8 @@ IntersectJvpOutputs integration_intersect_jvp_impl(
     return out;
 }
 
-extern "C" int64_t rayd_torch_native_intersect_forward(
-    int64_t scene_handle,
-    const at::Tensor *ray_o,
-    const at::Tensor *ray_d,
-    const at::Tensor *ray_tmax,
-    const at::Tensor *active,
-    int64_t flags,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    if (ray_o == nullptr || ray_d == nullptr || ray_tmax == nullptr || outputs == nullptr)
-        throw std::runtime_error("rayd_torch_native_intersect_forward received a null required pointer");
-    constexpr int64_t kOutputCount = 10;
-    if (output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_intersect_forward output capacity is too small");
-    IntersectForwardOutputs out = integration_intersect_forward_impl(
-        get_scene(scene_handle),
-        *ray_o,
-        *ray_d,
-        *ray_tmax,
-        active,
-        flags);
-    outputs[0] = out.t;
-    outputs[1] = out.p;
-    outputs[2] = out.n;
-    outputs[3] = out.geo_n;
-    outputs[4] = out.uv;
-    outputs[5] = out.barycentric;
-    outputs[6] = out.shape_id;
-    outputs[7] = out.prim_id;
-    outputs[8] = out.local_prim_id;
-    outputs[9] = out.global_prim_id;
-    return kOutputCount;
-}
 
-extern "C" int64_t rayd_torch_native_intersect_backward(
-    int64_t scene_handle,
-    const at::Tensor *ray_o,
-    const at::Tensor *ray_d,
-    const at::Tensor *ray_tmax,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *grad_t,
-    const at::Tensor *grad_p,
-    const at::Tensor *grad_n,
-    const at::Tensor *grad_geo_n,
-    const at::Tensor *grad_uv,
-    const at::Tensor *grad_barycentric,
-    bool need_grad_vertices,
-    bool need_grad_ray_o,
-    bool need_grad_ray_d,
-    bool need_grad_ray_tmax,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
-        if (tensor == nullptr)
-            throw std::runtime_error(std::string("rayd_torch_native_intersect_backward received null ") + name);
-        return *tensor;
-    };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
-    constexpr int64_t kOutputCount = 4;
-    if (outputs == nullptr || output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_intersect_backward output capacity is too small");
-    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
-    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    IntersectBackwardOutputs out = integration_intersect_backward_impl(
-        get_scene(scene_handle),
-        ray_o_checked,
-        ray_d_checked,
-        ray_tmax,
-        active,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        grad_t,
-        grad_p,
-        grad_n,
-        grad_geo_n,
-        grad_uv,
-        grad_barycentric,
-        need_grad_vertices,
-        need_grad_ray_o,
-        need_grad_ray_d,
-        need_grad_ray_tmax);
-    outputs[0] = out.grad_vertices;
-    outputs[1] = out.grad_ray_o;
-    outputs[2] = out.grad_ray_d;
-    outputs[3] = out.grad_ray_tmax;
-    return kOutputCount;
-}
 
-extern "C" int64_t rayd_torch_native_intersect_jvp(
-    int64_t scene_handle,
-    const at::Tensor *ray_o,
-    const at::Tensor *ray_d,
-    const at::Tensor *active,
-    const at::Tensor *tape_prim_id,
-    const at::Tensor *tape_barycentric,
-    const at::Tensor *tangent_vertices,
-    const at::Tensor *tangent_ray_o,
-    const at::Tensor *tangent_ray_d,
-    int64_t flags,
-    at::Tensor *outputs,
-    int64_t output_capacity) {
-    auto required = [](const at::Tensor *tensor, const char *name) -> const at::Tensor & {
-        if (tensor == nullptr)
-            throw std::runtime_error(std::string("rayd_torch_native_intersect_jvp received null ") + name);
-        return *tensor;
-    };
-    auto maybe = [](const at::Tensor *tensor) -> const at::Tensor * {
-        if (tensor == nullptr || !tensor->defined() || tensor->numel() == 0)
-            return nullptr;
-        return tensor;
-    };
-    constexpr int64_t kOutputCount = 6;
-    if (outputs == nullptr || output_capacity < kOutputCount)
-        throw std::runtime_error("rayd_torch_native_intersect_jvp output capacity is too small");
-    const at::Tensor &ray_o_checked = required(ray_o, "ray_o");
-    const at::Tensor &ray_d_checked = required(ray_d, "ray_d");
-    IntersectJvpOutputs out = integration_intersect_jvp_impl(
-        get_scene(scene_handle),
-        ray_o_checked,
-        ray_d_checked,
-        active,
-        required(tape_prim_id, "tape_prim_id"),
-        required(tape_barycentric, "tape_barycentric"),
-        tangent_vertices,
-        tangent_ray_o,
-        tangent_ray_d,
-        flags);
-    outputs[0] = out.tangent_t;
-    outputs[1] = out.tangent_p;
-    outputs[2] = out.tangent_n;
-    outputs[3] = out.tangent_geo_n;
-    outputs[4] = out.tangent_uv;
-    outputs[5] = out.tangent_barycentric;
-    return kOutputCount;
-}
 
 at::Tensor intersect_forward_t_op(
     int64_t scene_handle,

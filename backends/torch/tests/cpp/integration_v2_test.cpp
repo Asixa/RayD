@@ -1,4 +1,3 @@
-#include <rayd/torch/integration.h>
 #include <rayd/torch/integration_v2.h>
 
 #include <ATen/ATen.h>
@@ -14,6 +13,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -57,17 +57,22 @@ void require_tensor_exact(
     require(at::equal(actual, expected), name + ": values differ");
 }
 
-template <std::size_t Size>
-void require_tensor_arrays_exact(
-    const std::array<at::Tensor, Size> &actual,
-    const std::array<at::Tensor, Size> &expected,
+void require_tensor_contract(
+    const at::Tensor &tensor,
+    at::IntArrayRef sizes,
+    at::ScalarType dtype,
+    const at::Device &device,
     const std::string &name) {
-    for (std::size_t index = 0; index < Size; ++index)
-        require_tensor_exact(actual[index], expected[index], name + " " + std::to_string(index));
+    require(tensor.defined(), name + ": tensor is undefined");
+    require(tensor.sizes().equals(sizes), name + ": shape differs");
+    require(tensor.scalar_type() == dtype, name + ": dtype differs");
+    require(tensor.device() == device, name + ": device differs");
 }
 
-const at::Tensor *optional_tensor_ptr(const std::optional<at::Tensor> &tensor) {
-    return tensor.has_value() && tensor->defined() ? &*tensor : nullptr;
+void require_finite(const at::Tensor &tensor, const std::string &name) {
+    require(
+        at::isfinite(tensor).all().item<bool>(),
+        name + ": contains a non-finite value");
 }
 
 struct MeshFixture {
@@ -112,32 +117,6 @@ rayd::torch::MeshInput mesh_input(const MeshFixture &mesh) {
         false,
     };
 }
-
-struct LegacyScene {
-    explicit LegacyScene(const MeshFixture &mesh) {
-        const std::int64_t flags = 2;
-        handle = rayd_torch_native_scene_create(
-            &mesh.vertices,
-            &mesh.faces,
-            &mesh.uv,
-            &mesh.face_uv,
-            &mesh.to_world_left,
-            &mesh.to_world_right,
-            &flags,
-            1);
-        require(handle != 0, "legacy scene creation returned a null handle");
-    }
-
-    LegacyScene(const LegacyScene &) = delete;
-    LegacyScene &operator=(const LegacyScene &) = delete;
-
-    ~LegacyScene() {
-        if (handle != 0)
-            rayd_torch_native_scene_destroy(handle);
-    }
-
-    std::int64_t handle = 0;
-};
 
 rayd::torch::RayBatch one_hit_ray(int device_index = 0) {
     const auto float_options = at::TensorOptions()
@@ -235,164 +214,182 @@ EmptyDiffractionFixture make_empty_diffraction_fixture(int device_index = 0) {
     };
 }
 
-std::array<at::Tensor, 10> legacy_intersect(
-    const LegacyScene &scene,
-    const rayd::torch::RayBatch &rays,
-    std::int64_t flags = 0) {
-    std::array<at::Tensor, 10> values;
-    const at::Tensor *active =
-        rays.active.has_value() && rays.active->defined() ? &*rays.active : nullptr;
-    const at::Tensor ray_tmax =
-        rays.ray_tmax.has_value() && rays.ray_tmax->defined()
-        ? *rays.ray_tmax
-        : at::Tensor();
-    const std::int64_t count = rayd_torch_native_intersect_forward(
-        scene.handle,
-        &rays.ray_o,
-        &rays.ray_d,
-        &ray_tmax,
-        active,
-        flags,
-        values.data(),
-        static_cast<std::int64_t>(values.size()));
-    require(count == static_cast<std::int64_t>(values.size()), "legacy intersect output count differs");
-    return values;
+EmptyDiffractionFixture make_one_diffraction_fixture(int device_index = 0) {
+    const auto float_options = at::TensorOptions()
+                                   .dtype(at::kFloat)
+                                   .device(at::Device(at::kCUDA, device_index));
+    const auto int_options = at::TensorOptions()
+                                 .dtype(at::kInt)
+                                 .device(at::Device(at::kCUDA, device_index));
+    const auto bool_options = at::TensorOptions()
+                                  .dtype(at::kBool)
+                                  .device(at::Device(at::kCUDA, device_index));
+    const at::Tensor tx_pos =
+        at::tensor({0.0F, -1.0F, 0.25F}, float_options).reshape({1, 3});
+    const at::Tensor zeros = at::zeros({1, 3}, float_options);
+    rayd::torch::DiffractionState state = {
+        at::tensor({0}, int_options),
+        at::tensor({0.0F, 0.0F, 0.0F}, float_options).reshape({1, 3}),
+        at::tensor({1.0F, 0.0F, 0.0F}, float_options).reshape({1, 3}),
+        at::tensor({-1.0F}, float_options),
+        at::tensor({1.0F}, float_options),
+        at::tensor({0.0F, 0.0F, 1.0F}, float_options).reshape({1, 3}),
+        at::tensor({0.0F, 0.0F, -1.0F}, float_options).reshape({1, 3}),
+        at::tensor({0}, int_options),
+        at::tensor({0}, int_options),
+        at::tensor({static_cast<float>(3.14159265358979323846)}, float_options),
+        tx_pos,
+        at::ones({1}, float_options),
+        zeros,
+        zeros,
+    };
+    rayd::torch::MaterialPayload material = {
+        at::ones({1}, float_options),
+        at::zeros({1}, float_options),
+        at::ones({1}, float_options),
+        at::ones({1}, float_options),
+        at::ones({1}, bool_options),
+    };
+    rayd::torch::Grid2D grid = {
+        2,
+        0.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        4,
+        4,
+        0.25,
+    };
+    return {
+        std::move(state),
+        std::move(material),
+        grid,
+        at::ones({1}, bool_options),
+        tx_pos,
+        at::tensor({1.0F, 0.0F, 0.0F}, float_options).reshape({1, 3}),
+        at::tensor({0.0F, 1.0F, 0.25F}, float_options).reshape({1, 3}),
+        at::tensor({0}, int_options),
+        at::ones({1}, float_options),
+    };
 }
 
-void test_scene_and_intersection_lockstep() {
+void test_scene_and_intersection_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy(mesh);
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
+    const auto ints = mesh.faces.options();
 
     require(scene.valid(), "typed scene is not valid");
     require(scene.device_index() == 0, "typed scene reports the wrong device");
 
-    const auto typed_edges = rayd::torch::scene_edge_records(scene);
-    std::array<at::Tensor, 12> legacy_edges;
-    const std::int64_t edge_count = rayd_torch_native_scene_edge_records(
-        legacy.handle,
-        legacy_edges.data(),
-        static_cast<std::int64_t>(legacy_edges.size()));
-    require(edge_count == static_cast<std::int64_t>(legacy_edges.size()), "legacy edge output count differs");
-    const std::array<at::Tensor, 12> typed_edge_values = {
-        typed_edges.global_vertices,
-        typed_edges.global_faces,
-        typed_edges.tri_fn_x,
-        typed_edges.tri_fn_y,
-        typed_edges.tri_fn_z,
-        typed_edges.edge_v0,
-        typed_edges.edge_v1,
-        typed_edges.edge_face0_global,
-        typed_edges.edge_face1_global,
-        typed_edges.edge_shape_id,
-        typed_edges.edge_local_id,
-        typed_edges.edge_opposite,
-    };
-    for (std::size_t index = 0; index < typed_edge_values.size(); ++index)
-        require_tensor_exact(typed_edge_values[index], legacy_edges[index], "scene edge output " + std::to_string(index));
+    const auto edges = rayd::torch::scene_edge_records(scene);
+    require_tensor_exact(edges.global_vertices, mesh.vertices, "scene global vertices");
+    require_tensor_exact(edges.global_faces, mesh.faces, "scene global faces");
+    require_tensor_exact(edges.tri_fn_x, at::zeros({1}, floats), "scene face normal x");
+    require_tensor_exact(edges.tri_fn_y, at::zeros({1}, floats), "scene face normal y");
+    require_tensor_exact(edges.tri_fn_z, at::ones({1}, floats), "scene face normal z");
+    for (const auto &entry : {
+             edges.edge_v0,
+             edges.edge_v1,
+             edges.edge_face0_global,
+             edges.edge_face1_global,
+             edges.edge_shape_id,
+             edges.edge_local_id,
+             edges.edge_opposite})
+        require_tensor_contract(entry, {3}, at::kInt, device, "scene edge record");
+    require(
+        at::all(edges.edge_shape_id == 0).item<bool>(),
+        "single-mesh edge records must use shape id zero");
 
-    const auto rays = one_hit_ray();
-    const auto typed = rayd::torch::intersect_forward(scene, rays, 7);
-    const auto legacy_values = legacy_intersect(legacy, rays, 7);
-    const std::array<at::Tensor, 10> typed_values = {
-        typed.t,
-        typed.p,
-        typed.n,
-        typed.geo_n,
-        typed.uv,
-        typed.barycentric,
-        typed.shape_id,
-        typed.prim_id,
-        typed.local_prim_id,
-        typed.global_prim_id,
-    };
-    for (std::size_t index = 0; index < typed_values.size(); ++index)
-        require_tensor_exact(typed_values[index], legacy_values[index], "intersect output " + std::to_string(index));
+    auto rays = one_hit_ray();
+    rays.ray_tmax = at::full({1}, 2.0F, floats);
+    rays.active = at::ones({1}, floats.dtype(at::kBool));
+    const auto hit = rayd::torch::intersect_forward(scene, rays, 7);
+    require_tensor_exact(hit.t, at::ones({1}, floats), "intersect t");
+    require_tensor_exact(
+        hit.p,
+        at::tensor({0.25F, 0.25F, 0.0F}, floats).reshape({1, 3}),
+        "intersect point");
+    require_tensor_contract(hit.n, {1, 3}, at::kFloat, device, "intersect normal");
+    require_tensor_contract(hit.geo_n, {1, 3}, at::kFloat, device, "intersect geometric normal");
+    require_tensor_contract(hit.uv, {1, 2}, at::kFloat, device, "intersect uv");
+    require_tensor_contract(hit.barycentric, {1, 3}, at::kFloat, device, "intersect barycentric");
+    for (const auto &entry : {
+             hit.shape_id, hit.prim_id, hit.local_prim_id, hit.global_prim_id}) {
+        require_tensor_contract(entry, {1}, at::kInt, device, "intersect id");
+        require(entry.item<int>() == 0, "single-triangle intersect id must be zero");
+    }
 
-    rayd::torch::IntersectBackwardRequest backward_request;
-    backward_request.rays = rays;
-    backward_request.tape_prim_id = typed.global_prim_id;
-    backward_request.tape_barycentric = typed.barycentric;
-    backward_request.grad_t = at::ones_like(typed.t);
-    backward_request.need_grad_vertices = true;
-    backward_request.need_grad_ray_o = true;
-    backward_request.need_grad_ray_d = true;
-    backward_request.need_grad_ray_tmax = true;
-    const auto typed_backward = rayd::torch::intersect_backward(scene, backward_request);
-    const at::Tensor legacy_ray_tmax =
-        rays.ray_tmax.has_value() && rays.ray_tmax->defined()
-        ? *rays.ray_tmax
-        : at::Tensor();
-    std::array<at::Tensor, 4> legacy_backward;
-    const std::int64_t backward_count = rayd_torch_native_intersect_backward(
-        legacy.handle,
-        &rays.ray_o,
-        &rays.ray_d,
-        &legacy_ray_tmax,
-        nullptr,
-        &backward_request.tape_prim_id,
-        &backward_request.tape_barycentric,
-        optional_tensor_ptr(backward_request.grad_t),
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        backward_request.need_grad_vertices,
-        backward_request.need_grad_ray_o,
-        backward_request.need_grad_ray_d,
-        backward_request.need_grad_ray_tmax,
-        legacy_backward.data(),
-        static_cast<std::int64_t>(legacy_backward.size()));
-    require(backward_count == static_cast<std::int64_t>(legacy_backward.size()), "legacy intersect backward output count differs");
-    const std::array<at::Tensor, 4> typed_backward_values = {
-        typed_backward.grad_vertices,
-        typed_backward.grad_ray_o,
-        typed_backward.grad_ray_d,
-        typed_backward.grad_ray_tmax,
-    };
-    require_tensor_arrays_exact(typed_backward_values, legacy_backward, "intersect backward output");
+    rayd::torch::IntersectBackwardRequest backward;
+    backward.rays = rays;
+    backward.tape_prim_id = hit.global_prim_id;
+    backward.tape_barycentric = hit.barycentric;
+    backward.grad_t = at::ones_like(hit.t);
+    backward.need_grad_vertices = true;
+    backward.need_grad_ray_o = true;
+    backward.need_grad_ray_d = true;
+    backward.need_grad_ray_tmax = true;
+    const auto gradients = rayd::torch::intersect_backward(scene, backward);
+    require_tensor_contract(
+        gradients.grad_vertices, {3, 3}, at::kFloat, device, "intersect vertex gradient");
+    require_tensor_exact(
+        gradients.grad_ray_o,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "intersect ray-origin gradient");
+    require_tensor_exact(
+        gradients.grad_ray_d,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "intersect ray-direction gradient");
+    require_tensor_exact(
+        gradients.grad_ray_tmax,
+        at::zeros({1}, floats),
+        "intersect ray-tmax gradient");
+    require(
+        at::allclose(
+            gradients.grad_vertices.sum(0),
+            at::tensor({0.0F, 0.0F, 1.0F}, floats),
+            0.0,
+            0.0),
+        "intersect vertex gradients must translate the hit plane exactly");
 
-    rayd::torch::IntersectJvpRequest jvp_request;
-    jvp_request.ray_o = rays.ray_o;
-    jvp_request.ray_d = rays.ray_d;
-    jvp_request.tape_prim_id = typed.global_prim_id;
-    jvp_request.tape_barycentric = typed.barycentric;
-    jvp_request.tangent_vertices = at::zeros_like(mesh.vertices);
-    jvp_request.tangent_ray_o = at::ones_like(rays.ray_o);
-    jvp_request.tangent_ray_d = at::zeros_like(rays.ray_d);
-    jvp_request.flags = 7;
-    const auto typed_jvp = rayd::torch::intersect_jvp(scene, jvp_request);
-    std::array<at::Tensor, 6> legacy_jvp;
-    const std::int64_t jvp_count = rayd_torch_native_intersect_jvp(
-        legacy.handle,
-        &jvp_request.ray_o,
-        &jvp_request.ray_d,
-        nullptr,
-        &jvp_request.tape_prim_id,
-        &jvp_request.tape_barycentric,
-        optional_tensor_ptr(jvp_request.tangent_vertices),
-        optional_tensor_ptr(jvp_request.tangent_ray_o),
-        optional_tensor_ptr(jvp_request.tangent_ray_d),
-        jvp_request.flags,
-        legacy_jvp.data(),
-        static_cast<std::int64_t>(legacy_jvp.size()));
-    require(jvp_count == static_cast<std::int64_t>(legacy_jvp.size()), "legacy intersect JVP output count differs");
-    const std::array<at::Tensor, 6> typed_jvp_values = {
-        typed_jvp.tangent_t,
-        typed_jvp.tangent_p,
-        typed_jvp.tangent_n,
-        typed_jvp.tangent_geo_n,
-        typed_jvp.tangent_uv,
-        typed_jvp.tangent_barycentric,
-    };
-    require_tensor_arrays_exact(typed_jvp_values, legacy_jvp, "intersect JVP output");
+    rayd::torch::IntersectJvpRequest jvp;
+    jvp.ray_o = rays.ray_o;
+    jvp.ray_d = rays.ray_d;
+    jvp.active = rays.active;
+    jvp.tape_prim_id = hit.global_prim_id;
+    jvp.tape_barycentric = hit.barycentric;
+    jvp.tangent_vertices = at::zeros_like(mesh.vertices);
+    jvp.tangent_ray_o = at::ones_like(rays.ray_o);
+    jvp.tangent_ray_d = at::zeros_like(rays.ray_d);
+    jvp.flags = 7;
+    const auto tangents = rayd::torch::intersect_jvp(scene, jvp);
+    require_tensor_exact(
+        tangents.tangent_t, at::full({1}, -1.0F, floats), "intersect tangent t");
+    require_tensor_exact(
+        tangents.tangent_p,
+        at::tensor({1.0F, 1.0F, 0.0F}, floats).reshape({1, 3}),
+        "intersect tangent point");
+    require_tensor_contract(
+        tangents.tangent_n, {1, 3}, at::kFloat, device, "intersect tangent normal");
+    require_tensor_contract(
+        tangents.tangent_geo_n, {1, 3}, at::kFloat, device, "intersect tangent geo-normal");
+    require_tensor_contract(
+        tangents.tangent_uv, {1, 2}, at::kFloat, device, "intersect tangent uv");
+    require_tensor_contract(
+        tangents.tangent_barycentric,
+        {1, 3},
+        at::kFloat,
+        device,
+        "intersect tangent barycentric");
+    require_finite(tangents.tangent_n, "intersect tangent normal");
+    require_finite(tangents.tangent_geo_n, "intersect tangent geo-normal");
 }
 
 void test_empty_and_stream_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy(mesh);
     const auto rays = empty_rays_with_present_empty_mask();
 
     const c10::cuda::CUDAStream stream = c10::cuda::getStreamFromPool(false, 0);
@@ -402,7 +399,6 @@ void test_empty_and_stream_contracts() {
         require(
             c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
             "typed intersection changed the caller's active CUDA stream");
-        const auto legacy_values = legacy_intersect(legacy, rays, 7);
         const std::array<at::Tensor, 10> typed_values = {
             typed.t,
             typed.p,
@@ -417,233 +413,186 @@ void test_empty_and_stream_contracts() {
         };
         for (std::size_t index = 0; index < typed_values.size(); ++index) {
             require(typed_values[index].defined(), "empty typed output must remain defined");
-            require_tensor_exact(typed_values[index], legacy_values[index], "empty intersect output " + std::to_string(index));
+            require(typed_values[index].size(0) == 0, "empty typed output must keep zero rows");
         }
     }
 }
 
-void test_visibility_trace_and_face_normal_lockstep() {
+void test_visibility_trace_and_face_normal_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy(mesh);
-    const auto float_options = mesh.vertices.options();
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
+    const auto bools = floats.dtype(at::kBool);
 
     rayd::torch::VisibilityRequest visibility_request = {
-        at::tensor({0.25F, 0.25F, -1.0F}, float_options).reshape({1, 3}),
-        at::tensor({0.25F, 0.25F, 1.0F}, float_options).reshape({1, 3}),
-        std::nullopt,
+        at::tensor({0.25F, 0.25F, -1.0F}, floats).reshape({1, 3}),
+        at::tensor({0.25F, 0.25F, 1.0F}, floats).reshape({1, 3}),
+        at::ones({1}, bools),
     };
-    const auto typed_visibility = rayd::torch::visibility_forward(scene, visibility_request);
-    std::array<at::Tensor, 3> legacy_visibility;
-    rayd_torch_native_visibility_forward(
-        legacy.handle,
-        &visibility_request.start,
-        &visibility_request.end,
-        nullptr,
-        &legacy_visibility[0],
-        &legacy_visibility[1],
-        &legacy_visibility[2]);
-    const std::array<at::Tensor, 3> typed_visibility_values = {
-        typed_visibility.visible,
-        typed_visibility.blocker_prim,
-        typed_visibility.tape_t,
-    };
-    require_tensor_arrays_exact(
-        typed_visibility_values, legacy_visibility, "visibility output");
+    const auto visibility =
+        rayd::torch::visibility_forward(scene, visibility_request);
+    require_tensor_exact(
+        visibility.visible, at::zeros({1}, bools), "blocked segment visibility");
+    require_tensor_exact(
+        visibility.blocker_prim,
+        at::zeros({1}, mesh.faces.options()),
+        "visibility blocker primitive");
+    require_tensor_exact(
+        visibility.tape_t,
+        at::full({1}, std::numeric_limits<float>::infinity(), floats),
+        "visibility tape sentinel");
 
-    const auto rays = one_hit_ray();
-    const at::Tensor legacy_ray_tmax =
-        rays.ray_tmax.has_value() && rays.ray_tmax->defined()
-        ? *rays.ray_tmax
-        : at::Tensor();
+    auto rays = one_hit_ray();
+    rays.ray_tmax = at::full({1}, 2.0F, floats);
+    rays.active = at::ones({1}, bools);
     const rayd::torch::ReflectionTraceRequest trace_request = {rays, 1};
-    const auto typed_trace = rayd::torch::trace_reflections_forward(scene, trace_request);
-    std::array<at::Tensor, 3> legacy_trace;
-    const std::int64_t trace_count = rayd_torch_native_trace_reflections_forward(
-        legacy.handle,
-        &rays.ray_o,
-        &rays.ray_d,
-        &legacy_ray_tmax,
-        nullptr,
-        trace_request.max_bounces,
-        legacy_trace.data(),
-        static_cast<std::int64_t>(legacy_trace.size()));
-    require(trace_count == static_cast<std::int64_t>(legacy_trace.size()), "legacy reflection trace output count differs");
-    const std::array<at::Tensor, 3> typed_trace_values = {
-        typed_trace.valid,
-        typed_trace.t,
-        typed_trace.prim_ids,
-    };
-    require_tensor_arrays_exact(typed_trace_values, legacy_trace, "reflection trace output");
+    const auto trace =
+        rayd::torch::trace_reflections_forward(scene, trace_request);
+    require_tensor_exact(
+        trace.valid, at::ones({1, 1}, bools), "reflection trace validity");
+    require_tensor_exact(
+        trace.t, at::ones({1, 1}, floats), "reflection trace distance");
+    require_tensor_exact(
+        trace.prim_ids,
+        at::zeros({1, 1}, mesh.faces.options()),
+        "reflection trace primitive");
 
-    const auto typed_tape = rayd::torch::trace_reflections_forward_tape(scene, trace_request);
-    std::array<at::Tensor, 9> legacy_tape;
-    const std::int64_t tape_count = rayd_torch_native_trace_reflections_forward_tape(
-        legacy.handle,
-        &rays.ray_o,
-        &rays.ray_d,
-        &legacy_ray_tmax,
-        nullptr,
-        trace_request.max_bounces,
-        legacy_tape.data(),
-        static_cast<std::int64_t>(legacy_tape.size()));
-    require(tape_count == static_cast<std::int64_t>(legacy_tape.size()), "legacy reflection tape output count differs");
-    const std::array<at::Tensor, 9> typed_tape_values = {
-        typed_tape.valid,
-        typed_tape.t,
-        typed_tape.image_sources,
-        typed_tape.prim_ids,
-        typed_tape.tape_prim_id,
-        typed_tape.tape_barycentric,
-        typed_tape.tape_hit_points,
-        typed_tape.tape_normals,
-        typed_tape.active_ctx,
-    };
-    require_tensor_arrays_exact(typed_tape_values, legacy_tape, "reflection tape output");
+    const auto tape =
+        rayd::torch::trace_reflections_forward_tape(scene, trace_request);
+    require_tensor_exact(tape.valid, trace.valid, "reflection tape validity");
+    require_tensor_exact(tape.t, trace.t, "reflection tape distance");
+    require_tensor_exact(tape.prim_ids, trace.prim_ids, "reflection tape primitive");
     require(
-        typed_tape.prim_ids.unsafeGetTensorImpl() == typed_tape.tape_prim_id.unsafeGetTensorImpl(),
-        "typed reflection tape must preserve prim-id tensor aliasing");
+        tape.prim_ids.unsafeGetTensorImpl() == tape.tape_prim_id.unsafeGetTensorImpl(),
+        "reflection tape must preserve prim-id tensor aliasing");
+    require_tensor_contract(
+        tape.image_sources, {1, 1, 3}, at::kFloat, device, "reflection image sources");
+    require_tensor_contract(
+        tape.tape_barycentric, {1, 1, 3}, at::kFloat, device, "reflection barycentric tape");
+    require_tensor_contract(
+        tape.tape_hit_points, {1, 1, 3}, at::kFloat, device, "reflection hit-point tape");
+    require_tensor_contract(
+        tape.tape_normals, {1, 1, 3}, at::kFloat, device, "reflection normal tape");
+    require_tensor_exact(tape.active_ctx, *rays.active, "reflection active tape");
+    require_finite(tape.image_sources, "reflection image sources");
+    require_finite(tape.tape_hit_points, "reflection hit-point tape");
+    require_finite(tape.tape_normals, "reflection normal tape");
 
-    rayd::torch::ReflectionTraceBackwardRequest trace_backward;
-    trace_backward.rays = rays;
-    trace_backward.tape_prim_id = typed_tape.tape_prim_id;
-    trace_backward.tape_barycentric = typed_tape.tape_barycentric;
-    trace_backward.tape_hit_points = typed_tape.tape_hit_points;
-    trace_backward.tape_normals = typed_tape.tape_normals;
-    trace_backward.image_sources = typed_tape.image_sources;
-    trace_backward.grad_t = at::ones_like(typed_tape.t);
-    trace_backward.grad_image_sources = at::zeros_like(typed_tape.image_sources);
-    const auto typed_trace_backward =
-        rayd::torch::trace_reflections_backward(scene, trace_backward);
-    std::array<at::Tensor, 4> legacy_trace_backward;
-    const std::int64_t trace_backward_count =
-        rayd_torch_native_trace_reflections_backward(
-            legacy.handle,
-            &rays.ray_o,
-            &rays.ray_d,
-            &legacy_ray_tmax,
-            nullptr,
-            &trace_backward.tape_prim_id,
-            &trace_backward.tape_barycentric,
-            &trace_backward.tape_hit_points,
-            &trace_backward.tape_normals,
-            &trace_backward.image_sources,
-            optional_tensor_ptr(trace_backward.grad_t),
-            optional_tensor_ptr(trace_backward.grad_image_sources),
-            legacy_trace_backward.data(),
-            static_cast<std::int64_t>(legacy_trace_backward.size()));
-    require(
-        trace_backward_count == static_cast<std::int64_t>(legacy_trace_backward.size()),
-        "legacy reflection trace backward output count differs");
-    const std::array<at::Tensor, 4> typed_trace_backward_values = {
-        typed_trace_backward.grad_vertices,
-        typed_trace_backward.grad_ray_o,
-        typed_trace_backward.grad_ray_d,
-        typed_trace_backward.grad_ray_tmax,
-    };
-    require_tensor_arrays_exact(
-        typed_trace_backward_values,
-        legacy_trace_backward,
-        "reflection trace backward output");
+    rayd::torch::ReflectionTraceBackwardRequest backward;
+    backward.rays = rays;
+    backward.tape_prim_id = tape.tape_prim_id;
+    backward.tape_barycentric = tape.tape_barycentric;
+    backward.tape_hit_points = tape.tape_hit_points;
+    backward.tape_normals = tape.tape_normals;
+    backward.image_sources = tape.image_sources;
+    backward.grad_t = at::ones_like(tape.t);
+    backward.grad_image_sources = at::zeros_like(tape.image_sources);
+    const auto gradients =
+        rayd::torch::trace_reflections_backward(scene, backward);
+    require_tensor_contract(
+        gradients.grad_vertices, {3, 3}, at::kFloat, device, "reflection vertex gradient");
+    require_tensor_exact(
+        gradients.grad_ray_o,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "reflection ray-origin gradient");
+    require_tensor_exact(
+        gradients.grad_ray_d,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "reflection ray-direction gradient");
+    require_tensor_exact(
+        gradients.grad_ray_tmax,
+        at::zeros({1}, floats),
+        "reflection ray-tmax gradient");
 
-    rayd::torch::ReflectionTraceJvpRequest trace_jvp;
-    trace_jvp.ray_o = rays.ray_o;
-    trace_jvp.ray_d = rays.ray_d;
-    trace_jvp.tape_prim_id = typed_tape.tape_prim_id;
-    trace_jvp.tape_barycentric = typed_tape.tape_barycentric;
-    trace_jvp.tape_hit_points = typed_tape.tape_hit_points;
-    trace_jvp.tape_normals = typed_tape.tape_normals;
-    trace_jvp.tangent_vertices = at::zeros_like(mesh.vertices);
-    trace_jvp.tangent_ray_o = at::ones_like(rays.ray_o);
-    trace_jvp.tangent_ray_d = at::zeros_like(rays.ray_d);
-    trace_jvp.image_sources = typed_tape.image_sources;
-    const auto typed_trace_jvp = rayd::torch::trace_reflections_jvp(scene, trace_jvp);
-    std::array<at::Tensor, 2> legacy_trace_jvp;
-    const std::int64_t trace_jvp_count = rayd_torch_native_trace_reflections_jvp(
-        legacy.handle,
-        &trace_jvp.ray_o,
-        &trace_jvp.ray_d,
-        nullptr,
-        &trace_jvp.tape_prim_id,
-        &trace_jvp.tape_barycentric,
-        &trace_jvp.tape_hit_points,
-        &trace_jvp.tape_normals,
-        optional_tensor_ptr(trace_jvp.tangent_vertices),
-        optional_tensor_ptr(trace_jvp.tangent_ray_o),
-        optional_tensor_ptr(trace_jvp.tangent_ray_d),
-        &trace_jvp.image_sources,
-        legacy_trace_jvp.data(),
-        static_cast<std::int64_t>(legacy_trace_jvp.size()));
-    require(trace_jvp_count == static_cast<std::int64_t>(legacy_trace_jvp.size()), "legacy reflection trace JVP output count differs");
-    const std::array<at::Tensor, 2> typed_trace_jvp_values = {
-        typed_trace_jvp.tangent_t,
-        typed_trace_jvp.tangent_image_sources,
-    };
-    require_tensor_arrays_exact(
-        typed_trace_jvp_values, legacy_trace_jvp, "reflection trace JVP output");
+    rayd::torch::ReflectionTraceJvpRequest jvp;
+    jvp.ray_o = rays.ray_o;
+    jvp.ray_d = rays.ray_d;
+    jvp.active = rays.active;
+    jvp.tape_prim_id = tape.tape_prim_id;
+    jvp.tape_barycentric = tape.tape_barycentric;
+    jvp.tape_hit_points = tape.tape_hit_points;
+    jvp.tape_normals = tape.tape_normals;
+    jvp.tangent_vertices = at::zeros_like(mesh.vertices);
+    jvp.tangent_ray_o = at::ones_like(rays.ray_o);
+    jvp.tangent_ray_d = at::zeros_like(rays.ray_d);
+    jvp.image_sources = tape.image_sources;
+    const auto tangents = rayd::torch::trace_reflections_jvp(scene, jvp);
+    require_tensor_exact(
+        tangents.tangent_t,
+        at::full({1, 1}, -1.0F, floats),
+        "reflection trace tangent distance");
+    require_tensor_contract(
+        tangents.tangent_image_sources,
+        {1, 1, 3},
+        at::kFloat,
+        device,
+        "reflection image-source tangent");
+    require_finite(
+        tangents.tangent_image_sources, "reflection image-source tangent");
 
     const auto edges = rayd::torch::scene_edge_records(scene);
-    const at::Tensor grad_face_normals =
-        at::ones({edges.global_faces.size(0), 3}, float_options);
-    const auto typed_face_backward =
+    const at::Tensor grad_face_normals = at::ones({1, 3}, floats);
+    const auto face_gradients =
         rayd::torch::scene_face_normals_backward(scene, grad_face_normals);
-    std::array<at::Tensor, 1> legacy_face_backward;
-    const std::int64_t backward_count = rayd_torch_native_scene_face_normals_backward(
-        legacy.handle,
-        &grad_face_normals,
-        legacy_face_backward.data(),
-        1);
-    require(backward_count == 1, "legacy face-normal backward output count differs");
-    require_tensor_exact(
-        typed_face_backward, legacy_face_backward[0], "face-normal backward output");
+    require_tensor_contract(
+        face_gradients, {3, 3}, at::kFloat, device, "face-normal vertex gradient");
+    require_finite(face_gradients, "face-normal vertex gradient");
+    require(
+        at::allclose(
+            face_gradients.sum(0), at::zeros({3}, floats), 0.0, 1.0e-6),
+        "face-normal gradients must be translation invariant");
 
-    const at::Tensor tangent_vertices = at::ones_like(edges.global_vertices);
-    const auto typed_face_jvp = rayd::torch::scene_face_normals_jvp(scene, tangent_vertices);
-    std::array<at::Tensor, 1> legacy_face_jvp;
-    const std::int64_t jvp_count = rayd_torch_native_scene_face_normals_jvp(
-        legacy.handle,
-        &tangent_vertices,
-        legacy_face_jvp.data(),
-        1);
-    require(jvp_count == 1, "legacy face-normal JVP output count differs");
-    require_tensor_exact(typed_face_jvp, legacy_face_jvp[0], "face-normal JVP output");
+    const at::Tensor rigid_translation = at::ones_like(edges.global_vertices);
+    const auto face_tangent =
+        rayd::torch::scene_face_normals_jvp(scene, rigid_translation);
+    require_tensor_exact(
+        face_tangent,
+        at::zeros({1, 3}, floats),
+        "face-normal rigid-translation tangent");
 }
 
-void test_reflection_accumulation_and_epc_lockstep() {
+void test_reflection_accumulation_and_epc_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy(mesh);
-    const auto float_options = mesh.vertices.options();
-    const auto int_options = mesh.faces.options();
-    const auto bool_options = at::TensorOptions().dtype(at::kBool).device(mesh.vertices.device());
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
+    const auto ints = mesh.faces.options();
+    const auto bools = floats.dtype(at::kBool);
 
     const rayd::torch::MaterialPayload material = {
-        at::ones({1}, float_options),
-        at::zeros({1}, float_options),
-        at::ones({1}, float_options),
-        at::ones({1}, float_options),
-        at::ones({1}, bool_options),
+        at::full({1}, 4.0F, floats),
+        at::zeros({1}, floats),
+        at::ones({1}, floats),
+        at::ones({1}, floats),
+        at::ones({1}, bools),
     };
     const rayd::torch::Grid2D grid = {
         2,
-        0.0,
+        0.5,
         -1.0,
         1.0,
         -1.0,
         1.0,
-        2,
-        2,
-        1.0,
+        4,
+        4,
+        0.25,
+    };
+    rayd::torch::RayBatch rays = {
+        at::tensor({0.25F, 0.25F, 1.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        at::full({1}, 2.0F, floats),
+        at::ones({1}, bools),
     };
     rayd::torch::ReflectionAccumulationConfig accumulation = {
-        empty_rays_with_present_empty_mask(),
-        at::empty({0, 3}, float_options),
-        at::empty({0, 3}, float_options),
+        rays,
+        rays.ray_o,
+        at::tensor({1.0F, 0.0F, 0.0F}, floats).reshape({1, 3}),
         material,
-        0,
+        1,
         grid,
-        0.1,
-        0.0,
+        1.0,
+        1.0,
         false,
         false,
         0,
@@ -654,201 +603,135 @@ void test_reflection_accumulation_and_epc_lockstep() {
         0,
         false,
     };
-    const auto typed_accumulation =
+    const auto accumulated =
         rayd::torch::reflection_accumulation_forward(scene, accumulation);
-    const std::array<at::Tensor, 18> typed_accumulation_values = {
-        typed_accumulation.power,
-        typed_accumulation.field_x_re,
-        typed_accumulation.field_x_im,
-        typed_accumulation.field_y_re,
-        typed_accumulation.field_y_im,
-        typed_accumulation.field_z_re,
-        typed_accumulation.field_z_im,
-        typed_accumulation.reflection_count,
-        typed_accumulation.wedge_count,
-        typed_accumulation.wedge_ray_index,
-        typed_accumulation.wedge_hit,
-        typed_accumulation.wedge_normal,
-        typed_accumulation.wedge_prim_id,
-        typed_accumulation.wedge_direction,
-        typed_accumulation.wedge_source,
-        typed_accumulation.wedge_source_power,
-        typed_accumulation.wedge_initial_direction,
-        typed_accumulation.wedge_bounce_depth,
-    };
-    std::array<at::Tensor, 18> legacy_accumulation;
-    const at::Tensor legacy_accumulation_ray_tmax =
-        accumulation.rays.ray_tmax.has_value() && accumulation.rays.ray_tmax->defined()
-        ? *accumulation.rays.ray_tmax
-        : at::Tensor();
-    const std::int64_t accumulation_count =
-        rayd_torch_native_reflection_accumulation_forward(
-            legacy.handle,
-            &accumulation.rays.ray_o,
-            &accumulation.rays.ray_d,
-            &legacy_accumulation_ray_tmax,
-            optional_tensor_ptr(accumulation.rays.active),
-            &accumulation.tx,
-            &accumulation.tx_pol,
-            &accumulation.material.eta_r,
-            &accumulation.material.sigma,
-            &accumulation.material.mu_r,
-            &accumulation.material.gain,
-            &accumulation.material.valid,
-            accumulation.max_bounces,
-            accumulation.grid.axis,
-            accumulation.grid.position,
-            accumulation.grid.coord0_min,
-            accumulation.grid.coord0_max,
-            accumulation.grid.coord1_min,
-            accumulation.grid.coord1_max,
-            accumulation.grid.resolution0,
-            accumulation.grid.resolution1,
-            accumulation.wavelength,
-            accumulation.solid_angle_per_ray,
-            accumulation.collect_wedges,
-            accumulation.collect_wedge_prefixes,
-            accumulation.wedge_capacity,
-            accumulation.wedge_sample_stride,
-            accumulation.accumulation_strategy,
-            accumulation.compact_min_samples,
-            accumulation.staged_min_samples_per_cell,
-            accumulation.procedural_sample_count,
-            accumulation.include_los,
-            legacy_accumulation.data(),
-            static_cast<std::int64_t>(legacy_accumulation.size()));
+    for (const auto &field : {
+             accumulated.power,
+             accumulated.field_x_re,
+             accumulated.field_x_im,
+             accumulated.field_y_re,
+             accumulated.field_y_im,
+             accumulated.field_z_re,
+             accumulated.field_z_im}) {
+        require_tensor_contract(
+            field, {4, 4}, at::kFloat, device, "reflection accumulation grid");
+        require_finite(field, "reflection accumulation grid");
+    }
     require(
-        accumulation_count == static_cast<std::int64_t>(legacy_accumulation.size()),
-        "legacy reflection accumulation output count differs");
-    require_tensor_arrays_exact(
-        typed_accumulation_values,
-        legacy_accumulation,
-        "reflection accumulation output");
+        at::all(accumulated.power >= 0).item<bool>(),
+        "reflection accumulated power must be non-negative");
+    require_tensor_contract(
+        accumulated.reflection_count,
+        {1},
+        at::kInt,
+        device,
+        "reflection accumulation count");
+    const int reflection_count = accumulated.reflection_count.item<int>();
+    require(
+        reflection_count > 0,
+        "nonempty reflection ray produced no reflected-grid hit; count=" +
+            std::to_string(reflection_count));
+    require_tensor_exact(
+        accumulated.wedge_count,
+        at::zeros({1}, ints),
+        "disabled wedge count");
+    for (const auto &wedge : {
+             accumulated.wedge_ray_index,
+             accumulated.wedge_hit,
+             accumulated.wedge_normal,
+             accumulated.wedge_prim_id,
+             accumulated.wedge_direction,
+             accumulated.wedge_source,
+             accumulated.wedge_source_power,
+             accumulated.wedge_initial_direction,
+             accumulated.wedge_bounce_depth})
+        require(wedge.defined() && wedge.numel() == 0, "disabled wedge output must be defined-empty");
 
     rayd::torch::ReflectionEpcRequest epc = {
-        at::empty({0, 3}, float_options),
-        at::empty({0, 3}, float_options),
-        at::empty({0}, bool_options),
-        at::empty({0, 1}, int_options),
-        at::empty({0, 1, 3}, float_options),
-        at::empty({0, 1, 3}, float_options),
-        at::empty({0}, int_options),
-        at::zeros({1}, int_options),
-        at::empty({0}, int_options),
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        at::ones({1}, bools),
+        at::zeros({1, 1}, ints),
+        at::zeros({1, 1, 3}, floats),
+        at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
+        at::zeros({1}, ints),
+        at::ones({1}, ints),
+        at::zeros({1}, ints),
         1,
         0,
-        0.0,
+        1.0e-5,
     };
-    const auto typed_epc = rayd::torch::reflection_epc_paths_forward(scene, epc);
-    const std::array<at::Tensor, 6> typed_epc_values = {
-        typed_epc.valid,
-        typed_epc.path_length,
-        typed_epc.resolved_prim_ids,
-        typed_epc.surface_group_ids,
-        typed_epc.hit_positions,
-        typed_epc.normals,
-    };
-    std::array<at::Tensor, 6> legacy_epc;
-    const std::int64_t epc_count = rayd_torch_native_reflection_epc_paths_forward(
-        legacy.handle,
-        &epc.source,
-        &epc.receiver,
-        optional_tensor_ptr(epc.active),
-        &epc.expected_prim_ids,
-        &epc.direct_plane_points,
-        &epc.direct_plane_normals,
-        &epc.surface_group_id,
-        &epc.surface_group_size,
-        &epc.surface_group_members,
-        epc.max_bounces,
-        epc.visibility_ignore_mode,
-        epc.plane_tolerance,
-        legacy_epc.data(),
-        static_cast<std::int64_t>(legacy_epc.size()));
-    require(epc_count == static_cast<std::int64_t>(legacy_epc.size()), "legacy reflection EPC output count differs");
-    require_tensor_arrays_exact(typed_epc_values, legacy_epc, "reflection EPC output");
+    const auto path = rayd::torch::reflection_epc_paths_forward(scene, epc);
+    require_tensor_exact(path.valid, at::ones({1}, bools), "reflection EPC validity");
+    require_tensor_exact(
+        path.path_length, at::full({1}, 2.0F, floats), "reflection EPC path length");
+    require_tensor_exact(
+        path.resolved_prim_ids, at::zeros({1, 1}, ints), "reflection EPC primitive");
+    require_tensor_exact(
+        path.surface_group_ids, at::zeros({1, 1}, ints), "reflection EPC group");
+    require_tensor_exact(
+        path.hit_positions, at::zeros({1, 1, 3}, floats), "reflection EPC hit");
+    require_tensor_exact(
+        path.normals,
+        at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
+        "reflection EPC normal");
 
-    const at::Tensor bounce_count = at::empty({0}, int_options);
-    rayd::torch::ReflectionEpcBackwardRequest epc_backward;
-    epc_backward.source = epc.source;
-    epc_backward.receiver = epc.receiver;
-    epc_backward.sequence = epc.expected_prim_ids;
-    epc_backward.plane_points = epc.direct_plane_points;
-    epc_backward.plane_normals = epc.direct_plane_normals;
-    epc_backward.valid = typed_epc.valid;
-    epc_backward.bounce_count = bounce_count;
-    epc_backward.need_grad_vertices = true;
-    epc_backward.need_grad_source = true;
-    epc_backward.need_grad_receiver = true;
-    const auto typed_epc_backward =
-        rayd::torch::reflection_epc_paths_backward(scene, epc_backward);
-    std::array<at::Tensor, 3> legacy_epc_backward;
-    const std::int64_t epc_backward_count =
-        rayd_torch_native_reflection_epc_paths_backward(
-            legacy.handle,
-            &epc_backward.source,
-            &epc_backward.receiver,
-            &epc_backward.sequence,
-            &epc_backward.plane_points,
-            &epc_backward.plane_normals,
-            &epc_backward.valid,
-            &epc_backward.bounce_count,
-            nullptr,
-            nullptr,
-            nullptr,
-            epc_backward.need_grad_vertices,
-            epc_backward.need_grad_source,
-            epc_backward.need_grad_receiver,
-            legacy_epc_backward.data(),
-            static_cast<std::int64_t>(legacy_epc_backward.size()));
+    rayd::torch::ReflectionEpcBackwardRequest backward;
+    backward.source = epc.source;
+    backward.receiver = epc.receiver;
+    backward.sequence = epc.expected_prim_ids;
+    backward.plane_points = epc.direct_plane_points;
+    backward.plane_normals = epc.direct_plane_normals;
+    backward.valid = path.valid;
+    backward.bounce_count = at::ones({1}, ints);
+    backward.grad_path_length = at::ones({1}, floats);
+    backward.need_grad_vertices = true;
+    backward.need_grad_source = true;
+    backward.need_grad_receiver = true;
+    const auto gradients =
+        rayd::torch::reflection_epc_paths_backward(scene, backward);
+    require_tensor_contract(
+        gradients.grad_vertices, {3, 3}, at::kFloat, device, "reflection EPC vertex gradient");
+    require_tensor_exact(
+        gradients.grad_source,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "reflection EPC source gradient");
+    require_tensor_exact(
+        gradients.grad_receiver,
+        at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3}),
+        "reflection EPC receiver gradient");
     require(
-        epc_backward_count == static_cast<std::int64_t>(legacy_epc_backward.size()),
-        "legacy reflection EPC backward output count differs");
-    const std::array<at::Tensor, 3> typed_epc_backward_values = {
-        typed_epc_backward.grad_vertices,
-        typed_epc_backward.grad_source,
-        typed_epc_backward.grad_receiver,
-    };
-    require_tensor_arrays_exact(
-        typed_epc_backward_values,
-        legacy_epc_backward,
-        "reflection EPC backward output");
+        at::allclose(
+            gradients.grad_vertices.sum(0),
+            at::tensor({0.0F, 0.0F, 2.0F}, floats),
+            0.0,
+            1.0e-6),
+        "reflection EPC plane gradient must balance endpoint gradients");
 
-    rayd::torch::ReflectionEpcJvpRequest epc_jvp;
-    epc_jvp.source = epc.source;
-    epc_jvp.receiver = epc.receiver;
-    epc_jvp.sequence = epc.expected_prim_ids;
-    epc_jvp.plane_points = epc.direct_plane_points;
-    epc_jvp.plane_normals = epc.direct_plane_normals;
-    epc_jvp.valid = typed_epc.valid;
-    epc_jvp.bounce_count = bounce_count;
-    epc_jvp.tangent_vertices = at::zeros_like(mesh.vertices);
-    epc_jvp.tangent_source = at::empty_like(epc.source);
-    epc_jvp.tangent_receiver = at::empty_like(epc.receiver);
-    const auto typed_epc_jvp = rayd::torch::reflection_epc_paths_jvp(scene, epc_jvp);
-    std::array<at::Tensor, 3> legacy_epc_jvp;
-    const std::int64_t epc_jvp_count = rayd_torch_native_reflection_epc_paths_jvp(
-        legacy.handle,
-        &epc_jvp.source,
-        &epc_jvp.receiver,
-        &epc_jvp.sequence,
-        &epc_jvp.plane_points,
-        &epc_jvp.plane_normals,
-        &epc_jvp.valid,
-        &epc_jvp.bounce_count,
-        optional_tensor_ptr(epc_jvp.tangent_vertices),
-        optional_tensor_ptr(epc_jvp.tangent_source),
-        optional_tensor_ptr(epc_jvp.tangent_receiver),
-        legacy_epc_jvp.data(),
-        static_cast<std::int64_t>(legacy_epc_jvp.size()));
-    require(epc_jvp_count == static_cast<std::int64_t>(legacy_epc_jvp.size()), "legacy reflection EPC JVP output count differs");
-    const std::array<at::Tensor, 3> typed_epc_jvp_values = {
-        typed_epc_jvp.tangent_points,
-        typed_epc_jvp.tangent_normals,
-        typed_epc_jvp.tangent_path_length,
-    };
-    require_tensor_arrays_exact(
-        typed_epc_jvp_values, legacy_epc_jvp, "reflection EPC JVP output");
+    rayd::torch::ReflectionEpcJvpRequest jvp;
+    jvp.source = epc.source;
+    jvp.receiver = epc.receiver;
+    jvp.sequence = epc.expected_prim_ids;
+    jvp.plane_points = epc.direct_plane_points;
+    jvp.plane_normals = epc.direct_plane_normals;
+    jvp.valid = path.valid;
+    jvp.bounce_count = at::ones({1}, ints);
+    jvp.tangent_vertices = at::ones_like(mesh.vertices);
+    jvp.tangent_source = at::ones_like(epc.source);
+    jvp.tangent_receiver = at::ones_like(epc.receiver);
+    const auto tangents = rayd::torch::reflection_epc_paths_jvp(scene, jvp);
+    require_tensor_exact(
+        tangents.tangent_points,
+        at::ones({1, 1, 3}, floats),
+        "reflection EPC rigid-translation point tangent");
+    require_tensor_exact(
+        tangents.tangent_normals,
+        at::zeros({1, 1, 3}, floats),
+        "reflection EPC rigid-translation normal tangent");
+    require_tensor_exact(
+        tangents.tangent_path_length,
+        at::zeros({1}, floats),
+        "reflection EPC rigid-translation length tangent");
 }
 
 void test_error_and_lifecycle_contracts() {
@@ -919,11 +802,14 @@ void test_error_and_lifecycle_contracts() {
     }
 }
 
-void test_diffraction_paths_lockstep() {
+void test_diffraction_paths_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy_scene(mesh);
-    auto fixture = make_empty_diffraction_fixture();
+    auto fixture = make_one_diffraction_fixture();
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
+    const auto ints = mesh.faces.options();
+    const auto bools = floats.dtype(at::kBool);
 
     rayd::torch::DiffractionPathConfig config = {
         fixture.tx_pos,
@@ -932,80 +818,73 @@ void test_diffraction_paths_lockstep() {
         fixture.active,
         fixture.state,
         fixture.material,
-        0,
-        0,
-        0.1,
+        1,
+        8,
+        1.0,
         0.0,
     };
-    const auto typed = rayd::torch::diffraction_paths_order1_forward(scene, config);
-    const std::array<at::Tensor, 18> typed_values = {
-        typed.count,
-        typed.valid,
-        typed.tx_id,
-        typed.rx_id,
-        typed.order,
-        typed.edge0,
-        typed.edge1,
-        typed.edge2,
-        typed.delay,
-        typed.field_x_re,
-        typed.field_x_im,
-        typed.field_y_re,
-        typed.field_y_im,
-        typed.field_z_re,
-        typed.field_z_im,
-        typed.p0,
-        typed.p1,
-        typed.p2,
-    };
-    std::array<at::Tensor, 18> legacy_values;
-    const std::int64_t count = rayd_torch_native_diffraction_paths_order1_forward(
-        legacy_scene.handle,
-        &config.tx_pos,
-        &config.tx_pol,
-        &config.rx_pos,
-        optional_tensor_ptr(config.active),
-        &config.state.edge_index,
-        &config.state.edge_pos,
-        &config.state.edge_dir,
-        &config.state.edge_t_min,
-        &config.state.edge_t_max,
-        &config.state.n0,
-        &config.state.n1,
-        &config.state.prim0,
-        &config.state.prim1,
-        &config.state.exterior_angle,
-        &config.state.src,
-        &config.state.src_power,
-        &config.material.eta_r,
-        &config.material.sigma,
-        &config.material.mu_r,
-        &config.material.gain,
-        &config.material.valid,
-        config.state_limit,
-        config.capacity,
-        config.wavelength,
-        config.isb_taper_width_scale,
-        legacy_values.data(),
-        static_cast<std::int64_t>(legacy_values.size()));
-    require(count == static_cast<std::int64_t>(legacy_values.size()), "legacy diffraction path output count differs");
-    require_tensor_arrays_exact(typed_values, legacy_values, "diffraction path output");
+    const auto paths =
+        rayd::torch::diffraction_paths_order1_forward(scene, config);
+    require_tensor_contract(paths.count, {1}, at::kInt, device, "diffraction path count");
+    require_tensor_contract(paths.valid, {8}, at::kBool, device, "diffraction path valid");
+    for (const auto &entry : {
+             paths.tx_id,
+             paths.rx_id,
+             paths.order,
+             paths.edge0,
+             paths.edge1,
+             paths.edge2})
+        require_tensor_contract(entry, {8}, at::kInt, device, "diffraction path index");
+    for (const auto &entry : {
+             paths.delay,
+             paths.field_x_re,
+             paths.field_x_im,
+             paths.field_y_re,
+             paths.field_y_im,
+             paths.field_z_re,
+             paths.field_z_im}) {
+        require_tensor_contract(entry, {8}, at::kFloat, device, "diffraction path scalar");
+        require_finite(entry, "diffraction path scalar");
+    }
+    for (const auto &entry : {paths.p0, paths.p1, paths.p2}) {
+        require_tensor_contract(entry, {8, 3}, at::kFloat, device, "diffraction path point");
+        require_finite(entry, "diffraction path point");
+    }
+    const int count = paths.count.item<int>();
+    require(count >= 0 && count <= 8, "diffraction path count is outside capacity");
+    require(
+        paths.valid.sum().item<int64_t>() == count,
+        "diffraction valid rows must equal the exported count");
+    if (count > 0) {
+        const auto rows = at::arange(count, ints.dtype(at::kLong));
+        require(
+            at::all(paths.tx_id.index_select(0, rows) == 0).item<bool>() &&
+                at::all(paths.rx_id.index_select(0, rows) == 0).item<bool>() &&
+                at::all(paths.order.index_select(0, rows) == 1).item<bool>() &&
+                at::all(paths.edge0.index_select(0, rows) == 0).item<bool>(),
+            "single-state order-1 path identity differs");
+        require(
+            at::all(paths.delay.index_select(0, rows) >= 0).item<bool>(),
+            "diffraction path delay must be non-negative");
+    }
 }
 
-void test_diffraction_accumulation_lockstep() {
+void test_diffraction_accumulation_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy_scene(mesh);
-    auto fixture = make_empty_diffraction_fixture();
+    auto fixture = make_one_diffraction_fixture();
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
+    const auto ints = mesh.faces.options();
 
     rayd::torch::DiffractionAccumulationConfig config = {
         fixture.active,
         fixture.state,
         fixture.material,
-        0,
+        1,
         fixture.grid,
-        0.1,
-        0,
+        1.0,
+        1,
         0,
         0,
         17,
@@ -1015,167 +894,106 @@ void test_diffraction_accumulation_lockstep() {
         fixture.sample_state_index,
         fixture.sample_edge_weight,
     };
-    const auto typed = rayd::torch::diffraction_accumulation_forward(scene, config);
-    const std::array<at::Tensor, 19> typed_values = {
-        typed.power,
-        typed.field_x_re,
-        typed.field_x_im,
-        typed.field_y_re,
-        typed.field_y_im,
-        typed.field_z_re,
-        typed.field_z_im,
-        typed.direct_count,
-        typed.keller_count,
-        typed.suffix_count,
-        typed.visibility_rejects,
-        typed.edge_visibility_rejects,
-        typed.utd_rejects,
-        typed.edge_uses,
-        typed.tape_active,
-        typed.tape_state_idx,
-        typed.tape_cell,
-        typed.tape_material_idx,
-        typed.tape_edge_u,
-    };
-    std::array<at::Tensor, 19> legacy_values;
-    const std::int64_t count = rayd_torch_native_diffraction_accumulation_forward(
-        legacy_scene.handle,
-        optional_tensor_ptr(config.active),
-        &config.state.edge_index,
-        &config.state.edge_pos,
-        &config.state.edge_dir,
-        &config.state.edge_t_min,
-        &config.state.edge_t_max,
-        &config.state.n0,
-        &config.state.n1,
-        &config.state.prim0,
-        &config.state.prim1,
-        &config.state.exterior_angle,
-        &config.state.src,
-        &config.state.src_power,
-        optional_tensor_ptr(config.state.wi),
-        optional_tensor_ptr(config.state.d0),
-        &config.material.eta_r,
-        &config.material.sigma,
-        &config.material.mu_r,
-        &config.material.gain,
-        &config.material.valid,
-        config.state_limit,
-        config.grid.axis,
-        config.grid.position,
-        config.grid.coord0_min,
-        config.grid.coord0_max,
-        config.grid.coord1_min,
-        config.grid.coord1_max,
-        config.grid.resolution0,
-        config.grid.resolution1,
-        config.grid.cell_area,
-        config.wavelength,
-        config.direct_samples,
-        config.keller_samples,
-        config.suffix_samples,
-        config.seed,
-        config.max_order,
-        0,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        config.export_tape ? 1 : 0,
-        optional_tensor_ptr(config.sample_state_index),
-        optional_tensor_ptr(config.sample_edge_weight),
-        legacy_values.data(),
-        static_cast<std::int64_t>(legacy_values.size()));
-    require(count == static_cast<std::int64_t>(legacy_values.size()), "legacy diffraction accumulation output count differs");
-    require_tensor_arrays_exact(typed_values, legacy_values, "diffraction accumulation output");
-    for (std::size_t index = 14; index < typed_values.size(); ++index) {
-        require(typed_values[index].defined(), "disabled diffraction tape output must remain defined");
-        require(typed_values[index].numel() == 0, "disabled diffraction tape output must be empty");
+    const auto accumulated =
+        rayd::torch::diffraction_accumulation_forward(scene, config);
+    for (const auto &entry : {
+             accumulated.power,
+             accumulated.field_x_re,
+             accumulated.field_x_im,
+             accumulated.field_y_re,
+             accumulated.field_y_im,
+             accumulated.field_z_re,
+             accumulated.field_z_im}) {
+        require_tensor_contract(
+            entry, {4, 4}, at::kFloat, device, "diffraction accumulation grid");
+        require_finite(entry, "diffraction accumulation grid");
     }
+    require(
+        at::all(accumulated.power >= 0).item<bool>(),
+        "diffraction accumulated power must be non-negative");
+    for (const auto &counter : {
+             accumulated.direct_count,
+             accumulated.keller_count,
+             accumulated.suffix_count,
+             accumulated.visibility_rejects,
+             accumulated.edge_visibility_rejects,
+             accumulated.utd_rejects,
+             accumulated.edge_uses}) {
+        require_tensor_contract(
+            counter, {1}, at::kInt, device, "diffraction accumulation counter");
+        require(
+            counter.item<int>() >= 0,
+            "diffraction accumulation counter must be non-negative");
+    }
+    require(
+        accumulated.direct_count.item<int>() +
+                accumulated.visibility_rejects.item<int>() +
+                accumulated.edge_visibility_rejects.item<int>() +
+                accumulated.utd_rejects.item<int>() >
+            0,
+        "nonempty direct diffraction samples produced no accounting outcome");
+    for (const auto &tape : {
+             accumulated.tape_active,
+             accumulated.tape_state_idx,
+             accumulated.tape_cell,
+             accumulated.tape_material_idx,
+             accumulated.tape_edge_u})
+        require(tape.defined() && tape.numel() == 0, "disabled diffraction tape must be defined-empty");
 }
 
-void test_coherent_diffraction_lockstep() {
+void test_coherent_diffraction_typed_contracts() {
     MeshFixture mesh = make_triangle();
     auto scene = rayd::torch::create_scene({mesh_input(mesh)});
-    LegacyScene legacy_scene(mesh);
-    auto fixture = make_empty_diffraction_fixture();
+    auto fixture = make_one_diffraction_fixture();
+    const auto device = mesh.vertices.device();
+    const auto floats = mesh.vertices.options();
 
     rayd::torch::CoherentDiffractionConfig config = {
         fixture.active,
         fixture.state,
         fixture.material,
-        0,
+        1,
         fixture.grid,
-        0.1,
+        1.0,
         true,
         true,
     };
-    const auto typed = rayd::torch::diffraction_coherent_accumulation_forward(scene, config);
-    const std::array<at::Tensor, 16> typed_values = {
-        typed.direct_x_re,
-        typed.direct_x_im,
-        typed.direct_y_re,
-        typed.direct_y_im,
-        typed.direct_z_re,
-        typed.direct_z_im,
-        typed.multi_x_re,
-        typed.multi_x_im,
-        typed.multi_y_re,
-        typed.multi_y_im,
-        typed.multi_z_re,
-        typed.multi_z_im,
-        typed.direct_count,
-        typed.multi_count,
-        typed.visibility_reject_count,
-        typed.utd_reject_count,
-    };
-    std::array<at::Tensor, 16> legacy_values;
-    const std::int64_t count = rayd_torch_native_diffraction_coherent_accumulation_forward(
-        legacy_scene.handle,
-        optional_tensor_ptr(config.active),
-        &config.state.edge_index,
-        &config.state.edge_pos,
-        &config.state.edge_dir,
-        &config.state.edge_t_min,
-        &config.state.edge_t_max,
-        &config.state.n0,
-        &config.state.n1,
-        &config.state.prim0,
-        &config.state.prim1,
-        &config.state.exterior_angle,
-        &config.state.src,
-        &config.state.src_power,
-        optional_tensor_ptr(config.state.wi),
-        optional_tensor_ptr(config.state.d0),
-        &config.material.eta_r,
-        &config.material.sigma,
-        &config.material.mu_r,
-        &config.material.gain,
-        &config.material.valid,
-        config.state_limit,
-        config.grid.axis,
-        config.grid.position,
-        config.grid.coord0_min,
-        config.grid.coord0_max,
-        config.grid.coord1_min,
-        config.grid.coord1_max,
-        config.grid.resolution0,
-        config.grid.resolution1,
-        config.grid.cell_area,
-        config.wavelength,
-        config.select_diffraction_point,
-        config.prefilter_visibility,
-        legacy_values.data(),
-        static_cast<std::int64_t>(legacy_values.size()));
-    require(count == static_cast<std::int64_t>(legacy_values.size()), "legacy coherent diffraction output count differs");
-    require_tensor_arrays_exact(typed_values, legacy_values, "coherent diffraction output");
+    const auto coherent =
+        rayd::torch::diffraction_coherent_accumulation_forward(scene, config);
+    for (const auto &entry : {
+             coherent.direct_x_re,
+             coherent.direct_x_im,
+             coherent.direct_y_re,
+             coherent.direct_y_im,
+             coherent.direct_z_re,
+             coherent.direct_z_im,
+             coherent.multi_x_re,
+             coherent.multi_x_im,
+             coherent.multi_y_re,
+             coherent.multi_y_im,
+             coherent.multi_z_re,
+             coherent.multi_z_im}) {
+        require_tensor_contract(
+            entry, {4, 4}, at::kFloat, device, "coherent diffraction field");
+        require_finite(entry, "coherent diffraction field");
+    }
+    for (const auto &counter : {
+             coherent.direct_count,
+             coherent.multi_count,
+             coherent.visibility_reject_count,
+             coherent.utd_reject_count}) {
+        require_tensor_contract(
+            counter, {4, 4}, at::kInt, device, "coherent diffraction counter");
+        require(
+            at::all(counter >= 0).item<bool>(),
+            "coherent diffraction counters must be non-negative");
+    }
+    require(
+        coherent.direct_count.sum().item<int64_t>() +
+                coherent.visibility_reject_count.sum().item<int64_t>() +
+                coherent.utd_reject_count.sum().item<int64_t>() >
+            0,
+        "nonempty coherent diffraction state produced no accounting outcome");
 }
 
 std::array<at::Tensor, 12> layer_stack_values(
@@ -2080,22 +1898,22 @@ void test_transmission_sequence_nondefault_stream_dependency() {
 int main() {
     try {
         require(at::cuda::is_available(), "CUDA is required for the typed integration tests");
-        std::cout << "[RUN] test_scene_and_intersection_lockstep" << std::endl;
-        test_scene_and_intersection_lockstep();
+        std::cout << "[RUN] test_scene_and_intersection_typed_contracts" << std::endl;
+        test_scene_and_intersection_typed_contracts();
         std::cout << "[RUN] test_empty_and_stream_contracts" << std::endl;
         test_empty_and_stream_contracts();
-        std::cout << "[RUN] test_visibility_trace_and_face_normal_lockstep" << std::endl;
-        test_visibility_trace_and_face_normal_lockstep();
-        std::cout << "[RUN] test_reflection_accumulation_and_epc_lockstep" << std::endl;
-        test_reflection_accumulation_and_epc_lockstep();
+        std::cout << "[RUN] test_visibility_trace_and_face_normal_typed_contracts" << std::endl;
+        test_visibility_trace_and_face_normal_typed_contracts();
+        std::cout << "[RUN] test_reflection_accumulation_and_epc_typed_contracts" << std::endl;
+        test_reflection_accumulation_and_epc_typed_contracts();
         std::cout << "[RUN] test_error_and_lifecycle_contracts" << std::endl;
         test_error_and_lifecycle_contracts();
-        std::cout << "[RUN] test_diffraction_paths_lockstep" << std::endl;
-        test_diffraction_paths_lockstep();
-        std::cout << "[RUN] test_diffraction_accumulation_lockstep" << std::endl;
-        test_diffraction_accumulation_lockstep();
-        std::cout << "[RUN] test_coherent_diffraction_lockstep" << std::endl;
-        test_coherent_diffraction_lockstep();
+        std::cout << "[RUN] test_diffraction_paths_typed_contracts" << std::endl;
+        test_diffraction_paths_typed_contracts();
+        std::cout << "[RUN] test_diffraction_accumulation_typed_contracts" << std::endl;
+        test_diffraction_accumulation_typed_contracts();
+        std::cout << "[RUN] test_coherent_diffraction_typed_contracts" << std::endl;
+        test_coherent_diffraction_typed_contracts();
         std::cout << "[RUN] test_layer_stack_empty_and_contracts" << std::endl;
         test_layer_stack_empty_and_contracts();
         std::cout << "[RUN] test_layer_stack_nonempty_ad_and_stream" << std::endl;

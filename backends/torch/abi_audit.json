@@ -94,18 +94,12 @@
         "src/stable/core.cu"
       ],
       "uses_stable_registration": true
-    },
-    "integration_h": {
-      "contains_aten_tensor": true,
-      "extern_c_entry_count": 21,
-      "independent_stable_c_abi": false
     }
   },
   "decision": {
     "_C": "minimal_metadata_compatibility_shim",
     "_legacy_ops": "python_and_libtorch_abi_bound_dispatcher_and_custom_classes",
-    "_stable_ops": "independent_libtorch_stable_abi_dispatcher",
-    "integration_h": "same_cmake_graph_source_contract_only"
+    "_stable_ops": "independent_libtorch_stable_abi_dispatcher"
   },
   "inventory": {
     "compatibility_pybind_export_count": 2,
@@ -124,8 +118,10 @@
   "migration": {
     "legacy_retained": {
       "geometry_ad_and_multipath": "Implementations share rayd_torch_native_core ATen/autograd objects and py::object optional adapters; port kernel-by-kernel before moving.",
-      "integration_h": "at::Tensor pointers and C++ exceptions are valid only inside the same CMake graph; C linkage does not make them a stable C ABI.",
       "scene_custom_class_and_stateful_queries": "Scene ownership, OptiX handles, intrusive_ptr custom classes, and ATen tensor ABI require the matched Python/LibTorch build."
+    },
+    "retired": {
+      "plan13_extern_c_integration": "All same-graph native consumers use the versioned typed rayd::torch integration_v2 surface."
     },
     "stable": [
       "camera_sample_ray",
@@ -137,6 +133,6 @@
       "intersection_valid"
     ]
   },
-  "source_sha256": "1fb92247336cc71f6c8c86eed977174e5e1768a06480af1e8d1430de0500037d",
-  "version": 1
+  "source_sha256": "ad25f7c3bfd140e41ad0391e59df7ab81599da751046e208822a67fc8ef8d8aa",
+  "version": 2
 }
