@@ -295,7 +295,7 @@ class Scene:
         rx_positions: torch.Tensor,
         states: DfrStates,
         material: DfrMaterial | None = None,
-        active: torch.Tensor | None = None,
+        active: torch.Tensor,
         max_paths: int | None = None,
         wavelength: float = 1.0,
     ):

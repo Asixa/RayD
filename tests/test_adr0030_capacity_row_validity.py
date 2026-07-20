@@ -29,7 +29,7 @@ def kernel_body(text: str, name: str) -> str:
 class Adr0030CapacityRowValidityTests(unittest.TestCase):
     def test_api_version_and_stable_identity(self):
         integration = read(TORCH / "include" / "rayd" / "torch" / "integration.h")
-        self.assertIn("kIntegrationApiVersion = 3", integration)
+        self.assertIn("kIntegrationApiVersion = 4", integration)
         self.assertIn('"rayd.torch.integration"', integration)
         self.assertFalse((TORCH / "include" / "rayd" / "torch" / "integration_v2.h").exists())
 

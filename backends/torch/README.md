@@ -79,7 +79,7 @@ family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 The stable source-level boundary is named `rayd/torch/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version is `3`.
+identity is `rayd.torch.integration`, and its numeric API version is `4`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
@@ -91,6 +91,14 @@ primal/JVP rows and supported row gradients are bitwise zero and cannot
 contribute shared-gradient atomics. AD companions inherit the mask from their
 nested primal request. See
 [`docs/adr/0030-typed-capacity-row-validity.md`](../../docs/adr/0030-typed-capacity-row-validity.md).
+
+API version 4 additionally makes `DiffractionPathConfig.active` required for
+order-1 path export. It is a contiguous CUDA boolean tensor with exact shape
+`[state_limit]`; an empty state set carries a defined empty mask. The Python
+`Scene.trace_dfr_paths(...)` entry requires the keyword, and neither the typed
+API nor dispatcher accepts omitted, `None`, broadcast, or strided validity.
+Diffraction accumulation and coherent-accumulation contracts are unchanged. See
+[`docs/adr/0031-required-diffraction-path-validity.md`](../../docs/adr/0031-required-diffraction-path-validity.md).
 
 The typed boundary also carries a dormant axial-edge visibility candidate for
 device-resident diffraction state selection. It consumes broadcast TX and

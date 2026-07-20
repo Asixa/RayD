@@ -76,7 +76,7 @@ matrix, resource boundary, activation gates, and stop conditions.
 
 The same-graph Torch C++ boundary has one durable name:
 `rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 3`. Do not add an `integration_v2` forwarding
+numeric `kIntegrationApiVersion = 4`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
@@ -88,6 +88,14 @@ ID. Invalid primal/JVP rows and supported row gradients are bitwise zero, while
 invalid rows contribute no shared-gradient atomics. Backward and JVP requests
 inherit validity only through their nested primal request; an optional mask or
 implicit all-valid path is forbidden.
+
+The order-1 diffraction path exporter likewise requires
+`DiffractionPathConfig.active` as a contiguous CUDA boolean tensor with exact
+shape `[state_limit]`; `state_limit == 0` requires a defined empty tensor. Every
+host/device export path must gate on it before reading state payload, and the
+public Torch call has no omitted, `None`, scalar-broadcast, or strided-mask path.
+Diffraction accumulation and coherent-accumulation configs retain their existing
+contracts. See `docs/adr/0031-required-diffraction-path-validity.md`.
 
 ## OptiX Pipeline Guardrail
 

@@ -23,7 +23,7 @@
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 3);
+static_assert(rayd::torch::kIntegrationApiVersion == 4);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);
@@ -1181,6 +1181,117 @@ void test_diffraction_paths_typed_contracts() {
             at::all(paths.delay.index_select(0, rows) >= 0).item<bool>(),
             "diffraction path delay must be non-negative");
     }
+
+    auto missing_active = config;
+    missing_active.active = at::Tensor();
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, missing_active); },
+        "missing diffraction path active tensor must fail loudly");
+
+    auto wrong_shape = config;
+    wrong_shape.active = at::ones({2}, bools);
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, wrong_shape); },
+        "diffraction path active shape must equal state_limit");
+
+    auto wrong_dtype = config;
+    wrong_dtype.active = at::ones({1}, ints);
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, wrong_dtype); },
+        "diffraction path active dtype must be bool");
+
+    auto noncontiguous_active = config;
+    noncontiguous_active.active = at::zeros({2, 2}, bools).select(1, 0);
+    require(
+        !noncontiguous_active.active.is_contiguous(),
+        "diffraction path noncontiguous active fixture is contiguous");
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, noncontiguous_active); },
+        "diffraction path active tensor must be contiguous");
+
+    auto cpu_active = config;
+    cpu_active.active = at::ones({1}, at::TensorOptions().dtype(at::kBool));
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, cpu_active); },
+        "diffraction path active tensor must be CUDA resident");
+
+    const int device_count = at::cuda::device_count();
+    if (device_count > 1) {
+        auto other_device_active = config;
+        other_device_active.active = at::ones(
+            {1},
+            at::TensorOptions().dtype(at::kBool).device(at::Device(at::kCUDA, 1)));
+        require_throws(
+            [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, other_device_active); },
+            "cross-device diffraction path active tensor must fail loudly");
+    }
+
+    auto poison = config;
+    poison.active = at::zeros({1}, bools);
+    poison.rx_pos = at::full_like(poison.rx_pos, std::numeric_limits<float>::quiet_NaN());
+    poison.state.edge_index = at::full_like(poison.state.edge_index, std::numeric_limits<int>::max());
+    poison.state.edge_pos = at::full_like(poison.state.edge_pos, std::numeric_limits<float>::quiet_NaN());
+    poison.state.edge_dir = at::full_like(poison.state.edge_dir, std::numeric_limits<float>::quiet_NaN());
+    poison.state.edge_t_min = at::full_like(poison.state.edge_t_min, std::numeric_limits<float>::quiet_NaN());
+    poison.state.edge_t_max = at::full_like(poison.state.edge_t_max, std::numeric_limits<float>::quiet_NaN());
+    poison.state.n0 = at::full_like(poison.state.n0, std::numeric_limits<float>::quiet_NaN());
+    poison.state.n1 = at::full_like(poison.state.n1, std::numeric_limits<float>::quiet_NaN());
+    poison.state.prim0 = at::full_like(poison.state.prim0, std::numeric_limits<int>::max());
+    poison.state.prim1 = at::full_like(poison.state.prim1, std::numeric_limits<int>::max());
+    poison.state.exterior_angle = at::full_like(poison.state.exterior_angle, std::numeric_limits<float>::quiet_NaN());
+    poison.state.src = at::full_like(poison.state.src, std::numeric_limits<float>::quiet_NaN());
+    poison.state.src_power = at::full_like(poison.state.src_power, std::numeric_limits<float>::quiet_NaN());
+    poison.material.eta_r = at::full_like(poison.material.eta_r, std::numeric_limits<float>::quiet_NaN());
+    poison.material.sigma = at::full_like(poison.material.sigma, std::numeric_limits<float>::quiet_NaN());
+    poison.material.mu_r = at::full_like(poison.material.mu_r, std::numeric_limits<float>::quiet_NaN());
+    poison.material.gain = at::full_like(poison.material.gain, std::numeric_limits<float>::quiet_NaN());
+    const auto poisoned = rayd::torch::diffraction_paths_order1_forward(scene, poison);
+    require(poisoned.count.item<int>() == 0, "inactive poisoned diffraction row was exported");
+    require(!poisoned.valid.any().item<bool>(), "inactive poisoned diffraction row became valid");
+    for (const auto &entry : {
+             poisoned.delay,
+             poisoned.field_x_re,
+             poisoned.field_x_im,
+             poisoned.field_y_re,
+             poisoned.field_y_im,
+             poisoned.field_z_re,
+             poisoned.field_z_im,
+             poisoned.p0,
+             poisoned.p1,
+             poisoned.p2}) {
+        require(
+            at::equal(entry, at::zeros_like(entry)),
+            "inactive poisoned diffraction payload must remain exactly zero");
+    }
+
+    const auto stream = c10::cuda::getStreamFromPool(false, 0);
+    {
+        c10::cuda::CUDAStreamGuard guard(stream);
+        const auto streamed = rayd::torch::diffraction_paths_order1_forward(scene, config);
+        require(
+            c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
+            "diffraction path export changed the caller's CUDA stream");
+        stream.synchronize();
+        require(streamed.count.item<int>() >= 0, "streamed diffraction path export failed");
+    }
+
+    auto empty_fixture = make_empty_diffraction_fixture();
+    rayd::torch::DiffractionPathConfig empty_config = {
+        empty_fixture.tx_pos,
+        empty_fixture.tx_pol,
+        empty_fixture.rx_pos,
+        empty_fixture.active,
+        empty_fixture.state,
+        empty_fixture.material,
+        0,
+        0,
+        1.0,
+        0.0,
+    };
+    const auto empty = rayd::torch::diffraction_paths_order1_forward(scene, empty_config);
+    require_tensor_contract(empty.count, {1}, at::kInt, device, "empty diffraction path count");
+    require(empty.count.item<int>() == 0, "empty diffraction path count must be zero");
+    require_tensor_contract(empty.valid, {0}, at::kBool, device, "empty diffraction path valid");
 }
 
 void test_diffraction_accumulation_typed_contracts() {

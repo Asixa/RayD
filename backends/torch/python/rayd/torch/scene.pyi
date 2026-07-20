@@ -102,7 +102,7 @@ class Scene:
         rx_positions: torch.Tensor,
         states: DfrStates,
         material: DfrMaterial | None = ...,
-        active: torch.Tensor | None = ...,
+        active: torch.Tensor,
         max_paths: int | None = ...,
         wavelength: float = ...,
     ) -> DfrPaths: ...

@@ -79,7 +79,7 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertFalse((include / "integration_v2.h").exists())
         typed = (include / "integration.h").read_text(encoding="utf-8")
         self.assertIn("namespace rayd::torch", typed)
-        self.assertIn("kIntegrationApiVersion = 3", typed)
+        self.assertIn("kIntegrationApiVersion = 4", typed)
         self.assertIn('"rayd.torch.integration"', typed)
         self.assertIn("at::Tensor", typed)
 

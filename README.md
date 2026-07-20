@@ -136,7 +136,8 @@ overlap:
 - `scene.trace_refl_epc_field(...)`: complex reflected EPC fields
 - `scene.accum_dfr_direct(...)` / `scene.accum_dfr(...)`: diffraction
   accumulation
-- `scene.trace_dfr_paths(...)`: compact diffraction path export
+- `scene.trace_dfr_paths(...)`: compact diffraction path export with required
+  capacity-shaped CUDA validity
 - `scene.nearest_edges(point, k)` for `k <= 16`
 - `scene.visible(...)`, `visible_pair(...)`, `visible_chain(...)`, and
   `visible_edge(...)`

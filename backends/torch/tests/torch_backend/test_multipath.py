@@ -731,7 +731,7 @@ class MultipathTests(unittest.TestCase):
         empty_v = torch.empty((0, 3), device="cuda", dtype=torch.float32)
         empty_b = torch.empty((0,), device="cuda", dtype=torch.bool)
 
-        out = torch.ops.rayd_torch.diffraction_paths_order1_forward(
+        args = (
             scene._native_scene,
             tx_pos,
             torch.tensor([[1.0, 0.0, 0.0]], device="cuda", dtype=torch.float32),
@@ -758,10 +758,50 @@ class MultipathTests(unittest.TestCase):
             8,
             1.0,
         )
+        out = torch.ops.rayd_torch.diffraction_paths_order1_forward(*args)
         count = int(out[0].item())
         self.assertGreaterEqual(count, 0)
         self.assertEqual(out[1].shape, (8,))
         self.assertEqual(out[8].dtype, torch.float32)
+
+        missing_args = args[:4]
+        with self.assertRaises(RuntimeError):
+            torch.ops.rayd_torch.diffraction_paths_order1_forward(*missing_args)
+
+        none_args = args[:4] + (None,) + args[5:]
+        with self.assertRaises(RuntimeError):
+            torch.ops.rayd_torch.diffraction_paths_order1_forward(*none_args)
+
+        empty_args = (
+            scene._native_scene,
+            tx_pos,
+            args[2],
+            rx_pos,
+            empty_b,
+            empty_i,
+            empty_v,
+            empty_v,
+            empty_f,
+            empty_f,
+            empty_v,
+            empty_v,
+            empty_i,
+            empty_i,
+            empty_f,
+            empty_v,
+            empty_f,
+            material_eta_r,
+            material_sigma,
+            material_mu_r,
+            material_gain,
+            material_valid,
+            0,
+            0,
+            1.0,
+        )
+        empty_out = torch.ops.rayd_torch.diffraction_paths_order1_forward(*empty_args)
+        self.assertEqual(empty_out[0].item(), 0)
+        self.assertEqual(tuple(empty_out[1].shape), (0,))
 
     def test_diffraction_paths_order1_accepts_multi_mesh_scene(self):
         verts0 = torch.tensor(
@@ -831,7 +871,7 @@ class MultipathTests(unittest.TestCase):
         self.assertEqual(out[1].shape, (8,))
         self.assertEqual(out[8].dtype, torch.float32)
 
-    def test_diffraction_path_and_coherent_public_calls_do_not_create_empty_active_sentinel(self):
+    def test_diffraction_path_requires_active_while_coherent_remains_optional(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
             device="cuda",
@@ -865,11 +905,18 @@ class MultipathTests(unittest.TestCase):
             valid=torch.ones((1,), device="cuda", dtype=torch.bool),
         )
         grid = rt.DfrGrid(axis=2, position=0.0, resolution0=2, resolution1=2)
-        with mock.patch(
-            "torch.empty",
-            side_effect=AssertionError("Multipath public calls must not create Python empty active sentinels."),
-        ):
-            paths = scene.trace_dfr_paths(
+        with self.assertRaises(TypeError):
+            scene.trace_dfr_paths(
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=states,
+                material=material,
+                max_paths=1,
+                wavelength=1.0,
+            )
+
+        with self.assertRaises((TypeError, RuntimeError)):
+            scene.trace_dfr_paths(
                 tx_positions=tx_pos,
                 rx_positions=rx_pos,
                 states=states,
@@ -878,6 +925,11 @@ class MultipathTests(unittest.TestCase):
                 max_paths=1,
                 wavelength=1.0,
             )
+
+        with mock.patch(
+            "torch.empty",
+            side_effect=AssertionError("Coherent public call must not create a Python empty active sentinel."),
+        ):
             coherent = scene.accum_dfr_coherent_direct(
                 states=states,
                 grid=grid,
@@ -885,10 +937,9 @@ class MultipathTests(unittest.TestCase):
                 active=None,
                 wavelength=1.0,
             )
-        self.assertEqual(tuple(paths.valid.shape), (1,))
         self.assertEqual(tuple(coherent.direct_field_x_re.shape), (2, 2))
 
-    def test_diffraction_public_calls_accept_strided_active_masks(self):
+    def test_diffraction_paths_require_contiguous_active_while_accumulation_accepts_strided(self):
         verts = torch.tensor(
             [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [-1.0, 1.0, 0.0]],
             device="cuda",
@@ -926,15 +977,16 @@ class MultipathTests(unittest.TestCase):
         self.assertFalse(active_strided.is_contiguous())
         active_contig = active_strided.contiguous()
 
-        paths_strided = scene.trace_dfr_paths(
-            tx_positions=tx_pos,
-            rx_positions=rx_pos,
-            states=states,
-            material=material,
-            active=active_strided,
-            max_paths=2,
-            wavelength=1.0,
-        )
+        with self.assertRaises(RuntimeError):
+            scene.trace_dfr_paths(
+                tx_positions=tx_pos,
+                rx_positions=rx_pos,
+                states=states,
+                material=material,
+                active=active_strided,
+                max_paths=2,
+                wavelength=1.0,
+            )
         paths_contig = scene.trace_dfr_paths(
             tx_positions=tx_pos,
             rx_positions=rx_pos,
@@ -944,9 +996,7 @@ class MultipathTests(unittest.TestCase):
             max_paths=2,
             wavelength=1.0,
         )
-        torch.testing.assert_close(paths_strided.count, paths_contig.count)
-        torch.testing.assert_close(paths_strided.valid, paths_contig.valid)
-        torch.testing.assert_close(paths_strided.delay, paths_contig.delay)
+        self.assertEqual(tuple(paths_contig.valid.shape), (2,))
 
         accum_strided = scene.accum_dfr_direct(
             states=states,
@@ -1036,7 +1086,7 @@ class MultipathTests(unittest.TestCase):
             gain=strided_f32([1.0, 0.25]),
             valid=strided_bool([True, False]),
         )
-        active = strided_bool([True, False, True])
+        active = torch.tensor([True, False], device="cuda", dtype=torch.bool)
 
         expected_states = rt.DfrStates(
             edge_index=states.edge_index[:2].contiguous(),

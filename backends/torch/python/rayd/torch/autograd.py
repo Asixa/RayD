@@ -1467,7 +1467,7 @@ def trace_dfr_paths_order1_native(
     states: DfrStates,
     material: DfrMaterial,
     *,
-    active: torch.Tensor | None,
+    active: torch.Tensor,
     max_paths: int,
     wavelength: float,
     tx_polarization: torch.Tensor | None = None,

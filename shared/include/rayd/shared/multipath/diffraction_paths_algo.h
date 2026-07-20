@@ -140,11 +140,7 @@ RAYD_HOST_DEVICE Vec3f state_vec(
 
 template <typename Params>
 RAYD_HOST_DEVICE bool state_active(const Params &params, int state_idx) {
-    if (params.active_mask == nullptr) {
-        return true;
-    }
-    const int active_idx = params.active_width == 1 ? 0 : state_idx;
-    return params.active_mask[active_idx] != 0u;
+    return params.active_mask[state_idx] != 0u;
 }
 
 template <typename Params>

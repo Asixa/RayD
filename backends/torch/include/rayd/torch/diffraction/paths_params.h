@@ -45,8 +45,6 @@ struct DfrPathParams {
     int rx_count;
 
     const uint8_t *active_mask;
-    int active_width;
-    int active_stride;
     int state_count;
     int state_limit;
     const int *state_edge_index;

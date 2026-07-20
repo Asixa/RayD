@@ -15,7 +15,7 @@
 
 namespace rayd::torch {
 
-inline constexpr std::uint32_t kIntegrationApiVersion = 3;
+inline constexpr std::uint32_t kIntegrationApiVersion = 4;
 inline constexpr std::string_view kIntegrationHeaderIdentity =
     "rayd.torch.integration";
 
@@ -462,7 +462,7 @@ struct DiffractionPathConfig {
     at::Tensor tx_pos;
     at::Tensor tx_pol;
     at::Tensor rx_pos;
-    std::optional<at::Tensor> active;
+    at::Tensor active;
     DiffractionState state;
     MaterialPayload material;
     std::int64_t state_limit = 0;

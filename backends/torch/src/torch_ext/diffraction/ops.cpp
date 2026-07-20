@@ -439,7 +439,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     at::Tensor tx_pos,
     at::Tensor tx_pol,
     at::Tensor rx_pos,
-    c10::optional<at::Tensor> active,
+    at::Tensor active,
     at::Tensor state_edge_index,
     at::Tensor state_edge_pos,
     at::Tensor state_edge_dir,
@@ -464,7 +464,10 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     require_vec3f_strided(tx_pos, "tx_pos");
     require_vec3f_strided(tx_pol, "tx_pol");
     require_vec3f_strided(rx_pos, "rx_pos");
-    require_optional_mask(active, "active");
+    require_cuda(active, "active");
+    require_contiguous(active, "active");
+    require_dtype(active, at::kBool, "active");
+    require_rank(active, 1, "active");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
     require_vec3f_strided(state_edge_pos, "state_edge_pos");
     require_vec3f_strided(state_edge_dir, "state_edge_dir");
@@ -497,6 +500,8 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     if (state_limit_arg > state_physical_count)
         throw std::runtime_error("state_limit must not exceed state_edge_index width.");
     const int64_t state_limit = state_limit_arg;
+    if (active.size(0) != state_limit)
+        throw std::runtime_error("active must have shape [state_limit].");
     require_state_width(state_edge_pos, state_limit, "state_edge_pos");
     require_state_width(state_edge_dir, state_limit, "state_edge_dir");
     require_state_width(state_edge_t_min, state_limit, "state_edge_t_min");
@@ -631,13 +636,6 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
             out_p2};
     }
 
-    at::Tensor active_view;
-    if (has_defined_optional_tensor(active)) {
-        active_view = *active;
-        if (active_view.numel() != 0 && active_view.size(0) != 1 && active_view.size(0) < state_limit)
-            throw std::runtime_error("diffraction_paths_order1_forward active width must be 1 or cover state_limit.");
-    }
-
     DfrPathParams params = {};
     params.primary_handle = scene.triangle_ias.traversable;
     params.secondary_handle = 0;
@@ -662,10 +660,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.rx_pos_stride0 = stride_i32(rx_pos, 0, "rx_pos_stride0");
     params.rx_pos_stride1 = stride_i32(rx_pos, 1, "rx_pos_stride1");
     params.rx_count = checked_i32(rx_count, "rx_count");
-    params.active_mask = optional_mask_ptr(active_view);
-    params.active_width =
-        (active_view.defined() && active_view.numel() != 0) ? checked_i32(active_view.size(0), "active_width") : 0;
-    params.active_stride = active_stride_for_states(active_view, "active_stride");
+    params.active_mask = reinterpret_cast<const uint8_t *>(active.data_ptr<bool>());
     params.state_count = checked_i32(state_limit, "state_count");
     params.state_limit = checked_i32(state_limit, "state_limit");
     params.state_edge_index = state_edge_index.data_ptr<int>();
@@ -814,7 +809,7 @@ py::tuple diffraction_paths_order1_forward_op(
     at::Tensor tx_pos,
     at::Tensor tx_pol,
     at::Tensor rx_pos,
-    c10::optional<at::Tensor> active,
+    at::Tensor active,
     at::Tensor state_edge_index,
     at::Tensor state_edge_pos,
     at::Tensor state_edge_dir,
@@ -3130,7 +3125,7 @@ DiffractionPathResult diffraction_paths_order1_forward(
         config.tx_pos,
         config.tx_pol,
         config.rx_pos,
-        optional_defined_tensor(config.active),
+        config.active,
         config.state.edge_index,
         config.state.edge_pos,
         config.state.edge_dir,

@@ -187,11 +187,7 @@ static __forceinline__ __device__ float material_gain_for_faces(int face0_prim,
 }
 
 static __forceinline__ __device__ bool state_active(int state_idx) {
-    if (params.active_mask == nullptr) {
-        return true;
-    }
-    const int active_idx = params.active_width == 1 ? 0 : state_idx;
-    return params.active_mask[active_idx * params.active_stride] != 0u;
+    return params.active_mask[state_idx] != 0u;
 }
 
 static __forceinline__ __device__ float path_weight(int state_idx,
