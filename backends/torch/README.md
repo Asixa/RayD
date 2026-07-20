@@ -78,12 +78,12 @@ implementation remains dormant until Channel pins it, switches a complete
 family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
-RayD Torch currently carries the dormant Phase 10A typed candidate for the
-eleven table, sampling, single-bounce ensemble, and patch-integral entries. The
-candidate is source-linked into the native core for direct contract testing,
-but no Python binding dispatches it and Channel has not activated it. The two
-chain families remain outside this wave. Dormancy ends only at Channel's
-pin/switch/delete commit; until then Channel is the production numerical owner.
+RayD Torch carries all seventeen typed operations. Channel has activated the
+Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.
+The six Phase 10B chain entries are source-linked into the native core and
+direct-tested but remain dormant: no RayD Python binding dispatches them, and
+Channel remains their production numerical owner until its atomic
+pin/switch/delete commit.
 
 ## Current Status
 

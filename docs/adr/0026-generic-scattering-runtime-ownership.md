@@ -182,23 +182,31 @@ The eleven table/sampling/single-bounce/patch operations may activate before
 the six chain operations, but each row of the family table above is atomic.
 Primal and AD companions are never split between repositories.
 
-The repository's Phase 10A implementation is the dormant candidate for the
-first eleven entries: table evaluation/backward/JVP, table sample/PDF,
-single-bounce ensemble primal/backward/JVP, and patch-integral
-primal/backward/JVP. It intentionally contains no chain family or event-policy
-entry and has no Python binding. Its presence does not change production
-ownership before the Channel pin/switch/delete activation.
+The repository's Phase 10A implementation supplied the first eleven entries:
+table evaluation/backward/JVP, table sample/PDF, single-bounce ensemble
+primal/backward/JVP, and patch-integral primal/backward/JVP. Channel activated
+that complete wave through its atomic pin/switch/delete commit. Phase 10B adds
+the remaining six chain operations as a compiled and direct-tested dormant
+candidate with no Python binding. Channel remains the production numerical
+owner of both chain families until it pins this exact revision and atomically
+switches and deletes all four local chain translation units. No event-policy
+entry moves in either wave.
 
 The exact dormant candidate identity is
-`rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction.scattering-table-single-bounce`.
+`rayd.torch.integration.v2.20260719.rf-transmission-sequence.pure-wedge-diffraction.scattering-table-single-bounce.scattering-chains`.
 The source-level pin records are SHA-256 over source bytes after CRLF and CR
 line endings are normalized to LF:
-`66d75a20be16057f03cdfb79e3b9dcc85cacec79b555cd73b019259aa510262a`
+`ac95c418860d109aeaa96623131592e4df8887992e5fc25ecab71b4ddbf1f55b`
 for `rayd/torch/rf/scattering.h`,
 `38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38`
 for `rayd/shared/rf/scattering_table.cuh`, and
-`9f95ad9e8e3b790d00f8e762a3e6a09252d46afb65bfc3aba7c42325836cb1fb`
-for `rayd/torch/integration_v2.h`. The six implementation-source pins are
+`0608bfbaf022379bc03442f9baa777ec05cfe3f6ab9b964e2385ec12a7b6c654`
+for `rayd/torch/integration_v2.h`. The shared chain-AD host/device helper pin is
+`2551c33533dc7ea0a0c1680d67e5432587f8c2f77833d5a717fcb2d20597b507`
+for `scattering_chain_ad_common.cuh`, and the shared static typed-contract
+validator pin is
+`4f61082059d08112d675613e2e0ff0d8b7489753ffb96aec152aa17ac2409b73`
+for `scattering_chain_checks.h`. The ten implementation-source pins are
 `72fb84a4158652a70c5f4f17e5d1ce61371773cdd54db6835148ee065e474c50`
 for `scattering.cu`,
 `e09cb3992737b028222e205318baea1aa070d300f0126def9759edaa17ad5b7c`
@@ -210,10 +218,18 @@ for `scattering_ensemble_ad.cu`,
 `e1d8555874a1832067e92e9f1973cee38d9ce2f18dac230b56bb1c6504c0c08b`
 for `scattering_patch_integral.cu`, and
 `0d3bffe34ecd22656f1c5bdb10a6fe903ad059803547e29ccb95f5fd390858aa`
-for `scattering_patch_integral_ad.cu`. Governance tests recompute these hashes
-and reject pybind/map shims, event/chain scope leaks, dynamic lookup, explicit
-synchronization, and accidental fast-math so a source-contract change requires
-an intentional identity and pin update.
+for `scattering_patch_integral_ad.cu`,
+`6293c9238fa5c251d23408493fffd0b88cc557f50de84c90519ec1115ca7d9fd`
+for `scattering_chain_ensemble.cu`,
+`a207dbf58b62286b8a58d7f22535900b198f187c7d0bffb2bacce728eaae306e`
+for `scattering_chain_ensemble_ad.cu`,
+`be9601740ad1dce283708446ebc596b5fd5aca1da8f12421cc077d0dac99d424`
+for `scattering_chain_realization.cu`, and
+`970c579cc9d0c384d28e7aaa8f32200800a1de159de9a0338b2f0bad75f7fa93`
+for `scattering_chain_realization_ad.cu`. Governance tests recompute these
+hashes and reject pybind/map shims, event/solver scope leaks, dynamic lookup,
+explicit synchronization, and accidental fast-math so a source-contract
+change requires an intentional identity and pin update.
 
 Rollback changes Channel's lock to the prior complete, accepted RayD commit.
 It never selects an owner at runtime and never adds CPU, Torch-expression,

@@ -39,13 +39,13 @@ EXPECTED_FAMILIES = {
     },
 }
 
-PHASE10A_CONTRACT_HASHES = {
+PHASE10B_CONTRACT_HASHES = {
     "backends/torch/include/rayd/torch/rf/scattering.h":
-        "66d75a20be16057f03cdfb79e3b9dcc85cacec79b555cd73b019259aa510262a",
+        "ac95c418860d109aeaa96623131592e4df8887992e5fc25ecab71b4ddbf1f55b",
     "shared/include/rayd/shared/rf/scattering_table.cuh":
         "38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38",
     "backends/torch/include/rayd/torch/integration_v2.h":
-        "9f95ad9e8e3b790d00f8e762a3e6a09252d46afb65bfc3aba7c42325836cb1fb",
+        "0608bfbaf022379bc03442f9baa777ec05cfe3f6ab9b964e2385ec12a7b6c654",
     "backends/torch/src/torch_ext/rf/scattering.cu":
         "72fb84a4158652a70c5f4f17e5d1ce61371773cdd54db6835148ee065e474c50",
     "backends/torch/src/torch_ext/rf/scattering_table_eval_ad.cu":
@@ -58,10 +58,22 @@ PHASE10A_CONTRACT_HASHES = {
         "e1d8555874a1832067e92e9f1973cee38d9ce2f18dac230b56bb1c6504c0c08b",
     "backends/torch/src/torch_ext/rf/scattering_patch_integral_ad.cu":
         "0d3bffe34ecd22656f1c5bdb10a6fe903ad059803547e29ccb95f5fd390858aa",
+    "backends/torch/src/torch_ext/rf/scattering_chain_ad_common.cuh":
+        "2551c33533dc7ea0a0c1680d67e5432587f8c2f77833d5a717fcb2d20597b507",
+    "backends/torch/src/torch_ext/rf/scattering_chain_checks.h":
+        "4f61082059d08112d675613e2e0ff0d8b7489753ffb96aec152aa17ac2409b73",
+    "backends/torch/src/torch_ext/rf/scattering_chain_ensemble.cu":
+        "6293c9238fa5c251d23408493fffd0b88cc557f50de84c90519ec1115ca7d9fd",
+    "backends/torch/src/torch_ext/rf/scattering_chain_ensemble_ad.cu":
+        "a207dbf58b62286b8a58d7f22535900b198f187c7d0bffb2bacce728eaae306e",
+    "backends/torch/src/torch_ext/rf/scattering_chain_realization.cu":
+        "be9601740ad1dce283708446ebc596b5fd5aca1da8f12421cc077d0dac99d424",
+    "backends/torch/src/torch_ext/rf/scattering_chain_realization_ad.cu":
+        "970c579cc9d0c384d28e7aaa8f32200800a1de159de9a0338b2f0bad75f7fa93",
 }
 
-PHASE10A_CUDA_SOURCES = tuple(
-    path for path in PHASE10A_CONTRACT_HASHES if path.endswith(".cu")
+PHASE10B_CUDA_SOURCES = tuple(
+    path for path in PHASE10B_CONTRACT_HASHES if path.endswith(".cu")
 )
 
 
@@ -111,7 +123,7 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.text)
 
-    def test_phase10a_typed_header_identity_and_dormant_source_scope(self):
+    def test_phase10b_typed_header_identity_and_dormant_source_scope(self):
         header = (
             ROOT
             / "backends"
@@ -124,7 +136,8 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
         self.assertIn("#include <rayd/torch/rf/scattering.h>", header)
         self.assertIn(
             "rayd.torch.integration.v2.20260719.rf-transmission-sequence."
-            "pure-wedge-diffraction.scattering-table-single-bounce",
+            "pure-wedge-diffraction.scattering-table-single-bounce."
+            "scattering-chains",
             header,
         )
 
@@ -146,14 +159,19 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 "scattering_ensemble_ad",
                 "scattering_patch_integral",
                 "scattering_patch_integral_ad",
+                "scattering_chain_ensemble",
+                "scattering_chain_ensemble_ad",
+                "scattering_chain_realization",
+                "scattering_chain_realization_ad",
             },
         )
-        self.assertNotIn("scattering_chain_", source_list)
         self.assertNotIn("scattering_event", source_list)
         self.assertIn("tests/cpp/scattering_test.cpp", cmake)
         self.assertIn("NAME rayd_torch_scattering", cmake)
+        self.assertIn("tests/cpp/scattering_chain_test.cpp", cmake)
+        self.assertIn("NAME rayd_torch_scattering_chain", cmake)
 
-    def test_phase10a_source_local_fmad_policy(self):
+    def test_phase10b_source_local_fmad_policy(self):
         cmake = (ROOT / "backends" / "torch" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         )
@@ -176,6 +194,10 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 "scattering_ensemble_ad",
                 "scattering_patch_integral",
                 "scattering_patch_integral_ad",
+                "scattering_chain_ensemble",
+                "scattering_chain_ensemble_ad",
+                "scattering_chain_realization",
+                "scattering_chain_realization_ad",
             },
         )
         self.assertNotIn("src/torch_ext/rf/scattering.cu", fmad_blocks[0])
@@ -190,8 +212,8 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
         for block in fast_math_blocks:
             self.assertNotIn("src/torch_ext/rf/scattering.cu", block)
 
-    def test_phase10a_source_contract_hashes_are_pinned(self):
-        for relative_path, expected_hash in PHASE10A_CONTRACT_HASHES.items():
+    def test_phase10b_source_contract_hashes_are_pinned(self):
+        for relative_path, expected_hash in PHASE10B_CONTRACT_HASHES.items():
             with self.subTest(path=relative_path):
                 data = (
                     (ROOT / relative_path)
@@ -202,24 +224,40 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), expected_hash)
                 self.assertIn(expected_hash, self.text)
 
-    def test_phase10a_cuda_sources_have_no_shim_fallback_or_scope_leak(self):
+    def test_phase10b_cuda_sources_have_no_shim_fallback_or_scope_leak(self):
         forbidden = (
             "pybind11",
+            "torch/extension.h",
             "TensorResultMap",
             "cn_scattering",
             "channel_native",
             "scattering_event_kernel",
-            "scattering_chain_",
             "cudaDeviceSynchronize",
             "cudaStreamSynchronize",
             "GetProcAddress",
             "dlsym",
         )
-        for relative_path in PHASE10A_CUDA_SOURCES:
+        for relative_path in PHASE10B_CUDA_SOURCES:
             text = (ROOT / relative_path).read_text(encoding="utf-8")
             with self.subTest(path=relative_path):
                 for token in forbidden:
                     self.assertNotIn(token, text)
+
+        chain_sources = tuple(
+            path for path in PHASE10B_CUDA_SOURCES if "scattering_chain_" in path
+        )
+        for relative_path in chain_sources:
+            text = (ROOT / relative_path).read_text(encoding="utf-8")
+            with self.subTest(path=relative_path):
+                for token in (
+                    "scattering_event_probabilities",
+                    "bdpt",
+                    "montecarlo",
+                    "mis_weight",
+                    "curand",
+                    "solver",
+                ):
+                    self.assertNotIn(token, text.lower())
 
 
 if __name__ == "__main__":

@@ -575,6 +575,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/rf/scattering_ensemble_ad.cu
         src/torch_ext/rf/scattering_patch_integral.cu
         src/torch_ext/rf/scattering_patch_integral_ad.cu
+        src/torch_ext/rf/scattering_chain_ensemble.cu
+        src/torch_ext/rf/scattering_chain_ensemble_ad.cu
+        src/torch_ext/rf/scattering_chain_realization.cu
+        src/torch_ext/rf/scattering_chain_realization_ad.cu
         src/torch_ext/diffraction/accum_reduce.cu
         src/torch_ext/diffraction/accum_ad.cu
         src/torch_ext/diffraction/paths_init.cu
@@ -589,13 +593,17 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     # ADR-0026 preserves the source-local arithmetic policy from Channel. The
     # sampling/eval primal in scattering.cu deliberately keeps target defaults;
-    # only the five lockstep/AD translation units disable FMA contraction.
+    # the lockstep/AD translation units disable FMA contraction.
     set_source_files_properties(
         src/torch_ext/rf/scattering_table_eval_ad.cu
         src/torch_ext/rf/scattering_ensemble.cu
         src/torch_ext/rf/scattering_ensemble_ad.cu
         src/torch_ext/rf/scattering_patch_integral.cu
         src/torch_ext/rf/scattering_patch_integral_ad.cu
+        src/torch_ext/rf/scattering_chain_ensemble.cu
+        src/torch_ext/rf/scattering_chain_ensemble_ad.cu
+        src/torch_ext/rf/scattering_chain_realization.cu
+        src/torch_ext/rf/scattering_chain_realization_ad.cu
         PROPERTIES
             COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>")
 
@@ -693,11 +701,32 @@ if(RAYD_TORCH_BUILD_NATIVE)
         add_test(
             NAME rayd_torch_scattering
             COMMAND rayd_torch_scattering_test)
+        add_executable(
+            rayd_torch_scattering_chain_test
+            tests/cpp/scattering_chain_test.cpp)
+        target_include_directories(
+            rayd_torch_scattering_chain_test
+            PRIVATE
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+                ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(
+            rayd_torch_scattering_chain_test
+            PRIVATE
+                rayd_torch_native_core
+                Python::Python)
+        target_compile_features(
+            rayd_torch_scattering_chain_test PRIVATE cxx_std_17)
+        add_test(
+            NAME rayd_torch_scattering_chain
+            COMMAND rayd_torch_scattering_chain_test)
         if(WIN32)
             set_tests_properties(
                 rayd_torch_integration_v2
                 rayd_torch_diffraction_wedge
                 rayd_torch_scattering
+                rayd_torch_scattering_chain
                 PROPERTIES
                     ENVIRONMENT_MODIFICATION
                         "PATH=path_list_prepend:${TORCH_INSTALL_PREFIX}/lib;PATH=path_list_prepend:${PYTHON_ENV_ROOT};PATH=path_list_prepend:${PYTHON_ENV_ROOT}/Library/bin;PATH=path_list_prepend:${CUDAToolkit_BIN_DIR}")
