@@ -23,7 +23,7 @@
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 4);
+static_assert(rayd::torch::kIntegrationApiVersion == 5);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);
@@ -1182,6 +1182,120 @@ void test_diffraction_paths_typed_contracts() {
             "diffraction path delay must be non-negative");
     }
 
+    auto source_lane = config;
+    source_lane.active = at::zeros({2}, bools);
+    source_lane.active.select(0, 1).fill_(true);
+    source_lane.state.edge_index = fixture.state.edge_index.repeat({2});
+    source_lane.state.edge_pos = fixture.state.edge_pos.repeat({2, 1});
+    source_lane.state.edge_dir = fixture.state.edge_dir.repeat({2, 1});
+    source_lane.state.edge_t_min = fixture.state.edge_t_min.repeat({2});
+    source_lane.state.edge_t_max = fixture.state.edge_t_max.repeat({2});
+    source_lane.state.n0 = fixture.state.n0.repeat({2, 1});
+    source_lane.state.n1 = fixture.state.n1.repeat({2, 1});
+    source_lane.state.prim0 = fixture.state.prim0.repeat({2});
+    source_lane.state.prim1 = fixture.state.prim1.repeat({2});
+    source_lane.state.exterior_angle = fixture.state.exterior_angle.repeat({2});
+    source_lane.state.src = fixture.state.src.repeat({2, 1});
+    source_lane.state.src_power = fixture.state.src_power.repeat({2});
+    source_lane.state_limit = 2;
+    source_lane.capacity = 2;
+    source_lane.layout = rayd::torch::DiffractionPathLayout::SourceLane;
+    const auto lane_paths =
+        rayd::torch::diffraction_paths_order1_forward(scene, source_lane);
+    require(lane_paths.count.item<int>() == 1, "source-lane count must track valid paths");
+    require(
+        !lane_paths.valid.select(0, 0).item<bool>() &&
+            lane_paths.valid.select(0, 1).item<bool>(),
+        "source-lane export must preserve the pair/state lane index");
+    require(
+        lane_paths.tx_id.select(0, 1).item<int>() == 0 &&
+            lane_paths.rx_id.select(0, 1).item<int>() == 0 &&
+            lane_paths.edge0.select(0, 1).item<int>() == 0,
+        "source-lane path identity differs");
+    require(
+        lane_paths.tx_id.select(0, 0).item<int>() == -1 &&
+            lane_paths.rx_id.select(0, 0).item<int>() == -1 &&
+            lane_paths.order.select(0, 0).item<int>() == 0 &&
+            lane_paths.edge0.select(0, 0).item<int>() == -1 &&
+            lane_paths.edge1.select(0, 0).item<int>() == -1 &&
+            lane_paths.edge2.select(0, 0).item<int>() == -1,
+        "source-lane inactive identity must remain canonical");
+    for (const auto &entry : {
+             lane_paths.delay,
+             lane_paths.field_x_re,
+             lane_paths.field_x_im,
+             lane_paths.field_y_re,
+             lane_paths.field_y_im,
+             lane_paths.field_z_re,
+             lane_paths.field_z_im}) {
+        require(
+            entry.select(0, 0).item<float>() == 0.0f,
+            "source-lane inactive scalar payload must remain exactly zero");
+    }
+    for (const auto &entry : {lane_paths.p0, lane_paths.p1, lane_paths.p2}) {
+        require(
+            at::equal(entry.select(0, 0), at::zeros_like(entry.select(0, 0))),
+            "source-lane inactive point payload must remain exactly zero");
+    }
+
+    auto compact_lane = source_lane;
+    compact_lane.layout = rayd::torch::DiffractionPathLayout::Compact;
+    const auto compact_paths =
+        rayd::torch::diffraction_paths_order1_forward(scene, compact_lane);
+    require(
+        compact_paths.count.item<int>() == 1 && compact_paths.valid.select(0, 0).item<bool>(),
+        "compact parity fixture must export one row");
+    for (const auto &pair : {
+             std::pair<at::Tensor, at::Tensor>{compact_paths.tx_id, lane_paths.tx_id},
+             {compact_paths.rx_id, lane_paths.rx_id},
+             {compact_paths.order, lane_paths.order},
+             {compact_paths.edge0, lane_paths.edge0},
+             {compact_paths.edge1, lane_paths.edge1},
+             {compact_paths.edge2, lane_paths.edge2},
+             {compact_paths.delay, lane_paths.delay},
+             {compact_paths.field_x_re, lane_paths.field_x_re},
+             {compact_paths.field_x_im, lane_paths.field_x_im},
+             {compact_paths.field_y_re, lane_paths.field_y_re},
+             {compact_paths.field_y_im, lane_paths.field_y_im},
+             {compact_paths.field_z_re, lane_paths.field_z_re},
+             {compact_paths.field_z_im, lane_paths.field_z_im},
+             {compact_paths.p0, lane_paths.p0},
+             {compact_paths.p1, lane_paths.p1},
+             {compact_paths.p2, lane_paths.p2}}) {
+        require(
+            at::equal(pair.first.select(0, 0), pair.second.select(0, 1)),
+            "compact and source-lane payloads must be bit-identical");
+    }
+
+    auto multi_lane = source_lane;
+    multi_lane.tx_pos = fixture.tx_pos.repeat({2, 1});
+    multi_lane.tx_pol = fixture.tx_pol.repeat({2, 1});
+    multi_lane.rx_pos = fixture.rx_pos.repeat({2, 1});
+    multi_lane.capacity = 8;
+    const auto multi_paths =
+        rayd::torch::diffraction_paths_order1_forward(scene, multi_lane);
+    require(multi_paths.count.item<int>() == 4, "multi-pair source-lane count differs");
+    const auto pair_lanes = multi_paths.valid.reshape({4, 2});
+    require(
+        !pair_lanes.select(1, 0).any().item<bool>() &&
+            pair_lanes.select(1, 1).all().item<bool>(),
+        "source-lane state must be the fastest-varying coordinate");
+    const auto odd_rows = at::tensor({1, 3, 5, 7}, ints.dtype(at::kLong));
+    require(
+        at::equal(
+            multi_paths.tx_id.index_select(0, odd_rows),
+            at::tensor({0, 0, 1, 1}, ints)) &&
+            at::equal(
+                multi_paths.rx_id.index_select(0, odd_rows),
+                at::tensor({0, 1, 0, 1}, ints)),
+        "source-lane transmitter/receiver identity formula differs");
+
+    auto invalid_layout = config;
+    invalid_layout.layout = static_cast<rayd::torch::DiffractionPathLayout>(77);
+    require_throws(
+        [&] { (void)rayd::torch::diffraction_paths_order1_forward(scene, invalid_layout); },
+        "invalid diffraction path layout must fail loudly");
+
     auto missing_active = config;
     missing_active.active = at::Tensor();
     require_throws(
@@ -1227,6 +1341,7 @@ void test_diffraction_paths_typed_contracts() {
     }
 
     auto poison = config;
+    poison.layout = rayd::torch::DiffractionPathLayout::SourceLane;
     poison.active = at::zeros({1}, bools);
     poison.rx_pos = at::full_like(poison.rx_pos, std::numeric_limits<float>::quiet_NaN());
     poison.state.edge_index = at::full_like(poison.state.edge_index, std::numeric_limits<int>::max());
@@ -1267,7 +1382,7 @@ void test_diffraction_paths_typed_contracts() {
     const auto stream = c10::cuda::getStreamFromPool(false, 0);
     {
         c10::cuda::CUDAStreamGuard guard(stream);
-        const auto streamed = rayd::torch::diffraction_paths_order1_forward(scene, config);
+        const auto streamed = rayd::torch::diffraction_paths_order1_forward(scene, source_lane);
         require(
             c10::cuda::getCurrentCUDAStream(0).stream() == stream.stream(),
             "diffraction path export changed the caller's CUDA stream");
@@ -1288,6 +1403,7 @@ void test_diffraction_paths_typed_contracts() {
         1.0,
         0.0,
     };
+    empty_config.layout = rayd::torch::DiffractionPathLayout::SourceLane;
     const auto empty = rayd::torch::diffraction_paths_order1_forward(scene, empty_config);
     require_tensor_contract(empty.count, {1}, at::kInt, device, "empty diffraction path count");
     require(empty.count.item<int>() == 0, "empty diffraction path count must be zero");

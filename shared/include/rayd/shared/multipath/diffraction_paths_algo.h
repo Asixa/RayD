@@ -32,6 +32,9 @@ namespace rayd::shared::multipath {
 
 namespace diffraction_paths_algo_detail {
 
+inline constexpr int kOutputLayoutCompact = 0;
+inline constexpr int kOutputLayoutSourceLane = 1;
+
 using math::Vec3f;
 namespace utd = ::rayd::shared::utd;
 
@@ -267,6 +270,26 @@ RAYD_HOST_DEVICE bool finite_paths_points(Vec3f source, Vec3f edge_point, Vec3f 
            is_finite(receiver.x) && is_finite(receiver.y) && is_finite(receiver.z);
 }
 
+template <typename Params>
+RAYD_HOST_DEVICE auto path_output_layout(const Params &params, int)
+    -> decltype(params.output_layout) {
+    return params.output_layout;
+}
+
+template <typename Params>
+RAYD_HOST_DEVICE int path_output_layout(const Params &, long) {
+    return kOutputLayoutCompact;
+}
+
+template <typename Params>
+RAYD_DEVICE int reserve_path_output(const Params &params, std::uint32_t lane) {
+    if (path_output_layout(params, 0) == kOutputLayoutSourceLane) {
+        atomic_add(params.out_count, 1);
+        return static_cast<int>(lane);
+    }
+    return atomic_add(params.out_count, 1);
+}
+
 } // namespace diffraction_paths_algo_detail
 
 /// Combined first-order path export for one lane (former trace_paths_order1_impl).
@@ -345,7 +368,7 @@ RAYD_DEVICE void trace_paths_order1_algo(
     }
     const float amplitude_scale = sqrtf(fmaxf(params.state_src_power[state_idx], 0.f));
 
-    const int out_idx = atomic_add(params.out_count, 1);
+    const int out_idx = reserve_path_output(params, lane);
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }
@@ -469,7 +492,7 @@ RAYD_DEVICE void trace_paths_target_export_algo(
     }
     const float amplitude_scale = sqrtf(fmaxf(params.state_src_power[state_idx], 0.f));
 
-    const int out_idx = atomic_add(params.out_count, 1);
+    const int out_idx = reserve_path_output(params, lane);
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }
