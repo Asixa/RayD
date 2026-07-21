@@ -76,7 +76,7 @@ matrix, resource boundary, activation gates, and stop conditions.
 
 The same-graph Torch C++ boundary has one durable name:
 `rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 4`. Do not add an `integration_v2` forwarding
+numeric `kIntegrationApiVersion = 5`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
@@ -96,6 +96,15 @@ host/device export path must gate on it before reading state payload, and the
 public Torch call has no omitted, `None`, scalar-broadcast, or strided-mask path.
 Diffraction accumulation and coherent-accumulation configs retain their existing
 contracts. See `docs/adr/0031-required-diffraction-path-validity.md`.
+
+The typed order-1 diffraction exporter supports `Compact` and `SourceLane`
+storage under ADR-0032. `Compact` remains the default for existing consumers.
+`SourceLane` writes a successful logical lane only to
+`((tx * rx_count + rx) * state_limit) + state`, leaves rejected lanes inert,
+and retains the device count only as actual-count metadata. Both layouts share
+the same traversal and UTD body; do not add a second exporter, host compaction,
+or floating-point reduction to RayD. See
+`docs/adr/0032-source-lane-diffraction-path-layout.md`.
 
 ## OptiX Pipeline Guardrail
 

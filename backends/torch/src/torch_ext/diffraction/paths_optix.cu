@@ -244,17 +244,20 @@ static __forceinline__ __device__ void write_point(float *aos,
     z[idx] = value.z;
 }
 
-static __forceinline__ __device__ int reserve_path_slot() {
+static __forceinline__ __device__ int reserve_path_slot(unsigned int logical_lane) {
     const unsigned int mask = __activemask();
     unsigned int lane = 0u;
     asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane));
     const int leader = __ffs(mask) - 1;
-    const int rank = __popc(mask & ((1u << lane) - 1u));
     const int count = __popc(mask);
     int base = 0;
     if (static_cast<int>(lane) == leader) {
         base = atomicAdd(params.out_count, count);
     }
+    if (params.output_layout == kDiffractionPathLayoutSourceLane) {
+        return static_cast<int>(logical_lane);
+    }
+    const int rank = __popc(mask & ((1u << lane) - 1u));
     base = __shfl_sync(mask, base, leader);
     return base + rank;
 }
@@ -481,7 +484,7 @@ static __forceinline__ __device__ void trace_paths_order1_impl() {
     const float amplitude_scale =
         sqrtf(fmaxf(read_f32(params.state_src_power, params.state_src_power_stride, state_idx), 0.f));
 
-    const int out_idx = reserve_path_slot();
+    const int out_idx = reserve_path_slot(lane);
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }
@@ -643,7 +646,7 @@ static __forceinline__ __device__ void trace_paths_order1_target_export_primary_
         return;
     }
 
-    const int out_idx = reserve_path_slot();
+    const int out_idx = reserve_path_slot(lane);
     if (out_idx < 0 || out_idx >= params.capacity) {
         return;
     }

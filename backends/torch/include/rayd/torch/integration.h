@@ -15,7 +15,7 @@
 
 namespace rayd::torch {
 
-inline constexpr std::uint32_t kIntegrationApiVersion = 4;
+inline constexpr std::uint32_t kIntegrationApiVersion = 5;
 inline constexpr std::string_view kIntegrationHeaderIdentity =
     "rayd.torch.integration";
 
@@ -443,6 +443,11 @@ struct DiffractionState {
     std::optional<at::Tensor> d0;
 };
 
+enum class DiffractionPathLayout : std::uint8_t {
+    Compact = 0,
+    SourceLane = 1,
+};
+
 struct RecursiveDiffractionState {
     std::optional<at::Tensor> active;
     at::Tensor edge_index;
@@ -469,6 +474,7 @@ struct DiffractionPathConfig {
     std::int64_t capacity = 0;
     double wavelength = 0.0;
     double isb_taper_width_scale = 0.0;
+    DiffractionPathLayout layout = DiffractionPathLayout::Compact;
 };
 
 struct DiffractionPathResult {

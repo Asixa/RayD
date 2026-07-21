@@ -6,9 +6,10 @@
 - Scope: RayD Torch pure-wedge, transmission, and generic scattering rows
 
 The numeric version `3` below records this decision's accepted boundary.
-ADR-0031 subsequently advances the current stable integration API to version
-`4` for required diffraction path-export validity without changing these row
-validity contracts.
+ADR-0031 subsequently advanced the then-current stable integration API to
+version `4` for required diffraction path-export validity without changing
+these row validity contracts. ADR-0032 later advances that API to version `5`
+for the optional source-lane diffraction layout.
 
 ## Context
 

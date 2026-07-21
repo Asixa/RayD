@@ -459,6 +459,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     at::Tensor material_valid,
     int64_t state_limit_arg,
     int64_t capacity,
+    int output_layout,
     double wavelength,
     double isb_taper_width_scale) {
     require_vec3f_strided(tx_pos, "tx_pos");
@@ -527,6 +528,9 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
         throw std::runtime_error("capacity must be at least tx_count * rx_count * state_limit.");
     const int32_t n_rays = checked_i32(n_rays64, "n_rays");
     const int32_t capacity_i32 = checked_i32(capacity, "capacity");
+    if (output_layout != kDiffractionPathLayoutCompact &&
+        output_layout != kDiffractionPathLayoutSourceLane)
+        throw std::runtime_error("diffraction path layout is invalid.");
 
     require_scene_device(scene, tx_pos, "tx_pos");
     require_scene_device(scene, tx_pol, "tx_pol");
@@ -642,6 +646,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.split_mode = 0;
     params.n_rays = n_rays;
     params.capacity = capacity_i32;
+    params.output_layout = output_layout;
     params.tx_pos_x = nullptr;
     params.tx_pos_y = nullptr;
     params.tx_pos_z = nullptr;
@@ -856,6 +861,7 @@ py::tuple diffraction_paths_order1_forward_op(
         std::move(material_valid),
         state_limit,
         capacity,
+        kDiffractionPathLayoutCompact,
         wavelength,
         isb_taper_width_scale));
 }
@@ -3145,6 +3151,7 @@ DiffractionPathResult diffraction_paths_order1_forward(
         config.material.valid,
         config.state_limit,
         config.capacity,
+        static_cast<int>(config.layout),
         config.wavelength,
         config.isb_taper_width_scale);
     return {

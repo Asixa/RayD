@@ -15,7 +15,10 @@
 
 namespace rayd::torch_backend {
 
-/// Launch parameters for compact first-order diffraction path export.
+inline constexpr int kDiffractionPathLayoutCompact = 0;
+inline constexpr int kDiffractionPathLayoutSourceLane = 1;
+
+/// Launch parameters for first-order diffraction path export.
 struct DfrPathParams {
     OptixTraversableHandle primary_handle;
     OptixTraversableHandle secondary_handle;
@@ -23,6 +26,7 @@ struct DfrPathParams {
 
     int n_rays;
     int capacity;
+    int output_layout;
 
     const float *tx_pos_x;
     const float *tx_pos_y;

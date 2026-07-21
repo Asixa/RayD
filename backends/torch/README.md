@@ -79,7 +79,7 @@ family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 The stable source-level boundary is named `rayd/torch/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version is `4`.
+identity is `rayd.torch.integration`, and its numeric API version is `5`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
@@ -112,6 +112,14 @@ operation adds no synchronization beyond the existing common launch-parameter
 staging path; removing that staging path's host event wait is a separate
 optimization.
 See [`docs/adr/0029-typed-axial-edge-visibility.md`](../../docs/adr/0029-typed-axial-edge-visibility.md).
+
+API version 5 adds an explicit `DiffractionPathLayout` to the typed order-1
+exporter. Existing callers retain `Compact`; same-graph consumers may request
+`SourceLane`, where the fixed row is
+`((tx * rx_count + rx) * state_limit) + state`. Rejected lanes remain inert and
+the CUDA count remains actual-count metadata rather than a storage ordinal.
+Both layouts use the same traversal and UTD implementation. See
+[`docs/adr/0032-source-lane-diffraction-path-layout.md`](../../docs/adr/0032-source-lane-diffraction-path-layout.md).
 
 RayD Torch carries all seventeen typed operations. Channel has activated the
 Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.

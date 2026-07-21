@@ -7,6 +7,10 @@
 
 ## Context
 
+ADR-0032 subsequently advances the stable numeric integration API to version
+`5` for an explicit diffraction path storage layout without changing this
+required-validity contract.
+
 The order-1 exporter accepts fixed-capacity diffraction states selected on the
 device. Its former optional `active` mask allowed an implicit all-valid path,
 scalar broadcast, and strided masks. Those forms cannot safely represent an
