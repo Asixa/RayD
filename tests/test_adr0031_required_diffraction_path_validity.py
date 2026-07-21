@@ -19,9 +19,9 @@ def struct_body(text: str, name: str) -> str:
 
 
 class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
-    def test_required_path_export_validity_survives_api5(self):
+    def test_required_path_export_validity_survives_api6(self):
         integration = read(TORCH / "include" / "rayd" / "torch" / "integration.h")
-        self.assertIn("kIntegrationApiVersion = 5", integration)
+        self.assertIn("kIntegrationApiVersion = 6", integration)
         config = struct_body(integration, "DiffractionPathConfig")
         self.assertEqual(config.count("at::Tensor active;"), 1)
         self.assertNotIn("std::optional<at::Tensor> active", config)

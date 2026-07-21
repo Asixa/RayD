@@ -21,9 +21,9 @@ def struct_body(text: str, name: str) -> str:
 
 
 class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
-    def test_api5_exposes_stable_layout_without_a_new_boundary(self):
+    def test_api6_exposes_stable_layout_without_a_new_boundary(self):
         integration = read(TORCH / "include" / "rayd" / "torch" / "integration.h")
-        self.assertIn("kIntegrationApiVersion = 5", integration)
+        self.assertIn("kIntegrationApiVersion = 6", integration)
         self.assertIn('"rayd.torch.integration"', integration)
         self.assertIn("enum class DiffractionPathLayout", integration)
         enum = integration.split("enum class DiffractionPathLayout", 1)[1].split("};", 1)[0]

@@ -203,6 +203,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
     set(RAYD_TORCH_DIFFRACTION_PATHS_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/diffraction_paths_optix_ptx.h")
     set(RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_optix.ptx")
     set(RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/diffraction_accumulation_optix_ptx.h")
+    set(RAYD_TORCH_SEGMENT_PENETRATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_penetration_optix.ptx")
+    set(RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/segment_penetration_optix_ptx.h")
     add_custom_command(
         OUTPUT "${RAYD_TORCH_OPTIX_PTX}"
         COMMAND
@@ -568,6 +570,43 @@ if(RAYD_TORCH_BUILD_NATIVE)
             src/torch_ext/embed_ptx.py
     )
     add_custom_target(rayd_torch_diffraction_accumulation_optix_ptx DEPENDS "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}")
+    add_custom_command(
+        OUTPUT "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
+        COMMAND
+            "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/penetration/segment_penetration_optix.cu"
+            -o "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            -I "${RAYD_SHARED_INCLUDE_DIR}"
+            -I "${CUDAToolkit_INCLUDE_DIRS}"
+            -I "${OPTIX_INCLUDE_DIR}"
+            --std=c++17
+            --gpu-architecture=compute_75
+            --ftz=false
+            --prec-div=true
+            --prec-sqrt=true
+        DEPENDS
+            src/torch_ext/penetration/segment_penetration_optix.cu
+            include/rayd/torch/penetration/segment_penetration_params.h
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+    )
+    add_custom_command(
+        OUTPUT "${RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER}"
+        COMMAND
+            "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
+            "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
+            "${RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER}"
+            rayd_torch_segment_penetration_optix_ptx
+        DEPENDS
+            "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
+            src/torch_ext/embed_ptx.py
+    )
+    add_custom_target(
+        rayd_torch_segment_penetration_optix_ptx
+        DEPENDS "${RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER}")
 
     set(
         RAYD_TORCH_NATIVE_CORE_SOURCES
@@ -578,16 +617,19 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/common/ops_camera.cpp
         src/torch_ext/reflection/pipeline.cpp
         src/torch_ext/diffraction/pipeline.cpp
+        src/torch_ext/penetration/pipeline.cpp
         src/torch_ext/scene/ops_scene.cpp
         src/torch_ext/scene/optix_context.cpp
         src/torch_ext/scene/ops_intersect.cpp
         src/torch_ext/edge/ops_edge.cpp
         src/torch_ext/reflection/ops.cpp
         src/torch_ext/diffraction/ops.cpp
+        src/torch_ext/penetration/ops.cpp
         src/torch_ext/scene/cache_kernels.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/scene/packing.cu
         src/torch_ext/scene/geometry_forward.cu
         src/torch_ext/scene/geometry_backward.cu
+        src/torch_ext/penetration/segment_penetration.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu
@@ -631,6 +673,15 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PROPERTIES
             COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>")
 
+    # ADR-0033 freezes the two penetration policy expressions and their native
+    # VJP/JVP companions to precise division/square-root and non-FTZ behavior,
+    # while retaining the established default FMA-contraction behavior. The
+    # standalone OptiX PTX command above carries the same family-local policy.
+    set_source_files_properties(
+        src/torch_ext/penetration/segment_penetration.cu
+        PROPERTIES
+            COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--ftz=false;--prec-div=true;--prec-sqrt=true>")
+
     # ADR-0026 preserves the source-local arithmetic policy from Channel. The
     # sampling/eval primal in scattering.cu deliberately keeps target defaults;
     # the lockstep/AD translation units disable FMA contraction.
@@ -672,7 +723,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_reflection_epc_optix_ptx
         rayd_torch_reflection_accumulation_optix_ptx
         rayd_torch_diffraction_paths_optix_ptx
-        rayd_torch_diffraction_accumulation_optix_ptx)
+        rayd_torch_diffraction_accumulation_optix_ptx
+        rayd_torch_segment_penetration_optix_ptx)
     target_link_libraries(
         rayd_torch_native_core
         PUBLIC
@@ -702,6 +754,30 @@ if(RAYD_TORCH_BUILD_NATIVE)
         add_test(
             NAME rayd_torch_integration
             COMMAND rayd_torch_integration_test)
+        add_executable(
+            rayd_torch_segment_penetration_test
+            tests/cpp/segment_penetration_test.cpp
+            tests/cpp/segment_penetration_oracle.cu)
+        target_include_directories(
+            rayd_torch_segment_penetration_test
+            PRIVATE
+                ${Python_INCLUDE_DIRS}
+                "${TORCH_INSTALL_PREFIX}/include"
+                "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+                ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(
+            rayd_torch_segment_penetration_test
+            PRIVATE
+                rayd_torch_native_core
+                Python::Python)
+        target_compile_features(
+            rayd_torch_segment_penetration_test PRIVATE cxx_std_17)
+        set_target_properties(
+            rayd_torch_segment_penetration_test
+            PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+        add_test(
+            NAME rayd_torch_segment_penetration
+            COMMAND rayd_torch_segment_penetration_test)
         add_executable(
             rayd_torch_diffraction_wedge_test
             tests/cpp/diffraction_wedge_test.cpp)
@@ -765,6 +841,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         if(WIN32)
             set_tests_properties(
                 rayd_torch_integration
+                rayd_torch_segment_penetration
                 rayd_torch_diffraction_wedge
                 rayd_torch_scattering
                 rayd_torch_scattering_chain

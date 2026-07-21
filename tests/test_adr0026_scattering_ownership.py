@@ -13,7 +13,7 @@ STABLE_INTEGRATION_HEADER = (
     "backends/torch/include/rayd/torch/integration.h"
 )
 STABLE_INTEGRATION_HEADER_HASH = (
-    "f92c5fd88df028e819a67adc473c38df81d46f730533cc2ba8ac0523303b4719"
+    "57f83ea460e376166fd5ee22a8243a7c1576a290e1de99c0cbe8e86e93392e14"
 )
 
 EXPECTED_FAMILIES = {
