@@ -76,7 +76,7 @@ matrix, resource boundary, activation gates, and stop conditions.
 
 The same-graph Torch C++ boundary has one durable name:
 `rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 5`. Do not add an `integration_v2` forwarding
+numeric `kIntegrationApiVersion = 6`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
@@ -105,6 +105,20 @@ and retains the device count only as actual-count metadata. Both layouts share
 the same traversal and UTD body; do not add a second exporter, host compaction,
 or floating-point reduction to RayD. See
 `docs/adr/0032-source-lane-diffraction-path-layout.md`.
+
+The dormant ADR-0033 segment-penetration family uses the stable typed boundary
+only. Every structurally active non-empty forward entry submits one OptiX
+launch, with the ordered `D + 1` capacity probe inside each raygen lane.
+`input_active_any=false` submits zero OptiX work and must validate the device
+mask on the caller's stream. Results and tapes are fixed `[N,D]`, share the
+caller's CUDA int32 `[1]` failure transaction and single assigned bit, and are
+made completely inert after any failure; only the overflow diagnostic may be
+retained. Backward/JVP consume frozen primitive, barycentric, restart, tie, and
+denominator decisions and never retrace. Keep both policies, their exact
+comparison/normal/epsilon expressions, and family-local non-FTZ/precise-divide/
+precise-square-root compilation separate. Do not add a Python binding,
+dispatcher, host count read, partial result, or fallback. See
+`docs/adr/0033-batched-segment-penetration.md`.
 
 ## OptiX Pipeline Guardrail
 

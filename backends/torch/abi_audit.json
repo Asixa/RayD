@@ -133,9 +133,10 @@
       "intersection_valid"
     ],
     "typed_native_candidates": {
-      "axial_edge_visibility_forward": "dormant_same_graph_exact_optix_source_integration"
+      "axial_edge_visibility_forward": "dormant_same_graph_exact_optix_source_integration",
+      "segment_penetration_complete_family": "dormant_same_graph_batched_optix_fixed_winner_ad"
     }
   },
-  "source_sha256": "aa8963d3aa417fc97e0a434910f024d3422a4da537c5a89865afb7c6d669f09f",
+  "source_sha256": "70691cfb0d0957855344ed4e729fefd1d00c63f5197b104dd8a8f537fcefce13",
   "version": 2
 }

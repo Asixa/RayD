@@ -23,7 +23,7 @@
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 5);
+static_assert(rayd::torch::kIntegrationApiVersion == 6);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);

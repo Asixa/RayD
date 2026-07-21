@@ -79,7 +79,7 @@ family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
 The stable source-level boundary is named `rayd/torch/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version is `5`.
+identity is `rayd.torch.integration`, and its numeric API version is `6`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../../docs/adr/0028-stable-typed-integration-naming.md).
@@ -120,6 +120,16 @@ exporter. Existing callers retain `Compact`; same-graph consumers may request
 the CUDA count remains actual-count metadata rather than a storage ordinal.
 Both layouts use the same traversal and UTD implementation. See
 [`docs/adr/0032-source-lane-diffraction-path-layout.md`](../../docs/adr/0032-source-lane-diffraction-path-layout.md).
+
+API version 6 adds the dormant complete batched segment-penetration family.
+Each non-empty structurally active forward call submits one OptiX launch and
+performs its ordered `D+1` capacity probe in raygen; an explicit structurally
+all-inactive call uses only a same-stream CUDA mask consistency check. Results
+and tapes use fixed `[N,D]` storage and the caller's shared device failure
+transaction. Backward/JVP use frozen winners and never retrace. RayD exposes no
+Python dispatcher for this family, and Channel retains material and wall-product
+policy. See
+[`docs/adr/0033-batched-segment-penetration.md`](../../docs/adr/0033-batched-segment-penetration.md).
 
 RayD Torch carries all seventeen typed operations. Channel has activated the
 Phase 10A table, sampling, single-bounce ensemble, and patch-integral entries.
