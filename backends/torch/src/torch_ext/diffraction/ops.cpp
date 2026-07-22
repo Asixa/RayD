@@ -20,6 +20,7 @@
 #include <rayd/torch/reflection/trace_params.h>
 #include <rayd/torch/reflection/visibility_params.h>
 #include <rayd/torch/scene/cache.h>
+#include <rayd/torch/scene/multipath_cuda.h>
 #include <rayd/torch/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -640,6 +641,34 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
             out_p2};
     }
 
+    const bool cuda_backend = scene.trace_backend == TraceBackend::Cuda;
+    Vec3SoA cuda_tx_pos, cuda_rx_pos, cuda_state_edge_pos, cuda_state_edge_dir;
+    Vec3SoA cuda_state_n0, cuda_state_n1, cuda_state_src;
+    Vec3SoA cuda_out_p0, cuda_out_p1, cuda_out_p2;
+    at::Tensor cuda_state_edge_index, cuda_state_edge_t_min, cuda_state_edge_t_max;
+    at::Tensor cuda_state_prim0, cuda_state_prim1, cuda_state_exterior_angle;
+    at::Tensor cuda_state_src_power, cuda_temp_visibility;
+    if (cuda_backend) {
+        cuda_tx_pos = split_vec3(tx_pos);
+        cuda_rx_pos = split_vec3(rx_pos);
+        cuda_state_edge_pos = split_vec3(state_edge_pos);
+        cuda_state_edge_dir = split_vec3(state_edge_dir);
+        cuda_state_n0 = split_vec3(state_n0);
+        cuda_state_n1 = split_vec3(state_n1);
+        cuda_state_src = split_vec3(state_src);
+        cuda_state_edge_index = state_edge_index.contiguous();
+        cuda_state_edge_t_min = state_edge_t_min.contiguous();
+        cuda_state_edge_t_max = state_edge_t_max.contiguous();
+        cuda_state_prim0 = state_prim0.contiguous();
+        cuda_state_prim1 = state_prim1.contiguous();
+        cuda_state_exterior_angle = state_exterior_angle.contiguous();
+        cuda_state_src_power = state_src_power.contiguous();
+        cuda_temp_visibility = at::zeros({n_rays}, active.options());
+        cuda_out_p0 = split_vec3(out_p0);
+        cuda_out_p1 = split_vec3(out_p1);
+        cuda_out_p2 = split_vec3(out_p2);
+    }
+
     DfrPathParams params = {};
     params.primary_handle = scene.triangle_ias.traversable;
     params.secondary_handle = 0;
@@ -647,9 +676,9 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.n_rays = n_rays;
     params.capacity = capacity_i32;
     params.output_layout = output_layout;
-    params.tx_pos_x = nullptr;
-    params.tx_pos_y = nullptr;
-    params.tx_pos_z = nullptr;
+    params.tx_pos_x = cuda_backend ? cuda_tx_pos.x.data_ptr<float>() : nullptr;
+    params.tx_pos_y = cuda_backend ? cuda_tx_pos.y.data_ptr<float>() : nullptr;
+    params.tx_pos_z = cuda_backend ? cuda_tx_pos.z.data_ptr<float>() : nullptr;
     params.tx_pos_aos = tx_pos.data_ptr<float>();
     params.tx_pos_stride0 = stride_i32(tx_pos, 0, "tx_pos_stride0");
     params.tx_pos_stride1 = stride_i32(tx_pos, 1, "tx_pos_stride1");
@@ -658,9 +687,9 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.tx_pol_stride0 = stride_i32(tx_pol, 0, "tx_pol_stride0");
     params.tx_pol_stride1 = stride_i32(tx_pol, 1, "tx_pol_stride1");
     params.tx_pol_count = checked_i32(tx_pol.size(0), "tx_pol_count");
-    params.rx_pos_x = nullptr;
-    params.rx_pos_y = nullptr;
-    params.rx_pos_z = nullptr;
+    params.rx_pos_x = cuda_backend ? cuda_rx_pos.x.data_ptr<float>() : nullptr;
+    params.rx_pos_y = cuda_backend ? cuda_rx_pos.y.data_ptr<float>() : nullptr;
+    params.rx_pos_z = cuda_backend ? cuda_rx_pos.z.data_ptr<float>() : nullptr;
     params.rx_pos_aos = rx_pos.data_ptr<float>();
     params.rx_pos_stride0 = stride_i32(rx_pos, 0, "rx_pos_stride0");
     params.rx_pos_stride1 = stride_i32(rx_pos, 1, "rx_pos_stride1");
@@ -668,49 +697,49 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.active_mask = reinterpret_cast<const uint8_t *>(active.data_ptr<bool>());
     params.state_count = checked_i32(state_limit, "state_count");
     params.state_limit = checked_i32(state_limit, "state_limit");
-    params.state_edge_index = state_edge_index.data_ptr<int>();
+    params.state_edge_index = cuda_backend ? cuda_state_edge_index.data_ptr<int>() : state_edge_index.data_ptr<int>();
     params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
-    params.state_edge_pos_x = nullptr;
-    params.state_edge_pos_y = nullptr;
-    params.state_edge_pos_z = nullptr;
+    params.state_edge_pos_x = cuda_backend ? cuda_state_edge_pos.x.data_ptr<float>() : nullptr;
+    params.state_edge_pos_y = cuda_backend ? cuda_state_edge_pos.y.data_ptr<float>() : nullptr;
+    params.state_edge_pos_z = cuda_backend ? cuda_state_edge_pos.z.data_ptr<float>() : nullptr;
     params.state_edge_pos_aos = state_edge_pos.data_ptr<float>();
     params.state_edge_pos_stride0 = stride_i32(state_edge_pos, 0, "state_edge_pos_stride0");
     params.state_edge_pos_stride1 = stride_i32(state_edge_pos, 1, "state_edge_pos_stride1");
-    params.state_edge_dir_x = nullptr;
-    params.state_edge_dir_y = nullptr;
-    params.state_edge_dir_z = nullptr;
+    params.state_edge_dir_x = cuda_backend ? cuda_state_edge_dir.x.data_ptr<float>() : nullptr;
+    params.state_edge_dir_y = cuda_backend ? cuda_state_edge_dir.y.data_ptr<float>() : nullptr;
+    params.state_edge_dir_z = cuda_backend ? cuda_state_edge_dir.z.data_ptr<float>() : nullptr;
     params.state_edge_dir_aos = state_edge_dir.data_ptr<float>();
     params.state_edge_dir_stride0 = stride_i32(state_edge_dir, 0, "state_edge_dir_stride0");
     params.state_edge_dir_stride1 = stride_i32(state_edge_dir, 1, "state_edge_dir_stride1");
-    params.state_edge_t_min = state_edge_t_min.data_ptr<float>();
+    params.state_edge_t_min = cuda_backend ? cuda_state_edge_t_min.data_ptr<float>() : state_edge_t_min.data_ptr<float>();
     params.state_edge_t_min_stride = stride_i32(state_edge_t_min, 0, "state_edge_t_min_stride");
-    params.state_edge_t_max = state_edge_t_max.data_ptr<float>();
+    params.state_edge_t_max = cuda_backend ? cuda_state_edge_t_max.data_ptr<float>() : state_edge_t_max.data_ptr<float>();
     params.state_edge_t_max_stride = stride_i32(state_edge_t_max, 0, "state_edge_t_max_stride");
-    params.state_n0_x = nullptr;
-    params.state_n0_y = nullptr;
-    params.state_n0_z = nullptr;
+    params.state_n0_x = cuda_backend ? cuda_state_n0.x.data_ptr<float>() : nullptr;
+    params.state_n0_y = cuda_backend ? cuda_state_n0.y.data_ptr<float>() : nullptr;
+    params.state_n0_z = cuda_backend ? cuda_state_n0.z.data_ptr<float>() : nullptr;
     params.state_n0_aos = state_n0.data_ptr<float>();
     params.state_n0_stride0 = stride_i32(state_n0, 0, "state_n0_stride0");
     params.state_n0_stride1 = stride_i32(state_n0, 1, "state_n0_stride1");
-    params.state_n1_x = nullptr;
-    params.state_n1_y = nullptr;
-    params.state_n1_z = nullptr;
+    params.state_n1_x = cuda_backend ? cuda_state_n1.x.data_ptr<float>() : nullptr;
+    params.state_n1_y = cuda_backend ? cuda_state_n1.y.data_ptr<float>() : nullptr;
+    params.state_n1_z = cuda_backend ? cuda_state_n1.z.data_ptr<float>() : nullptr;
     params.state_n1_aos = state_n1.data_ptr<float>();
     params.state_n1_stride0 = stride_i32(state_n1, 0, "state_n1_stride0");
     params.state_n1_stride1 = stride_i32(state_n1, 1, "state_n1_stride1");
-    params.state_prim0 = state_prim0.data_ptr<int>();
+    params.state_prim0 = cuda_backend ? cuda_state_prim0.data_ptr<int>() : state_prim0.data_ptr<int>();
     params.state_prim0_stride = stride_i32(state_prim0, 0, "state_prim0_stride");
-    params.state_prim1 = state_prim1.data_ptr<int>();
+    params.state_prim1 = cuda_backend ? cuda_state_prim1.data_ptr<int>() : state_prim1.data_ptr<int>();
     params.state_prim1_stride = stride_i32(state_prim1, 0, "state_prim1_stride");
-    params.state_exterior_angle = state_exterior_angle.data_ptr<float>();
+    params.state_exterior_angle = cuda_backend ? cuda_state_exterior_angle.data_ptr<float>() : state_exterior_angle.data_ptr<float>();
     params.state_exterior_angle_stride = stride_i32(state_exterior_angle, 0, "state_exterior_angle_stride");
-    params.state_src_x = nullptr;
-    params.state_src_y = nullptr;
-    params.state_src_z = nullptr;
+    params.state_src_x = cuda_backend ? cuda_state_src.x.data_ptr<float>() : nullptr;
+    params.state_src_y = cuda_backend ? cuda_state_src.y.data_ptr<float>() : nullptr;
+    params.state_src_z = cuda_backend ? cuda_state_src.z.data_ptr<float>() : nullptr;
     params.state_src_aos = state_src.data_ptr<float>();
     params.state_src_stride0 = stride_i32(state_src, 0, "state_src_stride0");
     params.state_src_stride1 = stride_i32(state_src, 1, "state_src_stride1");
-    params.state_src_power = state_src_power.data_ptr<float>();
+    params.state_src_power = cuda_backend ? cuda_state_src_power.data_ptr<float>() : state_src_power.data_ptr<float>();
     params.state_src_power_stride = stride_i32(state_src_power, 0, "state_src_power_stride");
     params.material_eta_r = material_eta_r.data_ptr<float>();
     params.material_eta_r_stride = stride_i32(material_eta_r, 0, "material_eta_r_stride");
@@ -735,7 +764,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.sample_count = 1;
     params.return_geom = 1;
     params.receiver_model = RAYD_TORCH_DFR_MATCHED_ISO;
-    params.temp_visibility = nullptr;
+    params.temp_visibility = cuda_backend ? mutable_mask_ptr(cuda_temp_visibility) : nullptr;
     params.out_count = out_count.data_ptr<int>();
     params.out_valid = mutable_mask_ptr(out_valid);
     params.out_tx_id = out_tx_id.data_ptr<int>();
@@ -751,20 +780,27 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     params.out_field_y_im = out_field_y_im.data_ptr<float>();
     params.out_field_z_re = out_field_z_re.data_ptr<float>();
     params.out_field_z_im = out_field_z_im.data_ptr<float>();
-    params.out_p0_x = nullptr;
-    params.out_p0_y = nullptr;
-    params.out_p0_z = nullptr;
+    params.out_p0_x = cuda_backend ? cuda_out_p0.x.data_ptr<float>() : nullptr;
+    params.out_p0_y = cuda_backend ? cuda_out_p0.y.data_ptr<float>() : nullptr;
+    params.out_p0_z = cuda_backend ? cuda_out_p0.z.data_ptr<float>() : nullptr;
     params.out_p0_aos = out_p0.data_ptr<float>();
-    params.out_p1_x = nullptr;
-    params.out_p1_y = nullptr;
-    params.out_p1_z = nullptr;
-    params.out_p2_x = nullptr;
-    params.out_p2_y = nullptr;
-    params.out_p2_z = nullptr;
+    params.out_p1_x = cuda_backend ? cuda_out_p1.x.data_ptr<float>() : nullptr;
+    params.out_p1_y = cuda_backend ? cuda_out_p1.y.data_ptr<float>() : nullptr;
+    params.out_p1_z = cuda_backend ? cuda_out_p1.z.data_ptr<float>() : nullptr;
+    params.out_p2_x = cuda_backend ? cuda_out_p2.x.data_ptr<float>() : nullptr;
+    params.out_p2_y = cuda_backend ? cuda_out_p2.y.data_ptr<float>() : nullptr;
+    params.out_p2_z = cuda_backend ? cuda_out_p2.z.data_ptr<float>() : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
-    pipeline->launch(0, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
+    if (cuda_backend) {
+        launch_diffraction_paths_cuda(scene, params, n_rays);
+        out_p0 = at::stack({cuda_out_p0.x, cuda_out_p0.y, cuda_out_p0.z}, 1);
+        out_p1 = at::stack({cuda_out_p1.x, cuda_out_p1.y, cuda_out_p1.z}, 1);
+        out_p2 = at::stack({cuda_out_p2.x, cuda_out_p2.y, cuda_out_p2.z}, 1);
+    } else {
+        auto pipeline = optix_pipeline_for_scene(scene, diffraction_paths_pipeline_config());
+        pipeline->launch(0, params, static_cast<unsigned int>(n_rays), torch_ctx.stream);
+    }
 
     return {
         out_count,
@@ -1431,13 +1467,21 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
         ? reinterpret_cast<float4 *>(stage_value.data_ptr<float>())
         : nullptr;
 
-    auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
+    std::shared_ptr<OptixLaunchPipeline> pipeline;
+    if (scene.trace_backend != TraceBackend::Cuda)
+        pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
+    auto launch_variant = [&](int variant) {
+        if (scene.trace_backend == TraceBackend::Cuda)
+            launch_diffraction_accumulation_cuda(scene, params, variant, launch_count);
+        else
+            pipeline->launch(variant, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+    };
     if (use_recursive) {
-        pipeline->launch(13, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+        launch_variant(13);
     } else {
-        pipeline->launch(6, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+        launch_variant(6);
         if (direct_launch_count + keller_launch_count > 0)
-            pipeline->launch(7, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+            launch_variant(7);
         if (staged_no_suffix_accum) {
             reduce_dfr_accum_staged_cuda(
                 launch_count,
@@ -1450,8 +1494,8 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
                 edge_uses);
         }
         if (suffix_launch_count > 0) {
-            pipeline->launch(8, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
-            pipeline->launch(9, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+            launch_variant(8);
+            launch_variant(9);
         }
     }
 
@@ -2969,8 +3013,12 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
         : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
-    pipeline->launch(11, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_diffraction_accumulation_cuda(scene, params, 11, launch_count);
+    } else {
+        auto pipeline = optix_pipeline_for_scene(scene, diffraction_accumulation_pipeline_config());
+        pipeline->launch(11, params, static_cast<unsigned int>(launch_count), torch_ctx.stream);
+    }
     if (staged_coherent_accum) {
         reduce_dfr_coherent_accum_staged_cuda(
             launch_count64,

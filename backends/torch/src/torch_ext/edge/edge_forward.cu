@@ -424,9 +424,14 @@ void launch_edge_query(
     const EdgeOptixQueryParams &params,
     EdgeOptixLaunchKind kind,
     int64_t query_count) {
+    at::Tensor params_buffer = at::empty(
+        {static_cast<int64_t>(sizeof(EdgeOptixQueryParams))},
+        at::TensorOptions()
+            .device(at::Device(at::kCUDA, optix_entry.device_index))
+            .dtype(at::kByte));
     cuda_check(
         cudaMemcpyAsync(
-            optix_entry.edge_params_buffer.data_ptr<uint8_t>(),
+            params_buffer.data_ptr<uint8_t>(),
             &params,
             sizeof(EdgeOptixQueryParams),
             cudaMemcpyHostToDevice,
@@ -435,7 +440,7 @@ void launch_edge_query(
     rayd_torch_OPTIX_CHECK(optixLaunch(
         edge_pipeline(optix_entry, kind),
         stream,
-        reinterpret_cast<CUdeviceptr>(optix_entry.edge_params_buffer.data_ptr<uint8_t>()),
+        reinterpret_cast<CUdeviceptr>(params_buffer.data_ptr<uint8_t>()),
         sizeof(EdgeOptixQueryParams),
         &edge_sbt(optix_entry, kind),
         static_cast<unsigned int>(query_count),

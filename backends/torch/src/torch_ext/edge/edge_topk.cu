@@ -367,4 +367,209 @@ EdgeTopKForwardOutputs edge_topk_forward_cuda(
     return out;
 }
 
+__global__ void prepare_ray_query_kernel(
+    const float *ray_o, const float *ray_d, const float *ray_tmax,
+    const bool *active, int64_t count,
+    int64_t o_s0, int64_t o_s1, int64_t d_s0, int64_t d_s1,
+    float *ox, float *oy, float *oz, float *dx, float *dy, float *dz,
+    float *tmax, std::uint8_t *query_active) {
+    const int64_t ray = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (ray >= count)
+        return;
+    const float *o = ray_o + ray * o_s0;
+    const float *d = ray_d + ray * d_s0;
+    ox[ray] = o[0 * o_s1]; oy[ray] = o[1 * o_s1]; oz[ray] = o[2 * o_s1];
+    dx[ray] = d[0 * d_s1]; dy[ray] = d[1 * d_s1]; dz[ray] = d[2 * d_s1];
+    tmax[ray] = ray_tmax == nullptr ? CUDART_INF_F : ray_tmax[ray];
+    query_active[ray] =
+        (active == nullptr || active[ray]) && isfinite(ox[ray]) && isfinite(oy[ray]) &&
+        isfinite(oz[ray]) && isfinite(dx[ray]) && isfinite(dy[ray]) && isfinite(dz[ray])
+        ? 1u : 0u;
+}
+
+__global__ void repair_ray_overflow_kernel(
+    const float *ox, const float *oy, const float *oz,
+    const float *dx, const float *dy, const float *dz, const float *tmax,
+    const std::uint8_t *active, int64_t query_count,
+    const float *p0x, const float *p0y, const float *p0z,
+    const float *e1x, const float *e1y, const float *e1z,
+    const std::uint8_t *edge_mask, int64_t edge_count,
+    std::uint8_t *overflow, int *out_edge, float *out_distance_sq,
+    float *out_edge_t, float *out_ray_t) {
+    const int64_t ray = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (ray >= query_count || overflow[ray] == 0u)
+        return;
+    int best_edge = -1;
+    float best_distance = CUDART_INF_F;
+    float best_edge_t = 0.0f;
+    float best_ray_t = 0.0f;
+    if (active[ray] != 0u) {
+        const auto o = shared::math::make_vec3(ox[ray], oy[ray], oz[ray]);
+        const auto d = shared::math::make_vec3(dx[ray], dy[ray], dz[ray]);
+        const float limit = fmaxf(tmax[ray], 0.0f);
+        for (int edge = 0; edge < edge_count; ++edge) {
+            if (edge_mask != nullptr && edge_mask[edge] == 0u)
+                continue;
+            const auto p0 = shared::math::make_vec3(p0x[edge], p0y[edge], p0z[edge]);
+            const auto e1 = shared::math::make_vec3(e1x[edge], e1y[edge], e1z[edge]);
+            float distance;
+            float edge_t;
+            float ray_t;
+            if (isinf(tmax[ray])) {
+                const auto candidate = shared::edge::ray_segment_distance(o, d, p0, e1);
+                distance = candidate.squared_distance;
+                edge_t = candidate.edge_parameter;
+                ray_t = candidate.ray_parameter;
+            } else {
+                const auto candidate = shared::edge::segment_segment_distance(
+                    o, shared::math::scale(d, limit), p0, e1);
+                distance = candidate.squared_distance;
+                edge_t = candidate.edge_parameter;
+                ray_t = limit > 0.0f ? candidate.query_parameter * limit : 0.0f;
+            }
+            if (distance < best_distance || (distance == best_distance && edge < best_edge)) {
+                best_edge = edge; best_distance = distance;
+                best_edge_t = edge_t; best_ray_t = ray_t;
+            }
+        }
+    }
+    out_edge[ray] = best_edge;
+    out_distance_sq[ray] = best_distance;
+    out_edge_t[ray] = best_edge_t;
+    out_ray_t[ray] = best_ray_t;
+    overflow[ray] = 0u;
+}
+
+__global__ void finalize_ray_query_kernel(
+    const float *ox, const float *oy, const float *oz,
+    const float *dx, const float *dy, const float *dz,
+    const std::uint8_t *active, int64_t count,
+    const int *candidate_edge, const float *distance_sq,
+    const float *candidate_ray_t, const float *candidate_edge_t,
+    const float *p0x, const float *p0y, const float *p0z,
+    const float *e1x, const float *e1y, const float *e1z,
+    const int *edge_shape, const int *edge_local,
+    float *out_distance, float *out_ray_t, float *out_point,
+    float *out_edge_t, float *out_edge_point, int *out_shape,
+    int *out_local, int *out_global, int *out_tape) {
+    const int64_t ray = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (ray >= count)
+        return;
+    const int edge = candidate_edge[ray];
+    out_distance[ray] = CUDART_INF_F; out_ray_t[ray] = 0.0f; out_edge_t[ray] = 0.0f;
+    out_shape[ray] = -1; out_local[ray] = -1; out_global[ray] = -1; out_tape[ray] = -1;
+    for (int axis = 0; axis < 3; ++axis) {
+        out_point[ray * 3 + axis] = 0.0f;
+        out_edge_point[ray * 3 + axis] = 0.0f;
+    }
+    if (active[ray] == 0u || edge < 0)
+        return;
+    const float rt = candidate_ray_t[ray];
+    const float et = candidate_edge_t[ray];
+    out_distance[ray] = sqrtf(fmaxf(distance_sq[ray], 0.0f));
+    out_ray_t[ray] = rt; out_edge_t[ray] = et;
+    out_shape[ray] = edge_shape[edge]; out_local[ray] = edge_local[edge];
+    out_global[ray] = edge; out_tape[ray] = edge;
+    out_point[ray * 3 + 0] = ox[ray] + rt * dx[ray];
+    out_point[ray * 3 + 1] = oy[ray] + rt * dy[ray];
+    out_point[ray * 3 + 2] = oz[ray] + rt * dz[ray];
+    out_edge_point[ray * 3 + 0] = p0x[edge] + et * e1x[edge];
+    out_edge_point[ray * 3 + 1] = p0y[edge] + et * e1y[edge];
+    out_edge_point[ray * 3 + 2] = p0z[edge] + et * e1z[edge];
+}
+
+EdgeForwardOutputs edge_forward_bvh_cuda(SceneCache &scene, const at::Tensor &point) {
+    if (point.size(0) != 0 && scene.edge_v0.numel() != 0)
+        ensure_custom_edge_bvh(scene);
+    at::Tensor active = at::empty({0}, point.options().dtype(at::kBool));
+    EdgeTopKForwardOutputs top = edge_topk_forward_cuda(scene, point, 1, active);
+    return {
+        top.distances.select(1, 0),
+        top.edge_points.select(1, 0),
+        top.edge_t.select(1, 0),
+        top.shape_ids.select(1, 0),
+        top.edge_ids.select(1, 0),
+        top.global_edge_ids.select(1, 0),
+        top.tape_edge_id.select(1, 0),
+        top.tape_s.select(1, 0),
+        top.tape_d.select(1, 0),
+    };
+}
+
+EdgeForwardPublicOutputs edge_forward_noad_bvh_cuda(
+    SceneCache &scene,
+    const at::Tensor &point) {
+    EdgeForwardOutputs out = edge_forward_bvh_cuda(scene, point);
+    return {out.distance, out.edge_point, out.edge_t, out.shape_id,
+            out.edge_id, out.global_edge_id};
+}
+
+EdgeRayForwardOutputs edge_ray_forward_bvh_cuda(
+    SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active) {
+    if (ray_o.size(0) != 0 && scene.edge_v0.numel() != 0)
+        ensure_custom_edge_bvh(scene);
+    const int64_t count = ray_o.size(0);
+    const auto fopts = ray_o.options();
+    const auto iopts = scene.edge_v0.options();
+    const auto bopts = at::TensorOptions().device(ray_o.device()).dtype(at::kByte);
+    EdgeRayForwardOutputs out;
+    out.distance = at::empty({count}, fopts); out.ray_t = at::empty({count}, fopts);
+    out.point = at::empty({count, 3}, fopts); out.edge_t = at::empty({count}, fopts);
+    out.edge_point = at::empty({count, 3}, fopts); out.shape_id = at::empty({count}, iopts);
+    out.edge_id = at::empty({count}, iopts); out.global_edge_id = at::empty({count}, iopts);
+    out.tape_edge_id = at::empty({count}, iopts);
+    if (count == 0)
+        return out;
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(ray_o.get_device()).stream();
+    const int blocks = static_cast<int>((count + kThreads - 1) / kThreads);
+    at::Tensor ox=at::empty({count},fopts), oy=at::empty({count},fopts), oz=at::empty({count},fopts);
+    at::Tensor dx=at::empty({count},fopts), dy=at::empty({count},fopts), dz=at::empty({count},fopts);
+    at::Tensor tmax=at::empty({count},fopts), query_active=at::empty({count},bopts);
+    prepare_ray_query_kernel<<<blocks,kThreads,0,stream>>>(
+        ray_o.data_ptr<float>(),ray_d.data_ptr<float>(),
+        ray_tmax.numel()==0?nullptr:ray_tmax.data_ptr<float>(),
+        active.numel()==0?nullptr:active.data_ptr<bool>(),count,
+        ray_o.stride(0),ray_o.stride(1),ray_d.stride(0),ray_d.stride(1),
+        ox.data_ptr<float>(),oy.data_ptr<float>(),oz.data_ptr<float>(),
+        dx.data_ptr<float>(),dy.data_ptr<float>(),dz.data_ptr<float>(),
+        tmax.data_ptr<float>(),query_active.data_ptr<uint8_t>());
+    at::Tensor edge=at::empty({count},iopts), dist=at::empty({count},fopts);
+    at::Tensor et=at::empty({count},fopts), rt=at::empty({count},fopts);
+    at::Tensor stack=at::empty({shared::edge::kBvhTraversalStackDepth,count},iopts);
+    at::Tensor overflow=at::empty({count},bopts);
+    shared::edge::RayBvhQueryParams params={};
+    params.edges=scene_edge_view(scene); params.node_bounds=scene_edge_bvh_bounds_view(scene);
+    params.topology=scene_edge_bvh_topology_view(scene);
+    params.rays={ox.data_ptr<float>(),oy.data_ptr<float>(),oz.data_ptr<float>(),
+                 dx.data_ptr<float>(),dy.data_ptr<float>(),dz.data_ptr<float>(),
+                 tmax.data_ptr<float>(),static_cast<size_t>(count)};
+    params.output={edge.data_ptr<int>(),dist.data_ptr<float>(),et.data_ptr<float>(),rt.data_ptr<float>(),
+                   static_cast<size_t>(count),1,1,static_cast<size_t>(count)};
+    params.scratch={stack.data_ptr<int>(),overflow.data_ptr<uint8_t>(),static_cast<size_t>(count),
+                    static_cast<size_t>(shared::edge::kBvhTraversalStackDepth),
+                    static_cast<size_t>(stack.numel()),static_cast<size_t>(overflow.numel())};
+    params.active_mask=query_active.data_ptr<uint8_t>(); params.edge_mask=scene.edge_mask.data_ptr<uint8_t>();
+    params.stream=stream; shared::edge::launch_ray_bvh_query_async(params);
+    repair_ray_overflow_kernel<<<blocks,kThreads,0,stream>>>(
+        ox.data_ptr<float>(),oy.data_ptr<float>(),oz.data_ptr<float>(),dx.data_ptr<float>(),dy.data_ptr<float>(),dz.data_ptr<float>(),
+        tmax.data_ptr<float>(),query_active.data_ptr<uint8_t>(),count,
+        scene.edge_p0_x.data_ptr<float>(),scene.edge_p0_y.data_ptr<float>(),scene.edge_p0_z.data_ptr<float>(),
+        scene.edge_e1_x.data_ptr<float>(),scene.edge_e1_y.data_ptr<float>(),scene.edge_e1_z.data_ptr<float>(),
+        params.edge_mask,scene.edge_v0.numel(),overflow.data_ptr<uint8_t>(),edge.data_ptr<int>(),dist.data_ptr<float>(),et.data_ptr<float>(),rt.data_ptr<float>());
+    finalize_ray_query_kernel<<<blocks,kThreads,0,stream>>>(
+        ox.data_ptr<float>(),oy.data_ptr<float>(),oz.data_ptr<float>(),dx.data_ptr<float>(),dy.data_ptr<float>(),dz.data_ptr<float>(),
+        query_active.data_ptr<uint8_t>(),count,edge.data_ptr<int>(),dist.data_ptr<float>(),rt.data_ptr<float>(),et.data_ptr<float>(),
+        scene.edge_p0_x.data_ptr<float>(),scene.edge_p0_y.data_ptr<float>(),scene.edge_p0_z.data_ptr<float>(),
+        scene.edge_e1_x.data_ptr<float>(),scene.edge_e1_y.data_ptr<float>(),scene.edge_e1_z.data_ptr<float>(),
+        scene.edge_shape_id.data_ptr<int>(),scene.edge_local_id.data_ptr<int>(),out.distance.data_ptr<float>(),out.ray_t.data_ptr<float>(),
+        out.point.data_ptr<float>(),out.edge_t.data_ptr<float>(),out.edge_point.data_ptr<float>(),out.shape_id.data_ptr<int>(),
+        out.edge_id.data_ptr<int>(),out.global_edge_id.data_ptr<int>(),out.tape_edge_id.data_ptr<int>());
+    cuda_check(cudaGetLastError(),"edge_ray_forward_bvh_cuda");
+    return out;
+}
+
 } // namespace rayd::torch_backend

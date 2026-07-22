@@ -94,7 +94,7 @@ def audit() -> dict[str, object]:
             },
             "legacy_retained": {
                 "scene_custom_class_and_stateful_queries": (
-                    "Scene ownership, OptiX handles, intrusive_ptr custom classes, and "
+                    "Scene ownership, OptiX/CUDA acceleration state, intrusive_ptr custom classes, and "
                     "ATen tensor ABI require the matched Python/LibTorch build."
                 ),
                 "geometry_ad_and_multipath": (

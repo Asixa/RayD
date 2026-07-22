@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -66,14 +67,15 @@ private:
     std::vector<at::Tensor> raygen_records_;
     at::Tensor miss_record_;
     at::Tensor hitgroup_records_;
-    at::Tensor params_buffer_;
-
-    // Pinned host staging ring so launch params upload as a true async DMA.
-    // Each slot's event guards host-side reuse of that slot's pinned buffer.
+    // Each slot owns both host staging and device launch storage. Its event is
+    // recorded after optixLaunch, so a second stream cannot overwrite params
+    // that an earlier launch has not consumed yet.
     static constexpr int kParamsStagingSlots = 4;
+    std::array<at::Tensor, kParamsStagingSlots> params_buffers_;
     std::array<at::Tensor, kParamsStagingSlots> params_staging_;
     std::array<cudaEvent_t, kParamsStagingSlots> params_staging_events_ = {};
     int params_staging_cursor_ = 0;
+    std::mutex launch_mutex_;
 };
 
 std::shared_ptr<OptixLaunchPipeline> shared_optix_launch_pipeline(

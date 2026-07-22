@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "5b20d9095000ae38f2117a010721a6a0aa318549f25f504561819d53e64aabd0"
+_SCHEMA_SHA256 = "ee3832415f2f3d4aebc5a90ce317eb878bd52fca77cdb052347922b2005ec8bd"
 _BACKEND = "torch"
 _TYPING = "complete"
 
@@ -93,7 +93,7 @@ _TRACE = {
     "integration_modes": ["jit_symbolic", "eager_native"],
     "frontend_support": {
         "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
-        "torch": {"optix": ["eager_native"]},
+        "torch": {"optix": ["eager_native"], "cuda": ["eager_native"]},
     },
 }
 

@@ -59,7 +59,21 @@ def _has_forward_ad(*values: torch.Tensor) -> bool:
 
 
 class Scene:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        trace_backend: str = "auto",
+        edge_bvh_backend: str = "auto",
+    ) -> None:
+        trace_backends = {"auto": 0, "optix": 1, "cuda": 2}
+        edge_backends = {"auto": 0, "optix": 1, "cuda": 2}
+        if trace_backend not in trace_backends:
+            raise ValueError("trace_backend must be 'auto', 'optix', or 'cuda'.")
+        if edge_bvh_backend not in edge_backends:
+            raise ValueError(
+                "edge_bvh_backend must be 'auto', 'optix', or 'cuda'."
+            )
+        self._trace_backend_code = trace_backends[trace_backend]
+        self._edge_backend_code = edge_backends[edge_bvh_backend]
         self._meshes: list[tuple[Mesh, bool]] = []
         self._native_scene = None
         self._native_handle = 0
@@ -103,6 +117,9 @@ class Scene:
             if dynamic:
                 flags |= 4
             mesh_flags.append(flags)
+        if mesh_flags:
+            mesh_flags[0] |= self._trace_backend_code << 8
+            mesh_flags[0] |= self._edge_backend_code << 10
         with torch._C._DisableFuncTorch():
             native_scene = torch.classes.rayd_torch.Scene(
                 [spec["vertices"] for spec in specs],
@@ -155,6 +172,14 @@ class Scene:
 
     def is_ready(self) -> bool:
         return self._ready
+
+    @property
+    def trace_backend(self) -> str:
+        return str(self._require_native_scene().trace_backend())
+
+    @property
+    def edge_bvh_backend(self) -> str:
+        return str(self._require_native_scene().edge_backend())
 
     @property
     def num_meshes(self) -> int:

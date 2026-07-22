@@ -11,6 +11,7 @@
 #include <rayd/torch/reflection/kernels.h>
 #include <rayd/torch/reflection/pipeline.h>
 #include <rayd/torch/common/optix_context.h>
+#include <rayd/torch/scene/multipath_cuda.h>
 #include <rayd/torch/reflection/accum_reduce.h>
 #include <rayd/torch/reflection/accum_params.h>
 #include <rayd/torch/reflection/axial_edge_visibility_params.h>
@@ -508,6 +509,35 @@ std::shared_ptr<OptixLaunchPipeline> optix_pipeline_for_scene(
         config);
 }
 
+void launch_segment_visibility_backend(
+    SceneCache &scene,
+    const SegmentVisibilityParams &params,
+    int variant,
+    unsigned int lane_count,
+    cudaStream_t stream) {
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_segment_visibility_cuda(
+            scene, params, static_cast<CudaVisibilityVariant>(variant),
+            static_cast<int>(lane_count));
+        return;
+    }
+    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
+        ->launch(variant, params, lane_count, stream);
+}
+
+void launch_reflection_trace_backend(
+    SceneCache &scene,
+    const ReflectionTraceParams &params,
+    unsigned int lane_count,
+    cudaStream_t stream) {
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_reflection_trace_cuda(scene, params, static_cast<int>(lane_count));
+        return;
+    }
+    optix_pipeline_for_scene(scene, reflection_trace_pipeline_config())
+        ->launch(0, params, lane_count, stream);
+}
+
 struct SegmentVisibilityNativeOutputs {
     at::Tensor visible;
     at::Tensor blocker_prim;
@@ -548,8 +578,8 @@ SegmentVisibilityNativeOutputs visibility_forward_native_impl(
     params.out_t = tape_t.data_ptr<float>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
-        ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    launch_segment_visibility_backend(
+        scene, params, 0, static_cast<unsigned int>(ray_count), torch_ctx.stream);
     return {visible, blocker_prim, tape_t};
 }
 
@@ -616,8 +646,8 @@ std::vector<at::Tensor> visible_pair_forward_impl(
     params.out_visible_b = mutable_mask_ptr(visible_b);
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
-        ->launch(1, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    launch_segment_visibility_backend(
+        scene, params, 1, static_cast<unsigned int>(ray_count), torch_ctx.stream);
     return {visible_a, visible_b};
 }
 
@@ -690,8 +720,8 @@ std::vector<at::Tensor> visible_edge_forward_impl(
     params.out_visible = mutable_mask_ptr(any_visible);
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
-        ->launch(2, params, static_cast<unsigned int>(state_count), torch_ctx.stream);
+    launch_segment_visibility_backend(
+        scene, params, 2, static_cast<unsigned int>(state_count), torch_ctx.stream);
     return {any_visible};
 }
 
@@ -766,8 +796,8 @@ std::vector<at::Tensor> visible_chain_forward_impl(
     params.out_first_blocked_prim = first_blocked_prim.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, segment_visibility_pipeline_config())
-        ->launch(3, params, static_cast<unsigned int>(chain_count), torch_ctx.stream);
+    launch_segment_visibility_backend(
+        scene, params, 3, static_cast<unsigned int>(chain_count), torch_ctx.stream);
     return {all_visible, first_blocked_segment, first_blocked_prim};
 }
 
@@ -900,8 +930,8 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(
     params.out_img_z = nullptr;
     params.out_img = write_image_sources ? image_sources.data_ptr<float>() : nullptr;
 
-    optix_pipeline_for_scene(scene, reflection_trace_pipeline_config())
-        ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    launch_reflection_trace_backend(
+        scene, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
 
     if (!export_tape && !export_image_sources)
         return {valid, t, prim_ids};
@@ -1061,6 +1091,10 @@ at::Tensor axial_edge_visibility_forward_native_impl(
     const at::Tensor *active,
     const std::array<std::uint32_t, AxialEdgeVisibilitySampleCount>
         &sample_fraction_bits) {
+    if (scene.trace_backend == TraceBackend::Cuda)
+        throw std::runtime_error(
+            "ADR-0029 axial-edge visibility is unsupported by the CUDA ray-tracing backend; "
+            "select trace_backend='optix'.");
     require_cuda(tx, "tx");
     require_contiguous(tx, "tx");
     require_dtype(tx, at::kFloat, "tx");
@@ -1478,8 +1512,13 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(
     epc_params.out_first_blocked_group = first_blocked_group.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
-        ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_reflection_epc_cuda(
+            scene, epc_params, false, false, static_cast<int>(ray_count));
+    } else {
+        optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
+            ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    }
 
     ReflEpcFieldParams field_params = {};
     field_params.n_rays = static_cast<int32_t>(ray_count);
@@ -1745,8 +1784,13 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     epc_params.out_first_blocked_group = first_blocked_group.data_ptr<int>();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
-        ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_reflection_epc_cuda(
+            scene, epc_params, false, false, static_cast<int>(ray_count));
+    } else {
+        optix_pipeline_for_scene(scene, reflection_epc_pipeline_config())
+            ->launch(0, epc_params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    }
 
     at::Tensor hit_positions = stack_vec3(point_x, point_y, point_z).reshape({ray_count, max_bounces, 3}).contiguous();
     at::Tensor normals = stack_vec3(plane_normal_x, plane_normal_y, plane_normal_z).reshape({ray_count, max_bounces, 3}).contiguous();
@@ -2333,8 +2377,12 @@ ReflectionAccumulationNativeOutputs reflection_accumulation_forward_native_impl(
     params.out_wedge_bounce_depth = collect_wedges ? wedge_bounce_depth.data_ptr<int>() : nullptr;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    optix_pipeline_for_scene(scene, reflection_accumulation_pipeline_config())
-        ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_reflection_accumulation_cuda(scene, params, static_cast<int>(ray_count));
+    } else {
+        optix_pipeline_for_scene(scene, reflection_accumulation_pipeline_config())
+            ->launch(0, params, static_cast<unsigned int>(ray_count), torch_ctx.stream);
+    }
     if (staged_accum) {
         reduce_refl_accum_staged_cuda(
             stage_sample_count,

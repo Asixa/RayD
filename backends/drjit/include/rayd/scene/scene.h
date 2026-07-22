@@ -56,14 +56,14 @@ class Scene final {
 public:
     /// \brief Construct an empty scene.
     ///
-    /// \param edge_bvh_backend Nearest-edge backend ("drjit", "optix", or
-    ///        "optix_drjit"; see EdgeBVHBackend).
+    /// \param edge_bvh_backend Nearest-edge backend. "auto" resolves to
+    ///        "optix" when available and "drjit" otherwise; explicit choices
+    ///        are "drjit", "optix", and "optix_drjit" (see EdgeBVHBackend).
     /// \param trace_backend Triangle trace backend: "auto" resolves to OptiX when
-    ///        the driver is available and to "none" otherwise; "optix" forces
-    ///        OptiX (availability is enforced at build()); "none" builds no
-    ///        triangle trace backend (edge-only queries). "cuda"/"embree" are
-    ///        reserved for later phases and raise a not-implemented error.
-    explicit Scene(const std::string &edge_bvh_backend = "optix",
+    ///        the driver is available and to CUDA otherwise; "optix" forces
+    ///        OptiX (availability is enforced at build()), "cuda" forces the
+    ///        software CUDA backend, and "none" builds no triangle backend.
+    explicit Scene(const std::string &edge_bvh_backend = "auto",
                    const std::string &trace_backend = "auto");
     ~Scene();
 
@@ -95,10 +95,9 @@ public:
     SceneEdgeInfo edge_info() const;
     /// Canonical name of the active edge backend ("drjit", "optix", or "optix_drjit").
     std::string edge_bvh_backend() const;
-    /// Resolved triangle trace backend kind (Optix or None in this release).
+    /// Resolved triangle trace backend kind.
     TraceBackendKind trace_backend_kind() const { return triangle_kind_; }
-    /// The active triangle trace backend, or null when trace_backend='none'
-    /// (or OptiX was unavailable under trace_backend='auto').
+    /// The active triangle trace backend, or null when trace_backend='none'.
     const TraceBackend *trace_backend() const { return trace_backend_.get(); }
     /// Build/traversal statistics for the edge BVH.
     SceneEdgeBVHStats edge_bvh_stats() const;
@@ -433,7 +432,7 @@ private:
     mutable bool reflection_epc_geometry_ready_ = false;
     std::unique_ptr<SceneEdge> edge_bvh_;
     std::unique_ptr<SceneEdgeOptix> edge_optix_;
-    EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::Optix;
+    EdgeBVHBackend edge_bvh_backend_ = EdgeBVHBackend::DrJit;
     SceneSyncProfile last_sync_profile_;
 };
 

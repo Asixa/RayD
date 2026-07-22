@@ -99,6 +99,10 @@ struct ValidatedRequest {
 
 ValidatedRequest validate_request(const rayd::torch::SegmentPenetrationRequest &request) {
     SceneCache &scene = rayd::torch::detail::IntegrationAccess::scene_cache(request.scene);
+    if (scene.trace_backend == TraceBackend::Cuda)
+        throw std::runtime_error(
+            "ADR-0033 segment penetration is unsupported by the CUDA ray-tracing backend; "
+            "select trace_backend='optix'.");
     require_vec3f(request.origins, "origins");
     require_vec3f(request.targets, "targets");
     if (request.targets.size(0) != request.origins.size(0))

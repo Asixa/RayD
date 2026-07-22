@@ -28,7 +28,9 @@ void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
 py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
     require_vec3f(point, "point");
     SceneCache &scene = get_scene(scene_handle);
-    EdgeForwardOutputs out = edge_forward_cuda(scene, point);
+    EdgeForwardOutputs out = scene.edge_backend == EdgeBackend::Cuda
+        ? edge_forward_bvh_cuda(scene, point)
+        : edge_forward_cuda(scene, point);
     return py::make_tuple(
         out.distance,
         out.edge_point,
@@ -44,7 +46,9 @@ py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
 py::tuple nearest_edge_forward_noad_op(int64_t scene_handle, at::Tensor point) {
     require_vec3f(point, "point");
     SceneCache &scene = get_scene(scene_handle);
-    EdgeForwardPublicOutputs out = edge_forward_noad_cuda(scene, point);
+    EdgeForwardPublicOutputs out = scene.edge_backend == EdgeBackend::Cuda
+        ? edge_forward_noad_bvh_cuda(scene, point)
+        : edge_forward_noad_cuda(scene, point);
     return py::make_tuple(
         out.distance,
         out.edge_point,
@@ -159,7 +163,9 @@ py::tuple nearest_edge_ray_forward_op(
         (active.numel() != 0 && active.size(0) != ray_o.size(0)))
         throw std::runtime_error("ray_d, ray_tmax, and active must match ray_o batch size.");
     SceneCache &scene = get_scene(scene_handle);
-    EdgeRayForwardOutputs out = edge_ray_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
+    EdgeRayForwardOutputs out = scene.edge_backend == EdgeBackend::Cuda
+        ? edge_ray_forward_bvh_cuda(scene, ray_o, ray_d, ray_tmax, active)
+        : edge_ray_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
     return py::make_tuple(
         out.distance,
         out.ray_t,

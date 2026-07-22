@@ -128,7 +128,7 @@
     "integration_modes": ["jit_symbolic", "eager_native"],
     "frontend_support": {
       "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
-      "torch": {"optix": ["eager_native"]}
+      "torch": {"optix": ["eager_native"], "cuda": ["eager_native"]}
     }
   }
 }

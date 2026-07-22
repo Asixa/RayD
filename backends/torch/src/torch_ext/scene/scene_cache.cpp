@@ -3,6 +3,9 @@
 #include <rayd/torch/common/tensor_check.h>
 #include <rayd/torch/edge/bvh.h>
 #include <rayd/torch/scene/cache_kernels.h>
+#include <rayd/torch/scene/triangle_bvh.h>
+#include <rayd/shared/bvh/build.h>
+#include <rayd/shared/bvh/host_topology.h>
 #include <rayd/shared/edge/bvh_build.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -19,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace rayd::torch_backend {
 
@@ -270,6 +274,7 @@ void refresh_global_geometry(SceneCache &scene) {
     scene.global_faces = at::empty({face_offset, 3}, iopts);
     scene.face_shape_id = at::empty({face_offset}, iopts);
     scene.face_local_id = at::empty({face_offset}, iopts);
+    scene.primitive_identity = at::arange(face_offset, iopts);
     scene.face_offsets = at::empty({static_cast<int64_t>(face_offsets.size())}, iopts);
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
@@ -720,6 +725,14 @@ SceneHandle::~SceneHandle() {
 }
 
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
+    return create_scene_cache(
+        std::move(meshes), TraceBackend::Auto, EdgeBackend::Auto);
+}
+
+std::unique_ptr<SceneCache> create_scene_cache(
+    std::vector<MeshRecord> meshes,
+    TraceBackend requested_trace_backend,
+    EdgeBackend requested_edge_backend) {
     if (meshes.empty())
         throw std::runtime_error("Scene.build(): at least one mesh is required.");
 
@@ -728,8 +741,6 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != device_index)
         throw std::runtime_error("Scene.build(): current CUDA device does not match mesh tensors.");
-    OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(device_index));
-
     for (const MeshRecord &mesh : meshes) {
         require_vec3f(mesh.vertices, "mesh.vertices");
         require_vec3i(mesh.faces, "mesh.faces");
@@ -745,24 +756,49 @@ std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes) {
     SceneCache *scene = scene_unique.get();
     scene->handle = next_handle.fetch_add(1);
     scene->device_index = device_index;
+    if (requested_trace_backend == TraceBackend::Auto) {
+        scene->trace_backend = optix_context_available(static_cast<int>(device_index))
+            ? TraceBackend::Optix
+            : TraceBackend::Cuda;
+    } else {
+        scene->trace_backend = requested_trace_backend;
+    }
+    scene->edge_backend = requested_edge_backend == EdgeBackend::Auto
+        ? (scene->trace_backend == TraceBackend::Optix ? EdgeBackend::Optix : EdgeBackend::Cuda)
+        : requested_edge_backend;
+    OptixDeviceContextEntry *optix_entry = nullptr;
+    if (scene->trace_backend == TraceBackend::Optix || scene->edge_backend == EdgeBackend::Optix)
+        optix_entry = &get_optix_context(static_cast<int>(device_index));
     scene->meshes = std::move(meshes);
     refresh_global_geometry(*scene);
-    scene->triangle_accels.reserve(scene->meshes.size());
-    for (const MeshRecord &mesh : scene->meshes)
-        scene->triangle_accels.push_back(
-            build_triangle_accel(mesh, optix_entry.optix_context, torch_ctx.stream));
-    build_triangle_ias(*scene, optix_entry.optix_context, torch_ctx.stream);
+    if (scene->trace_backend == TraceBackend::Optix) {
+        scene->triangle_accels.reserve(scene->meshes.size());
+        for (const MeshRecord &mesh : scene->meshes)
+            scene->triangle_accels.push_back(
+                build_triangle_accel(mesh, optix_entry->optix_context, torch_ctx.stream));
+        build_triangle_ias(*scene, optix_entry->optix_context, torch_ctx.stream);
+    } else {
+        ensure_custom_triangle_bvh(*scene);
+    }
     build_edge_topology(*scene);
-    build_edge_accel(*scene, optix_entry.optix_context, torch_ctx.stream);
+    if (scene->edge_backend == EdgeBackend::Optix)
+        build_edge_accel(*scene, optix_entry->optix_context, torch_ctx.stream);
+    else
+        refresh_edge_soa(*scene);
     return scene_unique;
 }
 
 int64_t create_scene(std::vector<MeshRecord> meshes) {
     auto scene = create_scene_cache(std::move(meshes));
     const int64_t handle = scene->handle;
+    register_scene_cache(std::move(scene));
+    return handle;
+}
+
+void register_scene_cache(std::unique_ptr<SceneCache> scene) {
+    const int64_t handle = scene->handle;
     std::lock_guard<std::mutex> lock(scenes_mutex);
     scenes.emplace(handle, std::move(scene));
-    return handle;
 }
 
 void destroy_scene(int64_t handle) {
@@ -792,6 +828,14 @@ int64_t scene_edge_count(int64_t handle) {
     return get_scene(handle).edge_v0.size(0);
 }
 
+std::string scene_trace_backend(int64_t handle) {
+    return get_scene(handle).trace_backend == TraceBackend::Cuda ? "cuda" : "optix";
+}
+
+std::string scene_edge_backend(int64_t handle) {
+    return get_scene(handle).edge_backend == EdgeBackend::Cuda ? "cuda" : "optix";
+}
+
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices) {
     SceneCache &scene = get_scene(handle);
     if (mesh_id < 0 || mesh_id >= static_cast<int64_t>(scene.meshes.size()))
@@ -814,28 +858,39 @@ void sync_scene(int64_t handle) {
     TorchCudaContext torch_ctx = current_torch_cuda_context();
     if (torch_ctx.device_index != scene.device_index)
         throw std::runtime_error("Scene.sync(): current CUDA device does not match scene tensors.");
-    OptixDeviceContextEntry &optix_entry = get_optix_context(static_cast<int>(scene.device_index));
+    OptixDeviceContextEntry *optix_entry = nullptr;
+    if (scene.trace_backend == TraceBackend::Optix || scene.edge_backend == EdgeBackend::Optix)
+        optix_entry = &get_optix_context(static_cast<int>(scene.device_index));
 
     bool changed = false;
     for (int64_t mesh_id = 0; mesh_id < static_cast<int64_t>(scene.meshes.size()); ++mesh_id) {
         MeshRecord &mesh = scene.meshes[mesh_id];
         if (!mesh.pending_update)
             continue;
-        update_triangle_accel(
-            mesh,
-            scene.triangle_accels[mesh_id],
-            optix_entry.optix_context,
-            torch_ctx.stream);
+        if (scene.trace_backend == TraceBackend::Optix) {
+            update_triangle_accel(
+                mesh,
+                scene.triangle_accels[mesh_id],
+                optix_entry->optix_context,
+                torch_ctx.stream);
+        }
         mesh.pending_update = false;
         changed = true;
     }
     if (changed) {
         refresh_global_geometry(scene);
-        build_triangle_ias(scene, optix_entry.optix_context, torch_ctx.stream);
-        if (!update_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream))
-            build_edge_accel(scene, optix_entry.optix_context, torch_ctx.stream);
         scene.version += 1;
         scene.edge_version += 1;
+        if (scene.trace_backend == TraceBackend::Optix)
+            build_triangle_ias(scene, optix_entry->optix_context, torch_ctx.stream);
+        else
+            ensure_custom_triangle_bvh(scene);
+        if (scene.edge_backend == EdgeBackend::Optix) {
+            if (!update_edge_accel(scene, optix_entry->optix_context, torch_ctx.stream))
+                build_edge_accel(scene, optix_entry->optix_context, torch_ctx.stream);
+        } else {
+            refresh_edge_soa(scene);
+        }
     }
 }
 
@@ -1150,6 +1205,175 @@ std::vector<at::Tensor> scene_edge_records(SceneCache &scene) {
         scene.edge_local_id,
         scene.edge_opposite,
     };
+}
+
+rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache &scene) {
+    return {scene.tri_p0_x.data_ptr<float>(), scene.tri_p0_y.data_ptr<float>(),
+            scene.tri_p0_z.data_ptr<float>(), scene.tri_e1_x.data_ptr<float>(),
+            scene.tri_e1_y.data_ptr<float>(), scene.tri_e1_z.data_ptr<float>(),
+            scene.tri_e2_x.data_ptr<float>(), scene.tri_e2_y.data_ptr<float>(),
+            scene.tri_e2_z.data_ptr<float>(),
+            static_cast<size_t>(scene.global_faces.size(0))};
+}
+
+rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache &scene) {
+    const CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+    return {bvh.node_min_x.defined() ? bvh.node_min_x.data_ptr<float>() : nullptr,
+            bvh.node_min_y.defined() ? bvh.node_min_y.data_ptr<float>() : nullptr,
+            bvh.node_min_z.defined() ? bvh.node_min_z.data_ptr<float>() : nullptr,
+            bvh.node_max_x.defined() ? bvh.node_max_x.data_ptr<float>() : nullptr,
+            bvh.node_max_y.defined() ? bvh.node_max_y.data_ptr<float>() : nullptr,
+            bvh.node_max_z.defined() ? bvh.node_max_z.data_ptr<float>() : nullptr,
+            static_cast<size_t>(bvh.node_count)};
+}
+
+rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(
+    const SceneCache &scene) {
+    const CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+    const size_t primitive_count = static_cast<size_t>(scene.global_faces.size(0));
+    return {bvh.left_child.defined() ? bvh.left_child.data_ptr<int>() : nullptr,
+            bvh.right_child.defined() ? bvh.right_child.data_ptr<int>() : nullptr,
+            bvh.leaf_primitives.defined() ? bvh.leaf_primitives.data_ptr<int>() : nullptr,
+            nullptr, static_cast<size_t>(bvh.node_count), primitive_count, primitive_count};
+}
+
+void ensure_custom_triangle_bvh(SceneCache &scene) {
+    CompactTriangleBvh &bvh = scene.custom_triangle_bvh;
+    if (bvh.valid && bvh.geometry_version == scene.version)
+        return;
+
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
+    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    if (torch_ctx.device_index != scene.device_index)
+        throw std::runtime_error(
+            "ensure_custom_triangle_bvh(): current CUDA device does not match scene.");
+    const int64_t primitive_count = scene.global_faces.size(0);
+    const int64_t max_primitive_count =
+        (static_cast<int64_t>(std::numeric_limits<int>::max()) + 1) / 2;
+    if (primitive_count > max_primitive_count)
+        throw std::runtime_error(
+            "ensure_custom_triangle_bvh(): topology exceeds int32 indexing range.");
+
+    bvh = {};
+    bvh.geometry_version = scene.version;
+    if (primitive_count == 0) {
+        bvh.valid = true;
+        return;
+    }
+
+    const int64_t node_count = primitive_count * 2 - 1;
+    bvh.node_count = node_count;
+    const auto fopts = scene.global_vertices.options();
+    const auto iopts = scene.global_faces.options();
+    const auto bopts = at::TensorOptions().device(scene.global_faces.device()).dtype(at::kByte);
+    auto make_f = [&](int64_t count) { return at::empty({count}, fopts); };
+    auto make_i = [&](int64_t count) { return at::empty({count}, iopts); };
+    bvh.primitive_min_x = make_f(primitive_count); bvh.primitive_min_y = make_f(primitive_count);
+    bvh.primitive_min_z = make_f(primitive_count); bvh.primitive_max_x = make_f(primitive_count);
+    bvh.primitive_max_y = make_f(primitive_count); bvh.primitive_max_z = make_f(primitive_count);
+    bvh.node_min_x = make_f(node_count); bvh.node_min_y = make_f(node_count);
+    bvh.node_min_z = make_f(node_count); bvh.node_max_x = make_f(node_count);
+    bvh.node_max_y = make_f(node_count); bvh.node_max_z = make_f(node_count);
+    bvh.left_child = make_i(node_count).fill_(-1); bvh.right_child = make_i(node_count).fill_(-1);
+    bvh.parent = make_i(node_count).fill_(-1); bvh.leaf_primitive = make_i(node_count).fill_(-1);
+    bvh.is_leaf = make_i(node_count).zero_();
+    bvh.primitive_leaf_node = make_i(primitive_count).fill_(-1);
+    bvh.leaf_primitives = make_i(primitive_count).fill_(-1);
+    bvh.morton_in = make_i(primitive_count); bvh.morton_out = make_i(primitive_count);
+    bvh.primitive_ids_in = make_i(primitive_count); bvh.primitive_ids_out = make_i(primitive_count);
+    bvh.merge_counters = make_i(std::max<int64_t>(primitive_count - 1, 1)).zero_();
+    const size_t bounds_bytes = sizeof(rayd::shared::bvh::BvhBounds3);
+    bvh.packed_bounds = at::empty(
+        {primitive_count * static_cast<int64_t>(bounds_bytes)}, bopts);
+    bvh.reduced_bound = at::empty({static_cast<int64_t>(bounds_bytes)}, bopts);
+    const size_t scratch_bytes = std::max(
+        edge_bvh_bounds_reduce_scratch_bytes(primitive_count, torch_ctx.stream),
+        edge_bvh_sort_scratch_bytes(primitive_count, torch_ctx.stream));
+    bvh.scratch = at::empty({static_cast<int64_t>(scratch_bytes)}, bopts);
+
+    compute_triangle_bvh_bounds_cuda(
+        scene, bvh.primitive_min_x, bvh.primitive_min_y, bvh.primitive_min_z,
+        bvh.primitive_max_x, bvh.primitive_max_y, bvh.primitive_max_z,
+        bvh.packed_bounds, torch_ctx.stream);
+    reduce_edge_bvh_bounds_cuda(
+        primitive_count, bvh.packed_bounds, bvh.reduced_bound, bvh.scratch, torch_ctx.stream);
+    rayd::shared::bvh::BvhBounds3 scene_bound = {};
+    cuda_check(cudaMemcpyAsync(
+                   &scene_bound, bvh.reduced_bound.data_ptr<uint8_t>(), bounds_bytes,
+                   cudaMemcpyDeviceToHost, torch_ctx.stream),
+               "cudaMemcpyAsync(triangle BVH scene bound)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+               "cudaStreamSynchronize(triangle BVH scene bound)");
+
+    rayd::shared::bvh::launch_compute_morton_codes_async({
+        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+         static_cast<size_t>(primitive_count)},
+        scene_bound, reinterpret_cast<uint32_t *>(bvh.morton_in.data_ptr<int>()),
+        torch_ctx.stream});
+    rayd::shared::bvh::launch_init_sequence_async({
+        bvh.primitive_ids_in.data_ptr<int>(), static_cast<int>(primitive_count), torch_ctx.stream});
+    sort_edge_bvh_morton_cuda(
+        primitive_count, bvh.morton_in, bvh.morton_out, bvh.primitive_ids_in,
+        bvh.primitive_ids_out, bvh.scratch, torch_ctx.stream);
+    if (primitive_count > 1) {
+        rayd::shared::bvh::launch_build_radix_tree_async({
+            reinterpret_cast<const uint32_t *>(bvh.morton_out.data_ptr<int>()),
+            bvh.primitive_ids_out.data_ptr<int>(), bvh.left_child.data_ptr<int>(),
+            bvh.right_child.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+            static_cast<int>(primitive_count), torch_ctx.stream});
+    }
+    rayd::shared::bvh::launch_finalize_leaves_and_bounds_async({
+        bvh.primitive_ids_out.data_ptr<int>(), bvh.parent.data_ptr<int>(),
+        {bvh.primitive_min_x.data_ptr<float>(), bvh.primitive_min_y.data_ptr<float>(),
+         bvh.primitive_min_z.data_ptr<float>(), bvh.primitive_max_x.data_ptr<float>(),
+         bvh.primitive_max_y.data_ptr<float>(), bvh.primitive_max_z.data_ptr<float>(),
+         static_cast<size_t>(primitive_count)},
+        bvh.left_child.data_ptr<int>(), bvh.right_child.data_ptr<int>(),
+        {bvh.node_min_x.data_ptr<float>(), bvh.node_min_y.data_ptr<float>(),
+         bvh.node_min_z.data_ptr<float>(), bvh.node_max_x.data_ptr<float>(),
+         bvh.node_max_y.data_ptr<float>(), bvh.node_max_z.data_ptr<float>(),
+         static_cast<size_t>(node_count)},
+        bvh.leaf_primitive.data_ptr<int>(), bvh.is_leaf.data_ptr<int>(),
+        bvh.primitive_leaf_node.data_ptr<int>(), bvh.merge_counters.data_ptr<int>(),
+        static_cast<int>(primitive_count), torch_ctx.stream});
+
+    // The fused CUDA traverser intentionally uses a fixed, caller-owned stack.
+    // Reject a topology that cannot fit before making it visible to queries;
+    // unlike the standalone intersection path, multipath launches cannot repair
+    // an overflowed lane without changing their tracing decisions.
+    std::vector<int> host_left(static_cast<size_t>(node_count));
+    std::vector<int> host_right(static_cast<size_t>(node_count));
+    std::vector<int> host_is_leaf(static_cast<size_t>(node_count));
+    const size_t topology_bytes = static_cast<size_t>(node_count) * sizeof(int);
+    cuda_check(cudaMemcpyAsync(host_left.data(), bvh.left_child.data_ptr<int>(),
+                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+               "cudaMemcpyAsync(triangle BVH left child)");
+    cuda_check(cudaMemcpyAsync(host_right.data(), bvh.right_child.data_ptr<int>(),
+                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+               "cudaMemcpyAsync(triangle BVH right child)");
+    cuda_check(cudaMemcpyAsync(host_is_leaf.data(), bvh.is_leaf.data_ptr<int>(),
+                               topology_bytes, cudaMemcpyDeviceToHost, torch_ctx.stream),
+               "cudaMemcpyAsync(triangle BVH leaf flags)");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+               "cudaStreamSynchronize(triangle BVH topology guard)");
+    std::vector<int> heights(static_cast<size_t>(node_count), -1);
+    const int tree_height = rayd::shared::bvh::compute_node_height(
+        0, host_left, host_right, host_is_leaf, heights);
+    if (tree_height > rayd::shared::bvh::kBvhTraversalStackDepth)
+        throw std::runtime_error(
+            "CUDA triangle BVH height " + std::to_string(tree_height) +
+            " exceeds traversal stack capacity " +
+            std::to_string(rayd::shared::bvh::kBvhTraversalStackDepth) + ".");
+
+    encode_raw_edge_bvh_cuda(
+        primitive_count, bvh.left_child, bvh.right_child, bvh.leaf_primitive,
+        bvh.leaf_primitives, torch_ctx.stream);
+    cuda_check(cudaGetLastError(), "ensure_custom_triangle_bvh() kernel launch");
+    cuda_check(cudaStreamSynchronize(torch_ctx.stream),
+               "cudaStreamSynchronize(triangle BVH build)");
+    bvh.valid = true;
 }
 
 std::vector<at::Tensor> scene_edge_records(c10::intrusive_ptr<SceneHandle> scene_handle) {

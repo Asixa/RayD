@@ -95,10 +95,10 @@ class PublicApiManifestTests(unittest.TestCase):
         self.assertTrue(trace["backends"]["cuda"]["summary"])
         self.assertEqual(trace["integration_modes"], ["jit_symbolic", "eager_native"])
         # The CUDA backend is eager-native only: it never folds into a Dr.Jit
-        # symbolic megakernel, and it has no Torch frontend in this phase.
+        # symbolic megakernel; Torch exposes the eager-native CUDA executor.
         self.assertEqual(trace["frontend_support"], {
             "drjit": {"optix": ["jit_symbolic", "eager_native"], "cuda": ["eager_native"]},
-            "torch": {"optix": ["eager_native"]},
+            "torch": {"optix": ["eager_native"], "cuda": ["eager_native"]},
         })
 
     def test_hybrid_is_only_a_deprecated_compatibility_alias(self):

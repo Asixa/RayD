@@ -3,15 +3,30 @@
 #include <ATen/ATen.h>
 #include <torch/custom_class.h>
 #include <optix.h>
+#include <rayd/shared/bvh/topology.h>
+#include <rayd/shared/bvh/triangle_query.h>
 #include <rayd/shared/edge/bvh_types.h>
 
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace rayd::torch_backend {
+
+enum class TraceBackend : int64_t {
+    Auto = 0,
+    Optix = 1,
+    Cuda = 2,
+};
+
+enum class EdgeBackend : int64_t {
+    Auto = 0,
+    Optix = 1,
+    Cuda = 2,
+};
 
 struct MeshRecord {
     at::Tensor vertices;
@@ -64,12 +79,28 @@ struct CompactEdgeBvh {
     at::Tensor node_cost, internal_cost_arrivals, treelet_nodes;
 };
 
+struct CompactTriangleBvh {
+    int64_t geometry_version = 0;
+    int64_t node_count = 0;
+    bool valid = false;
+    at::Tensor primitive_min_x, primitive_min_y, primitive_min_z;
+    at::Tensor primitive_max_x, primitive_max_y, primitive_max_z;
+    at::Tensor node_min_x, node_min_y, node_min_z;
+    at::Tensor node_max_x, node_max_y, node_max_z;
+    at::Tensor left_child, right_child, leaf_primitives;
+    at::Tensor parent, leaf_primitive, is_leaf, primitive_leaf_node;
+    at::Tensor packed_bounds, reduced_bound, morton_in, morton_out;
+    at::Tensor primitive_ids_in, primitive_ids_out, merge_counters, scratch;
+};
+
 struct SceneCache {
     int64_t handle = 0;
     int64_t version = 1;
     int64_t edge_version = 1;
     int64_t edge_mask_version = 1;
     int64_t device_index = 0;
+    TraceBackend trace_backend = TraceBackend::Optix;
+    EdgeBackend edge_backend = EdgeBackend::Optix;
     std::vector<MeshRecord> meshes;
     std::vector<OptixTriangleAccel> triangle_accels;
     OptixInstanceAccel triangle_ias;
@@ -78,6 +109,7 @@ struct SceneCache {
     at::Tensor face_offsets;
     at::Tensor face_shape_id;
     at::Tensor face_local_id;
+    at::Tensor primitive_identity;
     at::Tensor tri_p0_x;
     at::Tensor tri_p0_y;
     at::Tensor tri_p0_z;
@@ -90,6 +122,7 @@ struct SceneCache {
     at::Tensor tri_fn_x;
     at::Tensor tri_fn_y;
     at::Tensor tri_fn_z;
+    CompactTriangleBvh custom_triangle_bvh;
     at::Tensor edge_v0;
     at::Tensor edge_v1;
     at::Tensor edge_face0;
@@ -122,7 +155,12 @@ struct SceneHandle : torch::CustomClassHolder {
 };
 
 std::unique_ptr<SceneCache> create_scene_cache(std::vector<MeshRecord> meshes);
+std::unique_ptr<SceneCache> create_scene_cache(
+    std::vector<MeshRecord> meshes,
+    TraceBackend trace_backend,
+    EdgeBackend edge_backend);
 int64_t create_scene(std::vector<MeshRecord> meshes);
+void register_scene_cache(std::unique_ptr<SceneCache> scene);
 void destroy_scene(int64_t handle);
 SceneCache &get_scene(int64_t handle);
 c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
@@ -136,6 +174,8 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
 int64_t scene_version(int64_t handle);
 int64_t scene_num_meshes(int64_t handle);
 int64_t scene_edge_count(int64_t handle);
+std::string scene_trace_backend(int64_t handle);
+std::string scene_edge_backend(int64_t handle);
 void update_mesh_vertices(int64_t handle, int64_t mesh_id, at::Tensor vertices);
 void sync_scene(int64_t handle);
 int64_t scene_version(c10::intrusive_ptr<SceneHandle> scene);
@@ -147,6 +187,11 @@ std::vector<at::Tensor> scene_global_geometry(c10::intrusive_ptr<SceneHandle> sc
 at::Tensor get_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene);
 void set_scene_edge_mask(c10::intrusive_ptr<SceneHandle> scene, at::Tensor mask);
 void ensure_custom_edge_bvh(SceneCache &scene);
+void ensure_custom_triangle_bvh(SceneCache &scene);
+rayd::shared::bvh::TriangleSoAView scene_triangle_view(const SceneCache &scene);
+rayd::shared::bvh::AabbSoAView scene_triangle_bvh_bounds_view(const SceneCache &scene);
+rayd::shared::bvh::CompactBvhTopologyView scene_triangle_bvh_topology_view(
+    const SceneCache &scene);
 rayd::shared::edge::EdgeSoAView scene_edge_view(const SceneCache &scene);
 rayd::shared::edge::AabbSoAView scene_edge_bvh_bounds_view(const SceneCache &scene);
 rayd::shared::edge::CompactBvhTopologyView scene_edge_bvh_topology_view(const SceneCache &scene);

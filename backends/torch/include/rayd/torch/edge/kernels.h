@@ -19,6 +19,7 @@ struct EdgeForwardOutputs {
 };
 
 EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &point);
+EdgeForwardOutputs edge_forward_bvh_cuda(SceneCache &scene, const at::Tensor &point);
 
 struct EdgeForwardPublicOutputs {
     at::Tensor distance;
@@ -30,6 +31,7 @@ struct EdgeForwardPublicOutputs {
 };
 
 EdgeForwardPublicOutputs edge_forward_noad_cuda(const SceneCache &scene, const at::Tensor &point);
+EdgeForwardPublicOutputs edge_forward_noad_bvh_cuda(SceneCache &scene, const at::Tensor &point);
 
 struct EdgeTopKForwardOutputs {
     at::Tensor is_valid;
@@ -66,6 +68,13 @@ struct EdgeRayForwardOutputs {
 
 EdgeRayForwardOutputs edge_ray_forward_cuda(
     const SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active);
+
+EdgeRayForwardOutputs edge_ray_forward_bvh_cuda(
+    SceneCache &scene,
     const at::Tensor &ray_o,
     const at::Tensor &ray_d,
     const at::Tensor &ray_tmax,

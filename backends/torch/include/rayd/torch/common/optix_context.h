@@ -7,6 +7,7 @@
 #include <ATen/ATen.h>
 
 #include <cstdint>
+#include <mutex>
 
 namespace rayd::torch_backend {
 
@@ -25,6 +26,9 @@ struct OptixDeviceContextEntry {
     int device_index = 0;
     CUcontext cuda_context = nullptr;
     OptixDeviceContext optix_context = nullptr;
+    // Lazy pipeline construction can be reached concurrently by independent
+    // host threads using streams in the same CUDA context.
+    std::mutex pipeline_mutex;
     OptixModule intersect_module = nullptr;
     OptixPipeline intersect_pipeline = nullptr;
     OptixProgramGroup intersect_raygen_group = nullptr;
@@ -56,7 +60,6 @@ struct OptixDeviceContextEntry {
     at::Tensor edge_topk_miss_record;
     at::Tensor edge_hitgroup_records;
     at::Tensor edge_topk_hitgroup_record;
-    at::Tensor edge_params_buffer;
     OptixModule reflection_trace_module = nullptr;
     OptixPipeline reflection_trace_pipeline = nullptr;
     OptixProgramGroup reflection_trace_raygen_group = nullptr;
@@ -70,6 +73,7 @@ struct OptixDeviceContextEntry {
 
 TorchCudaContext current_torch_cuda_context();
 OptixDeviceContextEntry &get_optix_context(int device_index);
+bool optix_context_available(int device_index);
 void ensure_intersect_pipeline(OptixDeviceContextEntry &entry);
 void ensure_edge_pipeline(OptixDeviceContextEntry &entry);
 OptixPipeline edge_pipeline(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind);

@@ -10,6 +10,37 @@ import rayd.torch as rt
 Install the `rayd-torch` distribution. It owns only `rayd/torch/**` and can
 coexist with the independently installed `rayd-drjit` backend.
 
+Published wheels contain both native backends and do not require an OptiX SDK
+at runtime. Building this dual-backend distribution from source does require
+the OptiX SDK headers, even when the target machine will select CUDA at
+runtime; an SDK-less CUDA-only source-build mode is not currently provided.
+
+## Ray-tracing backend selection
+
+`Scene()` selects OptiX when the current CUDA device and driver expose it and
+otherwise selects RayD's pure-CUDA triangle and edge BVHs. The resolved choices
+are available through `scene.trace_backend` and `scene.edge_bvh_backend` after
+`build()`:
+
+```python
+scene = rt.Scene()  # trace_backend="auto", edge_bvh_backend="auto"
+scene.add_mesh(mesh)
+scene.build()
+print(scene.trace_backend, scene.edge_bvh_backend)
+```
+
+Pass `trace_backend="optix"` or `"cuda"` and
+`edge_bvh_backend="optix"` or `"cuda"` to require a backend. An explicit
+OptiX request fails if OptiX is unavailable; runtime pipeline, allocation, and
+CUDA errors are never converted into a fallback. `RAYD_DISABLE_OPTIX=1` is the
+deployment and test kill switch. Both backends use Torch-owned tensors and the
+current Torch CUDA stream.
+
+The separately governed ADR-0029 exact four-sample axial-edge primitive and
+ADR-0033 segment-penetration family remain OptiX-only by contract. Requesting
+either from a CUDA scene raises an explicit unsupported-backend error; RayD
+does not substitute a numerically different implementation.
+
 ## Tensor ABI
 
 RayD Torch APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.

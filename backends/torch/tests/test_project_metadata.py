@@ -93,8 +93,8 @@ class ProjectMetadataTests(unittest.TestCase):
 
     def test_ci_cuda_fat_binary_covers_witwin_platform_matrix(self):
         root = Path(__file__).resolve().parents[3]
-        expected_cmake = "70-real;75-real;80-real;86-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
-        expected_torch = "7.0;7.5;8.0;8.6;8.9;9.0;10.0;10.1;12.0+PTX"
+        expected_cmake = "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+        expected_torch = "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
         pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
         stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
         for workflow in (pypi, stable):
@@ -125,3 +125,32 @@ class ProjectMetadataTests(unittest.TestCase):
             "link_options.maxTraversableGraphDepth",
         ):
             self.assertNotIn(removed_field, source)
+
+    def test_cuda_multipath_params_are_stream_local(self):
+        source = Path("src/torch_ext/scene/multipath_cuda.cu").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("__constant__", source)
+        self.assertNotIn("cudaMemcpyToSymbol", source)
+        self.assertIn("extern __shared__", source)
+        self.assertIn("getCurrentCUDAStream", source)
+
+    def test_optix_auto_fallback_preserves_operational_errors(self):
+        source = Path("src/torch_ext/scene/optix_context.cpp").read_text(
+            encoding="utf-8"
+        )
+        for capability_error in (
+            "OPTIX_ERROR_LIBRARY_NOT_FOUND",
+            "OPTIX_ERROR_UNSUPPORTED_ABI_VERSION",
+            "OPTIX_ERROR_NOT_SUPPORTED",
+            "OPTIX_ERROR_NOT_COMPATIBLE",
+        ):
+            self.assertIn(capability_error, source)
+        for operational_error in (
+            "OPTIX_ERROR_DEVICE_OUT_OF_MEMORY",
+            "OPTIX_ERROR_CUDA_ERROR",
+        ):
+            self.assertNotIn(
+                f"context_result == {operational_error}",
+                source,
+            )

@@ -25,11 +25,13 @@ std::string normalize_edge_backend_value(const std::string &value) {
     return normalized;
 }
 
-/// Map a backend name ("drjit"/"optix"/"optix_drjit" and aliases) to EdgeBVHBackend.
+/// Resolve an edge backend name to a concrete EdgeBVHBackend.
 EdgeBVHBackend parse_edge_backend(const std::string &value) {
     const std::string normalized = normalize_edge_backend_value(value);
-    if (normalized.empty() || normalized == "optix" ||
-        normalized == "custom_aabb") {
+    if (normalized.empty() || normalized == "auto") {
+        return optix_available() ? EdgeBVHBackend::Optix : EdgeBVHBackend::DrJit;
+    }
+    if (normalized == "optix" || normalized == "custom_aabb") {
         return EdgeBVHBackend::Optix;
     }
     if (normalized == "drjit" || normalized == "dr_jit" ||
@@ -41,7 +43,8 @@ EdgeBVHBackend parse_edge_backend(const std::string &value) {
         return EdgeBVHBackend::OptixDrJit;
     }
     throw std::runtime_error(
-        "Invalid edge_bvh_backend. Expected one of: 'drjit', 'optix', 'optix_drjit'.");
+        "Invalid edge_bvh_backend. Expected one of: 'auto', 'drjit', 'optix', "
+        "'optix_drjit'.");
 }
 
 const char *edge_backend_name(EdgeBVHBackend backend) {
@@ -80,13 +83,13 @@ bool edge_backend_uses_optix_topk(EdgeBVHBackend backend) {
 }
 
 /// Parse and resolve the trace_backend selector to a concrete kind. "auto"
-/// resolves to OptiX when the driver is available and to None otherwise; "optix"
-/// resolves to Optix (availability is enforced later, at build()); "none"
-/// resolves to None. "cuda"/"embree" are reserved for later phases.
+/// resolves to OptiX when the current CUDA device/context accepts an OptiX
+/// context and to CUDA otherwise;
+/// explicit OptiX availability is enforced later, at build().
 TraceBackendKind resolve_trace_backend_kind(const std::string &value) {
     const std::string normalized = normalize_edge_backend_value(value);
     if (normalized.empty() || normalized == "auto") {
-        return optix_available() ? TraceBackendKind::Optix : TraceBackendKind::None;
+        return optix_available() ? TraceBackendKind::Optix : TraceBackendKind::Cuda;
     }
     if (normalized == "optix") {
         return TraceBackendKind::Optix;
@@ -424,14 +427,15 @@ void Scene::build() {
     // than deep inside an OptiX call.
     if (triangle_kind_ == TraceBackendKind::Optix && !optix_available()) {
         throw std::runtime_error(
-            "trace_backend 'optix' requested but the OptiX driver library is "
-            "unavailable on this system");
+            "trace_backend 'optix' requested but OptiX is unavailable for the "
+            "current CUDA device/context");
     }
     if (edge_backend_builds_optix(edge_bvh_backend_) && !optix_available()) {
         throw std::runtime_error(
             "edge_bvh_backend='" + std::string(edge_backend_name(edge_bvh_backend_)) +
-            "' requires the OptiX driver library, which is unavailable on this "
-            "system; use edge_bvh_backend=\"drjit\" for a software edge backend");
+            "' requires OptiX, which is unavailable for the current CUDA "
+            "device/context; use edge_bvh_backend=\"drjit\" for a software edge "
+            "backend");
     }
 
     std::vector<int> face_offsets;

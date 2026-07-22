@@ -135,10 +135,10 @@ class RtHostCompileTests(unittest.TestCase):
         for header in RT_HEADERS:
             self._assert_no_device_only_tokens(header)
 
-    def test_instantiation_matrix_drjit_has_cuda_torch_optix_only(self):
-        # The Dr.Jit backend instantiates the migrated algorithm bodies with the
-        # CUDA BVH traverser (the eager-native fused executor); the Torch backend
-        # is OptiX-only and must never instantiate them with CudaBvhTraverser.
+    def test_instantiation_matrix_both_gpu_frontends_have_cuda_traversal(self):
+        # Both GPU frontends instantiate the migrated algorithm bodies with the
+        # CUDA BVH traverser for their eager-native fallback. Their OptiX paths
+        # remain separate thin traversal shims.
         drjit_src = ROOT / "backends" / "drjit" / "src"
         torch_src = ROOT / "backends" / "torch" / "src"
 
@@ -153,13 +153,15 @@ class RtHostCompileTests(unittest.TestCase):
                         "drjit backend must instantiate algo bodies with CudaBvhTraverser")
 
         if torch_src.is_dir():
-            offenders = [
+            torch_cuda_sources = [
                 str(path.relative_to(ROOT))
                 for path in sources(torch_src)
                 if "CudaBvhTraverser" in path.read_text(encoding="utf-8", errors="ignore")
             ]
-            self.assertEqual(offenders, [],
-                             f"Torch backend must be OptiX-only (no CudaBvhTraverser): {offenders}")
+            self.assertIn(
+                str(Path("backends/torch/src/torch_ext/scene/multipath_cuda.cu")),
+                torch_cuda_sources,
+            )
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):

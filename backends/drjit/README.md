@@ -2,7 +2,8 @@
 
 [![PyPI](https://img.shields.io/pypi/v/rayd-drjit)](https://pypi.org/project/rayd-drjit/) [![License](https://img.shields.io/github/license/Asixa/RayD)](../../LICENSE)
 
-RayD is a Dr.Jit-native GPU library for differentiable ray geometry and multipath simulation primitives built on OptiX.
+RayD is a Dr.Jit-native GPU library for differentiable ray geometry and
+multipath simulation primitives with OptiX and pure-CUDA ray-tracing backends.
 
 ```bash
 pip install rayd-drjit
@@ -12,7 +13,18 @@ RayD is not a full renderer. It exposes low-level scene, ray, edge, visibility, 
 
 ## Release compatibility
 
-Release wheels cover Linux x86-64 and Windows x86-64 on CPython 3.10-3.14. They are built with CUDA 12.8 and contain native code for `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, and `sm_120`, plus `compute_120` PTX for forward compatibility. This spans RTX 2080-class Turing GPUs through current data-center and GeForce/RTX PRO Blackwell families.
+Release wheels cover Linux x86-64 and Windows x86-64 on CPython 3.10-3.14. They are built with CUDA 12.8 and contain native code for `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_87`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, and `sm_120`, plus `compute_120` PTX for forward compatibility. `sm_87` is present for Orin-compatible builds, but the published x86-64 wheels themselves are not aarch64 packages; Jetson currently requires a native/source build.
+
+## Ray-tracing backend selection
+
+`Scene()` uses OptiX when the current CUDA device/context accepts an OptiX
+context and otherwise selects the
+pure-CUDA triangle backend plus the Dr.Jit/CUDA edge BVH. Use
+`trace_backend="optix"` or `"cuda"` and `edge_bvh_backend="optix"` or
+`"drjit"` to require a backend. `scene.capabilities()` reports the resolved
+choice. An explicit OptiX request fails when unavailable, and operational
+pipeline, allocation, or CUDA failures are not converted into a fallback.
+`RAYD_DISABLE_OPTIX=1` forces capability discovery to report OptiX unavailable.
 
 RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind extension uses the CPython ABI, CI builds one wheel per Python version rather than one Python-independent wheel. The complete build matrix and release configuration are documented in [`CI_BUILD_MATRIX.md`](CI_BUILD_MATRIX.md).
 
@@ -21,7 +33,7 @@ RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind exten
 RayD focuses on geometry and wave-propagation primitives:
 
 - differentiable ray-mesh intersection
-- scene-level GPU acceleration through OptiX
+- scene-level GPU acceleration through OptiX or a pure-CUDA BVH
 - nearest-edge queries through a scene-global edge BVH
 - primary-edge sampling support for edge-based gradient terms
 - segment visibility and multipath reflection primitives

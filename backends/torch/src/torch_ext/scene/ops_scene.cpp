@@ -16,6 +16,8 @@ namespace {
 constexpr int64_t kMeshUseFaceNormals = 1;
 constexpr int64_t kMeshEdgesEnabled = 2;
 constexpr int64_t kMeshDynamic = 4;
+constexpr int64_t kTraceBackendShift = 8;
+constexpr int64_t kEdgeBackendShift = 10;
 
 void require_mesh_vertex_tangent(const at::Tensor &tensor, const MeshRecord &mesh, const char *name) {
     require_vec3f(tensor, name);
@@ -64,6 +66,17 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
         mesh_flags.size() != mesh_count) {
         throw std::runtime_error("Scene init lists must have the same length.");
     }
+    TraceBackend trace_backend = TraceBackend::Auto;
+    EdgeBackend edge_backend = EdgeBackend::Auto;
+    if (!mesh_flags.empty()) {
+        const int64_t trace_code = (mesh_flags[0] >> kTraceBackendShift) & 0x3;
+        const int64_t edge_code = (mesh_flags[0] >> kEdgeBackendShift) & 0x3;
+        if (trace_code < 0 || trace_code > static_cast<int64_t>(TraceBackend::Cuda) ||
+            edge_code < 0 || edge_code > static_cast<int64_t>(EdgeBackend::Cuda))
+            throw std::runtime_error("Scene received an invalid ray-tracing backend code.");
+        trace_backend = static_cast<TraceBackend>(trace_code);
+        edge_backend = static_cast<EdgeBackend>(edge_code);
+    }
     std::vector<MeshRecord> meshes;
     meshes.reserve(mesh_count);
     for (size_t i = 0; i < mesh_count; ++i) {
@@ -76,7 +89,10 @@ c10::intrusive_ptr<SceneHandle> create_scene_cache_from_flat(
             std::move(to_world_right[i]),
             mesh_flags[i]));
     }
-    const int64_t handle = create_scene(std::move(meshes));
+    auto owner = create_scene_cache(
+        std::move(meshes), trace_backend, edge_backend);
+    const int64_t handle = owner->handle;
+    register_scene_cache(std::move(owner));
     return c10::make_intrusive<SceneHandle>(handle);
 }
 

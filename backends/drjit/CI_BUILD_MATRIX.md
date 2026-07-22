@@ -50,7 +50,7 @@ Both native backends keep `manylinux_2_28` rather than changing to the witwin `m
 The Dr.Jit backend compiles CUDA translation units through explicit `nvcc` custom commands. `CMAKE_CUDA_ARCHITECTURES` does not affect those commands, so release CI supplies two dedicated environment variables:
 
 ```text
-RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,89,90,100,101,120
+RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,87,89,90,100,101,120
 RAYD_CUDA_PTX_ARCH=120
 ```
 

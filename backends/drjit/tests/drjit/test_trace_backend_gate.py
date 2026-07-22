@@ -3,9 +3,8 @@
 Exercises the two axes the P1 acceptance criteria demand:
 
 * OptiX artificially blocked (env ``RAYD_DISABLE_OPTIX=1``) -- ``optix_available()``
-  reports False, a ``drjit`` edge scene still builds and answers ``nearest_edge``
-  queries with results bit-identical to the checked-in OptiX baseline, and every
-  triangle-trace operation fails with a clear, non-crashing error.
+  reports False and the default scene automatically selects the CUDA triangle
+  and Dr.Jit edge backends while preserving the checked-in OptiX baseline.
 * OptiX available -- the default scene reports the OptiX trace backend, a
   ``trace_backend='none'`` scene answers edge queries while triangle traces raise,
   a reserved backend name raises not-implemented, and the golden edge baseline
@@ -93,7 +92,7 @@ def bools(a):
     return [int(bool(v)) for v in list(a)]
 
 
-scene = rd.Scene(edge_bvh_backend="drjit")
+scene = rd.Scene()
 mesh = rd.Mesh(
     vec3(VERTS),
     cuda.Array3i(
@@ -104,9 +103,15 @@ mesh = rd.Mesh(
 )
 scene.add_mesh(mesh)
 scene.build()
+its = scene.intersect(rd.Ray(
+    vec3([[0.25, 0.25, -1.0]]),
+    vec3([[0.0, 0.0, 1.0]]),
+))
 
 out = {{"optix_available": rd.optix_available(),
        "trace_backend_name": scene.trace_backend_name(),
+       "edge_bvh_backend": scene.edge_bvh_backend,
+       "intersect_valid": bools(its.is_valid()),
        "is_ready": bool(scene.is_ready()),
        "queries": {{}}}}
 
@@ -170,10 +175,12 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
         )
         self.assertIs(data["optix_available"], False)
 
-    def test_drjit_edge_scene_matches_optix_baseline(self):
+    def test_default_scene_uses_cuda_and_matches_optix_edge_baseline(self):
         data = _run_json(_EDGE_GATE_SCRIPT, disable_optix=True)
         self.assertIs(data["optix_available"], False)
-        self.assertEqual(data["trace_backend_name"], "none")
+        self.assertEqual(data["trace_backend_name"], "cuda")
+        self.assertEqual(data["edge_bvh_backend"], "drjit")
+        self.assertEqual(data["intersect_valid"], [1])
         self.assertTrue(data["is_ready"])
 
         baseline = json.loads(EDGE_BASELINE.read_text(encoding="utf-8"))["queries"]
@@ -187,7 +194,7 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
                         f"discrete field {field!r} of {name!r} drifted vs OptiX baseline",
                     )
 
-    def test_capabilities_and_triangle_ops_error_cleanly(self):
+    def test_auto_capabilities_set_device_and_explicit_optix_errors(self):
         script = """
         import json
         import drjit.cuda as cuda
@@ -195,8 +202,12 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
 
         out = {}
 
-        # Edge-only drjit scene: builds, reports 'none', intersect must raise.
-        scene = rd.Scene(edge_bvh_backend="drjit")
+        current = rd.current_device()
+        out["current_device"] = int(current)
+        out["set_device"] = int(rd.set_device(current))
+
+        # Both default selectors must resolve to their software implementations.
+        scene = rd.Scene()
         mesh = rd.Mesh(
             cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
             cuda.Array3i([0], [1], [2]),
@@ -210,18 +221,16 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
             "intersect": caps["intersect"],
             "nearest_edge": caps["nearest_edge"],
             "integration": list(caps["integration"]),
+            "edge_backend": caps["edge_backend"],
         }
-        try:
-            scene.intersect(rd.Ray(
-                cuda.Array3f([0.25], [0.25], [-1.0]),
-                cuda.Array3f([0.0], [0.0], [1.0]),
-            ))
-            out["intersect"] = {"raised": False}
-        except Exception as exc:  # noqa: BLE001
-            out["intersect"] = {"raised": True, "msg": str(exc)}
+        its = scene.intersect(rd.Ray(
+            cuda.Array3f([0.25], [0.25], [-1.0]),
+            cuda.Array3f([0.0], [0.0], [1.0]),
+        ))
+        out["intersect_valid"] = bool(its.is_valid()[0])
 
         # trace_backend='optix' must fail at build() naming OptiX unavailable.
-        forced = rd.Scene(trace_backend="optix")
+        forced = rd.Scene(edge_bvh_backend="drjit", trace_backend="optix")
         forced.add_mesh(rd.Mesh(
             cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
             cuda.Array3i([0], [1], [2]),
@@ -232,38 +241,82 @@ class TraceBackendGateBlockedTests(unittest.TestCase):
         except Exception as exc:  # noqa: BLE001
             out["forced_optix_build"] = {"raised": True, "msg": str(exc)}
 
-        # Default scene (edge backend defaults to optix) must fail naming drjit.
-        default = rd.Scene()
-        default.add_mesh(rd.Mesh(
+        # Explicit edge OptiX must likewise fail rather than silently fallback.
+        forced_edge = rd.Scene(edge_bvh_backend="optix", trace_backend="cuda")
+        forced_edge.add_mesh(rd.Mesh(
             cuda.Array3f([0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]),
             cuda.Array3i([0], [1], [2]),
         ))
         try:
-            default.build()
-            out["default_build"] = {"raised": False}
+            forced_edge.build()
+            out["forced_edge_optix_build"] = {"raised": False}
         except Exception as exc:  # noqa: BLE001
-            out["default_build"] = {"raised": True, "msg": str(exc)}
+            out["forced_edge_optix_build"] = {"raised": True, "msg": str(exc)}
 
         print(json.dumps(out))
         """
         data = _run_json(script, disable_optix=True)
 
-        self.assertEqual(data["caps"]["trace_backend"], "none")
+        self.assertEqual(data["set_device"], data["current_device"])
+        self.assertEqual(data["caps"]["trace_backend"], "cuda")
         self.assertIs(data["caps"]["optix_available"], False)
-        self.assertIs(data["caps"]["intersect"], False)
+        self.assertIs(data["caps"]["intersect"], True)
         self.assertIs(data["caps"]["nearest_edge"], True)
-        self.assertEqual(data["caps"]["integration"], [])
-
-        self.assertTrue(data["intersect"]["raised"])
-        self.assertIn("trace backend", data["intersect"]["msg"])
+        self.assertEqual(data["caps"]["integration"], ["eager_native"])
+        self.assertEqual(data["caps"]["edge_backend"], "drjit")
+        self.assertTrue(data["intersect_valid"])
 
         self.assertTrue(data["forced_optix_build"]["raised"])
         self.assertIn("optix", data["forced_optix_build"]["msg"].lower())
         self.assertIn("unavailable", data["forced_optix_build"]["msg"])
 
-        self.assertTrue(data["default_build"]["raised"])
-        self.assertIn("edge_bvh_backend", data["default_build"]["msg"])
-        self.assertIn("drjit", data["default_build"]["msg"])
+        self.assertTrue(data["forced_edge_optix_build"]["raised"])
+        self.assertIn("edge_bvh_backend", data["forced_edge_optix_build"]["msg"])
+        self.assertIn("unavailable", data["forced_edge_optix_build"]["msg"])
+
+    def test_default_symbolic_reflections_run_eagerly_for_one_to_three_bounces(self):
+        data = _run_json(
+            """
+            import json
+            import drjit.cuda as cuda
+            import rayd.drjit as rd
+
+            # Two parallel quads form a corridor so one ray has at least three
+            # deterministic reflections. The public default symbolic=True path
+            # remains usable on the automatically selected CUDA backend: outside
+            # a recording region its bounce loop executes eagerly.
+            yz = [-2.0, 2.0, 2.0, -2.0]
+            zz = [-2.0, -2.0, 2.0, 2.0]
+            faces = cuda.Array3i([0, 0], [1, 2], [2, 3])
+            scene = rd.Scene()
+            scene.add_mesh(rd.Mesh(cuda.Array3f([0.0] * 4, yz, zz), faces))
+            scene.add_mesh(rd.Mesh(cuda.Array3f([1.0] * 4, yz, zz), faces))
+            scene.build()
+            ray = rd.Ray(
+                cuda.Array3f([0.5], [0.0], [0.0]),
+                cuda.Array3f([1.0], [0.0], [0.0]),
+            )
+            results = {}
+            for max_bounces in (1, 2, 3):
+                trace = scene.trace_reflections(ray, max_bounces)
+                results[str(max_bounces)] = {
+                    "bounce_count": int(trace.bounce_count[0]),
+                    "stored_bounces": len(trace.bounces),
+                    "prim_ids": [int(b.global_prim_ids[0]) for b in trace.bounces],
+                }
+            print(json.dumps({
+                "trace_backend": scene.trace_backend_name(),
+                "results": results,
+            }))
+            """,
+            disable_optix=True,
+        )
+        self.assertEqual(data["trace_backend"], "cuda")
+        for max_bounces in (1, 2, 3):
+            result = data["results"][str(max_bounces)]
+            self.assertEqual(result["bounce_count"], max_bounces)
+            self.assertEqual(result["stored_bounces"], max_bounces)
+            self.assertTrue(all(prim_id >= 0 for prim_id in result["prim_ids"]))
 
 
 class TraceBackendGateAvailableTests(unittest.TestCase):
@@ -288,6 +341,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
             "intersect": caps["intersect"],
             "integration": list(caps["integration"]),
             "trace_backend_name": scene.trace_backend_name(),
+            "edge_bvh_backend": scene.edge_bvh_backend,
         }))
         """
         data = _run_json(script)
@@ -296,6 +350,7 @@ class TraceBackendGateAvailableTests(unittest.TestCase):
         self.assertIs(data["intersect"], True)
         self.assertEqual(data["integration"], ["jit_symbolic", "eager_native"])
         self.assertEqual(data["trace_backend_name"], "optix")
+        self.assertEqual(data["edge_bvh_backend"], "optix")
 
     def test_trace_none_scene_answers_edges_but_not_triangles(self):
         script = """

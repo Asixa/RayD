@@ -74,7 +74,7 @@ int set_rayd_device(int device, bool initialize_optix) {
     jit_sync_thread();
     drjit::set_device(device);
 
-    if (initialize_optix) {
+    if (initialize_optix && optix_available()) {
         jit_optix_context();
         init_optix_api();
     }
@@ -304,7 +304,8 @@ NB_MODULE(_C, m) {
           "Call this before constructing RayD meshes, scenes, cameras, or "
           "Dr.Jit arrays that you intend to use with them. When "
           "initialize_optix=True, RayD also initializes the OptiX device "
-          "context for the selected device.");
+          "context when OptiX is available; otherwise CUDA-only operation "
+          "remains available.");
     m.def("optix_available",
           []() { return optix_available(); },
           "Return True when a usable OptiX driver is present on this system.\n\n"
@@ -1768,7 +1769,7 @@ NB_MODULE(_C, m) {
     bind_section("scene", [&]() {
         nb::class_<Scene>(m, "Scene")
             .def("__init__", &construct_scene,
-                 "edge_bvh_backend"_a = "optix",
+                 "edge_bvh_backend"_a = "auto",
                  "trace_backend"_a = "auto")
             .def("add_mesh", &Scene::add_mesh, "mesh"_a, "dynamic"_a = false)
             .def("build", &Scene::build)

@@ -3,6 +3,7 @@
 #include <rayd/torch/common/math.cuh>
 #include <rayd/torch/common/optix_context.h>
 #include <rayd/torch/scene/optix_intersect_params.h>
+#include <rayd/torch/scene/triangle_bvh.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -10,11 +11,8 @@
 #include <math_constants.h>
 #include <optix_stubs.h>
 
-#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace rayd::torch_backend {
 
@@ -129,75 +127,11 @@ __global__ void intersect_recompute_kernel(
     }
 }
 
-struct CachedIntersectParams {
-    OptixIntersectParams params;
-    cudaStream_t stream = nullptr;
-    at::Tensor buffer;
-};
-
-struct IntersectParamsCache {
-    std::vector<CachedIntersectParams> entries;
-    at::Tensor fallback_buffer;
-};
-
-bool same_intersect_params(const OptixIntersectParams &a, const OptixIntersectParams &b) {
-    return a.traversable == b.traversable &&
-           a.ray_o == b.ray_o &&
-           a.ray_d == b.ray_d &&
-           a.ray_tmax == b.ray_tmax &&
-           a.active == b.active &&
-           a.out_t == b.out_t &&
-           a.out_shape_id == b.out_shape_id &&
-           a.out_local_prim_id == b.out_local_prim_id &&
-           a.out_global_prim_id == b.out_global_prim_id &&
-           a.out_bary_uv == b.out_bary_uv &&
-           a.face_offsets == b.face_offsets &&
-           a.mesh_count == b.mesh_count &&
-           a.ray_count == b.ray_count;
-}
-
 at::Tensor make_intersect_params_buffer(int device_index) {
     c10::cuda::CUDAGuard guard(device_index);
     at::TensorOptions byte_options =
         at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte);
     return at::empty({static_cast<int64_t>(sizeof(OptixIntersectParams))}, byte_options);
-}
-
-CUdeviceptr intersect_params_device_ptr(
-    int device_index,
-    const OptixIntersectParams &params,
-    cudaStream_t stream) {
-    constexpr size_t kMaxCachedParamBuffers = 128;
-    static std::mutex buffer_mutex;
-    static std::unordered_map<int, IntersectParamsCache> caches;
-
-    std::lock_guard<std::mutex> lock(buffer_mutex);
-    IntersectParamsCache &cache = caches[device_index];
-    for (CachedIntersectParams &entry : cache.entries) {
-        if (entry.stream == stream && same_intersect_params(entry.params, params)) {
-            return reinterpret_cast<CUdeviceptr>(entry.buffer.data_ptr<uint8_t>());
-        }
-    }
-
-    at::Tensor *buffer = nullptr;
-    if (cache.entries.size() < kMaxCachedParamBuffers) {
-        cache.entries.push_back(CachedIntersectParams{params, stream, make_intersect_params_buffer(device_index)});
-        buffer = &cache.entries.back().buffer;
-    } else {
-        if (!cache.fallback_buffer.defined()) {
-            cache.fallback_buffer = make_intersect_params_buffer(device_index);
-        }
-        buffer = &cache.fallback_buffer;
-    }
-    cuda_check(
-        cudaMemcpyAsync(
-            buffer->data_ptr<uint8_t>(),
-            &params,
-            sizeof(OptixIntersectParams),
-            cudaMemcpyHostToDevice,
-            stream),
-        "cudaMemcpyAsync(OptiX intersect params)");
-    return reinterpret_cast<CUdeviceptr>(buffer->data_ptr<uint8_t>());
 }
 
 void launch_intersect_optix(
@@ -231,18 +165,51 @@ void launch_intersect_optix(
     params.mesh_count = static_cast<int32_t>(scene.meshes.size());
     params.ray_count = static_cast<int32_t>(ray_o.size(0));
 
-    const CUdeviceptr params_device_ptr =
-        intersect_params_device_ptr(static_cast<int>(scene.device_index), params, stream);
+    at::Tensor params_buffer =
+        make_intersect_params_buffer(static_cast<int>(scene.device_index));
+    // Pageable H2D copies stage the source before returning, so the stack
+    // value is safe while the Torch-owned device tensor remains stream-local.
+    cuda_check(
+        cudaMemcpyAsync(
+            params_buffer.data_ptr<uint8_t>(),
+            &params,
+            sizeof(OptixIntersectParams),
+            cudaMemcpyHostToDevice,
+            stream),
+        "cudaMemcpyAsync(OptiX intersect params)");
 
     rayd_torch_OPTIX_CHECK(optixLaunch(
         optix_entry.intersect_pipeline,
         stream,
-        params_device_ptr,
+        reinterpret_cast<CUdeviceptr>(params_buffer.data_ptr<uint8_t>()),
         sizeof(OptixIntersectParams),
         &optix_entry.intersect_sbt,
         static_cast<unsigned int>(ray_o.size(0)),
         1,
         1));
+}
+
+void launch_intersect_backend(
+    const SceneCache &scene,
+    const at::Tensor &ray_o,
+    const at::Tensor &ray_d,
+    const at::Tensor &ray_tmax,
+    const at::Tensor &active,
+    at::Tensor &out_t,
+    int *out_shape_id,
+    int *out_local_prim_id,
+    int *out_global_prim_id,
+    float *out_bary_uv,
+    cudaStream_t stream) {
+    if (scene.trace_backend == TraceBackend::Cuda) {
+        launch_intersect_cuda_bvh(
+            scene, ray_o, ray_d, ray_tmax, active, out_t, out_shape_id,
+            out_local_prim_id, out_global_prim_id, out_bary_uv, stream);
+        return;
+    }
+    launch_intersect_optix(
+        scene, ray_o, ray_d, ray_tmax, active, out_t, out_shape_id,
+        out_local_prim_id, out_global_prim_id, out_bary_uv, stream);
 }
 
 } // namespace
@@ -279,7 +246,7 @@ IntersectForwardOutputs intersect_forward_cuda(
         return out;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    launch_intersect_optix(
+    launch_intersect_backend(
         scene,
         ray_o,
         ray_d,
@@ -366,7 +333,7 @@ IntersectForwardOutputs intersect_forward_flags_cuda(
         : at::Tensor();
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    launch_intersect_optix(
+    launch_intersect_backend(
         scene,
         ray_o,
         ray_d,
@@ -445,7 +412,7 @@ IntersectForwardOutputs intersect_forward_ad_flags_cuda(
         return out;
 
     TorchCudaContext torch_ctx = current_torch_cuda_context();
-    launch_intersect_optix(
+    launch_intersect_backend(
         scene,
         ray_o,
         ray_d,
@@ -507,7 +474,7 @@ IntersectForwardOutputs intersect_forward_tape_cuda(
     if (ray_count == 0)
         return out;
 
-    launch_intersect_optix(
+    launch_intersect_backend(
         scene,
         ray_o,
         ray_d,
@@ -533,7 +500,7 @@ at::Tensor intersect_forward_t_only_cuda(
     at::Tensor out_t = at::empty({ray_count}, scene.global_vertices.options());
     if (ray_count == 0)
         return out_t;
-    launch_intersect_optix(
+    launch_intersect_backend(
         scene,
         ray_o,
         ray_d,

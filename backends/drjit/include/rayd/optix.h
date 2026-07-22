@@ -347,15 +347,16 @@ struct OptixRuntimeInfo {
 /// Probe the active OptiX driver and report what resolved; initializes the OptiX API as a side effect.
 OptixRuntimeInfo query_optix_runtime_info();
 
-/// \brief Non-throwing capability probe: is a usable OptiX driver present on this system?
+/// \brief Capability probe for the current Dr.Jit CUDA device/context.
 ///
-/// Unlike query_optix_runtime_info(), this never calls jit_optix_context() and never
-/// throws, so it is safe to call on machines without OptiX (for example Jetson). It
-/// loads the driver module (nvoptix.dll / libnvoptix.so.1), resolves
-/// optixQueryFunctionTable, and probes the target ABI. The result is cached per
-/// process. Setting the environment variable RAYD_DISABLE_OPTIX to "1"/"true"
-/// forces a false result (a test/deployment kill-switch).
-bool optix_available() noexcept;
+/// This does not call jit_optix_context() and therefore does not create Dr.Jit's
+/// default module, program group, or SBT. After the driver/ABI check it creates
+/// and destroys a temporary OptiX device context through typed entry points.
+/// NOT_SUPPORTED/NOT_COMPATIBLE return false; CUDA, allocation, and other
+/// operational failures throw instead of being converted into a fallback. The
+/// result is cached by Dr.Jit CUDA device and raw CUcontext. Setting
+/// RAYD_DISABLE_OPTIX to "1"/"true" forces false.
+bool optix_available();
 
 // Shared OptiX host helpers used by the multipath and edge pipelines.
 

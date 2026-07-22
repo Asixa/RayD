@@ -440,6 +440,12 @@ TORCH_LIBRARY(rayd_torch, m) {
         .def("edge_count", [](const ScenePtr &scene) {
             return scene_edge_count(scene);
         })
+        .def("trace_backend", [](const ScenePtr &scene) {
+            return scene_trace_backend(scene->handle);
+        })
+        .def("edge_backend", [](const ScenePtr &scene) {
+            return scene_edge_backend(scene->handle);
+        })
         .def("edge_mask", [](const ScenePtr &scene) {
             return get_scene_edge_mask(scene);
         })

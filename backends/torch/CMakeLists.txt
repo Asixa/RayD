@@ -674,6 +674,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/scene/cache_kernels.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/scene/packing.cu
         src/torch_ext/scene/geometry_forward.cu
+        src/torch_ext/scene/triangle_bvh.cu
+        src/torch_ext/scene/multipath_cuda.cu
         src/torch_ext/scene/geometry_backward.cu
         src/torch_ext/penetration/segment_penetration.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu

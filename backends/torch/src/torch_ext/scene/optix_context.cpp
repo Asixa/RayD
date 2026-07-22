@@ -12,6 +12,11 @@
 #include <rayd/torch/reflection_trace_optix_ptx.h>
 #include <rayd/shared/optix/scene_edge_contracts.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -21,7 +26,33 @@ namespace rayd::torch_backend {
 
 namespace {
 std::mutex context_mutex;
-std::unordered_map<int, OptixDeviceContextEntry> contexts;
+
+struct ContextKey {
+    int device_index;
+    CUcontext cuda_context;
+
+    bool operator==(const ContextKey &other) const noexcept {
+        return device_index == other.device_index && cuda_context == other.cuda_context;
+    }
+};
+
+struct ContextKeyHash {
+    size_t operator()(const ContextKey &key) const noexcept {
+        const size_t device_hash = std::hash<int>{}(key.device_index);
+        const size_t context_hash = std::hash<std::uintptr_t>{}(
+            reinterpret_cast<std::uintptr_t>(key.cuda_context));
+        return device_hash ^ (context_hash + 0x9e3779b9u + (device_hash << 6u) +
+                              (device_hash >> 2u));
+    }
+};
+
+std::unordered_map<ContextKey, std::unique_ptr<OptixDeviceContextEntry>, ContextKeyHash>
+    contexts;
+
+class OptixCapabilityUnavailable final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 static_assert(shared::optix::SbtRecordAlignment == OPTIX_SBT_RECORD_ALIGNMENT);
 static_assert(shared::optix::SbtRecordHeaderSize == OPTIX_SBT_RECORD_HEADER_SIZE);
@@ -78,6 +109,15 @@ void create_program_group(
     rayd_torch_OPTIX_CHECK(
         optixProgramGroupCreate(context, &desc, 1, &options, log, &log_size, out_group));
 }
+
+bool env_value_is_true(const char *raw) {
+    if (raw == nullptr)
+        return false;
+    std::string value(raw);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value == "1" || value == "true";
+}
 } // namespace
 
 TorchCudaContext current_torch_cuda_context() {
@@ -89,30 +129,66 @@ TorchCudaContext current_torch_cuda_context() {
 
 OptixDeviceContextEntry &get_optix_context(int device_index) {
     std::lock_guard<std::mutex> lock(context_mutex);
-    auto it = contexts.find(device_index);
-    if (it != contexts.end())
-        return it->second;
-
     c10::cuda::CUDAGuard guard(device_index);
     CUcontext cu_ctx = nullptr;
     CUresult cu_result = cuCtxGetCurrent(&cu_ctx);
     if (cu_result != CUDA_SUCCESS || cu_ctx == nullptr)
         throw std::runtime_error("Could not get current CUDA context for OptiX.");
 
-    OptixDeviceContext optix_ctx = nullptr;
-    rayd_torch_OPTIX_CHECK(optixInit());
-    OptixDeviceContextOptions options = {};
-    rayd_torch_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &optix_ctx));
+    const char *disabled = std::getenv("RAYD_DISABLE_OPTIX");
+    if (disabled == nullptr)
+        disabled = std::getenv("RAYD_TORCH_DISABLE_OPTIX");
+    if (env_value_is_true(disabled)) {
+        throw OptixCapabilityUnavailable(
+            "OptiX is disabled by RAYD_DISABLE_OPTIX.");
+    }
 
-    OptixDeviceContextEntry entry;
-    entry.device_index = device_index;
-    entry.cuda_context = cu_ctx;
-    entry.optix_context = optix_ctx;
-    auto [inserted, _] = contexts.emplace(device_index, entry);
-    return inserted->second;
+    const ContextKey key{device_index, cu_ctx};
+    auto it = contexts.find(key);
+    if (it != contexts.end())
+        return *it->second;
+
+    OptixDeviceContext optix_ctx = nullptr;
+    const OptixResult init_result = optixInit();
+    if (init_result == OPTIX_ERROR_LIBRARY_NOT_FOUND ||
+        init_result == OPTIX_ERROR_UNSUPPORTED_ABI_VERSION) {
+        throw OptixCapabilityUnavailable(
+            std::string("OptiX runtime is unavailable: ") + optixGetErrorName(init_result));
+    }
+    rayd_torch_OPTIX_CHECK(init_result);
+    OptixDeviceContextOptions options = {};
+    const OptixResult context_result =
+        optixDeviceContextCreate(cu_ctx, &options, &optix_ctx);
+    if (context_result == OPTIX_ERROR_NOT_SUPPORTED ||
+        context_result == OPTIX_ERROR_NOT_COMPATIBLE) {
+        throw OptixCapabilityUnavailable(
+            std::string("OptiX is unavailable on CUDA device ") +
+            std::to_string(device_index) + ": " + optixGetErrorName(context_result));
+    }
+    // CUDA/context failures and resource exhaustion are operational errors,
+    // not capability discovery. Preserve them instead of silently falling
+    // back after a real OptiX failure.
+    rayd_torch_OPTIX_CHECK(context_result);
+
+    auto entry = std::make_unique<OptixDeviceContextEntry>();
+    entry->device_index = device_index;
+    entry->cuda_context = cu_ctx;
+    entry->optix_context = optix_ctx;
+    auto [inserted, _] = contexts.emplace(key, std::move(entry));
+    return *inserted->second;
+}
+
+bool optix_context_available(int device_index) {
+    try {
+        (void)get_optix_context(device_index);
+        return true;
+    } catch (const OptixCapabilityUnavailable &) {
+        return false;
+    }
 }
 
 void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
+    std::lock_guard<std::mutex> lock(entry.pipeline_mutex);
     if (entry.intersect_pipeline != nullptr)
         return;
 
@@ -223,9 +299,11 @@ void ensure_intersect_pipeline(OptixDeviceContextEntry &entry) {
         reinterpret_cast<CUdeviceptr>(entry.intersect_hitgroup_record.data_ptr<uint8_t>());
     entry.intersect_sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     entry.intersect_sbt.hitgroupRecordCount = 1;
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(intersect SBT initialization)");
 }
 
 void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
+    std::lock_guard<std::mutex> lock(entry.pipeline_mutex);
     if (entry.edge_pipeline != nullptr && entry.edge_topk_pipeline != nullptr)
         return;
 
@@ -413,9 +491,6 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
         at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord) * 2)}, byte_options);
     entry.edge_topk_hitgroup_record =
         at::empty({static_cast<int64_t>(sizeof(EmptySbtRecord))}, byte_options);
-    entry.edge_params_buffer =
-        at::empty({static_cast<int64_t>(sizeof(EdgeOptixQueryParams))}, byte_options);
-
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(entry.device_index).stream();
     copy_sbt_record(entry.edge_raygen_point_group, entry.edge_raygen_point_record, stream);
     copy_sbt_record(entry.edge_raygen_ray_group, entry.edge_raygen_ray_record, stream);
@@ -458,6 +533,7 @@ void ensure_edge_pipeline(OptixDeviceContextEntry &entry) {
     init_point_ray_sbt(entry.edge_point_sbt, entry.edge_raygen_point_record);
     init_point_ray_sbt(entry.edge_ray_sbt, entry.edge_raygen_ray_record);
     init_topk_sbt();
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(edge SBT initialization)");
 }
 
 OptixPipeline edge_pipeline(const OptixDeviceContextEntry &entry, EdgeOptixLaunchKind kind) {
@@ -477,6 +553,7 @@ const OptixShaderBindingTable &edge_sbt(const OptixDeviceContextEntry &entry, Ed
 }
 
 void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
+    std::lock_guard<std::mutex> lock(entry.pipeline_mutex);
     if (entry.reflection_trace_pipeline != nullptr)
         return;
 
@@ -591,6 +668,9 @@ void ensure_reflection_trace_pipeline(OptixDeviceContextEntry &entry) {
         reinterpret_cast<CUdeviceptr>(entry.reflection_trace_hitgroup_record.data_ptr<uint8_t>());
     entry.reflection_trace_sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     entry.reflection_trace_sbt.hitgroupRecordCount = 1;
+    cuda_check(
+        cudaStreamSynchronize(stream),
+        "cudaStreamSynchronize(reflection trace SBT initialization)");
 }
 
 void optix_check(OptixResult result, const char *expr, const char *file, int line) {

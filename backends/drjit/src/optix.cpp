@@ -5,9 +5,13 @@
 #include <rayd/native_launch_audit.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -278,6 +282,23 @@ bool env_disables_optix() {
     return value == "1" || value == "true";
 }
 
+struct OptixDeviceContextOptionsProbe {
+    void *log_callback_function = nullptr;
+    void *log_callback_data = nullptr;
+    int log_callback_level = 0;
+    unsigned int validation_mode = 0;
+};
+
+using OptixDeviceContextCreateFn = OptixResult (*)(
+    void *, const OptixDeviceContextOptionsProbe *, OptixDeviceContext *);
+using OptixDeviceContextDestroyFn = OptixResult (*)(OptixDeviceContext);
+
+constexpr OptixResult kOptixErrorNotCompatible = 7400;
+constexpr OptixResult kOptixErrorNotSupported = 7800;
+
+std::mutex optix_capability_mutex;
+std::map<std::pair<int, std::uintptr_t>, bool> optix_capability_cache;
+
 } // namespace
 
 OptixRuntimeInfo query_optix_runtime_info() {
@@ -323,30 +344,92 @@ OptixRuntimeInfo query_optix_runtime_info() {
     return info;
 }
 
-bool optix_available() noexcept {
-    static const bool available = []() noexcept -> bool {
-        try {
-            if (env_disables_optix())
-                return false;
+bool optix_available() {
+    if (env_disables_optix())
+        return false;
 
-            auto module = probe_load_optix_module();
-            if (!module)
-                return false;
+    void *cuda_context = jit_cuda_context();
+    if (cuda_context == nullptr) {
+        throw std::runtime_error(
+            "OptiX capability probe requires an active Dr.Jit CUDA context.");
+    }
+    const int device = jit_cuda_device();
+    const auto key = std::make_pair(
+        device, reinterpret_cast<std::uintptr_t>(cuda_context));
 
-            OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
-            if (query_fn == nullptr)
-                return false;
+    std::lock_guard<std::mutex> lock(optix_capability_mutex);
+    auto cached = optix_capability_cache.find(key);
+    if (cached != optix_capability_cache.end())
+        return cached->second;
 
-            // ABI-93 probe (mirrors query_optix_runtime_info): 7801 signals the
-            // driver rejects the target ABI, anything else means it is supported.
-            const OptixResult abi_probe =
-                query_fn(RAYD_OPTIX_TARGET_ABI, 0, nullptr, nullptr, nullptr, 0);
-            return abi_probe != 7801;
-        } catch (...) {
-            return false;
-        }
-    }();
-    return available;
+    // Retain one process-lifetime driver-module reference. Repeated scene
+    // construction must not accumulate dlopen reference counts on Linux.
+    static auto module = probe_load_optix_module();
+    if (!module) {
+        optix_capability_cache.emplace(key, false);
+        return false;
+    }
+
+    OptixQueryFunctionTableFn query_fn = optix_query_function_table(module);
+    if (query_fn == nullptr) {
+        optix_capability_cache.emplace(key, false);
+        return false;
+    }
+
+    // OptiX 8.1 ABI-93 contains exactly 50 pointer-sized entries. Query a
+    // private table so capability discovery does not initialize Dr.Jit's
+    // default OptiX module/program/SBT. Entries 2 and 3 are the typed device
+    // context create/destroy functions in NVIDIA's ABI-93 contract.
+    std::array<void *, 50> function_table = {};
+    const OptixResult abi_probe = query_fn(
+        RAYD_OPTIX_TARGET_ABI,
+        0,
+        nullptr,
+        nullptr,
+        function_table.data(),
+        sizeof(function_table));
+    if (abi_probe == 7801) {
+        optix_capability_cache.emplace(key, false);
+        return false;
+    }
+    if (abi_probe != 0) {
+        throw std::runtime_error(
+            "OptiX ABI capability probe failed with error code " +
+            std::to_string(abi_probe) + ".");
+    }
+
+    auto create_context = reinterpret_cast<OptixDeviceContextCreateFn>(
+        function_table[2]);
+    auto destroy_context = reinterpret_cast<OptixDeviceContextDestroyFn>(
+        function_table[3]);
+    if (create_context == nullptr || destroy_context == nullptr) {
+        throw std::runtime_error(
+            "OptiX ABI-93 function table is missing device-context entry points.");
+    }
+
+    OptixDeviceContextOptionsProbe options = {};
+    OptixDeviceContext temporary_context = nullptr;
+    const OptixResult create_result =
+        create_context(cuda_context, &options, &temporary_context);
+    if (create_result == kOptixErrorNotSupported ||
+        create_result == kOptixErrorNotCompatible) {
+        optix_capability_cache.emplace(key, false);
+        return false;
+    }
+    if (create_result != 0) {
+        throw std::runtime_error(
+            "OptiX device capability probe failed with error code " +
+            std::to_string(create_result) + ".");
+    }
+
+    const OptixResult destroy_result = destroy_context(temporary_context);
+    if (destroy_result != 0) {
+        throw std::runtime_error(
+            "OptiX device capability probe cleanup failed with error code " +
+            std::to_string(destroy_result) + ".");
+    }
+    optix_capability_cache.emplace(key, true);
+    return true;
 }
 
 void check_optix(OptixResult result, const char *message) {

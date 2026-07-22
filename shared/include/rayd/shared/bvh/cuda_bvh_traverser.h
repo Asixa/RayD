@@ -88,9 +88,12 @@ struct CudaBvhTraverser {
     }
 
 private:
-    /// Closest non-ignored blocker; `ignore` is the row-major ignore buffer
-    /// (ignore_count entries per lane) and this traverser's `lane` selects the
-    /// row, matching traverse_first_blocker's per-ray contract.
+    /// Closest non-ignored blocker. The generic Traverser contract supplies
+    /// `ignore` already advanced to this lane's row; `lane` therefore selects
+    /// only the depth-major traversal-scratch column. The local scratch view is
+    /// rebased to that column while retaining the original depth stride, so
+    /// query zero addresses `base + depth * original_query_stride` and its
+    /// reduced capacity still bounds every reachable slot.
     __device__ __forceinline__ float first_blocker(
         math::Vec3f origin, math::Vec3f direction, float tmin, float tmax,
         const std::int32_t *ignore, int ignore_count, int &best_prim) const {
@@ -99,9 +102,26 @@ private:
         const float inv_dz = safe_rcp(direction.z);
         float best_t = tmax;
         bool overflowed = false;
+        // The visibility algorithms pass `ignore` already advanced to this
+        // lane's row.  Rebase only the traversal scratch and query it as lane
+        // zero so traverse_first_blocker does not advance the ignore row a
+        // second time for lanes > 0.
+        TriangleTraversalScratchView lane_scratch = scratch;
+        lane_scratch.node_indices = scratch.node_indices != nullptr
+            ? scratch.node_indices + lane
+            : nullptr;
+        lane_scratch.overflow = scratch.overflow != nullptr
+            ? scratch.overflow + lane
+            : nullptr;
+        lane_scratch.capacity = scratch.capacity > lane
+            ? scratch.capacity - lane
+            : 0;
+        lane_scratch.overflow_capacity = scratch.overflow_capacity > lane
+            ? scratch.overflow_capacity - lane
+            : 0;
         traverse_first_blocker(view.triangles, view.node_bounds, view.topology,
-                               scratch, ignore, static_cast<std::int32_t>(ignore_count),
-                               lane, origin.x, origin.y, origin.z,
+                               lane_scratch, ignore, static_cast<std::int32_t>(ignore_count),
+                               0, origin.x, origin.y, origin.z,
                                direction.x, direction.y, direction.z,
                                inv_dx, inv_dy, inv_dz, tmin,
                                best_t, best_prim, overflowed);

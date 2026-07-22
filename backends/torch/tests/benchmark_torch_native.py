@@ -41,6 +41,8 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--max-bounces", type=int, default=1)
     parser.add_argument("--direct-samples", type=int, default=64)
+    parser.add_argument("--trace-backend", choices=("auto", "optix", "cuda"), default="auto")
+    parser.add_argument("--edge-backend", choices=("auto", "optix", "cuda"), default="auto")
     args = parser.parse_args()
 
     n = args.grid
@@ -61,7 +63,10 @@ def main() -> None:
             faces.append([b, d, c])
     faces = torch.tensor(faces, device="cuda", dtype=torch.int32)
 
-    scene = rt.Scene()
+    scene = rt.Scene(
+        trace_backend=args.trace_backend,
+        edge_bvh_backend=args.edge_backend,
+    )
     t0 = time.perf_counter()
     scene.add_mesh(rt.Mesh(verts, faces, edges_enabled=True), dynamic=True)
     scene.build()
@@ -92,6 +97,8 @@ def main() -> None:
         "queries": args.queries,
         "warmup": args.warmup,
         "repeat": args.repeat,
+        "trace_backend": scene.trace_backend,
+        "edge_backend": scene.edge_bvh_backend,
         "build_ms": build_ms,
         "dynamic_sync_ms": dynamic_sync_ms,
         "intersect_flags_none_ms": time_ms(

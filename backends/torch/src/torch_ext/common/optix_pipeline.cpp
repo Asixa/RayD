@@ -270,10 +270,10 @@ void OptixLaunchPipeline::build(
 
     params_size_ = config.params_size;
     const int64_t params_capacity = static_cast<int64_t>(std::max<size_t>(params_size_, 1024));
-    params_buffer_ = at::empty(
-        {params_capacity},
-        at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
     for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
+        params_buffers_[slot] = at::empty(
+            {params_capacity},
+            at::TensorOptions().device(at::Device(at::kCUDA, device_index)).dtype(at::kByte));
         params_staging_[slot] = at::empty(
             {params_capacity},
             at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
@@ -281,6 +281,9 @@ void OptixLaunchPipeline::build(
             cudaEventCreateWithFlags(&params_staging_events_[slot], cudaEventDisableTiming),
             "cudaEventCreateWithFlags(params staging)");
     }
+    // SBT records are immutable after construction and may immediately be
+    // consumed on another CUDA stream after this shared pipeline is returned.
+    cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(SBT initialization)");
     hitgroup_record_count_ = hitgroup_record_count;
     ready_ = true;
 }
@@ -322,23 +325,25 @@ void OptixLaunchPipeline::launch_impl(
     size_t actual_params_size,
     unsigned int n_rays,
     cudaStream_t stream) {
+    std::lock_guard<std::mutex> guard(launch_mutex_);
     if (!ready_)
         throw std::runtime_error("OptixLaunchPipeline::launch(): pipeline is not ready.");
     if (raygen_index < 0 || raygen_index >= static_cast<int>(raygen_records_.size()))
         throw std::runtime_error("OptixLaunchPipeline::launch(): raygen index out of range.");
     const size_t launch_params_size = (std::max)(params_size_, actual_params_size);
-    if (params_buffer_.numel() < static_cast<int64_t>(launch_params_size)) {
+    if (params_buffers_[0].numel() < static_cast<int64_t>(launch_params_size)) {
         // This only occurs when a caller supplies a source-compatible extended
-        // launch structure. Synchronize before replacing buffers that may still
-        // be referenced by an earlier OptiX launch on this stream.
-        cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize(resize params buffer)");
+        // launch structure. Retire every slot before replacing its storage.
         const int64_t capacity = static_cast<int64_t>(launch_params_size);
-        params_buffer_ = at::empty(
-            {capacity},
-            at::TensorOptions()
-                .device(at::Device(at::kCUDA, device_index_))
-                .dtype(at::kByte));
         for (int slot = 0; slot < kParamsStagingSlots; ++slot) {
+            cuda_check(
+                cudaEventSynchronize(params_staging_events_[slot]),
+                "cudaEventSynchronize(resize params buffer)");
+            params_buffers_[slot] = at::empty(
+                {capacity},
+                at::TensorOptions()
+                    .device(at::Device(at::kCUDA, device_index_))
+                    .dtype(at::kByte));
             params_staging_[slot] = at::empty(
                 {capacity},
                 at::TensorOptions().device(at::kCPU).dtype(at::kByte).pinned_memory(true));
@@ -355,16 +360,12 @@ void OptixLaunchPipeline::launch_impl(
     std::memcpy(params_staging_[slot].data_ptr<uint8_t>(), params, launch_params_size);
     cuda_check(
         cudaMemcpyAsync(
-            params_buffer_.data_ptr<uint8_t>(),
+            params_buffers_[slot].data_ptr<uint8_t>(),
             params_staging_[slot].data_ptr<uint8_t>(),
             launch_params_size,
             cudaMemcpyHostToDevice,
             stream),
         "cudaMemcpyAsync(multipath params)");
-    cuda_check(
-        cudaEventRecord(params_staging_events_[slot], stream),
-        "cudaEventRecord(multipath params staging)");
-
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord =
         reinterpret_cast<CUdeviceptr>(raygen_records_[raygen_index].data_ptr<uint8_t>());
@@ -375,15 +376,19 @@ void OptixLaunchPipeline::launch_impl(
     sbt.hitgroupRecordStrideInBytes = sizeof(EmptySbtRecord);
     sbt.hitgroupRecordCount = static_cast<unsigned int>(hitgroup_record_count_);
 
-    rayd_torch_OPTIX_CHECK(optixLaunch(
+    const OptixResult launch_result = optixLaunch(
         pipeline_,
         stream,
-        reinterpret_cast<CUdeviceptr>(params_buffer_.data_ptr<uint8_t>()),
+        reinterpret_cast<CUdeviceptr>(params_buffers_[slot].data_ptr<uint8_t>()),
         launch_params_size,
         &sbt,
         n_rays,
         1,
-        1));
+        1);
+    cuda_check(
+        cudaEventRecord(params_staging_events_[slot], stream),
+        "cudaEventRecord(multipath launch params)");
+    rayd_torch_OPTIX_CHECK(launch_result);
 }
 
 } // namespace rayd::torch_backend
