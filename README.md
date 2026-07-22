@@ -394,6 +394,16 @@ the same device.
 
 ## Building from Source
 
+The `rayd-torch` wheel includes a lock-verifiable source bundle for native
+consumers that compile RayD in their own CMake/LibTorch graph. Its fixed passive
+metadata entry is `rayd/torch/_source/rayd-source.json`; it does not load a RayD
+extension or select a runtime backend. Consumers must discover it through the
+active Python distribution metadata, validate commit/repository/integration
+ABI, and recompute the complete source manifest before using it. Prefix scans
+and unvalidated global CMake package searches are intentionally unsupported.
+See
+[`ADR-0034`](docs/adr/0034-validated-package-source-discovery.md).
+
 RayD requires Python 3.10-3.14, CMake 3.22+, a C++17 compiler, CUDA, and the OptiX
 SDK. On Windows, use Visual Studio 2022 with Desktop C++ tools.
 

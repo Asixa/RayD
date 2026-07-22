@@ -52,6 +52,25 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(len(stable), 1, stable)
         self.assertNotRegex(stable[0], r"cp3(?:10|11|12|13|14)")
 
+    def test_torch_wheel_contains_integrity_described_source_bundle(self):
+        names = self.names(self.torch_wheel)
+        prefix = "rayd/torch/_source/"
+        self.assertIn(f"{prefix}rayd-source.json", names)
+        self.assertIn(f"{prefix}source-files.json", names)
+        self.assertIn(f"{prefix}source/backends/torch/CMakeLists.txt", names)
+        self.assertIn(
+            f"{prefix}source/backends/torch/include/rayd/torch/integration.h",
+            names,
+        )
+        self.assertTrue(
+            any(name.startswith(f"{prefix}source/shared/include/") for name in names)
+        )
+        self.assertTrue(
+            any(name.startswith(f"{prefix}source/shared/src/") for name in names)
+        )
+        forbidden = ("/.git/", "/__pycache__/", ".obj", ".pdb", ".pyc")
+        self.assertFalse(any(token in name for name in names for token in forbidden))
+
     def test_torch_wheel_separates_legacy_dispatcher_and_compatibility_shim(self):
         names = self.names(self.torch_wheel)
         legacy = [

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-project(rayd_torch LANGUAGES CXX CUDA)
+project(rayd_torch VERSION 0.6.0 LANGUAGES CXX CUDA)
 set(RAYD_SHARED_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -29,9 +29,55 @@ option(RAYD_TORCH_BUILD_NATIVE "Build the RayD Torch extension." ON)
 option(RAYD_TORCH_BUILD_PYTHON_MODULE "Build the rayd.torch Python extension module." ON)
 option(RAYD_TORCH_BUILD_CPP_TESTS "Build direct C++ tests for the typed integration API." OFF)
 option(RAYD_TORCH_OPTIX_FAST_MATH "Compile embedded OptiX PTX with --use_fast_math." ON)
+option(
+    RAYD_TORCH_INSTALL_SOURCE_BUNDLE
+    "Install the integrity-described source bundle for same-graph downstream builds."
+    ON)
+set(
+    RAYD_SOURCE_COMMIT
+    ""
+    CACHE STRING
+    "RayD source commit used when a package build has no Git checkout.")
+set(
+    RAYD_SOURCE_REPOSITORY_URL
+    ""
+    CACHE STRING
+    "RayD repository URL used when a package build has no Git checkout.")
 include(CTest)
 if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
     find_package(Python COMPONENTS Development.Embed REQUIRED)
+endif()
+
+if(RAYD_TORCH_INSTALL_SOURCE_BUNDLE)
+    set(RAYD_TORCH_SOURCE_BUNDLE "${CMAKE_CURRENT_BINARY_DIR}/rayd-source-bundle")
+    set(
+        RAYD_TORCH_SOURCE_BUNDLE_COMMAND
+        "${Python_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_source_bundle.py"
+        --workspace "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+        --output "${RAYD_TORCH_SOURCE_BUNDLE}"
+        --distribution-version "${PROJECT_VERSION}")
+    if(NOT RAYD_SOURCE_COMMIT STREQUAL "")
+        list(APPEND RAYD_TORCH_SOURCE_BUNDLE_COMMAND --commit "${RAYD_SOURCE_COMMIT}")
+    endif()
+    if(NOT RAYD_SOURCE_REPOSITORY_URL STREQUAL "")
+        list(
+            APPEND
+            RAYD_TORCH_SOURCE_BUNDLE_COMMAND
+            --repository-url "${RAYD_SOURCE_REPOSITORY_URL}")
+    endif()
+    execute_process(
+        COMMAND ${RAYD_TORCH_SOURCE_BUNDLE_COMMAND}
+        RESULT_VARIABLE RAYD_TORCH_SOURCE_BUNDLE_RESULT
+        ERROR_VARIABLE RAYD_TORCH_SOURCE_BUNDLE_ERROR)
+    if(NOT RAYD_TORCH_SOURCE_BUNDLE_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "Could not generate the RayD Torch source bundle: "
+            "${RAYD_TORCH_SOURCE_BUNDLE_ERROR}")
+    endif()
+    install(
+        DIRECTORY "${RAYD_TORCH_SOURCE_BUNDLE}/"
+        DESTINATION rayd/torch/_source)
 endif()
 
 set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)

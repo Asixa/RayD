@@ -74,6 +74,16 @@ matrix, resource boundary, activation gates, and stop conditions.
 
 ## Stable Typed Integration Naming
 
+The `rayd-torch` distribution owns the passive, relocatable same-graph source
+bundle under `rayd/torch/_source`. Its metadata and complete per-file manifest
+are packaging contracts: downstreams may locate them only through the active
+Python distribution metadata and must pin and recompute their identity before
+`add_subdirectory`. Do not add environment-prefix scans, execute package code
+for discovery, export the native core as an unvalidated cross-build static
+library, or omit source files from the manifest. Explicit source checkouts
+remain higher-priority developer inputs and retain Git commit/remote/dirty
+validation.
+
 The same-graph Torch C++ boundary has one durable name:
 `rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
 numeric `kIntegrationApiVersion = 6`. Do not add an `integration_v2` forwarding

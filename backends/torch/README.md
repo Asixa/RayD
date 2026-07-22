@@ -30,6 +30,18 @@ second RayD Python extension or use a dynamic symbol registry. Solver-neutral
 RF device math is exposed through `rayd/shared/rf/*.cuh`. Torch-specific field
 AD helpers remain under `rayd/torch/rf/` because they use Torch complex types.
 
+The `rayd-torch` wheel also carries a relocatable source bundle at
+`rayd/torch/_source`. `rayd-source.json` records the distribution version,
+source commit and repository, integration ABI identity, and the SHA-256 of a
+complete per-file manifest. The bundle contains only the Torch and shared
+sources needed for a same-graph native build. Downstreams locate this passive
+resource through `importlib.metadata`; they must not import `rayd.torch`, scan
+an environment prefix, or trust the metadata without pinning and recomputing
+the full source manifest. An explicit source checkout remains a higher-priority
+developer input and keeps its Git identity checks.
+See
+[`docs/adr/0034-validated-package-source-discovery.md`](../../docs/adr/0034-validated-package-source-discovery.md).
+
 The accepted transmission surface consists of complete primal/backward/JVP
 families for resident CSR layer-stack evaluation and complete-row Jones field
 transport. These operations preserve precise-math compilation, row fusion,
