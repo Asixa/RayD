@@ -12,7 +12,15 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
+if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
+   AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        "$ENV{CMAKE_CUDA_ARCHITECTURES}"
+        CACHE STRING
+        "CUDA architectures for RayD Torch native kernels."
+        FORCE)
+elseif(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
     set(
@@ -410,95 +418,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             -I "${CUDAToolkit_INCLUDE_DIRS}"
             -I "${OPTIX_INCLUDE_DIR}"
             ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
-        DEPENDS
-            src/torch_ext/reflection/visibility_optix.cu
-            include/rayd/torch/common/math.cuh
-            include/rayd/torch/reflection/visibility_params.h
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
-        COMMAND
-            "${Python_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
-            "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
-            "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
-            rayd_torch_segment_visibility_optix_ptx
-        DEPENDS
-            "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
-            src/torch_ext/embed_ptx.py
-    )
-    add_custom_target(rayd_torch_segment_visibility_optix_ptx DEPENDS "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}")
-    add_custom_command(
-        OUTPUT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
-        COMMAND
-            "${CMAKE_CUDA_COMPILER}"
-            --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/axial_edge_visibility_optix.cu"
-            -o "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
-            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            -I "${RAYD_SHARED_INCLUDE_DIR}"
-            -I "${CUDAToolkit_INCLUDE_DIRS}"
-            -I "${OPTIX_INCLUDE_DIR}"
-            ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
-        DEPENDS
-            src/torch_ext/reflection/axial_edge_visibility_optix.cu
-            include/rayd/torch/reflection/axial_edge_visibility_params.h
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}"
-        COMMAND
-            "${Python_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/embed_ptx.py"
-            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
-            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}"
-            rayd_torch_axial_edge_visibility_optix_ptx
-        DEPENDS
-            "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
-            src/torch_ext/embed_ptx.py
-    )
-    add_custom_target(
-        rayd_torch_axial_edge_visibility_optix_ptx
-        DEPENDS "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}")
-    add_custom_command(
-        OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX}"
-        COMMAND
-            "${CMAKE_CUDA_COMPILER}"
-            --ptx
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/torch_ext/reflection/epc_optix.cu"
-            -o "${RAYD_TORCH_REFLECTION_EPC_PTX}"
-            -I "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            -I "${RAYD_SHARED_INCLUDE_DIR}"
-            -I "${CUDAToolkit_INCLUDE_DIRS}"
-            -I "${OPTIX_INCLUDE_DIR}"
-            ${RAYD_TORCH_OPTIX_NVCC_FLAGS}
-        DEPENDS
-            src/torch_ext/reflection/epc_optix.cu
-            include/rayd/torch/common/math.cuh
-            include/rayd/torch/reflection/epc_params.h
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        DEPEN…1169 tokens truncated…ualifiers.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
             "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
     )
@@ -949,3 +869,4 @@ if(RAYD_TORCH_BUILD_NATIVE)
         install(TARGETS _C LIBRARY DESTINATION rayd/torch RUNTIME DESTINATION rayd/torch)
     endif()
 endif()
+
