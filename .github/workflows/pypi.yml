@@ -280,6 +280,82 @@ jobs:
           path: dist/${{ matrix.backend }}/*.whl
           if-no-files-found: error
 
+  test-stable-torch-abi:
+    name: Stable ABI / ${{ matrix.os }} / py${{ matrix.compatibility.python-version }} / torch${{ matrix.compatibility.torch-version }}
+    needs: [build-torch-linux, build-windows-wheels]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        compatibility:
+          - {python-version: "3.10", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.11", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.12", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.13", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.11.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.12.0", cuda-index: "cu126"}
+          - {python-version: "3.14", torch-version: "2.13.0", cuda-index: "cu126"}
+
+    steps:
+      - name: Set up compatibility Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.compatibility.python-version }}
+
+      - name: Download Linux Torch wheels
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rayd-torch-linux
+          path: wheel-artifact
+
+      - name: Download Windows Torch wheel
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rayd-torch-windows-py3.10
+          path: wheel-artifact
+
+      - name: Install compatibility Torch
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir "torch==${{ matrix.compatibility.torch-version }}" \
+            --index-url "https://download.pytorch.org/whl/${{ matrix.compatibility.cuda-index }}"
+
+      - name: Load the same Stable ABI library
+        shell: bash
+        env:
+          EXPECTED_TORCH: ${{ matrix.compatibility.torch-version }}
+        run: |
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          import torch
+
+          assert torch.__version__.split("+", 1)[0] == os.environ["EXPECTED_TORCH"]
+          wheels = sorted(Path("wheel-artifact").glob("*.whl"))
+          assert wheels, "RayD Torch wheel artifact is missing"
+          with zipfile.ZipFile(wheels[0]) as archive:
+              members = [
+                  name
+                  for name in archive.namelist()
+                  if Path(name).name.startswith("_stable_ops")
+                  and Path(name).suffix in {".dll", ".so"}
+              ]
+              assert len(members) == 1, members
+              archive.extract(members[0], "stable-library")
+          library = Path("stable-library") / members[0]
+          torch.ops.load_library(str(library.resolve()))
+          assert torch.ops.rayd_torch_stable.camera_sample_to_world is not None
+          assert torch.ops.rayd_torch_stable.intersection_valid is not None
+          print(f"Loaded {library.name} with torch {torch.__version__}")
+          PY
+
   build-meta:
     name: rayd meta wheel and sdist
     runs-on: ubuntu-22.04
@@ -301,7 +377,7 @@ jobs:
   validate-wheel-set:
     name: Validate complete release artifact set
     runs-on: ubuntu-22.04
-    needs: [build-drjit-linux, build-torch-linux, build-windows-wheels, build-meta]
+    needs: [build-drjit-linux, build-torch-linux, build-windows-wheels, test-stable-torch-abi, build-meta]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
@@ -390,3 +466,4 @@ jobs:
         with:
           packages-dir: dist
           verbose: true
+
