@@ -111,10 +111,19 @@ jobs:
           if-no-files-found: error
 
   build-torch-linux:
-    name: rayd-torch / manylinux_2_28 / py3.10-3.14
+    name: rayd-torch / manylinux_2_28 / py${{ matrix.python-version }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 180
     needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python-version: "3.10", cibw-build: "cp310-manylinux_x86_64"}
+          - {python-version: "3.11", cibw-build: "cp311-manylinux_x86_64"}
+          - {python-version: "3.12", cibw-build: "cp312-manylinux_x86_64"}
+          - {python-version: "3.13", cibw-build: "cp313-manylinux_x86_64"}
+          - {python-version: "3.14", cibw-build: "cp314-manylinux_x86_64"}
     steps:
       - uses: actions/checkout@v5
       - name: Check out OptiX 8.1 headers
@@ -137,7 +146,7 @@ jobs:
       - name: Build and repair Torch wheels
         uses: pypa/cibuildwheel@v3.3.0
         env:
-          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
+          CIBW_BUILD: ${{ matrix.cibw-build }}
           CIBW_SKIP: "*-musllinux_*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: "1"
@@ -187,7 +196,7 @@ jobs:
           output-dir: dist/torch
       - uses: actions/upload-artifact@v4
         with:
-          name: release-rayd-torch-linux
+          name: release-rayd-torch-linux-py${{ matrix.python-version }}
           path: dist/torch/*.whl
           if-no-files-found: error
 
@@ -308,7 +317,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/download-artifact@v4
         with:
-          name: release-rayd-torch-linux
+          name: release-rayd-torch-linux-py3.10
           path: wheel-artifact
 
       - name: Download Windows Torch wheel
