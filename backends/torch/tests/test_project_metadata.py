@@ -122,6 +122,9 @@ class ProjectMetadataTests(unittest.TestCase):
             pypi,
         )
         self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
+        torch_verifier = "--stem _legacy_ops --stem _stable_ops"
+        self.assertEqual(pypi.count(torch_verifier), 2)
+        self.assertNotIn("--stem _C --stem _stable_ops", pypi)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
