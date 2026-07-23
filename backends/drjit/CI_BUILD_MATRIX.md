@@ -67,17 +67,24 @@ four outer jobs by two inner jobs.
 Both workflows install `sccache` 0.11.0. Torch routes C, C++, and CUDA compiler
 invocations through CMake launchers. Dr.Jit's explicit NVCC custom commands use
 the generated `RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four
-independent translation units. Linux manylinux jobs expose the host-installed
-portable sccache binary and cache through cibuildwheel's `/project` mount.
+independent translation units. Linux manylinux jobs access the host-installed
+portable sccache binary and persistent cache through cibuildwheel's default
+`/host` mount; `/project` is a container copy and must not hold persistent
+compiler state.
 Compiler caches are capped at 1 GiB per
 OS/backend/profile namespace, restore by prefix across commits, and report
 statistics at job completion. Python matrix jobs share that namespace rather
 than multiplying the repository cache footprint. The Linux cibuildwheel tool
 cache and the Windows pip download cache are also persisted.
-Windows hosted jobs use NVIDIA's network installer and install only `nvcc`,
-`cudart`, `cuobjdump`, and Visual Studio integration. This keeps compilation
-and final-wheel architecture verification intact without spending time on
-profilers, samples, and unrelated CUDA libraries.
+Windows hosted jobs use NVIDIA's network installer. Dr.Jit installs only
+`nvcc`, `cudart`, `cuobjdump`, and Visual Studio integration. Torch also
+installs the cuBLAS, cuSPARSE, and cuSOLVER runtime/development packages needed
+by its public CUDA headers. This keeps compilation and final-wheel architecture
+verification intact without spending time on profilers, samples, and unrelated
+CUDA libraries.
+Linux manylinux jobs likewise install only `cuda-compiler`,
+`cuda-cudart-devel`, and `cuda-cuobjdump`, plus those three math development
+libraries for Torch, rather than the 5 GiB full toolkit metapackage.
 
 Cache misses are always supported. Release correctness does not depend on a
 warm cache, and the post-build CUDA binary verifier inspects the produced wheel

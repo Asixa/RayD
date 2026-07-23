@@ -105,7 +105,10 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-8 &&
+            dnf install -y
+            cuda-compiler-12-8
+            cuda-cudart-devel-12-8
+            cuda-cuobjdump-12-8 &&
             ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
@@ -114,14 +117,15 @@ jobs:
             CUDA_ROOT=/usr/local/cuda
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
+            RAYD_SCCACHE_ROOT=/host${{ github.workspace }}/.cache
             RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,87,89,90,100,101,120
             RAYD_CUDA_PTX_ARCH=120
-            RAYD_NVCC_LAUNCHER=/project/.cache/sccache-bin/sccache
+            RAYD_NVCC_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
             PIP_CONSTRAINT=/project/.github/constraints/drjit-build.txt
             CMAKE_BUILD_PARALLEL_LEVEL=4
-            CMAKE_C_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
-            CMAKE_CXX_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
-            SCCACHE_DIR=/project/.cache/rayd-sccache
+            CMAKE_C_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            SCCACHE_DIR=$RAYD_SCCACHE_ROOT/rayd-sccache
             SCCACHE_CACHE_SIZE=1G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
@@ -140,7 +144,7 @@ jobs:
             -w {dest_dir} {wheel} &&
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
             --stem _C {dest_dir}/*.whl &&
-            /project/.cache/sccache-bin/sccache --show-stats
+            $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats
         with:
           package-dir: backends/drjit
           output-dir: dist/drjit
@@ -219,7 +223,13 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-8 &&
+            dnf install -y
+            cuda-compiler-12-8
+            cuda-cudart-devel-12-8
+            cuda-cuobjdump-12-8
+            libcublas-devel-12-8
+            libcusparse-devel-12-8
+            libcusolver-devel-12-8 &&
             ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
@@ -229,14 +239,15 @@ jobs:
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
             OPTIX_INCLUDE_DIR=/project/.optix/include
+            RAYD_SCCACHE_ROOT=/host${{ github.workspace }}/.cache
             CMAKE_CUDA_ARCHITECTURES="70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
             TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
             CMAKE_BUILD_PARALLEL_LEVEL=2
             CMAKE_CUDA_FLAGS=--threads=2
-            CMAKE_C_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
-            CMAKE_CXX_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
-            CMAKE_CUDA_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
-            SCCACHE_DIR=/project/.cache/rayd-sccache
+            CMAKE_C_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CUDA_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            SCCACHE_DIR=$RAYD_SCCACHE_ROOT/rayd-sccache
             SCCACHE_CACHE_SIZE=1G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
@@ -263,7 +274,7 @@ jobs:
             --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
             python /project/backends/torch/scripts/verify_stable_abi.py
             --source-root /project/backends/torch/src/stable {dest_dir}/*.whl &&
-            /project/.cache/sccache-bin/sccache --show-stats
+            $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats
         with:
           package-dir: backends/torch
           output-dir: dist/torch
@@ -326,7 +337,10 @@ jobs:
         with:
           cuda: "12.8.1"
           method: network
-          sub-packages: '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]'
+          sub-packages: >-
+            ${{ matrix.backend == 'torch'
+            && '["nvcc", "cudart", "cuobjdump", "visual_studio_integration", "cublas", "cublas_dev", "cusparse", "cusparse_dev", "cusolver", "cusolver_dev"]'
+            || '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]' }}
           log-file-suffix: "${{ matrix.backend }}-windows-py${{ matrix.python-version }}"
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
