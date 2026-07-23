@@ -212,6 +212,7 @@ jobs:
           }
           "CUDA_HOME=$cudaRoot" >> $env:GITHUB_ENV
           "CUDA_PATH=$cudaRoot" >> $env:GITHUB_ENV
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
         shell: pwsh
