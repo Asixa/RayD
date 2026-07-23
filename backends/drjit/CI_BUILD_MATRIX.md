@@ -70,22 +70,25 @@ the generated `RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four
 independent translation units. Linux manylinux jobs access the host-installed
 portable sccache binary and persistent cache through cibuildwheel's default
 `/host` mount; `/project` is a container copy and must not hold persistent
-compiler state.
+compiler state. Before the container exits, it resets the cache tree ownership
+to match the host workspace so the GitHub cache post-step can archive it.
 Compiler caches are capped at 1 GiB per
 OS/backend/profile namespace, restore by prefix across commits, and report
 statistics at job completion. Python matrix jobs share that namespace rather
 than multiplying the repository cache footprint. The Linux cibuildwheel tool
 cache and the Windows pip download cache are also persisted.
-Windows hosted jobs use NVIDIA's network installer. Dr.Jit installs only
-`nvcc`, `cudart`, `cuobjdump`, and Visual Studio integration. Torch also
-installs the cuBLAS, cuSPARSE, and cuSOLVER runtime/development packages needed
-by its public CUDA headers. This keeps compilation and final-wheel architecture
-verification intact without spending time on profilers, samples, and unrelated
-CUDA libraries.
+Windows hosted Dr.Jit jobs use NVIDIA's network installer and install only
+`nvcc`, `cudart`, `cuobjdump`, and Visual Studio integration. Torch needs the
+larger cuBLAS, cuSPARSE, and cuSOLVER runtime/development packages referenced by
+its public CUDA headers; it uses the action's GitHub-cached local installer but
+still selects only those packages. This avoids parallel matrix jobs competing
+for NVIDIA network-installer downloads while excluding profilers, samples, and
+unrelated CUDA libraries from installation.
 Linux manylinux jobs likewise install only `cuda-compiler`,
 `cuda-cudart-devel`, and `cuda-cuobjdump`, plus those three math development
 libraries and the CUDA driver stub development package for Torch, rather than
-the 5 GiB full toolkit metapackage.
+the 5 GiB full toolkit metapackage. Torch also installs the NVRTC development
+package required by its Caffe2 CMake targets.
 
 Pull-request cache keys use the PR head commit rather than the synthetic merge
 commit. Push, schedule, release, and manual builds use `github.sha`. Restore
