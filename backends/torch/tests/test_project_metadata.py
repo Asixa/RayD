@@ -45,8 +45,10 @@ class ProjectMetadataTests(unittest.TestCase):
         stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
+        self.assertNotIn("CUDA::cuda_driver", stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CPU_LIBRARY}"', stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CUDA_LIBRARY}"', stable_target)
+        self.assertIn("CUDA::cudart", stable_target)
 
     def test_stable_abi_audit_script_is_packaged_with_the_backend(self):
         script = Path("scripts/verify_stable_abi.py")
