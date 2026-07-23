@@ -86,7 +86,7 @@ jobs:
           path: |
             ${{ github.workspace }}/.cache/rayd-sccache
             ${{ github.workspace }}/.cache/cibuildwheel
-          key: rayd-sccache-v2-quick-${{ runner.os }}-${{ matrix.backend }}-${{ github.sha }}
+          key: rayd-sccache-v2-quick-${{ runner.os }}-${{ matrix.backend }}-${{ github.event.pull_request.head.sha || github.sha }}
           restore-keys: |
             rayd-sccache-v2-quick-${{ runner.os }}-${{ matrix.backend }}-
 
@@ -124,7 +124,7 @@ jobs:
             cuda-compiler-12-8
             cuda-cudart-devel-12-8
             cuda-cuobjdump-12-8
-            ${{ matrix.backend == 'torch' && 'libcublas-devel-12-8 libcusparse-devel-12-8 libcusolver-devel-12-8' || '' }} &&
+            ${{ matrix.backend == 'torch' && 'cuda-driver-devel-12-8 libcublas-devel-12-8 libcusparse-devel-12-8 libcusolver-devel-12-8' || '' }} &&
             ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-

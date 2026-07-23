@@ -84,7 +84,13 @@ verification intact without spending time on profilers, samples, and unrelated
 CUDA libraries.
 Linux manylinux jobs likewise install only `cuda-compiler`,
 `cuda-cudart-devel`, and `cuda-cuobjdump`, plus those three math development
-libraries for Torch, rather than the 5 GiB full toolkit metapackage.
+libraries and the CUDA driver stub development package for Torch, rather than
+the 5 GiB full toolkit metapackage.
+
+Pull-request cache keys use the PR head commit rather than the synthetic merge
+commit. Push, schedule, release, and manual builds use `github.sha`. Restore
+prefixes still allow reuse across commits, while a new head can save updated
+compiler results instead of being blocked by an immutable empty cache entry.
 
 Cache misses are always supported. Release correctness does not depend on a
 warm cache, and the post-build CUDA binary verifier inspects the produced wheel
