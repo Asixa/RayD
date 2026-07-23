@@ -155,4 +155,3 @@ class ProjectMetadataTests(unittest.TestCase):
                 f"context_result == {operational_error}",
                 source,
             )
-
