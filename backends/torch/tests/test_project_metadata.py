@@ -65,6 +65,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("torch.cuda.get_device_capability()", cmake)
         self.assertIn("print(f'{major}.{minor}')", cmake)
         self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
+        self.assertIn("if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}", cmake)
         self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
 
         dev_build = Path("scripts/dev_build_native.ps1").read_text(encoding="utf-8")
@@ -154,3 +155,4 @@ class ProjectMetadataTests(unittest.TestCase):
                 f"context_result == {operational_error}",
                 source,
             )
+
