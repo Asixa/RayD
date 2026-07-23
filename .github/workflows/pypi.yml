@@ -188,7 +188,7 @@ jobs:
             --exclude libtorch_global_deps.so
             -w {dest_dir} {wheel} &&
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
-            --stem _C --stem _stable_ops {dest_dir}/*.whl &&
+            --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
             python /project/backends/torch/scripts/verify_stable_abi.py
             --source-root /project/backends/torch/src/stable {dest_dir}/*.whl
         with:
@@ -280,7 +280,7 @@ jobs:
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem dist/torch/*.whl).FullName
-          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _C --stem _stable_ops $wheel
+          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops $wheel
           python backends/torch/scripts/verify_stable_abi.py --source-root backends/torch/src/stable $wheel
           python -m twine check $wheel
       - uses: actions/upload-artifact@v4
