@@ -212,8 +212,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PRIVATE
             "${RAYD_TORCH_STABLE_CPU_LIBRARY}"
             "${RAYD_TORCH_STABLE_CUDA_LIBRARY}"
-            CUDA::cudart
-            CUDA::cuda_driver)
+            CUDA::cudart)
     target_compile_features(rayd_torch_stable_ops PRIVATE cxx_std_17)
     install(
         TARGETS rayd_torch_stable_ops
