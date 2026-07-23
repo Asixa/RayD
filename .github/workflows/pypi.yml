@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 120
     needs: metadata
     env:
-      SCCACHE_DIR: ${{ runner.temp }}/rayd-sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     strategy:
@@ -75,16 +75,16 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ${{ runner.temp }}/rayd-sccache
-            ${{ runner.temp }}/cibuildwheel
+            ${{ github.workspace }}/.cache/rayd-sccache
+            ${{ github.workspace }}/.cache/cibuildwheel
           key: rayd-sccache-v2-full-linux-drjit-${{ github.sha }}
           restore-keys: |
             rayd-sccache-v2-full-linux-drjit-
       - name: Expose sccache to manylinux
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/rayd-sccache-bin"
-          cp "$(command -v sccache)" "$RUNNER_TEMP/rayd-sccache-bin/sccache"
+          mkdir -p "$GITHUB_WORKSPACE/.cache/sccache-bin"
+          cp "$(command -v sccache)" "$GITHUB_WORKSPACE/.cache/sccache-bin/sccache"
       - name: Free disk space
         shell: bash
         run: |
@@ -97,7 +97,7 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.cibw-build }}
           CIBW_SKIP: "*-musllinux_*"
-          CIBW_CACHE_PATH: ${{ runner.temp }}/cibuildwheel
+          CIBW_CACHE_PATH: ${{ github.workspace }}/.cache/cibuildwheel
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_BEFORE_ALL_LINUX: >-
@@ -116,12 +116,12 @@ jobs:
             CUDACXX=/usr/local/cuda/bin/nvcc
             RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,87,89,90,100,101,120
             RAYD_CUDA_PTX_ARCH=120
-            RAYD_NVCC_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
+            RAYD_NVCC_LAUNCHER=/project/.cache/sccache-bin/sccache
             PIP_CONSTRAINT=/project/.github/constraints/drjit-build.txt
             CMAKE_BUILD_PARALLEL_LEVEL=4
-            CMAKE_C_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
-            CMAKE_CXX_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
-            SCCACHE_DIR=/host${{ runner.temp }}/rayd-sccache
+            CMAKE_C_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
+            SCCACHE_DIR=/project/.cache/rayd-sccache
             SCCACHE_CACHE_SIZE=1G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
@@ -155,7 +155,7 @@ jobs:
     timeout-minutes: 180
     needs: metadata
     env:
-      SCCACHE_DIR: ${{ runner.temp }}/rayd-sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     strategy:
@@ -188,16 +188,16 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ${{ runner.temp }}/rayd-sccache
-            ${{ runner.temp }}/cibuildwheel
+            ${{ github.workspace }}/.cache/rayd-sccache
+            ${{ github.workspace }}/.cache/cibuildwheel
           key: rayd-sccache-v2-full-linux-torch-${{ github.sha }}
           restore-keys: |
             rayd-sccache-v2-full-linux-torch-
       - name: Expose sccache to manylinux
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/rayd-sccache-bin"
-          cp "$(command -v sccache)" "$RUNNER_TEMP/rayd-sccache-bin/sccache"
+          mkdir -p "$GITHUB_WORKSPACE/.cache/sccache-bin"
+          cp "$(command -v sccache)" "$GITHUB_WORKSPACE/.cache/sccache-bin/sccache"
       - name: Free disk space
         shell: bash
         run: |
@@ -210,7 +210,7 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.cibw-build }}
           CIBW_SKIP: "*-musllinux_*"
-          CIBW_CACHE_PATH: ${{ runner.temp }}/cibuildwheel
+          CIBW_CACHE_PATH: ${{ github.workspace }}/.cache/cibuildwheel
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_BEFORE_ALL_LINUX: >-
@@ -232,10 +232,10 @@ jobs:
             TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
             CMAKE_BUILD_PARALLEL_LEVEL=2
             CMAKE_CUDA_FLAGS=--threads=2
-            CMAKE_C_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
-            CMAKE_CXX_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
-            CMAKE_CUDA_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
-            SCCACHE_DIR=/host${{ runner.temp }}/rayd-sccache
+            CMAKE_C_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
+            CMAKE_CUDA_COMPILER_LAUNCHER=/project/.cache/sccache-bin/sccache
+            SCCACHE_DIR=/project/.cache/rayd-sccache
             SCCACHE_CACHE_SIZE=1G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
@@ -289,7 +289,7 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_CUDA_COMPILER_LAUNCHER: sccache
       RAYD_NVCC_LAUNCHER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}\rayd-sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
       SCCACHE_BASEDIRS: ${{ github.workspace }}
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -315,7 +315,7 @@ jobs:
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
-          path: ${{ runner.temp }}\rayd-sccache
+          path: ${{ github.workspace }}/.cache/rayd-sccache
           key: rayd-sccache-v2-full-windows-${{ matrix.backend }}-${{ github.sha }}
           restore-keys: |
             rayd-sccache-v2-full-windows-${{ matrix.backend }}-

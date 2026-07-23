@@ -68,8 +68,8 @@ Both workflows install `sccache` 0.11.0. Torch routes C, C++, and CUDA compiler
 invocations through CMake launchers. Dr.Jit's explicit NVCC custom commands use
 the generated `RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four
 independent translation units. Linux manylinux jobs expose the host-installed
-portable sccache binary through cibuildwheel's `/host` mount. Compiler caches
-are capped at 1 GiB per
+portable sccache binary and cache through cibuildwheel's `/project` mount.
+Compiler caches are capped at 1 GiB per
 OS/backend/profile namespace, restore by prefix across commits, and report
 statistics at job completion. Python matrix jobs share that namespace rather
 than multiplying the repository cache footprint. The Linux cibuildwheel tool

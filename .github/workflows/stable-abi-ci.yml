@@ -26,7 +26,7 @@ jobs:
       CMAKE_CUDA_COMPILER_LAUNCHER: sccache
       TORCH_CUDA_ARCH_LIST: "8.7;12.0+PTX"
       OPTIX_INCLUDE_DIR: ${{ github.workspace }}/.optix/include
-      SCCACHE_DIR: ${{ runner.temp }}/rayd-sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
       SCCACHE_BASEDIRS: ${{ github.workspace }}
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -57,7 +57,7 @@ jobs:
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
-          path: ${{ runner.temp }}/rayd-sccache
+          path: ${{ github.workspace }}/.cache/rayd-sccache
           key: rayd-sccache-v2-quick-${{ runner.os }}-torch-${{ github.sha }}
           restore-keys: |
             rayd-sccache-v2-quick-${{ runner.os }}-torch-
