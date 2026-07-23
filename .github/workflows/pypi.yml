@@ -139,7 +139,8 @@ jobs:
             --exclude libnanothread.so
             -w {dest_dir} {wheel} &&
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
-            --stem _C {dest_dir}/*.whl
+            --stem _C {dest_dir}/*.whl &&
+            /project/.cache/sccache-bin/sccache --show-stats
         with:
           package-dir: backends/drjit
           output-dir: dist/drjit
@@ -261,7 +262,8 @@ jobs:
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
             --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
             python /project/backends/torch/scripts/verify_stable_abi.py
-            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl
+            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl &&
+            /project/.cache/sccache-bin/sccache --show-stats
         with:
           package-dir: backends/torch
           output-dir: dist/torch
@@ -323,7 +325,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
-          method: local
+          method: network
+          sub-packages: '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]'
           log-file-suffix: "${{ matrix.backend }}-windows-py${{ matrix.python-version }}"
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1

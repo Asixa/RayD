@@ -74,6 +74,10 @@ OS/backend/profile namespace, restore by prefix across commits, and report
 statistics at job completion. Python matrix jobs share that namespace rather
 than multiplying the repository cache footprint. The Linux cibuildwheel tool
 cache and the Windows pip download cache are also persisted.
+Windows hosted jobs use NVIDIA's network installer and install only `nvcc`,
+`cudart`, `cuobjdump`, and Visual Studio integration. This keeps compilation
+and final-wheel architecture verification intact without spending time on
+profilers, samples, and unrelated CUDA libraries.
 
 Cache misses are always supported. Release correctness does not depend on a
 warm cache, and the post-build CUDA binary verifier inspects the produced wheel

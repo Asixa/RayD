@@ -172,7 +172,8 @@ jobs:
             if [ "${{ matrix.backend }}" = "torch" ]; then
             python /project/backends/torch/scripts/verify_stable_abi.py
             --source-root /project/backends/torch/src/stable {dest_dir}/*.whl;
-            fi
+            fi &&
+            /project/.cache/sccache-bin/sccache --show-stats
         with:
           package-dir: backends/${{ matrix.backend }}
           output-dir: dist/${{ matrix.backend }}
@@ -182,7 +183,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
-          method: local
+          method: network
+          sub-packages: '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]'
           log-file-suffix: "pr-${{ matrix.backend }}-windows"
       - name: Set up MSVC
         if: runner.os == 'Windows'

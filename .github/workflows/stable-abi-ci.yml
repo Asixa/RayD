@@ -71,12 +71,22 @@ jobs:
             /usr/local/share/powershell /usr/share/swift || true
           sudo docker image prune --all --force || true
 
-      - name: Install CUDA Toolkit 12.8
+      - name: Install CUDA Toolkit 12.8 on Linux
+        if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
           method: local
-          log-file-suffix: "stable-abi-${{ runner.os }}"
+          log-file-suffix: "stable-abi-linux"
+
+      - name: Install CUDA Toolkit 12.8 on Windows
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "12.8.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]'
+          log-file-suffix: "stable-abi-windows"
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -106,6 +116,9 @@ jobs:
         shell: bash
         run: |
           cmake -S backends/torch -B artifacts/stable-abi -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
             -DRAYD_TORCH_BUILD_PYTHON_MODULE=OFF \
             -DOPTIX_INCLUDE_DIR="$OPTIX_INCLUDE_DIR"
 
