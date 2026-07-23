@@ -84,7 +84,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
-          method: network
+          method: local
           sub-packages: '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]'
           log-file-suffix: "stable-abi-windows"
 

@@ -190,7 +190,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
-          method: ${{ matrix.backend == 'torch' && 'local' || 'network' }}
+          method: local
           sub-packages: >-
             ${{ matrix.backend == 'torch'
             && '["nvcc", "cudart", "cuobjdump", "visual_studio_integration", "cublas", "cublas_dev", "cusparse", "cusparse_dev", "cusolver", "cusolver_dev"]'
