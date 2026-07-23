@@ -1,9 +1,6 @@
 name: Stable ABI Build
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
   workflow_dispatch:
 
@@ -22,16 +19,24 @@ jobs:
         os: [ubuntu-22.04, windows-2022]
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: "2"
-      CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
-      TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
+      CMAKE_CUDA_FLAGS: "--threads=2"
+      CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      TORCH_CUDA_ARCH_LIST: "8.7;12.0+PTX"
       OPTIX_INCLUDE_DIR: ${{ github.workspace }}/.optix/include
+      SCCACHE_DIR: ${{ runner.temp }}/rayd-sccache
+      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
 
     steps:
       - name: Check out RayD
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check out OptiX 8.1 headers
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: NVIDIA/optix-dev
           ref: v8.1.0
@@ -39,9 +44,23 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.10 build environment
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+          cache: pip
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        with:
+          version: "v0.11.0"
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/rayd-sccache
+          key: rayd-sccache-v2-quick-${{ runner.os }}-torch-${{ github.sha }}
+          restore-keys: |
+            rayd-sccache-v2-quick-${{ runner.os }}-torch-
 
       - name: Free disk space on Linux
         if: runner.os == 'Linux'
@@ -115,6 +134,8 @@ jobs:
         run: |
           python backends/drjit/scripts/verify_cuda_binary_arches.py \
             --stem _stable_ops \
+            --expected-sass 87,120 \
+            --expected-ptx 120 \
             "$RAYD_STABLE_LIBRARY"
 
       - name: Upload Stable ABI library

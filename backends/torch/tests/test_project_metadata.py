@@ -99,10 +99,13 @@ class ProjectMetadataTests(unittest.TestCase):
         expected_cmake = "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
         expected_torch = "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
         pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
+        pull_request = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
-        for workflow in (pypi, stable):
-            self.assertIn(expected_cmake, workflow)
-            self.assertIn(expected_torch, workflow)
+        self.assertIn(expected_cmake, pypi)
+        self.assertIn(expected_torch, pypi)
+        self.assertIn("87-real;120-real;120-virtual", stable)
+        self.assertIn("8.7;12.0+PTX", stable)
+        self.assertIn("--expected-sass 87,120", stable)
         torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
             "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
         )[0]
@@ -127,6 +130,14 @@ class ProjectMetadataTests(unittest.TestCase):
         torch_verifier = "--stem _legacy_ops --stem _stable_ops"
         self.assertEqual(pypi.count(torch_verifier), 2)
         self.assertNotIn("--stem _C --stem _stable_ops", pypi)
+        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=4', pypi)
+        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=2', pypi)
+        self.assertIn('CMAKE_CUDA_FLAGS=--threads=2', pypi)
+        self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
+        self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
+        self.assertIn('CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"', pull_request)
+        self.assertIn("--expected-sass 87,120", pull_request)
+        self.assertNotIn("self-hosted", pull_request)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")

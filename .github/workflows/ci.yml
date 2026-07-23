@@ -1,0 +1,238 @@
+name: Hosted Pull Request CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: hosted-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RAYD_CUDA_GENCODE_ARCHES: "87,120"
+  RAYD_CUDA_PTX_ARCH: "120"
+  CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"
+  TORCH_CUDA_ARCH_LIST: "8.7;12.0+PTX"
+
+jobs:
+  metadata:
+    name: Metadata / py${{ matrix.python-version }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install "tomli>=2; python_version < '3.11'"
+      - name: Validate package metadata and CI policy
+        shell: bash
+        run: |
+          python -m unittest tests.packaging.test_project_metadata -v
+          (cd backends/drjit && python -m unittest tests.test_project_metadata tests.test_verify_cuda_binary_arches -v)
+          (cd backends/torch && python -m unittest tests.test_project_metadata -v)
+
+  native-wheel:
+    name: ${{ matrix.backend }} / ${{ matrix.os }} / py3.12 / quick CUDA
+    needs: metadata
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        backend: [drjit, torch]
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'torch' && '2' || '4' }}
+      CMAKE_CUDA_FLAGS: ${{ matrix.backend == 'torch' && '--threads=2' || '' }}
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      RAYD_NVCC_LAUNCHER: sccache
+      OPTIX_INCLUDE_DIR: ${{ github.workspace }}/.optix/include
+      SCCACHE_DIR: ${{ runner.temp }}/rayd-sccache
+      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check out OptiX 8.1 headers
+        if: matrix.backend == 'torch'
+        uses: actions/checkout@v5
+        with:
+          repository: NVIDIA/optix-dev
+          ref: v8.1.0
+          path: .optix
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        with:
+          version: "v0.11.0"
+      - name: Restore compiler and cibuildwheel caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.temp }}/rayd-sccache
+            ${{ runner.temp }}/cibuildwheel
+          key: rayd-sccache-v2-quick-${{ runner.os }}-${{ matrix.backend }}-${{ github.sha }}
+          restore-keys: |
+            rayd-sccache-v2-quick-${{ runner.os }}-${{ matrix.backend }}-
+
+      - name: Expose sccache to manylinux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/rayd-sccache-bin"
+          cp "$(command -v sccache)" "$RUNNER_TEMP/rayd-sccache-bin/sccache"
+
+      - name: Free Linux disk space
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift || true
+          sudo docker image prune --all --force || true
+
+      - name: Build Linux wheel
+        if: runner.os == 'Linux'
+        uses: pypa/cibuildwheel@v3.3.0
+        env:
+          CIBW_BUILD: "cp312-manylinux_x86_64"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_CACHE_PATH: ${{ runner.temp }}/cibuildwheel
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BUILD_VERBOSITY: "1"
+          CIBW_BEFORE_ALL_LINUX: >-
+            dnf install -y dnf-plugins-core gcc-toolset-12 &&
+            rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
+            dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
+            dnf clean expire-cache &&
+            dnf install -y cuda-toolkit-12-8 &&
+            ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
+            /usr/local/cuda/bin/nvcc --version
+          CIBW_ENVIRONMENT_LINUX: >-
+            CUDA_HOME=/usr/local/cuda
+            CUDA_PATH=/usr/local/cuda
+            CUDA_ROOT=/usr/local/cuda
+            CUDA_BIN_PATH=/usr/local/cuda
+            CUDACXX=/usr/local/cuda/bin/nvcc
+            OPTIX_INCLUDE_DIR=/project/.optix/include
+            RAYD_CUDA_GENCODE_ARCHES=87,120
+            RAYD_CUDA_PTX_ARCH=120
+            RAYD_NVCC_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
+            CMAKE_CUDA_ARCHITECTURES="87-real;120-real;120-virtual"
+            TORCH_CUDA_ARCH_LIST="8.7;12.0+PTX"
+            CMAKE_BUILD_PARALLEL_LEVEL=${{ matrix.backend == 'torch' && '2' || '4' }}
+            CMAKE_CUDA_FLAGS=${{ matrix.backend == 'torch' && '--threads=2' || '' }}
+            CMAKE_C_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
+            CMAKE_CUDA_COMPILER_LAUNCHER=/host${{ runner.temp }}/rayd-sccache-bin/sccache
+            SCCACHE_DIR=/host${{ runner.temp }}/rayd-sccache
+            SCCACHE_CACHE_SIZE=1G
+            SCCACHE_BASEDIRS=/project
+            SCCACHE_IGNORE_SERVER_IO_ERROR=1
+            PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128
+            CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
+            CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
+            CUDAHOSTCXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
+            PATH=/usr/local/cuda/bin:$PATH
+            LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair --plat manylinux_2_28_x86_64
+            --exclude libcuda.so.1
+            --exclude libnvoptix.so.1
+            --exclude libcudart.so.12
+            --exclude libc10.so
+            --exclude libc10_cuda.so
+            --exclude libtorch.so
+            --exclude libtorch_cpu.so
+            --exclude libtorch_cuda.so
+            --exclude libtorch_python.so
+            --exclude libtorch_global_deps.so
+            --exclude libdrjit-core.so
+            --exclude libdrjit-extra.so
+            --exclude libnanothread.so
+            -w {dest_dir} {wheel} &&
+            python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
+            ${{ matrix.backend == 'drjit' && '--stem _C' || '--stem _legacy_ops --stem _stable_ops' }}
+            --expected-sass 87,120 --expected-ptx 120 {dest_dir}/*.whl &&
+            if [ "${{ matrix.backend }}" = "torch" ]; then
+            python /project/backends/torch/scripts/verify_stable_abi.py
+            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl;
+            fi
+        with:
+          package-dir: backends/${{ matrix.backend }}
+          output-dir: dist/${{ matrix.backend }}
+
+      - name: Install CUDA Toolkit 12.8 on Windows
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "12.8.1"
+          method: local
+          log-file-suffix: "pr-${{ matrix.backend }}-windows"
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Export Windows CUDA paths
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cudaRoot = $env:CUDA_PATH
+          if (-not $cudaRoot) {
+            $nvcc = (Get-Command nvcc -ErrorAction Stop).Source
+            $cudaRoot = Split-Path (Split-Path $nvcc -Parent) -Parent
+          }
+          "CUDA_HOME=$cudaRoot" >> $env:GITHUB_ENV
+          "CUDA_PATH=$cudaRoot" >> $env:GITHUB_ENV
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip build twine "scikit-build-core>=0.10" "cmake>=3.26" ninja
+          if ("${{ matrix.backend }}" -eq "drjit") {
+            python -m pip install --constraint .github/constraints/drjit-build.txt "nanobind==2.9.2" "drjit==1.3.1"
+          } else {
+            python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+          }
+      - name: Build Windows wheel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:GITHUB_WORKSPACE "dist/${{ matrix.backend }}"
+          python -m build "backends/${{ matrix.backend }}" --wheel --no-isolation --outdir $output -Cbuild-dir=artifacts/skbuild
+
+      - name: Verify quick CUDA architecture set
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem "dist/${{ matrix.backend }}/*.whl").FullName
+          if ("${{ matrix.backend }}" -eq "drjit") {
+            python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _C --expected-sass 87,120 --expected-ptx 120 $wheel
+          } else {
+            python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops --expected-sass 87,120 --expected-ptx 120 $wheel
+            python backends/torch/scripts/verify_stable_abi.py --source-root backends/torch/src/stable $wheel
+          }
+          python -m pip install twine
+          python -m twine check $wheel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-rayd-${{ matrix.backend }}-${{ runner.os }}-py3.12
+          path: dist/${{ matrix.backend }}/*.whl
+          if-no-files-found: error

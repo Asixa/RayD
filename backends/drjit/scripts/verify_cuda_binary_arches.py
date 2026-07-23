@@ -87,7 +87,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Verify CUDA SASS and PTX targets in RayD release binaries.")
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--stem", action="append", required=True)
+    parser.add_argument(
+        "--expected-sass",
+        default=",".join(EXPECTED_SASS),
+        help="Comma-separated native SASS targets. Defaults to the release matrix.",
+    )
+    parser.add_argument(
+        "--expected-ptx",
+        default=EXPECTED_PTX_TARGET.removeprefix("sm_"),
+        help="PTX target without the sm_ prefix. Defaults to the release matrix.",
+    )
     args = parser.parse_args()
+    expected_sass = tuple(arch.strip() for arch in args.expected_sass.split(",") if arch.strip())
+    if not expected_sass:
+        raise SystemExit("--expected-sass must contain at least one architecture.")
+    expected_ptx_target = f"sm_{args.expected_ptx.strip().removeprefix('sm_')}"
 
     with tempfile.TemporaryDirectory(prefix="rayd_cuda_arch_verify_") as temp_dir:
         binaries = _collect_binaries(args.inputs, tuple(args.stem), Path(temp_dir))
@@ -96,13 +110,13 @@ def main() -> None:
 
         for binary in binaries:
             elf_listing = _cuobjdump("--list-elf", binary)
-            missing_sass = [arch for arch in EXPECTED_SASS if f"sm_{arch}" not in elf_listing]
+            missing_sass = [arch for arch in expected_sass if f"sm_{arch}" not in elf_listing]
             if missing_sass:
                 raise SystemExit(f"{binary} is missing SASS targets: {', '.join(missing_sass)}")
 
             ptx_dump = _cuobjdump("--dump-ptx", binary)
-            if f".target {EXPECTED_PTX_TARGET}" not in ptx_dump:
-                raise SystemExit(f"{binary} is missing compute 12.0 PTX.")
+            if f".target {expected_ptx_target}" not in ptx_dump:
+                raise SystemExit(f"{binary} is missing PTX target {expected_ptx_target}.")
 
             print(f"Verified CUDA architectures in {binary}")
 
