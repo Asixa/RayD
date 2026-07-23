@@ -106,6 +106,22 @@ class ProjectMetadataTests(unittest.TestCase):
         )[0]
         self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
         self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+        for python, tag in (
+            ("3.10", "cp310"),
+            ("3.11", "cp311"),
+            ("3.12", "cp312"),
+            ("3.13", "cp313"),
+            ("3.14", "cp314"),
+        ):
+            self.assertIn(
+                f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}',
+                pypi,
+            )
+        self.assertIn(
+            "name: release-rayd-torch-linux-py${{ matrix.python-version }}",
+            pypi,
+        )
+        self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
