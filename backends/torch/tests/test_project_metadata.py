@@ -135,6 +135,19 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn('CMAKE_CUDA_FLAGS=--threads=2', pypi)
         self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
         self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
+        for grouped_flag in (
+            "--generate-code=arch=compute_70,code=[sm_70,sm_75]",
+            "--generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]",
+            "--generate-code=arch=compute_90,code=sm_90",
+            "--generate-code=arch=compute_100,code=[sm_100,sm_101]",
+            "--generate-code=arch=compute_120,code=[sm_120,compute_120]",
+        ):
+            self.assertIn(grouped_flag, pypi)
+        self.assertIn("Windows Torch full wheel build exceeded the 60-minute release limit.", pypi)
+        cmake = (root / "backends/torch/CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("RAYD_TORCH_CUDA_GENCODE_FLAGS", cmake)
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_stable_ops)", cmake)
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_native_core)", cmake)
         self.assertIn('CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"', pull_request)
         self.assertIn("--expected-sass 87,120", pull_request)
         self.assertNotIn("self-hosted", pull_request)

@@ -304,6 +304,12 @@ jobs:
       CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'torch' && '2' || '4' }}
       CMAKE_CUDA_FLAGS: ${{ matrix.backend == 'torch' && '--threads=2' || '' }}
+      RAYD_TORCH_CUDA_GENCODE_FLAGS: >-
+        --generate-code=arch=compute_70,code=[sm_70,sm_75]
+        --generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]
+        --generate-code=arch=compute_90,code=sm_90
+        --generate-code=arch=compute_100,code=[sm_100,sm_101]
+        --generate-code=arch=compute_120,code=[sm_120,compute_120]
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_CUDA_COMPILER_LAUNCHER: sccache
@@ -382,9 +388,19 @@ jobs:
       - name: Build Torch wheel
         if: matrix.backend == 'torch'
         working-directory: backends/torch
-        run: >-
-          python -m build --wheel --no-isolation --outdir ../../dist/torch
-          -Cbuild-dir=artifacts/skbuild
+        shell: pwsh
+        run: |
+          $startedAt = Get-Date
+          python -m build --wheel --no-isolation --outdir ../../dist/torch `
+            -Cbuild-dir=artifacts/skbuild
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $elapsedMinutes = ((Get-Date) - $startedAt).TotalMinutes
+          "Windows Torch full wheel build: {0:N2} minutes" -f $elapsedMinutes
+          if ($elapsedMinutes -ge 60) {
+            throw "Windows Torch full wheel build exceeded the 60-minute release limit."
+          }
       - name: Verify Dr.Jit wheel
         if: matrix.backend == 'drjit'
         shell: pwsh
