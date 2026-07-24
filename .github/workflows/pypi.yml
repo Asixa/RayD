@@ -303,7 +303,6 @@ jobs:
     env:
       CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'torch' && '2' || '4' }}
-      CMAKE_CUDA_FLAGS: ${{ matrix.backend == 'torch' && '--threads=2' || '' }}
       RAYD_TORCH_CUDA_GENCODE_FLAGS: >-
         --generate-code=arch=compute_70,code=[sm_70,sm_75]
         --generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]
