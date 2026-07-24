@@ -68,6 +68,25 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertEqual(workflow.count(guard), 3)
         self.assertIn("id-token: write", workflow)
 
+    def test_paid_workflows_are_opt_in(self):
+        workflows = ROOT / ".github" / "workflows"
+        release = (workflows / "pypi.yml").read_text(encoding="utf-8")
+        self.assertNotIn("\n  push:", release)
+        self.assertNotIn("\n  schedule:", release)
+        self.assertIn("\n  release:\n    types: [published]", release)
+        self.assertIn("\n  workflow_dispatch:", release)
+
+        label_guard = (
+            "github.event_name == 'workflow_dispatch' "
+            "|| github.event.label.name == 'run-ci'"
+        )
+        for name in ("ci.yml", "stable-abi-ci.yml"):
+            workflow = (workflows / name).read_text(encoding="utf-8")
+            self.assertNotIn("\n  push:", workflow)
+            self.assertNotIn("\n  schedule:", workflow)
+            self.assertIn("\n  pull_request:\n    types: [labeled]", workflow)
+            self.assertIn(label_guard, workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

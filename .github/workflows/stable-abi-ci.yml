@@ -2,6 +2,7 @@ name: Stable ABI Build
 
 on:
   pull_request:
+    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +12,7 @@ concurrency:
 jobs:
   torch-stable-abi:
     name: Torch Stable ABI / ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-ci'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:

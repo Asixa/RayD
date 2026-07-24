@@ -1,7 +1,8 @@
-name: Hosted Pull Request CI
+name: Hosted Opt-In CI
 
 on:
   pull_request:
+    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -20,6 +21,7 @@ env:
 jobs:
   metadata:
     name: Metadata / py${{ matrix.python-version }}
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-ci'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
