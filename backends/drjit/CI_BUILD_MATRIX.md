@@ -10,7 +10,7 @@ This document records the release-wheel compatibility contract shared by RayD an
 | GitHub runners | `ubuntu-22.04` and `windows-2022` for build/validate jobs; `ubuntu-latest` for the publish jobs |
 | Python | CPython 3.10, 3.11, 3.12, 3.13, and 3.14 |
 | CUDA build toolkit | CUDA 12.8 Update 1 on Windows; CUDA 12.8 latest update from the RHEL 8 repository in manylinux |
-| Native SASS | `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, `sm_120` |
+| Native SASS | `sm_70`, `sm_75`, `sm_80`, `sm_86`, `sm_87`, `sm_89`, `sm_90`, `sm_100`, `sm_101`, `sm_120` |
 | Forward-compatible PTX | `compute_120` |
 | Oldest explicitly covered consumer GPU | Turing / RTX 2080 class (`sm_75`) |
 | Newest explicitly covered families | Data-center and GeForce/RTX PRO Blackwell (`sm_100`, `sm_101`, `sm_120`) |
@@ -31,19 +31,73 @@ The Dr.Jit backend must not add PyTorch merely to make the matrix look identical
 
 ## RayD GitHub Actions matrix
 
-The distribution workflow is `.github/workflows/pypi.yml`. Pushes, pull requests, and manual runs build and audit artifacts but never publish them. Only a published GitHub Release enables the trusted-publishing jobs. The existing `rayd` project uses the `pypi` GitHub Environment; the two pending backend projects use the unique `pypi-rayd-drjit` and `pypi-rayd-torch` environments required by PyPI.
+Pull requests use `.github/workflows/ci.yml`: GitHub-hosted Linux and Windows
+runners build representative CPython 3.12 wheels with native `sm_87` and
+`sm_120` SASS plus `compute_120` PTX. This fast profile proves both native
+backends compile and package without paying the full release fan-out on every
+commit.
+
+The complete distribution workflow is `.github/workflows/pypi.yml`. It runs
+on `main`, weekly, by manual dispatch, and for published releases. Every run
+builds and audits the complete release artifact set; only a published GitHub
+Release enables trusted publishing. The existing `rayd` project uses the
+`pypi` GitHub Environment; the two backend projects use the unique
+`pypi-rayd-drjit` and `pypi-rayd-torch` environments required by PyPI.
 
 | Job | Matrix | Purpose |
 | --- | --- | --- |
 | `metadata` | Python 3.10-3.14 on Ubuntu | Validate all three distributions and the release configuration on every supported interpreter |
-| `build-drjit-linux` | CPython 3.10-3.14 through cibuildwheel | Build and repair five `rayd-drjit` `manylinux_2_28_x86_64` wheels inside the CUDA-enabled manylinux image |
-| `build-torch-linux` | CPython 3.10-3.14 through cibuildwheel | Build and repair five full `rayd-torch` wheels; audit `_C`, `_stable_ops`, external framework dependencies, and CUDA images |
+| `build-drjit-linux` | Five parallel CPython 3.10-3.14 cibuildwheel jobs | Build and repair five `rayd-drjit` `manylinux_2_28_x86_64` wheels inside CUDA-enabled manylinux images |
+| `build-torch-linux` | Five parallel CPython 3.10-3.14 cibuildwheel jobs | Build and repair five full `rayd-torch` wheels; audit `_legacy_ops`, `_stable_ops`, external framework dependencies, and CUDA images |
 | `build-windows-wheels` | 2 backends x Python 3.10-3.14 on `windows-2022` | Build and audit ten `win_amd64` wheels |
 | `build-meta` | Python 3.12 on Ubuntu | Build and check the pure Python `rayd` wheel and sdist |
 | `validate-wheel-set` | Ubuntu, after all four build jobs | Validate the complete release artifact set via `tests.packaging.test_release_artifact_matrix`; gates every publish job |
 | `publish-*` | published GitHub Releases only, on `ubuntu-latest` | Publish backend wheels first, then the meta distribution, using PyPI trusted publishing |
 
 Both native backends keep `manylinux_2_28` rather than changing to the witwin `manylinux_2_35` tag. This is a stricter backward-compatibility target and matches the Dr.Jit and PyTorch 2.10/cu128 Linux wheels used by the builds.
+
+## Build concurrency and caching
+
+Standard public GitHub-hosted Linux and Windows runners have four vCPUs.
+Dr.Jit uses four build-system jobs because its CUDA sources are separate custom
+commands. Torch uses two build-system jobs and `nvcc --threads=2`, which lets
+each multi-architecture CUDA compilation use two threads without multiplying
+four outer jobs by two inner jobs.
+
+Both workflows install `sccache` 0.11.0. Torch routes C, C++, and CUDA compiler
+invocations through CMake launchers. Dr.Jit's explicit NVCC custom commands use
+the generated `RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four
+independent translation units. Linux manylinux jobs access the host-installed
+portable sccache binary and persistent cache through cibuildwheel's default
+`/host` mount; `/project` is a container copy and must not hold persistent
+compiler state. Before the container exits, it resets the cache tree ownership
+to match the host workspace so the GitHub cache post-step can archive it.
+Compiler caches are capped at 1 GiB per
+OS/backend/profile namespace, restore by prefix across commits, and report
+statistics at job completion. Python matrix jobs share that namespace rather
+than multiplying the repository cache footprint. The Linux cibuildwheel tool
+cache and the Windows pip download cache are also persisted.
+Windows hosted Dr.Jit jobs use NVIDIA's network installer and install only
+`nvcc`, `cudart`, `cuobjdump`, and Visual Studio integration. Torch needs the
+larger cuBLAS, cuSPARSE, and cuSOLVER runtime/development packages referenced by
+its public CUDA headers; it uses the action's GitHub-cached local installer but
+still selects only those packages. This avoids parallel matrix jobs competing
+for NVIDIA network-installer downloads while excluding profilers, samples, and
+unrelated CUDA libraries from installation.
+Linux manylinux jobs likewise install only `cuda-compiler`,
+`cuda-cudart-devel`, and `cuda-cuobjdump`, plus those three math development
+libraries and the CUDA driver stub development package for Torch, rather than
+the 5 GiB full toolkit metapackage. Torch also installs the NVRTC development
+package required by its Caffe2 CMake targets.
+
+Pull-request cache keys use the PR head commit rather than the synthetic merge
+commit. Push, schedule, release, and manual builds use `github.sha`. Restore
+prefixes still allow reuse across commits, while a new head can save updated
+compiler results instead of being blocked by an immutable empty cache entry.
+
+Cache misses are always supported. Release correctness does not depend on a
+warm cache, and the post-build CUDA binary verifier inspects the produced wheel
+regardless of whether compilation was cached.
 
 ## RayD CUDA configuration
 
@@ -61,6 +115,7 @@ RAYD_CUDA_PTX_ARCH=120
 -gencode=arch=compute_75,code=sm_75
 -gencode=arch=compute_80,code=sm_80
 -gencode=arch=compute_86,code=sm_86
+-gencode=arch=compute_87,code=sm_87
 -gencode=arch=compute_89,code=sm_89
 -gencode=arch=compute_90,code=sm_90
 -gencode=arch=compute_100,code=sm_100

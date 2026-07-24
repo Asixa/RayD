@@ -82,6 +82,35 @@ find_package(CUDA 11.0 REQUIRED)
 set(CUDA_PROPAGATE_HOST_FLAGS OFF)
 mark_as_advanced(CLEAR CUDA_64_BIT_DEVICE_CODE)
 
+# FindCUDA does not support CMAKE_CUDA_COMPILER_LAUNCHER for the explicit NVCC
+# custom commands below. CI may provide a compiler launcher through a small
+# generated wrapper; local builds keep invoking NVCC directly.
+set(RAYD_NVCC_LAUNCHER "" CACHE STRING
+    "Optional compiler cache or launcher placed before NVCC.")
+if(DEFINED ENV{RAYD_NVCC_LAUNCHER}
+   AND NOT "$ENV{RAYD_NVCC_LAUNCHER}" STREQUAL "")
+    set(RAYD_NVCC_LAUNCHER "$ENV{RAYD_NVCC_LAUNCHER}")
+endif()
+if(NOT RAYD_NVCC_LAUNCHER STREQUAL "")
+    set(RAYD_REAL_NVCC_EXECUTABLE "${CUDA_NVCC_EXECUTABLE}")
+    if(WIN32)
+        set(RAYD_NVCC_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/rayd_nvcc.cmd")
+        file(WRITE "${RAYD_NVCC_WRAPPER}"
+            "@\"${RAYD_NVCC_LAUNCHER}\" \"${RAYD_REAL_NVCC_EXECUTABLE}\" %*\r\n")
+    else()
+        set(RAYD_NVCC_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/rayd_nvcc")
+        file(WRITE "${RAYD_NVCC_WRAPPER}"
+            "#!/bin/sh\nexec \"${RAYD_NVCC_LAUNCHER}\" \"${RAYD_REAL_NVCC_EXECUTABLE}\" \"$@\"\n")
+        file(CHMOD "${RAYD_NVCC_WRAPPER}"
+            PERMISSIONS
+                OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                GROUP_READ GROUP_EXECUTE
+                WORLD_READ WORLD_EXECUTE)
+    endif()
+    set(CUDA_NVCC_EXECUTABLE "${RAYD_NVCC_WRAPPER}")
+    message(STATUS "RayD NVCC launcher: ${RAYD_NVCC_LAUNCHER}")
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")

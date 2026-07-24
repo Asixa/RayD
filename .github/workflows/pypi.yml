@@ -4,21 +4,29 @@ on:
   push:
     branches:
       - main
-      - "codex/**"
-  pull_request:
+  schedule:
+    - cron: "17 9 * * 1"
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Manual validation scope
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows-torch-smoke
 
 concurrency:
-  group: distributions-${{ github.ref }}
+  group: distributions-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.sha || github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 permissions:
   contents: read
 
 env:
-  CMAKE_BUILD_PARALLEL_LEVEL: "2"
   RAYD_CUDA_GENCODE_ARCHES: "70,75,80,86,87,89,90,100,101,120"
   RAYD_CUDA_PTX_ARCH: "120"
   TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
@@ -33,7 +41,7 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install "tomli>=2; python_version < '3.11'"
@@ -45,15 +53,48 @@ jobs:
           (cd backends/torch && python -m unittest tests.test_project_metadata -v)
 
   build-drjit-linux:
-    name: rayd-drjit / manylinux_2_28 / py3.10-3.14
+    name: rayd-drjit / manylinux_2_28 / py${{ matrix.python-version }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 120
     needs: metadata
+    if: inputs.scope != 'windows-torch-smoke'
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
+      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python-version: "3.10", cibw-build: "cp310-manylinux_x86_64"}
+          - {python-version: "3.11", cibw-build: "cp311-manylinux_x86_64"}
+          - {python-version: "3.12", cibw-build: "cp312-manylinux_x86_64"}
+          - {python-version: "3.13", cibw-build: "cp313-manylinux_x86_64"}
+          - {python-version: "3.14", cibw-build: "cp314-manylinux_x86_64"}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        with:
+          version: "v0.11.0"
+      - name: Restore compiler and cibuildwheel caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/rayd-sccache
+            ${{ github.workspace }}/.cache/cibuildwheel
+          key: rayd-sccache-v2-full-linux-drjit-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            rayd-sccache-v2-full-linux-drjit-
+      - name: Expose sccache to manylinux
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.cache/sccache-bin"
+          cp "$(command -v sccache)" "$GITHUB_WORKSPACE/.cache/sccache-bin/sccache"
       - name: Free disk space
         shell: bash
         run: |
@@ -64,8 +105,9 @@ jobs:
       - name: Build and repair Dr.Jit wheels
         uses: pypa/cibuildwheel@v3.3.0
         env:
-          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
+          CIBW_BUILD: ${{ matrix.cibw-build }}
           CIBW_SKIP: "*-musllinux_*"
+          CIBW_CACHE_PATH: ${{ github.workspace }}/.cache/cibuildwheel
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_BEFORE_ALL_LINUX: >-
@@ -73,7 +115,10 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-8 &&
+            dnf install -y
+            cuda-compiler-12-8
+            cuda-cudart-devel-12-8
+            cuda-cuobjdump-12-8 &&
             ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
@@ -82,10 +127,18 @@ jobs:
             CUDA_ROOT=/usr/local/cuda
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
+            RAYD_SCCACHE_ROOT=/host${{ github.workspace }}/.cache
             RAYD_CUDA_GENCODE_ARCHES=70,75,80,86,87,89,90,100,101,120
             RAYD_CUDA_PTX_ARCH=120
+            RAYD_NVCC_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
             PIP_CONSTRAINT=/project/.github/constraints/drjit-build.txt
-            CMAKE_BUILD_PARALLEL_LEVEL=2
+            CMAKE_BUILD_PARALLEL_LEVEL=4
+            CMAKE_C_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            SCCACHE_DIR=$RAYD_SCCACHE_ROOT/rayd-sccache
+            SCCACHE_CACHE_SIZE=1G
+            SCCACHE_BASEDIRS=/project
+            SCCACHE_IGNORE_SERVER_IO_ERROR=1
             CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
             CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
             CUDAHOSTCXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
@@ -100,21 +153,38 @@ jobs:
             --exclude libnanothread.so
             -w {dest_dir} {wheel} &&
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
-            --stem _C {dest_dir}/*.whl
+            --stem _C {dest_dir}/*.whl &&
+            $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
+            chown -R --reference=/host${{ github.workspace }}
+            $RAYD_SCCACHE_ROOT/rayd-sccache
         with:
           package-dir: backends/drjit
           output-dir: dist/drjit
       - uses: actions/upload-artifact@v4
         with:
-          name: release-rayd-drjit-linux
+          name: release-rayd-drjit-linux-py${{ matrix.python-version }}
           path: dist/drjit/*.whl
           if-no-files-found: error
 
   build-torch-linux:
-    name: rayd-torch / manylinux_2_28 / py3.10-3.14
+    name: rayd-torch / manylinux_2_28 / py${{ matrix.python-version }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 180
     needs: metadata
+    if: inputs.scope != 'windows-torch-smoke'
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
+      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {python-version: "3.10", cibw-build: "cp310-manylinux_x86_64"}
+          - {python-version: "3.11", cibw-build: "cp311-manylinux_x86_64"}
+          - {python-version: "3.12", cibw-build: "cp312-manylinux_x86_64"}
+          - {python-version: "3.13", cibw-build: "cp313-manylinux_x86_64"}
+          - {python-version: "3.14", cibw-build: "cp314-manylinux_x86_64"}
     steps:
       - uses: actions/checkout@v5
       - name: Check out OptiX 8.1 headers
@@ -124,9 +194,28 @@ jobs:
           ref: v8.1.0
           path: .optix
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        with:
+          version: "v0.11.0"
+      - name: Restore compiler and cibuildwheel caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/rayd-sccache
+            ${{ github.workspace }}/.cache/cibuildwheel
+          key: rayd-sccache-v2-full-linux-torch-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            rayd-sccache-v2-full-linux-torch-
+      - name: Expose sccache to manylinux
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.cache/sccache-bin"
+          cp "$(command -v sccache)" "$GITHUB_WORKSPACE/.cache/sccache-bin/sccache"
       - name: Free disk space
         shell: bash
         run: |
@@ -137,8 +226,9 @@ jobs:
       - name: Build and repair Torch wheels
         uses: pypa/cibuildwheel@v3.3.0
         env:
-          CIBW_BUILD: "cp310-manylinux_x86_64 cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
+          CIBW_BUILD: ${{ matrix.cibw-build }}
           CIBW_SKIP: "*-musllinux_*"
+          CIBW_CACHE_PATH: ${{ github.workspace }}/.cache/cibuildwheel
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_BEFORE_ALL_LINUX: >-
@@ -146,7 +236,15 @@ jobs:
             rpm --import https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/D42D0685.pub &&
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&
             dnf clean expire-cache &&
-            dnf install -y cuda-toolkit-12-8 &&
+            dnf install -y
+            cuda-compiler-12-8
+            cuda-cudart-devel-12-8
+            cuda-cuobjdump-12-8
+            cuda-driver-devel-12-8
+            cuda-nvrtc-devel-12-8
+            libcublas-devel-12-8
+            libcusparse-devel-12-8
+            libcusolver-devel-12-8 &&
             ln -sfn /usr/local/cuda-12.8 /usr/local/cuda &&
             /usr/local/cuda/bin/nvcc --version
           CIBW_ENVIRONMENT_LINUX: >-
@@ -156,9 +254,18 @@ jobs:
             CUDA_BIN_PATH=/usr/local/cuda
             CUDACXX=/usr/local/cuda/bin/nvcc
             OPTIX_INCLUDE_DIR=/project/.optix/include
+            RAYD_SCCACHE_ROOT=/host${{ github.workspace }}/.cache
             CMAKE_CUDA_ARCHITECTURES="70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
             TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
             CMAKE_BUILD_PARALLEL_LEVEL=2
+            CMAKE_CUDA_FLAGS=--threads=2
+            CMAKE_C_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            CMAKE_CUDA_COMPILER_LAUNCHER=$RAYD_SCCACHE_ROOT/sccache-bin/sccache
+            SCCACHE_DIR=$RAYD_SCCACHE_ROOT/rayd-sccache
+            SCCACHE_CACHE_SIZE=1G
+            SCCACHE_BASEDIRS=/project
+            SCCACHE_IGNORE_SERVER_IO_ERROR=1
             PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu128
             CC=/opt/rh/gcc-toolset-12/root/usr/bin/gcc
             CXX=/opt/rh/gcc-toolset-12/root/usr/bin/g++
@@ -179,15 +286,18 @@ jobs:
             --exclude libtorch_global_deps.so
             -w {dest_dir} {wheel} &&
             python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
-            --stem _C --stem _stable_ops {dest_dir}/*.whl &&
+            --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
             python /project/backends/torch/scripts/verify_stable_abi.py
-            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl
+            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl &&
+            $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
+            chown -R --reference=/host${{ github.workspace }}
+            $RAYD_SCCACHE_ROOT/rayd-sccache
         with:
           package-dir: backends/torch
           output-dir: dist/torch
       - uses: actions/upload-artifact@v4
         with:
-          name: release-rayd-torch-linux
+          name: release-rayd-torch-linux-py${{ matrix.python-version }}
           path: dist/torch/*.whl
           if-no-files-found: error
 
@@ -199,10 +309,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [drjit, torch]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        backend: ${{ fromJSON(inputs.scope == 'windows-torch-smoke' && '["torch"]' || '["drjit","torch"]') }}
+        python-version: ${{ fromJSON(inputs.scope == 'windows-torch-smoke' && '["3.10"]' || '["3.10","3.11","3.12","3.13","3.14"]') }}
     env:
       CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'torch' && '2' || '4' }}
+      RAYD_TORCH_CUDA_GENCODE_FLAGS: >-
+        --generate-code=arch=compute_70,code=[sm_70,sm_75]
+        --generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]
+        --generate-code=arch=compute_90,code=sm_90
+        --generate-code=arch=compute_100,code=[sm_100,sm_101]
+        --generate-code=arch=compute_120,code=[sm_120,compute_120]
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ matrix.backend == 'drjit' && 'sccache' || '' }}
+      RAYD_NVCC_LAUNCHER: sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
+      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       OPTIX_INCLUDE_DIR: ${{ github.workspace }}\.optix\include
     steps:
       - uses: actions/checkout@v5
@@ -214,14 +339,30 @@ jobs:
           ref: v8.1.0
           path: .optix
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+        with:
+          version: "v0.11.0"
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.cache/rayd-sccache
+          key: rayd-sccache-v2-full-windows-${{ matrix.backend }}-${{ github.event.pull_request.head.sha || github.sha }}
+          restore-keys: |
+            rayd-sccache-v2-full-windows-${{ matrix.backend }}-
       - name: Install CUDA Toolkit 12.8
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: "12.8.1"
           method: local
+          sub-packages: >-
+            ${{ matrix.backend == 'torch'
+            && '["nvcc", "cudart", "cuobjdump", "visual_studio_integration", "cublas", "cublas_dev", "cusparse", "cusparse_dev", "cusolver", "cusolver_dev"]'
+            || '["nvcc", "cudart", "cuobjdump", "visual_studio_integration"]' }}
           log-file-suffix: "${{ matrix.backend }}-windows-py${{ matrix.python-version }}"
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -237,6 +378,7 @@ jobs:
           }
           "CUDA_HOME=$cudaRoot" >> $env:GITHUB_ENV
           "CUDA_PATH=$cudaRoot" >> $env:GITHUB_ENV
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
       - name: Install Dr.Jit build dependencies
         if: matrix.backend == 'drjit'
         shell: pwsh
@@ -256,9 +398,19 @@ jobs:
       - name: Build Torch wheel
         if: matrix.backend == 'torch'
         working-directory: backends/torch
-        run: >-
-          python -m build --wheel --no-isolation --outdir ../../dist/torch
-          -Cbuild-dir=artifacts/skbuild
+        shell: pwsh
+        run: |
+          $startedAt = Get-Date
+          python -m build --wheel --no-isolation --outdir ../../dist/torch `
+            -Cbuild-dir=artifacts/skbuild
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $elapsedMinutes = ((Get-Date) - $startedAt).TotalMinutes
+          "Windows Torch full wheel build: {0:N2} minutes" -f $elapsedMinutes
+          if ($elapsedMinutes -ge 60) {
+            throw "Windows Torch full wheel build exceeded the 60-minute release limit."
+          }
       - name: Verify Dr.Jit wheel
         if: matrix.backend == 'drjit'
         shell: pwsh
@@ -271,7 +423,7 @@ jobs:
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem dist/torch/*.whl).FullName
-          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _C --stem _stable_ops $wheel
+          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops $wheel
           python backends/torch/scripts/verify_stable_abi.py --source-root backends/torch/src/stable $wheel
           python -m twine check $wheel
       - uses: actions/upload-artifact@v4
@@ -280,13 +432,89 @@ jobs:
           path: dist/${{ matrix.backend }}/*.whl
           if-no-files-found: error
 
+  test-stable-torch-abi:
+    name: Stable ABI / ${{ matrix.os }} / py${{ matrix.compatibility.python-version }} / torch${{ matrix.compatibility.torch-version }}
+    needs: [build-torch-linux, build-windows-wheels]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+        compatibility:
+          - {python-version: "3.10", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.11", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.12", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.13", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.10.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.11.0", cuda-index: "cu128"}
+          - {python-version: "3.14", torch-version: "2.12.0", cuda-index: "cu126"}
+          - {python-version: "3.14", torch-version: "2.13.0", cuda-index: "cu126"}
+
+    steps:
+      - name: Set up compatibility Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.compatibility.python-version }}
+
+      - name: Download Linux Torch wheels
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rayd-torch-linux-py3.10
+          path: wheel-artifact
+
+      - name: Download Windows Torch wheel
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rayd-torch-windows-py3.10
+          path: wheel-artifact
+
+      - name: Install compatibility Torch
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir "torch==${{ matrix.compatibility.torch-version }}" \
+            --index-url "https://download.pytorch.org/whl/${{ matrix.compatibility.cuda-index }}"
+
+      - name: Load the same Stable ABI library
+        shell: bash
+        env:
+          EXPECTED_TORCH: ${{ matrix.compatibility.torch-version }}
+        run: |
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          import torch
+
+          assert torch.__version__.split("+", 1)[0] == os.environ["EXPECTED_TORCH"]
+          wheels = sorted(Path("wheel-artifact").glob("*.whl"))
+          assert wheels, "RayD Torch wheel artifact is missing"
+          with zipfile.ZipFile(wheels[0]) as archive:
+              members = [
+                  name
+                  for name in archive.namelist()
+                  if Path(name).name.startswith("_stable_ops")
+                  and Path(name).suffix in {".dll", ".so"}
+              ]
+              assert len(members) == 1, members
+              archive.extract(members[0], "stable-library")
+          library = Path("stable-library") / members[0]
+          torch.ops.load_library(str(library.resolve()))
+          assert torch.ops.rayd_torch_stable.camera_sample_to_world is not None
+          assert torch.ops.rayd_torch_stable.intersection_valid is not None
+          print(f"Loaded {library.name} with torch {torch.__version__}")
+          PY
+
   build-meta:
     name: rayd meta wheel and sdist
     runs-on: ubuntu-22.04
     needs: metadata
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip build twine "setuptools>=77"
@@ -301,10 +529,10 @@ jobs:
   validate-wheel-set:
     name: Validate complete release artifact set
     runs-on: ubuntu-22.04
-    needs: [build-drjit-linux, build-torch-linux, build-windows-wheels, build-meta]
+    needs: [build-drjit-linux, build-torch-linux, build-windows-wheels, test-stable-torch-abi, build-meta]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4

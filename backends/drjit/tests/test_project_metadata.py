@@ -75,8 +75,10 @@ class ProjectMetadataTests(unittest.TestCase):
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
-        for job in ("drjit:", "torch:", "parity:", "packaging:", "coexistence:"):
-            self.assertIn(job, workflow)
+        self.assertIn("native-wheel:", workflow)
+        self.assertIn("os: [ubuntu-22.04, windows-2022]", workflow)
+        self.assertIn("backend: [drjit, torch]", workflow)
+        self.assertNotIn("self-hosted", workflow)
         self.assertIn("name: pypi-rayd-drjit", release)
         self.assertIn("name: pypi-rayd-torch", release)
         self.assertEqual(release.count("name: pypi\n"), 1)
@@ -89,6 +91,10 @@ class ProjectMetadataTests(unittest.TestCase):
         )
         self.assertIn("--query-gpu=compute_cap", cmake)
         self.assertIn("RayD local CUDA architecture: sm_", cmake)
+        self.assertIn("RAYD_NVCC_LAUNCHER", cmake)
+        self.assertIn("rayd_nvcc.cmd", cmake)
+        self.assertIn("rayd_nvcc", cmake)
+        self.assertIn("RAYD_NVCC_LAUNCHER=", release)
         self.assertIn("if(DEFINED ENV{VSCMD_VER})", cmake)
         self.assertEqual(cmake.count('call \\"${RAYD_VSDEVCMD}\\" -arch=x64'), 1)
         self.assertTrue((ROOT / "CI_BUILD_MATRIX.md").is_file())
@@ -197,8 +203,8 @@ class ProjectMetadataTests(unittest.TestCase):
             / "include"
             / "rayd"
             / "shared"
-            / "optix"
-            / "segment_visibility_device.cuh"
+            / "multipath"
+            / "segment_visibility_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn(
             "<rayd/shared/optix/segment_visibility_device.cuh>",

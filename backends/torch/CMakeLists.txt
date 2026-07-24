@@ -7,12 +7,57 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
+set(
+    RAYD_TORCH_CUDA_GENCODE_FLAGS
+    ""
+    CACHE STRING
+    "Optional explicit NVCC gencode flags used to share CUDA front-end work across compatible real architectures.")
+if(DEFINED ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}
+   AND NOT "$ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}" STREQUAL "")
+    set(
+        RAYD_TORCH_CUDA_GENCODE_FLAGS
+        "$ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}"
+        CACHE STRING
+        "Optional explicit NVCC gencode flags used to share CUDA front-end work across compatible real architectures."
+        FORCE)
+endif()
+if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+    separate_arguments(
+        RAYD_TORCH_CUDA_GENCODE_OPTIONS
+        NATIVE_COMMAND
+        "${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+    set(RAYD_TORCH_CALLER_CUDA_FLAGS "$ENV{CMAKE_CUDA_FLAGS}")
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        OFF
+        CACHE STRING
+        "CUDA architectures are supplied by RAYD_TORCH_CUDA_GENCODE_FLAGS."
+        FORCE)
+endif()
+
+function(rayd_torch_apply_cuda_gencode target)
+    foreach(option IN LISTS RAYD_TORCH_CUDA_GENCODE_OPTIONS)
+        target_compile_options(
+            "${target}"
+            PRIVATE
+                "$<$<COMPILE_LANGUAGE:CUDA>:${option}>")
+    endforeach()
+endfunction()
+
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayD Torch native targets." FORCE)
 endif()
 
 set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
+if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
+   AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        "$ENV{CMAKE_CUDA_ARCHITECTURES}"
+        CACHE STRING
+        "CUDA architectures for RayD Torch native kernels."
+        FORCE)
+elseif(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
     set(
@@ -150,13 +195,41 @@ if(RAYD_TORCH_BUILD_NATIVE)
         endif()
     endif()
     find_package(Torch REQUIRED)
-    if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
+    if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+        string(
+            REGEX REPLACE
+            "(^|[ \t])-gencode[ \t]+arch=[^ \t]+,code=[^ \t]+"
+            ""
+            CMAKE_CUDA_FLAGS
+            "${CMAKE_CUDA_FLAGS}")
+        string(STRIP "${CMAKE_CUDA_FLAGS}" CMAKE_CUDA_FLAGS)
+        if(NOT RAYD_TORCH_CALLER_CUDA_FLAGS STREQUAL "")
+            string(
+                FIND
+                "${CMAKE_CUDA_FLAGS}"
+                "${RAYD_TORCH_CALLER_CUDA_FLAGS}"
+                RAYD_TORCH_CALLER_CUDA_FLAGS_INDEX)
+            if(RAYD_TORCH_CALLER_CUDA_FLAGS_INDEX EQUAL -1)
+                string(
+                    PREPEND
+                    CMAKE_CUDA_FLAGS
+                    "${RAYD_TORCH_CALLER_CUDA_FLAGS} ")
+            endif()
+        endif()
+        set(CMAKE_CUDA_ARCHITECTURES OFF)
+    elseif(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
         set(CMAKE_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
     endif()
-    if(NOT CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "OFF")
+    if(RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL ""
+       AND (NOT CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "OFF"))
         message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayD Torch kernels would build without -gencode flags.")
     endif()
-    message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+        message(STATUS "RayD Torch grouped CUDA gencode flags: ${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+        message(STATUS "RayD Torch CUDA flags after removing Torch gencode flags: ${CMAKE_CUDA_FLAGS}")
+    else()
+        message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    endif()
     message(STATUS "RayD Torch/Caffe2 CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
 
     # Stable ABI shims are exported by torch_cpu and torch_cuda. Link those
@@ -188,6 +261,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             PREFIX ""
             OUTPUT_NAME "_stable_ops"
             POSITION_INDEPENDENT_CODE ON)
+    rayd_torch_apply_cuda_gencode(rayd_torch_stable_ops)
     target_compile_definitions(
         rayd_torch_stable_ops
         PRIVATE
@@ -204,8 +278,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PRIVATE
             "${RAYD_TORCH_STABLE_CPU_LIBRARY}"
             "${RAYD_TORCH_STABLE_CUDA_LIBRARY}"
-            CUDA::cudart
-            CUDA::cuda_driver)
+            CUDA::cudart)
     target_compile_features(rayd_torch_stable_ops PRIVATE cxx_std_17)
     install(
         TARGETS rayd_torch_stable_ops
@@ -748,6 +821,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
 
     add_library(rayd_torch_native_core STATIC ${RAYD_TORCH_NATIVE_CORE_SOURCES})
     set_target_properties(rayd_torch_native_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    rayd_torch_apply_cuda_gencode(rayd_torch_native_core)
     target_include_directories(
         rayd_torch_native_core
         PUBLIC

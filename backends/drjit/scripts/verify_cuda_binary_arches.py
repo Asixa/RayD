@@ -38,18 +38,70 @@ def _collect_binaries(inputs: list[Path], stems: tuple[str, ...], extract_root: 
 def _cuobjdump(flag: str, binary: Path) -> str:
     result = subprocess.run(
         ["cuobjdump", flag, str(binary)],
-        check=True,
         capture_output=True,
         text=True,
     )
-    return f"{result.stdout}\n{result.stderr}"
+    if result.returncode == 0:
+        return f"{result.stdout}\n{result.stderr}"
+
+    errors = [
+        f"cuobjdump {flag} failed for {binary} with exit code {result.returncode}:",
+        result.stderr.strip() or result.stdout.strip() or "<no output>",
+    ]
+    if binary.suffix == ".so":
+        with tempfile.TemporaryDirectory(prefix="rayd_cuda_fatbin_") as temp_dir:
+            fatbin = Path(temp_dir) / f"{binary.stem}.fatbin"
+            extraction = subprocess.run(
+                ["objcopy", "--dump-section", f".nv_fatbin={fatbin}", str(binary)],
+                capture_output=True,
+                text=True,
+            )
+            if extraction.returncode == 0 and fatbin.is_file() and fatbin.stat().st_size:
+                retry = subprocess.run(
+                    ["cuobjdump", flag, str(fatbin)],
+                    capture_output=True,
+                    text=True,
+                )
+                if retry.returncode == 0:
+                    return f"{retry.stdout}\n{retry.stderr}"
+                errors.extend(
+                    [
+                        f"cuobjdump {flag} failed for extracted {fatbin.name} "
+                        f"with exit code {retry.returncode}:",
+                        retry.stderr.strip() or retry.stdout.strip() or "<no output>",
+                    ]
+                )
+            else:
+                errors.extend(
+                    [
+                        f"Could not extract .nv_fatbin from {binary}:",
+                        extraction.stderr.strip()
+                        or extraction.stdout.strip()
+                        or "<no output>",
+                    ]
+                )
+    raise SystemExit("\n".join(errors))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify CUDA SASS and PTX targets in RayD release binaries.")
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--stem", action="append", required=True)
+    parser.add_argument(
+        "--expected-sass",
+        default=",".join(EXPECTED_SASS),
+        help="Comma-separated native SASS targets. Defaults to the release matrix.",
+    )
+    parser.add_argument(
+        "--expected-ptx",
+        default=EXPECTED_PTX_TARGET.removeprefix("sm_"),
+        help="PTX target without the sm_ prefix. Defaults to the release matrix.",
+    )
     args = parser.parse_args()
+    expected_sass = tuple(arch.strip() for arch in args.expected_sass.split(",") if arch.strip())
+    if not expected_sass:
+        raise SystemExit("--expected-sass must contain at least one architecture.")
+    expected_ptx_target = f"sm_{args.expected_ptx.strip().removeprefix('sm_')}"
 
     with tempfile.TemporaryDirectory(prefix="rayd_cuda_arch_verify_") as temp_dir:
         binaries = _collect_binaries(args.inputs, tuple(args.stem), Path(temp_dir))
@@ -58,13 +110,13 @@ def main() -> None:
 
         for binary in binaries:
             elf_listing = _cuobjdump("--list-elf", binary)
-            missing_sass = [arch for arch in EXPECTED_SASS if f"sm_{arch}" not in elf_listing]
+            missing_sass = [arch for arch in expected_sass if f"sm_{arch}" not in elf_listing]
             if missing_sass:
                 raise SystemExit(f"{binary} is missing SASS targets: {', '.join(missing_sass)}")
 
             ptx_dump = _cuobjdump("--dump-ptx", binary)
-            if f".target {EXPECTED_PTX_TARGET}" not in ptx_dump:
-                raise SystemExit(f"{binary} is missing compute 12.0 PTX.")
+            if f".target {expected_ptx_target}" not in ptx_dump:
+                raise SystemExit(f"{binary} is missing PTX target {expected_ptx_target}.")
 
             print(f"Verified CUDA architectures in {binary}")
 

@@ -45,8 +45,10 @@ class ProjectMetadataTests(unittest.TestCase):
         stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
+        self.assertNotIn("CUDA::cuda_driver", stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CPU_LIBRARY}"', stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CUDA_LIBRARY}"', stable_target)
+        self.assertIn("CUDA::cudart", stable_target)
 
     def test_stable_abi_audit_script_is_packaged_with_the_backend(self):
         script = Path("scripts/verify_stable_abi.py")
@@ -65,6 +67,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("torch.cuda.get_device_capability()", cmake)
         self.assertIn("print(f'{major}.{minor}')", cmake)
         self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
+        self.assertIn("if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}", cmake)
         self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
 
         dev_build = Path("scripts/dev_build_native.ps1").read_text(encoding="utf-8")
@@ -96,15 +99,80 @@ class ProjectMetadataTests(unittest.TestCase):
         expected_cmake = "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
         expected_torch = "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
         pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
+        pull_request = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
-        for workflow in (pypi, stable):
-            self.assertIn(expected_cmake, workflow)
-            self.assertIn(expected_torch, workflow)
+        self.assertIn(expected_cmake, pypi)
+        self.assertIn(expected_torch, pypi)
+        self.assertIn("87-real;120-real;120-virtual", stable)
+        self.assertIn("8.7;12.0+PTX", stable)
+        self.assertIn("--expected-sass 87,120", stable)
         torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
             "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
         )[0]
         self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
         self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+        for python, tag in (
+            ("3.10", "cp310"),
+            ("3.11", "cp311"),
+            ("3.12", "cp312"),
+            ("3.13", "cp313"),
+            ("3.14", "cp314"),
+        ):
+            self.assertIn(
+                f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}',
+                pypi,
+            )
+        self.assertIn(
+            "name: release-rayd-torch-linux-py${{ matrix.python-version }}",
+            pypi,
+        )
+        self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
+        torch_verifier = "--stem _legacy_ops --stem _stable_ops"
+        self.assertEqual(pypi.count(torch_verifier), 2)
+        self.assertNotIn("--stem _C --stem _stable_ops", pypi)
+        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=4', pypi)
+        self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=2', pypi)
+        self.assertIn('CMAKE_CUDA_FLAGS=--threads=2', pypi)
+        self.assertIn(
+            "github.event_name == 'workflow_dispatch' && github.sha",
+            pypi,
+        )
+        self.assertIn("windows-torch-smoke", pypi)
+        self.assertIn(
+            "inputs.scope == 'windows-torch-smoke' && '[\"torch\"]'",
+            pypi,
+        )
+        self.assertIn(
+            "inputs.scope == 'windows-torch-smoke' && '[\"3.10\"]'",
+            pypi,
+        )
+        windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
+        self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
+        self.assertIn(
+            "CMAKE_CUDA_COMPILER_LAUNCHER: "
+            "${{ matrix.backend == 'drjit' && 'sccache' || '' }}",
+            windows_wheel_job,
+        )
+        self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
+        self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
+        for grouped_flag in (
+            "--generate-code=arch=compute_70,code=[sm_70,sm_75]",
+            "--generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89]",
+            "--generate-code=arch=compute_90,code=sm_90",
+            "--generate-code=arch=compute_100,code=[sm_100,sm_101]",
+            "--generate-code=arch=compute_120,code=[sm_120,compute_120]",
+        ):
+            self.assertIn(grouped_flag, pypi)
+        self.assertIn("Windows Torch full wheel build exceeded the 60-minute release limit.", pypi)
+        cmake = (root / "backends/torch/CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("RAYD_TORCH_CUDA_GENCODE_FLAGS", cmake)
+        self.assertIn("RAYD_TORCH_CALLER_CUDA_FLAGS", cmake)
+        self.assertIn("-gencode[ \\t]+arch=[^ \\t]+,code=[^ \\t]+", cmake)
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_stable_ops)", cmake)
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_native_core)", cmake)
+        self.assertIn('CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"', pull_request)
+        self.assertIn("--expected-sass 87,120", pull_request)
+        self.assertNotIn("self-hosted", pull_request)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
