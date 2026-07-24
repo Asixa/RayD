@@ -139,6 +139,11 @@ class ProjectMetadataTests(unittest.TestCase):
         )
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
+        self.assertIn(
+            "CMAKE_CUDA_COMPILER_LAUNCHER: "
+            "${{ matrix.backend == 'torch' && '' || 'sccache' }}",
+            windows_wheel_job,
+        )
         self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
         self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
         for grouped_flag in (

@@ -311,7 +311,7 @@ jobs:
         --generate-code=arch=compute_120,code=[sm_120,compute_120]
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ matrix.backend == 'torch' && '' || 'sccache' }}
       RAYD_NVCC_LAUNCHER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
