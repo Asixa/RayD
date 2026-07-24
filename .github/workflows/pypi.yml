@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: distributions-${{ github.ref }}
+  group: distributions-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.sha || github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'release' }}
 
 permissions:

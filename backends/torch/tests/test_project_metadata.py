@@ -133,6 +133,10 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=4', pypi)
         self.assertIn('CMAKE_BUILD_PARALLEL_LEVEL=2', pypi)
         self.assertIn('CMAKE_CUDA_FLAGS=--threads=2', pypi)
+        self.assertIn(
+            "github.event_name == 'workflow_dispatch' && github.sha",
+            pypi,
+        )
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
         self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
