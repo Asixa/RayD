@@ -27,7 +27,7 @@ class SourceBundleTests(unittest.TestCase):
             module.generate(
                 ROOT,
                 output,
-                distribution_version="0.6.0",
+                distribution_version="0.7.0",
                 commit="1" * 40,
                 repository_url="https://github.com/Asixa/RayD.git",
             )
@@ -39,7 +39,7 @@ class SourceBundleTests(unittest.TestCase):
             self.assertEqual(metadata["schema_version"], 1)
             self.assertEqual(
                 metadata["distribution"],
-                {"name": "rayd-torch", "version": "0.6.0"},
+                {"name": "rayd-torch", "version": "0.7.0"},
             )
             self.assertEqual(metadata["commit"], "1" * 40)
             self.assertEqual(metadata["source_manifest"]["sha256"], sha256(manifest_path))

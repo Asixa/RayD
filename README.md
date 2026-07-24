@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/github/license/Asixa/RayD)](LICENSE)
 
 RayD is a CUDA/OptiX library for differentiable ray geometry, edge queries,
-visibility, and RF-style multipath primitives. Version 0.6 provides two
+visibility, and RF-style multipath primitives. Version 0.7 provides two
 independent, backend-native Python APIs:
 
 ```python
@@ -35,7 +35,7 @@ pip install rayd-drjit
 pip install rayd-torch
 ```
 
-All three distributions share version `0.6.0`. The `rayd` meta-distribution
+All three distributions share version `0.7.0`. The `rayd` meta-distribution
 pins `rayd-drjit` and `rayd-torch` to exactly the same version.
 
 Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
@@ -46,7 +46,7 @@ Stable ABI boundary. The `rayd` meta-distribution is a universal pure-Python
 wheel and is the only distribution that also publishes an sdist.
 
 > [!IMPORTANT]
-> RayD 0.6 uses explicit backend namespaces. The parent `rayd` namespace does
+> RayD 0.7 uses explicit backend namespaces. The parent `rayd` namespace does
 > not select or re-export a default backend. Replace legacy `import rayd as rd`
 > with `import rayd.drjit as rd` or `import rayd.torch as rt`.
 

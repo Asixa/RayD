@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-project(rayd_torch VERSION 0.6.0 LANGUAGES CXX CUDA)
+project(rayd_torch VERSION 0.7.0 LANGUAGES CXX CUDA)
 set(RAYD_SHARED_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include")
 
 set(CMAKE_CXX_STANDARD 17)
