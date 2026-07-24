@@ -146,6 +146,8 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("Windows Torch full wheel build exceeded the 60-minute release limit.", pypi)
         cmake = (root / "backends/torch/CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("RAYD_TORCH_CUDA_GENCODE_FLAGS", cmake)
+        self.assertIn("RAYD_TORCH_CALLER_CUDA_FLAGS", cmake)
+        self.assertIn("-gencode[ \\t]+arch=[^ \\t]+,code=[^ \\t]+", cmake)
         self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_stable_ops)", cmake)
         self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_native_core)", cmake)
         self.assertIn('CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"', pull_request)

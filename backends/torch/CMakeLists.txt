@@ -26,6 +26,7 @@ if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
         RAYD_TORCH_CUDA_GENCODE_OPTIONS
         NATIVE_COMMAND
         "${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+    set(RAYD_TORCH_CALLER_CUDA_FLAGS "$ENV{CMAKE_CUDA_FLAGS}")
     set(
         CMAKE_CUDA_ARCHITECTURES
         OFF
@@ -195,6 +196,26 @@ if(RAYD_TORCH_BUILD_NATIVE)
     endif()
     find_package(Torch REQUIRED)
     if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+        string(
+            REGEX REPLACE
+            "(^|[ \t])-gencode[ \t]+arch=[^ \t]+,code=[^ \t]+"
+            ""
+            CMAKE_CUDA_FLAGS
+            "${CMAKE_CUDA_FLAGS}")
+        string(STRIP "${CMAKE_CUDA_FLAGS}" CMAKE_CUDA_FLAGS)
+        if(NOT RAYD_TORCH_CALLER_CUDA_FLAGS STREQUAL "")
+            string(
+                FIND
+                "${CMAKE_CUDA_FLAGS}"
+                "${RAYD_TORCH_CALLER_CUDA_FLAGS}"
+                RAYD_TORCH_CALLER_CUDA_FLAGS_INDEX)
+            if(RAYD_TORCH_CALLER_CUDA_FLAGS_INDEX EQUAL -1)
+                string(
+                    PREPEND
+                    CMAKE_CUDA_FLAGS
+                    "${RAYD_TORCH_CALLER_CUDA_FLAGS} ")
+            endif()
+        endif()
         set(CMAKE_CUDA_ARCHITECTURES OFF)
     elseif(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
         set(CMAKE_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
@@ -205,6 +226,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
     endif()
     if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
         message(STATUS "RayD Torch grouped CUDA gencode flags: ${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+        message(STATUS "RayD Torch CUDA flags after removing Torch gencode flags: ${CMAKE_CUDA_FLAGS}")
     else()
         message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     endif()
