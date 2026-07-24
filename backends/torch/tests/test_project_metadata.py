@@ -137,11 +137,20 @@ class ProjectMetadataTests(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && github.sha",
             pypi,
         )
+        self.assertIn("windows-torch-smoke", pypi)
+        self.assertIn(
+            "inputs.scope == 'windows-torch-smoke' && '[\"torch\"]'",
+            pypi,
+        )
+        self.assertIn(
+            "inputs.scope == 'windows-torch-smoke' && '[\"3.10\"]'",
+            pypi,
+        )
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
         self.assertIn(
             "CMAKE_CUDA_COMPILER_LAUNCHER: "
-            "${{ matrix.backend == 'torch' && '' || 'sccache' }}",
+            "${{ matrix.backend == 'drjit' && 'sccache' || '' }}",
             windows_wheel_job,
         )
         self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)

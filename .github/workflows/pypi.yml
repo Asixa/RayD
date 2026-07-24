@@ -9,6 +9,15 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Manual validation scope
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows-torch-smoke
 
 concurrency:
   group: distributions-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.sha || github.event_name }}
@@ -48,6 +57,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     needs: metadata
+    if: inputs.scope != 'windows-torch-smoke'
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -161,6 +171,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     needs: metadata
+    if: inputs.scope != 'windows-torch-smoke'
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
@@ -298,8 +309,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [drjit, torch]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        backend: ${{ fromJSON(inputs.scope == 'windows-torch-smoke' && '["torch"]' || '["drjit","torch"]') }}
+        python-version: ${{ fromJSON(inputs.scope == 'windows-torch-smoke' && '["3.10"]' || '["3.10","3.11","3.12","3.13","3.14"]') }}
     env:
       CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'torch' && '2' || '4' }}
@@ -311,7 +322,7 @@ jobs:
         --generate-code=arch=compute_120,code=[sm_120,compute_120]
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ matrix.backend == 'torch' && '' || 'sccache' }}
+      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ matrix.backend == 'drjit' && 'sccache' || '' }}
       RAYD_NVCC_LAUNCHER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
