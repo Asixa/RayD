@@ -293,7 +293,7 @@ Latest verification:
   threshold. Current public native smoke uses default air-air material parameters, so
   reflection accumulation remains zero and does not yet prove a speedup for that path.
 - Multipath smoke benchmark:
-  `python -m tests.benchmark_raydn_rayd_mitsuba_multipath --preset smoke --rayd-source local --rayd-root E:\Code\RayDi`
+`python -m tests.benchmark_raydn_rayd_mitsuba_multipath --preset smoke --rayd-source local --rayd-root E:\Code\witwin-platform\RayD`
   completed for RayDN, RayD path, and Mitsuba path; outputs are under
   `artifacts/benchmarks/multipath/smoke_all/` and contain JSON, CSV, and one
   PNG grouped-bar chart only.
@@ -377,7 +377,7 @@ claim. RayD's current Mitsuba comparison benchmark uses `mesh_resolution` /
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
-  --rayd-source local --rayd-root E:\Code\RayDi `
+  --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --scenario rayd-latest:64:128 `
   --scenario release:192:256 `
   --repeats 5 --warmup 2 --mitsuba-preliminary
@@ -397,7 +397,7 @@ For real scaling curves rather than hand-picked sizes, run:
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset large `
-  --rayd-source local --rayd-root E:\Code\RayDi `
+  --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --mitsuba-preliminary
 ```
 
@@ -430,7 +430,7 @@ Latest multipath path-export benchmark:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_multipath `
-  --preset smoke --rayd-source local --rayd-root E:\Code\RayDi
+  --preset smoke --rayd-source local --rayd-root E:\Code\witwin-platform\RayD
 ```
 
 This is the RayD latest-style multipath path benchmark, not the Sionna solver
@@ -449,7 +449,7 @@ Latest AD backward coverage:
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset smoke --mesh-resolution 64 --mesh-resolution 128 --mesh-resolution 256 `
   --total-rays 16384 --total-rays 65536 --ray-batch-side 256 `
-  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\RayDi `
+  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --mitsuba-preliminary --include-backward `
   --output-dir artifacts\benchmarks\scaling\ad_uv_tape
 ```

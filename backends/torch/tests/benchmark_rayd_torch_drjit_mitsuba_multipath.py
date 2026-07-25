@@ -18,7 +18,7 @@ import rayd.torch as rt
 
 try:
     from .benchmark_C_rayd_mitsuba_stress import (
-        RAYDI_ROOT,
+        RAYD_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
         _load_rayd,
@@ -26,7 +26,7 @@ try:
     )
 except ImportError:  # pragma: no cover - supports direct script execution.
     from benchmark_C_rayd_mitsuba_stress import (  # type: ignore
-        RAYDI_ROOT,
+        RAYD_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
         _load_rayd,
@@ -967,7 +967,7 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=None)
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
-    parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
+    parser.add_argument("--rayd-root", type=Path, default=RAYD_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-ray-api", choices=("preliminary", "surface"), default="preliminary")
     parser.add_argument("--sionna-root", type=Path, default=DEFAULT_SIONNA_ROOT)

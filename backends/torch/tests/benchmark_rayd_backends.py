@@ -12,7 +12,7 @@ import torch
 import rayd.torch as rt
 
 
-RAYDI_ROOT = Path(r"E:\Code\RayDi")
+RAYD_ROOT = Path(r"E:\Code\witwin-platform\RayD")
 
 
 def _sync_torch() -> None:
@@ -220,7 +220,7 @@ def main() -> None:
         default="package",
         help="Use the installed RayD package by default, or a local checkout via --rayd-root.",
     )
-    parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
+    parser.add_argument("--rayd-root", type=Path, default=RAYD_ROOT)
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA torch is required")

@@ -197,8 +197,8 @@ class ProjectMetadataTests(unittest.TestCase):
             / "include"
             / "rayd"
             / "shared"
-            / "optix"
-            / "segment_visibility_device.cuh"
+            / "multipath"
+            / "segment_visibility_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn(
             "<rayd/shared/optix/segment_visibility_device.cuh>",

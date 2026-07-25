@@ -45,8 +45,10 @@ class ProjectMetadataTests(unittest.TestCase):
         stable_target = cmake[stable_start:cmake.index("execute_process(", stable_start)]
         self.assertNotIn("TORCH_PYTHON_LIBRARY", stable_target)
         self.assertNotIn('"${TORCH_LIBRARIES}"', stable_target)
+        self.assertNotIn("CUDA::cuda_driver", stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CPU_LIBRARY}"', stable_target)
         self.assertIn('"${RAYD_TORCH_STABLE_CUDA_LIBRARY}"', stable_target)
+        self.assertIn("CUDA::cudart", stable_target)
 
     def test_stable_abi_audit_script_is_packaged_with_the_backend(self):
         script = Path("scripts/verify_stable_abi.py")
@@ -65,6 +67,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("torch.cuda.get_device_capability()", cmake)
         self.assertIn("print(f'{major}.{minor}')", cmake)
         self.assertNotIn("print(f'{major}.{minor}+PTX')", cmake)
+        self.assertIn("if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}", cmake)
         self.assertIn("ENV{TORCH_CUDA_ARCH_LIST}", cmake)
 
         dev_build = Path("scripts/dev_build_native.ps1").read_text(encoding="utf-8")
@@ -105,6 +108,27 @@ class ProjectMetadataTests(unittest.TestCase):
         )[0]
         self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
         self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+        for python, tag in (
+            ("3.10", "cp310"),
+            ("3.11", "cp311"),
+            ("3.12", "cp312"),
+            ("3.13", "cp313"),
+            ("3.14", "cp314"),
+        ):
+            self.assertIn(
+                f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}',
+                pypi,
+            )
+        self.assertIn(
+            "name: release-rayd-torch-linux-py${{ matrix.python-version }}",
+            pypi,
+        )
+        self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
+        torch_verifier = (
+            "--stem _legacy_ops --stem _stable_ops"
+        )
+        self.assertEqual(pypi.count(torch_verifier), 2)
+        self.assertNotIn("--stem _C --stem _stable_ops", pypi)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")

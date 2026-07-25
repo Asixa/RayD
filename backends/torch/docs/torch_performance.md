@@ -131,7 +131,7 @@ intersection pressure and Mitsuba comparison, use:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_stress `
-  --rayd-source local --rayd-root E:\Code\RayDi `
+  --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --scenario rayd-latest:64:128 `
   --scenario release:192:256 `
   --repeats 5 --warmup 2 --mitsuba-preliminary
@@ -149,7 +149,7 @@ For scaling sweeps instead of a few fixed sizes, use:
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset standard `
-  --rayd-source local --rayd-root E:\Code\RayDi `
+  --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --mitsuba-preliminary
 ```
 
@@ -185,7 +185,7 @@ RayD latest-style multipath path export is covered separately:
 
 ```powershell
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -m tests.benchmark_raydn_rayd_mitsuba_multipath `
-  --preset smoke --rayd-source local --rayd-root E:\Code\RayDi
+  --preset smoke --rayd-source local --rayd-root E:\Code\witwin-platform\RayD
 ```
 
 This benchmark adds RayDN to RayD's path-level Mitsuba comparison for:
@@ -222,7 +222,7 @@ time grouped by backend, not throughput or speedup plots:
 C:\Users\Asixa\miniconda3\envs\witwin2\python.exe -B -m tests.benchmark_raydn_rayd_mitsuba_sweep `
   --preset smoke --mesh-resolution 64 --mesh-resolution 128 --mesh-resolution 256 `
   --total-rays 16384 --total-rays 65536 --ray-batch-side 256 `
-  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\RayDi `
+  --repeats 5 --warmup 3 --rayd-source local --rayd-root E:\Code\witwin-platform\RayD `
   --mitsuba-preliminary --include-backward `
   --output-dir artifacts\benchmarks\scaling\ad_uv_tape
 ```

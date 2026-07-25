@@ -12,7 +12,15 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
+if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
+   AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        "$ENV{CMAKE_CUDA_ARCHITECTURES}"
+        CACHE STRING
+        "CUDA architectures for RayD Torch native kernels."
+        FORCE)
+elseif(NOT DEFINED CMAKE_CUDA_ARCHITECTURES
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL ""
    OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
     set(
@@ -204,8 +212,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PRIVATE
             "${RAYD_TORCH_STABLE_CPU_LIBRARY}"
             "${RAYD_TORCH_STABLE_CUDA_LIBRARY}"
-            CUDA::cudart
-            CUDA::cuda_driver)
+            CUDA::cudart)
     target_compile_features(rayd_torch_stable_ops PRIVATE cxx_std_17)
     install(
         TARGETS rayd_torch_stable_ops

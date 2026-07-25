@@ -13,7 +13,7 @@ python -m pip install --no-build-isolation -e . -Cbuild-dir=build/local-120
 - After native `.cpp`, `.cu`, `.h`, CMake, or PTX embedding changes, use the incremental helper:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File E:\Code\RayDi\backends\torch\scripts\dev_build_native.ps1
+powershell -ExecutionPolicy Bypass -File E:\Code\witwin-platform\RayD\backends\torch\scripts\dev_build_native.ps1
 ```
 
 - The helper runs `cmake --build build/local-120 --config Release --target rayd_torch_stable_ops rayd_torch_legacy_ops _C` and copies the resulting `_stable_ops*.dll`, `_legacy_ops*.dll`, and `_C*.pyd` to the conda site-packages path that the editable import hook actually loads. See `abi_audit.json` for the authoritative `_C` / `_stable_ops` / `_legacy_ops` boundary.

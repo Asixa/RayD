@@ -17,7 +17,7 @@ import torch
 import rayd.torch as rt
 
 
-RAYDI_ROOT = Path(r"E:\Code\RayDi")
+RAYD_ROOT = Path(r"E:\Code\witwin-platform\RayD")
 
 
 @dataclass(frozen=True)
@@ -1153,7 +1153,7 @@ def main() -> None:
     parser.add_argument("--dynamic-x-offset", type=float, default=2.0)
     parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
-    parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
+    parser.add_argument("--rayd-root", type=Path, default=RAYD_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
     parser.add_argument("--include-backward", action="store_true")

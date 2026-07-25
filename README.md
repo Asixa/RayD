@@ -43,7 +43,9 @@ Release artifacts cover CPython 3.10 through 3.14 on Windows x86-64 and
 the Torch backend still contains the transitional `_C` extension. The
 `_stable_ops` library inside `rayd-torch` is untagged and uses the LibTorch 2.10
 Stable ABI boundary. The `rayd` meta-distribution is a universal pure-Python
-wheel and is the only distribution that also publishes an sdist.
+wheel and is the only distribution that also publishes an sdist. Release
+fatbins include native SM87 SASS, and CI loads the same `_stable_ops` binary
+across the declared Torch 2.10-and-newer compatibility matrix.
 
 > [!IMPORTANT]
 > RayD 0.6 uses explicit backend namespaces. The parent `rayd` namespace does

@@ -11,7 +11,7 @@ from typing import Any
 import torch
 
 from .benchmark_C_rayd_mitsuba_stress import (
-    RAYDI_ROOT,
+    RAYD_ROOT,
     _cleanup_drjit,
     _cleanup_torch,
     _load_rayd,
@@ -546,7 +546,7 @@ def main() -> None:
     )
     parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
-    parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
+    parser.add_argument("--rayd-root", type=Path, default=RAYD_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
     parser.add_argument("--include-backward", action="store_true")

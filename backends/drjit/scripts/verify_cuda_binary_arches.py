@@ -38,11 +38,49 @@ def _collect_binaries(inputs: list[Path], stems: tuple[str, ...], extract_root: 
 def _cuobjdump(flag: str, binary: Path) -> str:
     result = subprocess.run(
         ["cuobjdump", flag, str(binary)],
-        check=True,
         capture_output=True,
         text=True,
     )
-    return f"{result.stdout}\n{result.stderr}"
+    if result.returncode == 0:
+        return f"{result.stdout}\n{result.stderr}"
+
+    errors = [
+        f"cuobjdump {flag} failed for {binary} with exit code {result.returncode}:",
+        result.stderr.strip() or result.stdout.strip() or "<no output>",
+    ]
+    if binary.suffix == ".so":
+        with tempfile.TemporaryDirectory(prefix="rayd_cuda_fatbin_") as temp_dir:
+            fatbin = Path(temp_dir) / f"{binary.stem}.fatbin"
+            extraction = subprocess.run(
+                ["objcopy", "--dump-section", f".nv_fatbin={fatbin}", str(binary)],
+                capture_output=True,
+                text=True,
+            )
+            if extraction.returncode == 0 and fatbin.is_file() and fatbin.stat().st_size:
+                retry = subprocess.run(
+                    ["cuobjdump", flag, str(fatbin)],
+                    capture_output=True,
+                    text=True,
+                )
+                if retry.returncode == 0:
+                    return f"{retry.stdout}\n{retry.stderr}"
+                errors.extend(
+                    [
+                        f"cuobjdump {flag} failed for extracted {fatbin.name} "
+                        f"with exit code {retry.returncode}:",
+                        retry.stderr.strip() or retry.stdout.strip() or "<no output>",
+                    ]
+                )
+            else:
+                errors.extend(
+                    [
+                        f"Could not extract .nv_fatbin from {binary}:",
+                        extraction.stderr.strip()
+                        or extraction.stdout.strip()
+                        or "<no output>",
+                    ]
+                )
+    raise SystemExit("\n".join(errors))
 
 
 def main() -> None:
