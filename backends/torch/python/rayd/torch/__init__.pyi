@@ -3,6 +3,8 @@ from ._capabilities import backend_capabilities as backend_capabilities
 from .camera import Camera as Camera
 from .mesh import Mesh as Mesh
 from .scene import Scene as Scene
+from .sdf import SdfGrid as SdfGrid
+from .sdf import sdf_intersect as sdf_intersect
 from .types import (
     AxialEdgeVisibility as AxialEdgeVisibility,
     DfrAccum as DfrAccum,
@@ -20,6 +22,7 @@ from .types import (
     ReflEpcField as ReflEpcField,
     ReflectionChain as ReflectionChain,
     SceneGlobalGeometry as SceneGlobalGeometry,
+    SdfIntersection as SdfIntersection,
     SegmentChainVisibility as SegmentChainVisibility,
     SegmentPairVisibility as SegmentPairVisibility,
 )
