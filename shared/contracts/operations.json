@@ -5,7 +5,8 @@
     "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
     "visibility_edge", "visibility_chain",
     "reflection_trace", "reflection_accumulation", "diffraction_direct",
-    "diffraction_chain", "surfel", "reverse_ad", "forward_ad", "torch_compile"
+    "diffraction_chain", "surfel", "sdf_intersect",
+    "reverse_ad", "forward_ad", "torch_compile"
   ],
   "constants": {
     "invalid_signed_id": -1,
@@ -143,6 +144,24 @@
       ],
       "backend_extensions": {"drjit": ["prefix_depth"], "torch": []},
       "complex_encoding": {"drjit": "native_complex", "torch": "real_imag_components"}
+    },
+    "sdf_intersection": {
+      "canonical_fields": ["t", "hit_mask", "position", "normal", "steps"],
+      "field_types": {
+        "t": "float32[N]",
+        "hit_mask": "bool[N]",
+        "position": "float32[N, 3]",
+        "normal": "float32[N, 3]",
+        "steps": "int32[N]"
+      },
+      "differentiable_fields": ["t", "position", "normal"],
+      "backend_fields": {
+        "drjit": [],
+        "torch": ["t", "hit_mask", "position", "normal", "steps"]
+      },
+      "miss": {"t": "inf", "hit_mask": false, "position": 0.0, "normal": 0.0},
+      "miss_inertness": "A missed lane is bitwise inert: position and normal are exact positive zero, every gradient and tangent is exact positive zero, and the lane contributes no atomic to any shared gradient buffer.",
+      "non_finite_policy": "t = inf on a miss is the only non-finite value any output or derivative may carry."
     }
   },
   "operations": {
@@ -232,6 +251,35 @@
       "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
       "result": "diffraction_paths_or_accumulation",
       "ad": "fixed-path forward/VJP/JVP"
+    },
+    "sdf_intersect": {
+      "record": "docs/adr/0037-differentiable-sdf-intersection.md",
+      "integration": {"drjit": [], "torch": ["eager_native"]},
+      "inputs": [
+        "values", "position", "rotation", "scale", "origins", "directions",
+        "tmax", "max_steps", "relaxation", "eps_hit"
+      ],
+      "result": "sdf_intersection",
+      "representation": {
+        "values": "vertex-centered trilinear samples, shape [Nx, Ny, Nz] with N_i >= 2, world-metric distance, negative inside",
+        "placement": "oriented box from world-centre position, scalar-first unit quaternion rotation, and full side lengths scale",
+        "grid_coordinate": "u_i = (x_l_i / scale_i + 0.5) * (N_i - 1) after x_l = R^T (x_w - position)"
+      },
+      "ray_domain": "slab overlap of the ray with the oriented box clipped to tmax; an origin inside the box starts at t_lo = 0",
+      "ad": "fixed-winner forward/VJP/JVP by the implicit function theorem at the frozen hit, for values, position, rotation, scale, origins, and directions",
+      "numeric_policy": {
+        "relaxation_default": 0.9,
+        "max_steps_default": 64,
+        "bisection_steps": 32,
+        "eps_hit_voxel_fraction": 1e-3,
+        "eps_hit_default": "eps_hit_voxel_fraction * min_i(scale_i / (N_i - 1)), derived on the device without any host read",
+        "eps_graze": 1e-6,
+        "eps_norm": 1e-12,
+        "eps_parallel": 1e-7,
+        "grazing_clamp": "g_clamped = sign(g) * max(|g|, eps_graze) with sign(0) := +1, where g = grad_w D . wh",
+        "miss_sentinel": "inf",
+        "determinism": "the forward pass is bitwise deterministic and atomic-free; the values, position, rotation, and scale gradients accumulate across rays with float32 atomics"
+      }
     }
   },
   "tolerances": {
