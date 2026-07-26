@@ -53,6 +53,14 @@ D(u) = sum_{m in {0,1}^3} c_m * values[b + m],
 c_m  = prod_i ( m_i * f_i + (1 - m_i) * (1 - f_i) ).
 ```
 
+The grid coordinate is clamped to the sampled domain, `u_i := clamp(u_i, 0,
+N_i - 1)`, before that base/fraction split, so `f_i` always lies in `[0, 1]` and
+`D` is never evaluated at a `u` outside `[0, N_i - 1]`. The interpolant has no
+extrapolated branch: it is defined on the closed box and nowhere else. Every
+sample site in this record is already restricted to the traced interval of
+section 3, so the clamp only absorbs float32 rounding at the box faces rather
+than covering a real out-of-domain query.
+
 The sign convention is **negative inside, positive outside**, matching
 `witwin.core`. Values are world-metric distances. RayD never bakes a field,
 never rescales one, and never checks that one is eikonal.
@@ -133,20 +141,35 @@ defined recovery, not as a failure.
 The entry sample fixes the marching sign. With `d_0 = D(u(x_l(t_lo)))`,
 
 ```
-sigma = +1 if d_0 >= 0 else -1,
-t_0   = t_lo,
-t_k+1 = t_k + lambda * sigma * d_k,
+sigma   = +1 if d_0 >= 0 else -1,
+t_0     = t_lo,
+t_raw_k = t_k + lambda * sigma * d_k,
+t_k+1   = min(t_raw_k, t_hi),
 ```
 
 so a ray starting outside marches forward on a positive field and a ray starting
 inside marches forward on a negative one. `lambda` is the caller's relaxation
-factor in `(0, 1]`, default `0.9`. Each iteration is ordered:
+factor in `(0, 1]`, default `0.9`. **The step is clamped to `t_hi` before it is
+sampled.** The march therefore evaluates the field only on `[t_lo, t_hi]`, where
+section 1's interpolant is defined, and never on the extrapolated continuation of
+a step that overshoots the box. Each iteration is ordered:
 
 1. `|d_k| < eps_hit` terminates as a hit with `t* = t_k`;
-2. `sigma * d_k+1 < 0` terminates the march and enters bisection on the bracket
+2. `sigma * d_k+1 < 0`, with `d_k+1 = D(u(x_l(t_k+1)))` sampled at the clamped
+   `t_k+1`, terminates the march and enters bisection on the bracket
    `[t_k, t_k+1]`;
-3. `t_k+1 > t_hi` terminates as a miss;
+3. `t_raw_k > t_hi` terminates as a miss;
 4. exhausting `max_steps` iterations terminates as a miss.
+
+The sign-flip rule is tested before the exit rule deliberately: a step whose raw
+target leaves the box may still cross the level set inside it, and clamping the
+sample to `t_hi` is what makes that crossing decidable without leaving the
+sampled domain. Rule 3 fires on the unclamped `t_raw_k`, not on `t_k+1`, which by
+construction never exceeds `t_hi`. Because `sigma * d_k >= 0` holds on entry to
+every iteration, the bracket handed to bisection satisfies
+`t_lo <= t_k < t_k+1 <= t_hi`, so every reported `t*` satisfies
+`t_lo <= t* <= t_hi <= tmax`. A hit outside the box, or beyond `tmax`, is
+unreachable rather than merely unlikely.
 
 Bisection maintains the invariant `sigma * D(a) >= 0 > sigma * D(b)` on
 `[a, b] = [t_k, t_k+1]`. It performs at most `kSdfBisectionSteps = 32`
@@ -372,7 +395,8 @@ Phase 4 of the plan lands the following, as one change:
    copies **four** lines, not the three that ADR-0036 enumerates. ADR-0036's
    enforcement test counts no lines, so nothing fails, but its prose is a
    factual claim about the repository and must be amended in the same change
-   rather than left false.
+   rather than left false. ADR-0036 carries a forward reference to this item so
+   that an implementer reading only that record sees the pending amendment.
 5. `shared/contracts/compile_policy.json`: the new Torch translation units enter
    under `nvcc_default`, raising the Torch object-unit count and its
    `nvcc_default` membership by the number of new units; the recomputed

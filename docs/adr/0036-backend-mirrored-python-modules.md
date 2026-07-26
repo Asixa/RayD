@@ -40,6 +40,11 @@ copies pin in the shared `_SCHEMA_SHA256` line, and
 cross-checks every line against that contract. Everything outside those three
 lines is identical between the copies.
 
+ADR-0037 adds a fourth divergent line, `"sdf_intersect"` (`False` versus
+`True`), when its Phase 4 contract change lands; that change amends the count
+and the enumeration in this section in the same commit. Until then the count
+above is current.
+
 ## Consequences
 
 - The byte-identity assertion is the anti-drift mechanism for
