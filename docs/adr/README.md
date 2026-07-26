@@ -2,7 +2,7 @@
 
 Every accepted RayD decision record lives in this directory as
 `NNNN-<slug>.md`. The sequence is not contiguous: it runs `0001`, `0002`, then
-`0025`, `0026`, then `0028`-`0036`. The gaps are deliberate. This file records
+`0025`, `0026`, then `0028`-`0037`. The gaps are deliberate. This file records
 why, so the sequence is not "tidied" by a later reader.
 
 ## Index
@@ -22,6 +22,7 @@ why, so the sequence is not "tidied" by a later reader.
 | [0034](0034-validated-package-source-discovery.md) | Validated package source discovery | `validated-package-source-discovery` | 2026-07-22 | Accepted |
 | [0035](0035-cuda-compile-flag-policy.md) | Per-translation-unit CUDA numeric compile-flag policy | `cuda-numeric-compile-flag-policy` | 2026-07-24 | Accepted |
 | [0036](0036-backend-mirrored-python-modules.md) | Backend-mirrored Python modules | `backend-mirrored-python-modules` | 2026-07-25 | Accepted |
+| [0037](0037-differentiable-sdf-intersection.md) | Differentiable SDF ray intersection | `differentiable-sdf-intersection` | 2026-07-26 | Accepted |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.
