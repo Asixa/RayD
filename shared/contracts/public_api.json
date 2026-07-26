@@ -15,6 +15,7 @@
     "diffraction_direct",
     "diffraction_chain",
     "surfel",
+    "sdf_intersect",
     "reverse_ad",
     "forward_ad",
     "torch_compile"
@@ -40,6 +41,7 @@
     "diffraction_direct": {"category": "multipath", "stability": "provisional", "summary": "First-order diffraction path and accumulation primitives."},
     "diffraction_chain": {"category": "multipath", "stability": "experimental", "summary": "Recursive diffraction path primitives."},
     "surfel": {"category": "surfel", "stability": "experimental", "summary": "Dr.Jit-only surfel query primitives."},
+    "sdf_intersect": {"category": "core", "stability": "provisional", "summary": "Torch-only sphere-traced intersection of a caller-owned dense SDF grid placed by an oriented box."},
     "reverse_ad": {"category": "core", "stability": "stable", "summary": "Fixed-winner reverse-mode derivatives."},
     "forward_ad": {"category": "core", "stability": "provisional", "summary": "Fixed-winner forward-mode derivatives where implemented."},
     "torch_compile": {"category": "experimental", "stability": "provisional", "summary": "Torch dispatcher and torch.compile integration."}
@@ -85,6 +87,7 @@
         "diffraction_direct": true,
         "diffraction_chain": true,
         "surfel": true,
+        "sdf_intersect": false,
         "reverse_ad": true,
         "forward_ad": true,
         "torch_compile": false
@@ -107,6 +110,7 @@
         "diffraction_direct": true,
         "diffraction_chain": true,
         "surfel": false,
+        "sdf_intersect": true,
         "reverse_ad": true,
         "forward_ad": true,
         "torch_compile": true

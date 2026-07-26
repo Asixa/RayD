@@ -68,6 +68,8 @@ RayD focuses on geometry and wave-propagation primitives:
   layer stacks, and Jones field transport
 - solver-neutral RF scattering table, sampling, ensemble, and phase-screen
   evaluation primitives over caller-owned resident tensors
+- differentiable sphere-traced intersection of a caller-owned dense signed
+  distance field (Torch backend)
 - Dr.Jit and PyTorch reverse/forward automatic differentiation
 - source-level integration for native downstream CMake projects
 
@@ -109,6 +111,7 @@ edges, visibility, and multipath query results.
 | EPC path and field queries | Yes | Yes |
 | Direct and chained diffraction | Yes | Yes |
 | Surfel primitives | Yes | No |
+| SDF grid intersection | No | Yes |
 | Reverse-mode AD | Yes | Yes |
 | Forward-mode AD | Yes | Yes |
 | `torch.compile` integration | No | Yes |
@@ -153,6 +156,20 @@ The Dr.Jit backend additionally exposes:
 Torch reaches reflection accumulation and EPC path geometry through the
 dispatcher ops `torch.ops.rayd_torch.reflection_accumulation_forward` and
 `reflection_epc_paths_forward` rather than through `Scene` methods.
+
+The Torch backend additionally exposes a standalone differentiable signed
+distance field query:
+
+- `SdfGrid(values, position, rotation, scale)`: a caller-owned dense grid of
+  vertex-centred world-metric distances placed by an oriented box
+- `sdf_intersect(grid, origins, directions, ...)`: sphere-traced intersection
+  returning `t`, `hit_mask`, `position`, `normal`, and a `steps` diagnostic
+
+Gradients and tangents reach the grid values, the box transform, and the rays
+through the frozen-winner implicit function theorem. The primitive is
+standalone: it uses no OptiX, does not join a `Scene`, and does not mix with
+triangle geometry. See
+[`ADR-0037`](docs/adr/0037-differentiable-sdf-intersection.md).
 
 ## Differentiation Contract
 

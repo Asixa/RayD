@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "ee3832415f2f3d4aebc5a90ce317eb878bd52fca77cdb052347922b2005ec8bd"
+_SCHEMA_SHA256 = "8996fadff4002023b672a585d3f861fc968319bd2a5b2dec82b437a19d2424aa"
 _BACKEND = "torch"
 _TYPING = "complete"
 
@@ -29,6 +29,7 @@ _CAPABILITIES = {
     "diffraction_direct": True,
     "diffraction_chain": True,
     "surfel": False,
+    "sdf_intersect": True,
     "reverse_ad": True,
     "forward_ad": True,
     "torch_compile": True,
@@ -49,6 +50,7 @@ _API_CLASSIFICATION = {
     "diffraction_direct": ("multipath", "provisional"),
     "diffraction_chain": ("multipath", "experimental"),
     "surfel": ("surfel", "experimental"),
+    "sdf_intersect": ("core", "provisional"),
     "reverse_ad": ("core", "stable"),
     "forward_ad": ("core", "provisional"),
     "torch_compile": ("experimental", "provisional"),

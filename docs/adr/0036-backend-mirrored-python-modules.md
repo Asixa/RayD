@@ -31,27 +31,23 @@ independence, and a third `rayd-shared` distribution violates the frozen
 distribution set. Any edit lands in both copies in the same change with
 identical bytes, including line endings.
 
-`_capabilities.py` diverges on exactly three lines, each required: `_BACKEND`
+`_capabilities.py` diverges on exactly four lines, each required: `_BACKEND`
 (`"drjit"` versus `"torch"`), `"surfel"` (`True` versus `False`, per
-ADR-0001), and `"torch_compile"` (`False` versus `True`). All three values are
+ADR-0001), `"sdf_intersect"` (`False` versus `True`, per ADR-0037), and
+`"torch_compile"` (`False` versus `True`). All four values are
 frozen in `shared/contracts/public_api.json`, whose EOL-normalized SHA-256 both
 copies pin in the shared `_SCHEMA_SHA256` line, and
 `tests/test_public_api_manifest.py::test_runtime_modules_are_validated_copies_of_shared_manifest`
-cross-checks every line against that contract. Everything outside those three
+cross-checks every line against that contract. Everything outside those four
 lines is identical between the copies.
-
-ADR-0037 adds a fourth divergent line, `"sdf_intersect"` (`False` versus
-`True`), when its Phase 4 contract change lands; that change amends the count
-and the enumeration in this section in the same commit. Until then the count
-above is current.
 
 ## Consequences
 
 - The byte-identity assertion is the anti-drift mechanism for
   `path_exchange.py`; a one-sided edit, or a CRLF/LF mismatch between the
   copies, fails the root suite immediately.
-- A `_capabilities.py` change outside the three backend-specific lines must be
-  applied to both copies; a change to one of the three lines is a public-API
+- A `_capabilities.py` change outside the four backend-specific lines must be
+  applied to both copies; a change to one of the four lines is a public-API
   capability change governed by `shared/contracts/public_api.json` and, for
   `surfel`, ADR-0001.
 - Sharing these modules through a common wheel or cross-import would require
