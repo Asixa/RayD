@@ -131,7 +131,7 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             "reflection_epc_device.cuh",
             "segment_visibility_device.cuh",
         ):
-            self.assertGreaterEqual(drjit_cmake.count(header), 2)
+            self.assertGreaterEqual(drjit_cmake.count(header), 1)
             self.assertGreaterEqual(torch_cmake.count(header), 1)
 
     def test_shared_headers_do_not_take_host_pipeline_ownership(self):

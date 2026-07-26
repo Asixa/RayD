@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rayd.dev/schemas/compile_policy.schema.json",
+  "title": "RayD per-translation-unit CUDA numeric compile-flag contract",
+  "type": "object",
+  "required": [
+    "version", "record", "scope", "profiles", "translation_units",
+    "frozen_divergences", "shared_header_exposure", "adr_mandates",
+    "uncontracted", "notes"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "record": {"type": "string", "minLength": 1},
+    "scope": {
+      "type": "object",
+      "required": ["records", "excludes"],
+      "properties": {
+        "records": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "excludes": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "profiles": {
+      "type": "object",
+      "required": ["nvcc_default", "fast_math", "no_fmad", "precise_no_ftz"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["flags", "semantics", "note"],
+        "properties": {
+          "flags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "semantics": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "note": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "translation_units": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["backend", "unit", "source", "kind", "target", "profile", "default_enabled"],
+        "properties": {
+          "backend": {"enum": ["drjit", "torch"]},
+          "unit": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["object", "ptx"]},
+          "target": {"type": "string", "minLength": 1},
+          "profile": {"enum": ["nvcc_default", "fast_math", "no_fmad", "precise_no_ftz"]},
+          "default_enabled": {"type": "boolean"},
+          "arch": {"type": "string", "minLength": 1},
+          "option": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "frozen_divergences": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["id", "aspect", "summary", "sides", "shared_headers", "evidence", "status"],
+        "properties": {
+          "id": {"type": "string", "minLength": 2},
+          "aspect": {"enum": ["numeric_profile", "ptx_arch", "structural"]},
+          "summary": {"type": "string", "minLength": 1},
+          "sides": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["backend", "unit", "value"],
+              "properties": {
+                "backend": {"enum": ["drjit", "torch"]},
+                "unit": {"type": "string", "minLength": 1},
+                "value": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          },
+          "shared_headers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "status": {"enum": ["frozen", "open"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "shared_header_exposure": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {"enum": ["nvcc_default", "fast_math", "no_fmad", "precise_no_ftz"]}
+      }
+    },
+    "adr_mandates": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["record", "profile", "exhaustive", "sources", "excluded_sources", "rule"],
+        "properties": {
+          "record": {"type": "string", "minLength": 1},
+          "profile": {"enum": ["nvcc_default", "fast_math", "no_fmad", "precise_no_ftz"]},
+          "exhaustive": {"type": "boolean"},
+          "sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "excluded_sources": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "rule": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "uncontracted": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "notes": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "additionalProperties": false
+}

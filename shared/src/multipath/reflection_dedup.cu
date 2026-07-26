@@ -173,4 +173,131 @@ void launch_reflection_dedup_compact(const ReflectionDedupCompactParams &params)
     reflection_dedup_compact_kernel<<<block_count(params.ray_count), kBlockSize, 0, params.stream>>>(params);
 }
 
+ReflectionDedupSequenceStatus launch_reflection_dedup_sequence(
+    const ReflectionDedupSequenceParams &params) {
+    launch_reflection_dedup_build_keys({
+        params.ray_count,
+        params.max_bounces,
+        params.bounce_count,
+        params.shape_ids,
+        params.prim_ids,
+        params.face_offsets,
+        params.mesh_count,
+        params.canonical_table,
+        params.canonical_table_size,
+        params.keys_in,
+        params.ray_indices_in,
+        params.stream
+    });
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kBuildKeys};
+
+    error = params.run_pass(params, ReflectionDedupDevicePass::kFirstSort);
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kFirstSort};
+
+    launch_reflection_dedup_mark_boundaries(
+        params.ray_count, params.keys_out, params.boundary_flags, params.stream);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kFirstBoundaries};
+
+    error = params.run_pass(params, ReflectionDedupDevicePass::kFirstScan);
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kFirstScan};
+
+    launch_reflection_dedup_zero_base_ids(
+        params.ray_count, params.keys_out, params.hash_group_ids, params.stream);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kFirstZeroBase};
+
+    launch_reflection_dedup_sub_cluster({
+        params.ray_count,
+        params.max_bounces,
+        params.keys_out,
+        params.ray_indices_out,
+        params.hash_group_ids,
+        params.bounce_count,
+        params.raw_image_x,
+        params.raw_image_y,
+        params.raw_image_z,
+        params.image_source_tolerance,
+        params.cluster_keys_in,
+        params.cluster_ray_indices_in,
+        params.stream
+    });
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kSubCluster};
+
+    error = params.run_pass(params, ReflectionDedupDevicePass::kSecondSort);
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kSecondSort};
+
+    launch_reflection_dedup_mark_boundaries(
+        params.ray_count, params.cluster_keys_out, params.boundary_flags, params.stream);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kSecondBoundaries};
+
+    error = params.run_pass(params, ReflectionDedupDevicePass::kSecondScan);
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kSecondScan};
+
+    launch_reflection_dedup_zero_base_ids(
+        params.ray_count, params.cluster_keys_out, params.unique_path_ids, params.stream);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kSecondZeroBase};
+
+    launch_reflection_dedup_compact({
+        params.ray_count,
+        params.max_bounces,
+        params.cluster_keys_out,
+        params.cluster_ray_indices_out,
+        params.unique_path_ids,
+        params.bounce_count,
+        params.shape_ids,
+        params.prim_ids,
+        params.raw_t,
+        params.raw_bary_u,
+        params.raw_bary_v,
+        params.raw_hit_x,
+        params.raw_hit_y,
+        params.raw_hit_z,
+        params.raw_norm_x,
+        params.raw_norm_y,
+        params.raw_norm_z,
+        params.raw_image_x,
+        params.raw_image_y,
+        params.raw_image_z,
+        params.out_unique_count,
+        params.out_bounce_count,
+        params.out_shape_ids,
+        params.out_prim_ids,
+        params.out_t,
+        params.out_bary_u,
+        params.out_bary_v,
+        params.out_hit_x,
+        params.out_hit_y,
+        params.out_hit_z,
+        params.out_norm_x,
+        params.out_norm_y,
+        params.out_norm_z,
+        params.out_image_x,
+        params.out_image_y,
+        params.out_image_z,
+        params.out_discovery_count,
+        params.out_representative_ray_index,
+        params.stream
+    });
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+        return {error, ReflectionDedupSequenceStep::kCompact};
+
+    return {cudaSuccess, ReflectionDedupSequenceStep::kNone};
+}
+
 } // namespace rayd::shared::multipath

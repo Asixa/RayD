@@ -67,6 +67,16 @@ for name in ("raydn", "rayd.native"):
         self.assertEqual(set(rdd.backend_capabilities()), required)
         self.assertEqual(set(rdt.backend_capabilities()), required)
 
+    def test_drjit_all_matches_the_built_extension(self):
+        import rayd.drjit as rdd
+
+        # tests/test_public_api_manifest.py derives __all__ statically from
+        # rayd.cpp; this closes the loop against the extension actually built.
+        declared = set(rdd.__all__)
+        runtime = {name for name in dir(rdd._C) if not name.startswith("_")}
+        runtime |= {"api_manifest", "backend_capabilities"}
+        self.assertEqual(declared, runtime, sorted(declared ^ runtime))
+
 
 if __name__ == "__main__":
     unittest.main()

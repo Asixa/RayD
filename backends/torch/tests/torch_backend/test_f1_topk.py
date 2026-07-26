@@ -103,6 +103,105 @@ class TorchTopKNearestEdgeTests(unittest.TestCase):
         self.assertEqual(jvp.shape, (2, 2))
         self.assertTrue(torch.isfinite(jvp).all().item())
 
+    @staticmethod
+    def make_two_mesh_scene(*, requires_grad=False):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        verts0 = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=requires_grad,
+        )
+        verts1 = torch.tensor(
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=requires_grad,
+        )
+        scene = rt.Scene()
+        scene.add_mesh(rt.Mesh(verts0, faces))
+        scene.add_mesh(rt.Mesh(verts1, faces))
+        scene.build()
+        return scene, verts0, verts1
+
+    def test_two_mesh_forward_and_fixed_winner_vjp_routes_to_each_mesh(self):
+        scene, verts0, verts1 = self.make_two_mesh_scene(requires_grad=True)
+        point = torch.tensor(
+            [[0.5, -0.25, 0.0], [10.5, -0.25, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        result = scene.nearest_edges(point, 2)
+        self.assertEqual(tuple(result.distances.shape), (2, 2))
+        self.assertTrue((result.distances[:, 1:] >= result.distances[:, :-1]).all().item())
+        torch.testing.assert_close(
+            result.distances[:, 0],
+            torch.tensor([0.25, 0.25], device="cuda"),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        result.distances[:, 0].sum().backward()
+        # Each query's fixed winner is its own mesh's bottom edge with s=0.5,
+        # so an exact-value check also proves no cross-mesh gradient leak.
+        expected_vertex_grad = torch.tensor(
+            [[0.0, 0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.0]], device="cuda"
+        )
+        torch.testing.assert_close(verts0.grad, expected_vertex_grad, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(verts1.grad, expected_vertex_grad, atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(
+            point.grad,
+            torch.tensor([[0.0, -1.0, 0.0], [0.0, -1.0, 0.0]], device="cuda"),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+    def test_two_mesh_fixed_winner_jvp_uses_per_mesh_tangents(self):
+        faces = torch.tensor([[0, 1, 2]], device="cuda", dtype=torch.int32)
+        point = torch.tensor(
+            [[0.5, -0.25, 0.0], [10.5, -0.25, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+
+        def query(verts0, verts1):
+            scene = rt.Scene()
+            scene.add_mesh(rt.Mesh(verts0, faces))
+            scene.add_mesh(rt.Mesh(verts1, faces))
+            scene.build()
+            return scene.nearest_edges(point, 2).distances
+
+        verts0 = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        verts1 = torch.tensor(
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [10.0, 1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        tangent0 = torch.zeros_like(verts0)
+        tangent1 = torch.tensor(
+            [[0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0]],
+            device="cuda",
+            dtype=torch.float32,
+        )
+        primal, jvp = torch.func.jvp(query, (verts0, verts1), (tangent0, tangent1))
+        torch.testing.assert_close(
+            primal[:, 0],
+            torch.tensor([0.25, 0.25], device="cuda"),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        # Query 0 tracks mesh 0, whose tangent is zero. Query 1's winners are
+        # mesh 1's bottom edge (unit(c - p) = (0, 1, 0)) and hypotenuse
+        # (unit(c - p) = (1, 1, 0) / sqrt(2)), both translating by (0, -1, 0).
+        expected = torch.tensor(
+            [[0.0, 0.0], [-1.0, -(2.0 ** 0.5) / 2.0]], device="cuda"
+        )
+        torch.testing.assert_close(jvp, expected, atol=1e-5, rtol=1e-5)
+
     def test_torch_compile_matches_eager(self):
         scene, _ = self.make_scene()
         point = torch.tensor([[0.2, 0.3, 0.4]], device="cuda")

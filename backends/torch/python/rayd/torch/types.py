@@ -106,7 +106,7 @@ class Intersection:
     global_prim_id: torch.Tensor
 
     def is_valid(self) -> torch.Tensor:
-        if _C is not None and self.t.device.type == "cuda":
+        if self.t.device.type == "cuda":
             return core_ops().intersection_valid(self.t, self.shape_id)
         if self.shape_id.numel() != self.t.numel():
             return torch.isfinite(self.t)
