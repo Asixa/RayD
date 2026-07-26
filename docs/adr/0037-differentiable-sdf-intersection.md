@@ -354,10 +354,13 @@ else, and never synchronizes.
 - **No OptiX and no `Scene`.** The primitive is standalone: an `SdfGrid` holder
   plus a functional entry point. It does not participate in acceleration
   structure builds and does not mix with triangle geometry.
-- **No committed-PTX exposure.** New device code must not include any header
-  listed in a `backends/drjit/ptx_sources.json` module include closure, and must
-  not modify any existing shared header. New shared device math lives in new
-  files under `shared/include/rayd/shared/sdf/`. This keeps
+- **No committed-PTX exposure.** No SDF header or translation unit may be
+  reachable from any `backends/drjit/ptx_sources.json` module include closure,
+  and no existing shared header may be modified. New shared device math lives
+  in new files under `shared/include/rayd/shared/sdf/`; those files may include
+  closure-listed leaf headers such as `rayd/shared/math/vec3.h` and
+  `rayd/shared/rt/qualifiers.h` read-only, because inclusion in that direction
+  leaves every PTX closure and digest unchanged. This keeps
   `tests/test_ptx_source_digest.py` green by construction rather than by repair.
 - **`nvcc_default` only.** Every new CUDA translation unit takes the
   `nvcc_default` profile. No new numeric flag, no profile move, no new profile,
@@ -502,7 +505,8 @@ Stop and reopen this record before:
   atomic contribution;
 - assigning a new CUDA translation unit anything other than `nvcc_default`, or
   adding a target-wide CUDA numeric flag;
-- including a header that appears in a `backends/drjit/ptx_sources.json` module
-  closure, or editing an existing shared header;
+- making any SDF header or translation unit reachable from a
+  `backends/drjit/ptx_sources.json` module closure, or editing an existing
+  shared header;
 - adding a second implementation, a dispatcher, a compatibility alias, or a
   `sdf_intersect_v2` name for any of it.
