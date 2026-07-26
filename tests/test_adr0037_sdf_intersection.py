@@ -181,7 +181,7 @@ class Adr0037AlgorithmTests(AdrTestCase):
         ]
 
     def test_relaxed_step_freezes_the_entry_sign(self) -> None:
-        self.assertPhrase("t_k+1 = t_k + lambda * sigma * d_k", self.march)
+        self.assertPhrase("t_raw_k = t_k + lambda * sigma * d_k", self.march)
         self.assertPhrase("sigma = +1 if d_0 >= 0 else -1", self.march)
         self.assertPhrase("`(0, 1]`, default `0.9`", self.march)
 
@@ -189,10 +189,28 @@ class Adr0037AlgorithmTests(AdrTestCase):
         for rule in (
             "`|d_k| < eps_hit` terminates as a hit",
             "sigma * d_k+1 < 0",
-            "t_k+1 > t_hi` terminates as a miss",
+            "t_raw_k > t_hi` terminates as a miss",
             "exhausting `max_steps` iterations terminates as a miss",
         ):
             self.assertPhrase(rule, self.march)
+
+    def test_the_step_is_clamped_so_no_hit_can_land_outside_the_interval(self) -> None:
+        """A sign flip found past `t_hi` would be read off the extrapolated
+        interpolant and could report a hit beyond `tmax`. The step clamp, and the
+        rule-3 test on the unclamped target, are what exclude that."""
+        for pinned in (
+            "t_k+1   = min(t_raw_k, t_hi)",
+            "The step is clamped to `t_hi` before it is sampled",
+            "t_lo <= t* <= t_hi <= tmax",
+        ):
+            self.assertPhrase(pinned, self.march)
+
+    def test_the_interpolant_is_never_evaluated_outside_its_domain(self) -> None:
+        body = sections(read(ADR_PATH), 3)["1. Field representation"]
+        self.assertPhrase("u_i := clamp(u_i, 0, N_i - 1)", body)
+        self.assertPhrase(
+            "`D` is never evaluated at a `u` outside `[0, N_i - 1]`", body
+        )
 
     def test_bisection_fallback_is_bounded_and_always_reports_a_hit(self) -> None:
         for pinned in (
@@ -489,13 +507,17 @@ class Adr0037ContractStateTests(AdrTestCase):
         self.assertIn(CAPABILITY, self.operations["operations"])
 
     def test_no_sdf_translation_unit_may_leave_the_nvcc_default_profile(self) -> None:
-        units = self.compile_policy["translation_units"]
-        if "sdf" not in json.dumps(units):
+        units = [
+            unit
+            for unit in self.compile_policy["translation_units"]
+            if "sdf" in unit["source"]
+        ]
+        if not units:
             self.skipTest("Phase 3a has not added an SDF translation unit yet")
-        for backend, entry in units.items():
-            for unit in entry.get("objects", []):
-                if "sdf" in unit["source"]:
-                    self.assertEqual(unit["profile"], "nvcc_default", msg=backend)
+        for unit in units:
+            self.assertEqual(
+                unit["profile"], "nvcc_default", msg=f"{unit['backend']}:{unit['unit']}"
+            )
 
 
 if __name__ == "__main__":
