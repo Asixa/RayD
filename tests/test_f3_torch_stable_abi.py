@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
+import textwrap
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,11 +71,78 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIn("torch.ops.load_library", loader)
         self.assertIn("torch.classes.rayd_torch", loader)
 
+    def run_probe(self, body: str) -> None:
+        result = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(body)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_package_loads_legacy_before_using_custom_classes(self):
-        source = (TORCH / "python" / "rayd" / "torch" / "__init__.py").read_text(encoding="utf-8")
-        self.assertLess(source.index("from . import _legacy"), source.index("from .scene import Scene"))
-        self.assertIn("_NATIVE_AVAILABLE = _legacy.AVAILABLE or _legacy.is_registered()", source)
-        self.assertIn("_C = (_compat_extension or _compat) if _NATIVE_AVAILABLE else None", source)
+        # sys.modules preserves insertion order, and a module is inserted when
+        # its execution starts, so this observes the real import order rather
+        # than the text of __init__.py.
+        self.run_probe(
+            """
+            import sys
+            import rayd.torch
+            order = list(sys.modules)
+            assert "rayd.torch._legacy" in order, "legacy loader was never imported"
+            assert order.index("rayd.torch._legacy") < order.index("rayd.torch.scene"), order
+            from rayd.torch import _legacy
+            if _legacy.is_registered():
+                import torch
+                torch.classes.rayd_torch.Scene
+            """
+        )
+
+    def test_native_metadata_shim_tracks_the_legacy_dispatcher(self):
+        # `_C` doubles as the "native dispatcher available" sentinel for the
+        # autograd/scene guards, so it must never be non-None while the legacy
+        # dispatcher is missing, and the pure-Python stand-in must stay deleted.
+        self.run_probe(
+            """
+            import rayd.torch as rt
+            from rayd.torch import _legacy
+            assert not hasattr(rt, "_compat"), "pure-Python _C stand-in is back"
+            assert rt._NATIVE_AVAILABLE == (_legacy.AVAILABLE or _legacy.is_registered())
+            assert rt._C is None or rt._NATIVE_AVAILABLE, "_C is set without a dispatcher"
+            assert (rt._EXTENSION_IMPORT_ERROR is None) == rt._NATIVE_AVAILABLE
+            if rt._C is not None:
+                assert rt._C.build_info()["backend"] == "torch"
+                assert rt._C.__file__.endswith((".pyd", ".so", ".dylib"))
+            """
+        )
+
+    def test_stable_accessors_have_no_legacy_dispatch_fallback(self):
+        import torch
+
+        from rayd.torch import _legacy, _stable
+
+        if _legacy.AVAILABLE or _legacy.is_registered():
+            # CMake builds `_stable_ops` unconditionally under
+            # RAYD_TORCH_BUILD_NATIVE while `_legacy_ops` is gated behind
+            # RAYD_TORCH_BUILD_PYTHON_MODULE, so a loadable legacy dispatcher
+            # implies a loadable stable ABI library.
+            self.assertTrue(_stable.AVAILABLE, _stable.LOAD_ERROR)
+
+        if _stable.AVAILABLE:
+            self.assertIs(_stable.camera_ops(), torch.ops.rayd_torch_stable)
+            self.assertIs(_stable.core_ops(), torch.ops.rayd_torch_stable)
+
+        with mock.patch.object(_stable, "AVAILABLE", False):
+            for accessor in (_stable.camera_ops, _stable.core_ops):
+                with self.subTest(accessor=accessor.__name__):
+                    with self.assertRaises(RuntimeError) as caught:
+                        accessor()
+                    self.assertIn("stable ABI operators are unavailable", str(caught.exception))
+                    self.assertIs(caught.exception.__cause__, _stable.LOAD_ERROR)
+
+        source = (TORCH / "python" / "rayd" / "torch" / "_stable.py").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"torch\.ops\.rayd_torch(?!_stable)", source))
 
     def test_plan13_extern_c_integration_surface_is_retired(self):
         include = TORCH / "include" / "rayd" / "torch"

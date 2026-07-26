@@ -7,6 +7,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "shared" / "include" / "rayd" / "shared"
 SHARED_SOURCE = ROOT / "shared" / "src"
 
+# A local build drops generated trees under backends/*/build (notably the Torch
+# rayd-source-bundle, which is a verbatim copy of shared/src). Those copies are
+# build output, not a second definition, so ownership scans must skip them.
+_BUILD_OUTPUT_DIRS = frozenset({"build", "artifacts", "_skbuild", "dist"})
+
+
+def _is_build_output(path: Path) -> bool:
+    return any(part in _BUILD_OUTPUT_DIRS for part in path.relative_to(ROOT).parts)
+
+
 UNITS = {
     "aabb": (
         SHARED_INCLUDE / "edge" / "edge_aabb.h",
@@ -52,12 +62,14 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             "launch_reflection_dedup_zero_base_ids",
             "launch_reflection_dedup_sub_cluster",
             "launch_reflection_dedup_compact",
+            "launch_reflection_dedup_sequence",
         ):
             self.assertRegex(dedup, rf"\b{name}\s*\(")
         for params in (
             "ReflectionDedupBuildKeysParams",
             "ReflectionDedupSubClusterParams",
             "ReflectionDedupCompactParams",
+            "ReflectionDedupSequenceParams",
         ):
             body = self._struct_body(dedup, params)
             self.assertIn("*", body)
@@ -146,8 +158,12 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             "pack_global_geometry_kernel": "shared/src/scene/packing.cu",
             "pack_global_vertex_tangent_kernel": "shared/src/scene/packing.cu",
         }
-        cuda_sources = list((ROOT / "shared").rglob("*.cu"))
-        cuda_sources += list((ROOT / "backends").rglob("*.cu"))
+        cuda_sources = [
+            path
+            for root in ((ROOT / "shared"), (ROOT / "backends"))
+            for path in root.rglob("*.cu")
+            if not _is_build_output(path)
+        ]
         for kernel, expected in expected_locations.items():
             definitions = []
             pattern = re.compile(rf"__global__\s+void\s+{kernel}\s*\(")

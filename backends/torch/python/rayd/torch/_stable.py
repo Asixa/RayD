@@ -40,25 +40,43 @@ def _load() -> tuple[bool, Exception | None]:
     )
     if all(hasattr(torch.ops.rayd_torch_stable, name) for name in required):
         return True, None
+    first_error: Exception | None = None
     for path in _candidates():
         if not path.is_file():
             continue
         try:
             torch.ops.load_library(str(path))
-        except Exception as exc:  # preserve the actual loader error for diagnostics
-            return False, exc
+        except Exception as exc:  # retain the first loader error for diagnostics
+            if first_error is None:
+                first_error = exc
+            continue
         if all(hasattr(torch.ops.rayd_torch_stable, name) for name in required):
             return True, None
-        return False, RuntimeError(f"Stable ABI operators were not registered by {path}")
+        if first_error is None:
+            first_error = RuntimeError(
+                f"Stable ABI operators were not registered by {path}"
+            )
+    if first_error is not None:
+        return False, first_error
     return False, FileNotFoundError(f"RayD stable ABI library {_library_name()} was not found")
 
 
 AVAILABLE, LOAD_ERROR = _load()
 
 
+def _stable_ops():
+    # RayD has no legacy-dispatch fallback: a failed stable ABI load is a hard
+    # error so a broken build cannot silently run a different code path.
+    if not AVAILABLE:
+        raise RuntimeError(
+            f"RayD Torch stable ABI operators are unavailable: {_library_name()} did not load."
+        ) from LOAD_ERROR
+    return torch.ops.rayd_torch_stable
+
+
 def camera_ops():
-    return torch.ops.rayd_torch_stable if AVAILABLE else torch.ops.rayd_torch
+    return _stable_ops()
 
 
 def core_ops():
-    return torch.ops.rayd_torch_stable if AVAILABLE else torch.ops.rayd_torch
+    return _stable_ops()

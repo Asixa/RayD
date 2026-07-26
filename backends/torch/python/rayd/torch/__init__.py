@@ -4,21 +4,22 @@ import torch as _torch  # noqa: F401
 
 from . import _stable
 from . import _legacy
-from . import _compat
 
 try:
-    from . import _C as _compat_extension
-except ImportError as exc:
-    _compat_extension = None
-    _COMPAT_IMPORT_ERROR = exc
-else:
-    _COMPAT_IMPORT_ERROR = None
+    from . import _C as _extension
+except ImportError:
+    _extension = None
 
-# During migration, older combined `_C` builds may register the legacy
-# dispatcher as an import side effect. New builds load `_legacy_ops` first and
-# keep `_C` as metadata-only compatibility surface.
+# Three native artifacts back this package. `_legacy_ops` is the primary
+# dispatcher and owns `torch.ops.rayd_torch` plus `torch.classes.rayd_torch.Scene`;
+# `_stable_ops` is the LibTorch Stable ABI slice loaded by `_stable`; `_C` is a
+# metadata-only pybind11 module built alongside `_legacy_ops`. `_NATIVE_AVAILABLE`
+# is the one dispatcher-availability signal and is what submodules gate native
+# calls on. `_C` is not that signal in either direction: it is forced to None
+# when the dispatcher did not load, but it is also None when the dispatcher DID
+# load (e.g. via RAYD_TORCH_LEGACY_LIBRARY) while the metadata module is absent.
 _NATIVE_AVAILABLE = _legacy.AVAILABLE or _legacy.is_registered()
-_C = (_compat_extension or _compat) if _NATIVE_AVAILABLE else None
+_C = _extension if _NATIVE_AVAILABLE else None
 _EXTENSION_IMPORT_ERROR = None if _NATIVE_AVAILABLE else _legacy.LOAD_ERROR
 
 if _NATIVE_AVAILABLE:

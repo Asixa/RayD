@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from . import _C
+from .autograd import _require_native_dispatcher
 from .autograd import accum_dfr_chain_native as _accum_dfr_chain
 from .autograd import accum_dfr_coherent_direct_native as _accum_dfr_coherent_direct
 from .autograd import accum_dfr_direct_native as _accum_dfr_direct
@@ -104,8 +104,7 @@ class Scene:
         }
 
     def build(self) -> None:
-        if _C is None:
-            raise RuntimeError("RayD Torch extension is not built yet.")
+        _require_native_dispatcher()
         specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
         mesh_flags = []
         for mesh, dynamic in self._meshes:

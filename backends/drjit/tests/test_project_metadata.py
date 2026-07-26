@@ -72,6 +72,7 @@ class ProjectMetadataTests(unittest.TestCase):
         workflow = (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         release = (WORKSPACE_ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        cuda_helper = (ROOT / "cmake" / "rayd_cuda.cmake").read_text(encoding="utf-8")
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
@@ -83,7 +84,11 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("name: pypi-rayd-torch", release)
         self.assertEqual(release.count("name: pypi\n"), 1)
 
-        self.assertGreaterEqual(cmake.count("${RAYD_CUDA_GENCODE_FLAGS}"), 4)
+        # Every CUDA object translation unit is compiled by rayd_cuda_object(), which
+        # is the single site that applies the gencode flags to both platforms.
+        self.assertGreaterEqual(cmake.count("rayd_cuda_object("), 13)
+        self.assertIn("${RAYD_CUDA_GENCODE_FLAGS}", cuda_helper)
+        self.assertIn("${RAYD_CUDA_GENCODE_FLAGS_LIST}", cuda_helper)
         self.assertIn("-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}", cmake)
         self.assertIn(
             "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}",
@@ -151,7 +156,9 @@ class ProjectMetadataTests(unittest.TestCase):
         )
 
     def test_trace_reflections_builds_cold_pipeline_before_drjit_materialization(self):
-        source = (ROOT / "src" / "scene" / "scene_multipath.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "scene" / "scene_multipath_reflection.cpp").read_text(
+            encoding="utf-8"
+        )
 
         anchor = source.find("const OptixSceneSelection scenes = select_optix_scenes();")
         self.assertGreaterEqual(anchor, 0, "Missing trace_reflections OptiX scene selection block.")
@@ -177,7 +184,9 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertLess(detached_eval, launch)
 
     def test_visibility_utilities_use_single_trace_segment_pipeline_launches(self):
-        source = (ROOT / "src" / "scene" / "scene_multipath.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "scene" / "scene_multipath_visibility.cpp").read_text(
+            encoding="utf-8"
+        )
         segment_source = (ROOT / "src" / "multipath" / "segment_visibility.cu").read_text(encoding="utf-8")
 
         visible_start = source.find("SegmentVisibilityT<Detached> Scene::visible(")
@@ -247,18 +256,30 @@ class ProjectMetadataTests(unittest.TestCase):
             self.assertIn(marker, pipelines)
 
     def test_multipath_pipeline_order_guards_cover_staged_launches(self):
-        source = (ROOT / "src" / "scene" / "scene_multipath.cpp").read_text(encoding="utf-8")
+        paths_source = (
+            ROOT / "src" / "scene" / "scene_multipath_diffraction_paths.cpp"
+        ).read_text(encoding="utf-8")
+        accum_source = (
+            ROOT / "src" / "scene" / "scene_multipath_diffraction_accum.cpp"
+        ).read_text(encoding="utf-8")
 
-        def function_body(signature: str) -> str:
+        def function_body(source: str, signature: str) -> str:
             start = source.find(signature)
             self.assertGreaterEqual(start, 0, f"Missing function signature: {signature}")
             end = source.find("\ntemplate <", start + 1)
-            self.assertGreaterEqual(end, 0, f"Missing function end after: {signature}")
+            if end < 0:
+                # Last templated definition in its file: the explicit
+                # instantiations that follow do not start with "template <".
+                end = len(source)
             return source[start:end]
 
-        trace_dfr_paths = function_body("DfrPathsT<Detached> Scene::trace_dfr_paths(")
-        accum_dfr_direct = function_body("DfrAccumT<Detached> Scene::accum_dfr_direct(")
-        accum_dfr = function_body("DfrAccumT<Detached> Scene::accum_dfr(")
+        trace_dfr_paths = function_body(
+            paths_source, "DfrPathsT<Detached> Scene::trace_dfr_paths("
+        )
+        accum_dfr_direct = function_body(
+            accum_source, "DfrAccumT<Detached> Scene::accum_dfr_direct("
+        )
+        accum_dfr = function_body(accum_source, "DfrAccumT<Detached> Scene::accum_dfr(")
 
         def assert_order(name: str, body: str, before: str, after: str):
             before_pos = body.find(before)

@@ -9,6 +9,15 @@ namespace rayd::shared::rt {
 // Backend-neutral numeric policy contract (RAY_TRACING_BACKEND_ARCHITECTURE.md
 // §7). Freezes the current per-backend epsilon divergences behind explicit
 // legacy profiles so a future third backend cannot silently reinterpret them.
+//
+// Compiler numeric flags are deliberately not fields of this struct: a flag is a
+// property of one translation unit, not of a backend profile, and this field
+// order is itself a locked contract. The per-translation-unit nvcc flag policy,
+// including which shared device-math headers are compiled under more than one
+// profile, lives in shared/contracts/compile_policy.json and
+// docs/adr/0035-cuda-compile-flag-policy.md. A frozen constant below does not
+// survive a translation unit compiled with --use_fast_math: the constant is
+// unchanged, the arithmetic around it is not.
 struct NumericPolicy {
     float ray_tmin;
     float shadow_tmin;

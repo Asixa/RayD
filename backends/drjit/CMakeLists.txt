@@ -19,8 +19,32 @@ option(RAYD_REGENERATE_REFLECTION_EPC_PTX "Regenerate reflection_epc PTX during 
 option(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX "Regenerate segment_visibility PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_SURFEL_TRACE_PTX "Regenerate surfel trace PTX during the build. Requires OptiX SDK headers." OFF)
 option(RAYD_REGENERATE_EDGE_OPTIX_PTX "Regenerate edge OptiX custom-AABB PTX during the build. Requires OptiX SDK headers." OFF)
+option(RAYD_STRICT_PTX_SOURCE_CHECK "Fail configuration when the committed PTX source-identity record is stale." OFF)
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+
+# The committed *_ptx.h headers are regenerated only on request, so an edit to a
+# .cu file or to any header it reaches otherwise leaves them describing older
+# device code. Replay the source-identity audit that
+# tests/test_ptx_source_digest.py enforces. That test is the authority; this is
+# the early warning for a developer who is mid-edit. It stays a warning by
+# default because regenerating PTX needs an OptiX SDK that a source build is not
+# required to have; release configures set RAYD_STRICT_PTX_SOURCE_CHECK.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/audit_ptx_sources.py" --check
+    RESULT_VARIABLE RAYD_PTX_AUDIT_RESULT
+    OUTPUT_VARIABLE RAYD_PTX_AUDIT_OUTPUT
+    ERROR_VARIABLE RAYD_PTX_AUDIT_ERROR
+)
+if(NOT RAYD_PTX_AUDIT_RESULT EQUAL 0)
+    if(RAYD_STRICT_PTX_SOURCE_CHECK)
+        message(FATAL_ERROR "${RAYD_PTX_AUDIT_ERROR}")
+    else()
+        message(WARNING
+            "${RAYD_PTX_AUDIT_ERROR}\n"
+            "Configure with -DRAYD_STRICT_PTX_SOURCE_CHECK=ON to make this fatal.")
+    endif()
+endif()
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -c "import importlib.util, pathlib, sys; spec = importlib.util.find_spec('drjit'); sys.stdout.write(str(pathlib.Path(next(iter(spec.submodule_search_locations))).resolve() / 'cmake')) if spec and spec.submodule_search_locations else sys.exit(1)"
     RESULT_VARIABLE DRJIT_CMAKE_DIR_RESULT
@@ -253,7 +277,15 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene_internal.h
     ${RAYD_SOURCE_DIR}/scene/scene.cpp
     ${RAYD_SOURCE_DIR}/scene/scene_intersect.cpp
-    ${RAYD_SOURCE_DIR}/scene/scene_multipath.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_internal.h
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_config.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_reflection.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_reflection_accum.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_epc.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_diffraction_paths.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_diffraction_accum.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_diffraction_coherent.cpp
+    ${RAYD_SOURCE_DIR}/scene/scene_multipath_visibility.cpp
     ${RAYD_SOURCE_DIR}/scene/scene_custom_op.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
@@ -261,13 +293,13 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/native_launch_audit.cpp
 
 )
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/rayd_cuda.cmake")
+
 if(WIN32)
-    set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.obj")
-    set(RAYD_SHARED_BVH_CORE_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_core_build.obj")
-    set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.obj")
-    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.obj")
-    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.obj")
-    set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.obj")
+    # nvcc drives cl.exe, so the generated .bat wrappers need an initialized MSVC
+    # environment. A developer shell already provides one; the Visual Studio
+    # generator instead exposes its instance path so each wrapper can set one up.
     if(DEFINED ENV{VSCMD_VER})
         set(RAYD_MSVC_SETUP "")
     elseif(CMAKE_GENERATOR_INSTANCE)
@@ -278,1337 +310,343 @@ if(WIN32)
             "RayD's Windows CUDA build needs an initialized MSVC environment. "
             "Run scripts/build_local.cmd or configure from a Visual Studio developer shell.")
     endif()
-    set(RAYD_CUDA_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_bvh.bat")
-    file(GENERATE OUTPUT "${RAYD_CUDA_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_CUDA_OBJECT}"
-        COMMAND "${RAYD_CUDA_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_CUDA_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-        VERBATIM
-    )
-    set(RAYD_SHARED_BVH_CORE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_core_build.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
-        COMMAND "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_BVH_CORE_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-        VERBATIM
-    )
-    set(RAYD_SHARED_BVH_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_build.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_BUILD_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_BUILD_OBJECT}"
-        COMMAND "${RAYD_SHARED_BVH_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_BVH_BUILD_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-        VERBATIM
-    )
-    set(RAYD_SHARED_BVH_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_query.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_QUERY_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_QUERY_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
-        COMMAND "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_BVH_QUERY_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
-        VERBATIM
-    )
-    set(RAYD_SHARED_EDGE_DISTANCE_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_distance.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_EDGE_DISTANCE_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
-        COMMAND "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_EDGE_DISTANCE_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-        VERBATIM
-    )
-    set(RAYD_SHARED_EDGE_AABB_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_edge_aabb.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_EDGE_AABB_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_EDGE_AABB_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_EDGE_AABB_OBJECT}"
-        COMMAND "${RAYD_SHARED_EDGE_AABB_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_EDGE_AABB_SCRIPT}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
-        VERBATIM
-    )
-else()
-    set(RAYD_CUDA_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/edge_bvh.o")
-    set(RAYD_SHARED_BVH_CORE_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_core_build.o")
-    set(RAYD_SHARED_BVH_BUILD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_build.o")
-    set(RAYD_SHARED_BVH_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_query.o")
-    set(RAYD_SHARED_EDGE_DISTANCE_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_distance.o")
-    set(RAYD_SHARED_EDGE_AABB_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_edge_aabb.o")
-    add_custom_command(
-        OUTPUT "${RAYD_CUDA_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_CUDA_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_BUILD_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_BVH_BUILD_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_EDGE_AABB_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_EDGE_AABB_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_QUERY_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_BVH_QUERY_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" -std=c++17 -Xcompiler=-fPIC -c
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
-            "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-        VERBATIM
-    )
 endif()
-set_source_files_properties("${RAYD_CUDA_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_SHARED_BVH_BUILD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_SHARED_BVH_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_SHARED_EDGE_DISTANCE_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_SHARED_EDGE_AABB_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES
-    "${RAYD_CUDA_OBJECT}"
-    "${RAYD_SHARED_BVH_CORE_BUILD_OBJECT}"
-    "${RAYD_SHARED_BVH_BUILD_OBJECT}"
-    "${RAYD_SHARED_BVH_QUERY_OBJECT}"
-    "${RAYD_SHARED_EDGE_DISTANCE_OBJECT}"
-    "${RAYD_SHARED_EDGE_AABB_OBJECT}")
+
+# nvcc numeric flags are a contract. shared/contracts/compile_policy.json and
+# docs/adr/0035-cuda-compile-flag-policy.md declare the numeric profile of every
+# unit below, and tests/test_compile_flag_policy_contract.py re-derives it from
+# this file. EXTRA_FLAGS is the only place a numeric flag may be introduced here;
+# the shared command shape in cmake/rayd_cuda.cmake carries none for objects.
+
+# Edge BVH build/refit/query, split between the backend and the shared core.
+# ADR-0035 profile: nvcc_default for all six.
+rayd_cuda_object(
+    NAME edge_bvh
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_bvh.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+)
+rayd_cuda_object(
+    NAME shared_bvh_core_build
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/build.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+)
+rayd_cuda_object(
+    NAME shared_bvh_build
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_build.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/refit.h"
+)
+rayd_cuda_object(
+    NAME shared_bvh_query
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/bvh_query.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_query.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+)
+rayd_cuda_object(
+    NAME shared_edge_distance
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_distance.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
+)
+rayd_cuda_object(
+    NAME shared_edge_aabb
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/edge/edge_aabb.cu"
+    POSIX_NO_EXTENDED_LAMBDA
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_aabb.h"
+)
 
 # Pure-CUDA triangle BVH: the primitive-specific traversal kernels live in the
 # shared tree; the build/refit/query orchestrator lives in the drjit backend.
-set(RAYD_SHARED_BVH_TRIANGLE_QUERY_CU
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu")
-set(RAYD_TRIANGLE_BVH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/triangle_bvh.cu")
-set(RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS
-    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h")
-set(RAYD_TRIANGLE_BVH_DEPS
-    "${RAYD_TRIANGLE_BVH_CU}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h")
-if(WIN32)
-    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.obj")
-    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.obj")
-    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_shared_bvh_triangle_query.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
-        COMMAND "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}"
-        DEPENDS "${RAYD_SHARED_BVH_TRIANGLE_QUERY_SCRIPT}" ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
-        VERBATIM)
-    set(RAYD_TRIANGLE_BVH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_triangle_bvh.bat")
-    file(GENERATE OUTPUT "${RAYD_TRIANGLE_BVH_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_TRIANGLE_BVH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_TRIANGLE_BVH_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
-        COMMAND "${RAYD_TRIANGLE_BVH_SCRIPT}"
-        DEPENDS "${RAYD_TRIANGLE_BVH_SCRIPT}" ${RAYD_TRIANGLE_BVH_DEPS}
-        VERBATIM)
-else()
-    set(RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/shared_bvh_triangle_query.o")
-    set(RAYD_TRIANGLE_BVH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/triangle_bvh.o")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_SHARED_BVH_TRIANGLE_QUERY_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
-        DEPENDS ${RAYD_SHARED_BVH_TRIANGLE_QUERY_DEPS}
-        VERBATIM)
-    add_custom_command(
-        OUTPUT "${RAYD_TRIANGLE_BVH_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_TRIANGLE_BVH_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_TRIANGLE_BVH_OBJECT}"
-        DEPENDS ${RAYD_TRIANGLE_BVH_DEPS}
-        VERBATIM)
-endif()
-set_source_files_properties("${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-set_source_files_properties("${RAYD_TRIANGLE_BVH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES
-    "${RAYD_SHARED_BVH_TRIANGLE_QUERY_OBJECT}"
-    "${RAYD_TRIANGLE_BVH_OBJECT}")
+rayd_cuda_object(
+    NAME shared_bvh_triangle_query
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/bvh/triangle_query.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+)
+rayd_cuda_object(
+    NAME triangle_bvh
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/triangle_bvh.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+)
 
 # CUDA fused multipath executor (P4 Stage D): runs the traverser-templated
 # multipath algorithm bodies with CudaBvhTraverser over the scene triangle BVH.
 # Object-compiled (host-callable launchers) like triangle_bvh.cu; needs no OptiX
-# headers because the migrated params/algo headers are host-safe.
-set(RAYD_CUDA_MULTIPATH_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/cuda_multipath.cu")
-set(RAYD_CUDA_MULTIPATH_DEPS
-    "${RAYD_CUDA_MULTIPATH_CU}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/cuda_multipath_gpu.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-    "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h")
-if(WIN32)
-    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.obj")
-    set(RAYD_CUDA_MULTIPATH_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_cuda_multipath.bat")
-    file(GENERATE OUTPUT "${RAYD_CUDA_MULTIPATH_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda --use_fast_math -std=c++17 -c \"${RAYD_CUDA_MULTIPATH_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_CUDA_MULTIPATH_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
-        COMMAND "${RAYD_CUDA_MULTIPATH_SCRIPT}"
-        DEPENDS "${RAYD_CUDA_MULTIPATH_SCRIPT}" ${RAYD_CUDA_MULTIPATH_DEPS}
-        VERBATIM)
-else()
-    set(RAYD_CUDA_MULTIPATH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/cuda_multipath.o")
-    add_custom_command(
-        OUTPUT "${RAYD_CUDA_MULTIPATH_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda --use_fast_math -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_CUDA_MULTIPATH_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_CUDA_MULTIPATH_OBJECT}"
-        DEPENDS ${RAYD_CUDA_MULTIPATH_DEPS}
-        VERBATIM)
-endif()
-set_source_files_properties("${RAYD_CUDA_MULTIPATH_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES
-    "${RAYD_CUDA_MULTIPATH_OBJECT}")
+# headers because the migrated params/algo headers are host-safe. It is the only
+# object translation unit compiled with --use_fast_math.
+#
+# ADR-0035 profile: fast_math. Frozen divergence D1: the Torch backend compiles
+# its counterpart, src/torch_ext/scene/multipath_cuda.cu, at nvcc defaults over
+# the same shared multipath algorithm headers. Do not align either side here.
+rayd_cuda_object(
+    NAME cuda_multipath
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/trace/cuda_multipath.cu"
+    EXTRA_FLAGS --use_fast_math
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/trace/cuda_multipath_gpu.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_intersect.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/traversal_common.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+)
 
-set(RAYD_REFLECTION_DEDUP_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu")
-if(WIN32)
-    set(RAYD_REFLECTION_DEDUP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_dedup.obj")
-    set(RAYD_REFLECTION_DEDUP_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_dedup.bat")
-    file(GENERATE OUTPUT "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_DEDUP_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
-        COMMAND "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_REFLECTION_DEDUP_BUILD_SCRIPT}"
-            "${RAYD_REFLECTION_DEDUP_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
-        VERBATIM
-    )
-else()
-    set(RAYD_REFLECTION_DEDUP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_dedup.o")
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_DEDUP_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_REFLECTION_DEDUP_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_REFLECTION_DEDUP_OBJECT}"
-        DEPENDS
-            "${RAYD_REFLECTION_DEDUP_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
-        VERBATIM
-    )
-endif()
-set_source_files_properties("${RAYD_REFLECTION_DEDUP_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+rayd_cuda_object(
+    NAME reflection_dedup
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_dedup.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_dedup.h"
+)
+rayd_cuda_object(
+    NAME shared_reflection_dedup
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_dedup.h"
+)
 
-set(RAYD_SHARED_REFLECTION_DEDUP_CU
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/multipath/reflection_dedup.cu")
-set(RAYD_SHARED_REFLECTION_DEDUP_HEADER
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_dedup.h")
-if(WIN32)
-    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
-        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.obj")
-    set(RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT
-        "${CMAKE_CURRENT_BINARY_DIR}/build_shared_reflection_dedup.bat")
-    file(GENERATE OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_SHARED_REFLECTION_DEDUP_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
-        COMMAND "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_SHARED_REFLECTION_DEDUP_BUILD_SCRIPT}"
-            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
-            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
-        VERBATIM)
-else()
-    set(RAYD_SHARED_REFLECTION_DEDUP_OBJECT
-        "${CMAKE_CURRENT_BINARY_DIR}/shared_reflection_dedup.o")
-    add_custom_command(
-        OUTPUT "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
-        DEPENDS
-            "${RAYD_SHARED_REFLECTION_DEDUP_CU}"
-            "${RAYD_SHARED_REFLECTION_DEDUP_HEADER}"
-        VERBATIM)
-endif()
-set_source_files_properties(
-    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}"
-    PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES
-    "${RAYD_REFLECTION_DEDUP_OBJECT}"
-    "${RAYD_SHARED_REFLECTION_DEDUP_OBJECT}")
+rayd_cuda_object(
+    NAME reflection_epc_field
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/reflection_epc_field_device.cuh"
+)
 
-set(RAYD_REFLECTION_EPC_FIELD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc_field.cu")
-if(WIN32)
-    set(RAYD_REFLECTION_EPC_FIELD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_field.obj")
-    set(RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_epc_field.bat")
-    file(GENERATE OUTPUT "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_REFLECTION_EPC_FIELD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_REFLECTION_EPC_FIELD_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
-        COMMAND "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_REFLECTION_EPC_FIELD_BUILD_SCRIPT}"
-            "${RAYD_REFLECTION_EPC_FIELD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
-        VERBATIM
-    )
-else()
-    set(RAYD_REFLECTION_EPC_FIELD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc_field.o")
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_REFLECTION_EPC_FIELD_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_REFLECTION_EPC_FIELD_OBJECT}"
-        DEPENDS
-            "${RAYD_REFLECTION_EPC_FIELD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
-        VERBATIM
-    )
-endif()
-set_source_files_properties("${RAYD_REFLECTION_EPC_FIELD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_FIELD_OBJECT}")
+rayd_cuda_object(
+    NAME diffraction_accumulation_ad
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_accumulation_ad.cu"
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/diffraction_accumulation_ad_device.cuh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/multipath/diffraction_accumulation_ad_vjp_device.cuh"
+)
 
-set(RAYD_DIFFRACTION_ACCUMULATION_AD_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_accumulation_ad.cu")
-if(WIN32)
-    set(RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_ad.obj")
-    set(RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_accumulation_ad.bat")
-    file(GENERATE OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" --extended-lambda -std=c++17 -c \"${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}\" ${RAYD_CUDA_GENCODE_FLAGS} ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -Xcompiler \"/MD /O2 /EHsc /wd4819\" -o \"${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}\"\r\n\
-")
-    add_custom_command(
-        OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
-        COMMAND "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}"
-        DEPENDS
-            "${RAYD_DIFFRACTION_ACCUMULATION_AD_BUILD_SCRIPT}"
-            "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-        VERBATIM
-    )
-else()
-    set(RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation_ad.o")
-    add_custom_command(
-        OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" -ccbin "${CMAKE_CXX_COMPILER}" --extended-lambda -std=c++17 -Xcompiler=-fPIC -c
-                "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
-                ${RAYD_CUDA_GENCODE_FLAGS_LIST}
-                ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                ${RAYD_CUDA_DEFINITIONS_LIST}
-                -o "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}"
-        DEPENDS
-            "${RAYD_DIFFRACTION_ACCUMULATION_AD_CU}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-        VERBATIM
-    )
-endif()
-set_source_files_properties("${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
-list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_ACCUMULATION_AD_OBJECT}")
-
-set(RAYD_REFLECTION_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu")
-set(RAYD_REFLECTION_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_trace_ptx.h")
-set(RAYD_REFLECTION_TRACE_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_ptx.h")
-
-if(RAYD_REGENERATE_REFLECTION_TRACE_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate reflection_trace PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_REFLECTION_TRACE_PTX.")
-    endif()
-
-    set(RAYD_REFLECTION_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_trace.ptx")
-    if(WIN32)
-        set(RAYD_REFLECTION_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_trace_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_TRACE_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
-            COMMAND "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_REFLECTION_TRACE_BUILD_SCRIPT}"
-                "${RAYD_REFLECTION_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_TRACE_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_REFLECTION_TRACE_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_REFLECTION_TRACE_PTX}"
-            DEPENDS
-                "${RAYD_REFLECTION_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_TRACE_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_REFLECTION_TRACE_PTX}
-            -DOUTPUT_FILE=${RAYD_REFLECTION_TRACE_PTX_H}
-            -DVAR_NAME=reflection_trace_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_REFLECTION_TRACE_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_REFLECTION_TRACE_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed reflection_trace PTX header at "
-            "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_REFLECTION_TRACE_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_TRACE_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_REFLECTION_EPC_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc.cu")
-set(RAYD_REFLECTION_EPC_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_epc_ptx.h")
-set(RAYD_REFLECTION_EPC_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_ptx.h")
-
-if(RAYD_REGENERATE_REFLECTION_EPC_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate reflection_epc PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_REFLECTION_EPC_PTX.")
-    endif()
-
-    set(RAYD_REFLECTION_EPC_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_epc.ptx")
-    if(WIN32)
-        set(RAYD_REFLECTION_EPC_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_epc_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_EPC_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_EPC_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_EPC_PTX}"
-            COMMAND "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_REFLECTION_EPC_BUILD_SCRIPT}"
-                "${RAYD_REFLECTION_EPC_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_EPC_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_REFLECTION_EPC_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_REFLECTION_EPC_PTX}"
-            DEPENDS
-                "${RAYD_REFLECTION_EPC_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_EPC_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_REFLECTION_EPC_PTX}
-            -DOUTPUT_FILE=${RAYD_REFLECTION_EPC_PTX_H}
-            -DVAR_NAME=reflection_epc_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_REFLECTION_EPC_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_REFLECTION_EPC_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_REFLECTION_EPC_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed reflection_epc PTX header at "
-            "${RAYD_REFLECTION_EPC_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_REFLECTION_EPC_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_EPC_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_REFLECTION_ACCUMULATION_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation.cu")
-set(RAYD_REFLECTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/reflection_accumulation_ptx.h")
-set(RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_ptx.h")
-
-if(RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate reflection_accumulation PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX.")
-    endif()
-
-    set(RAYD_REFLECTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/reflection_accumulation.ptx")
-    if(WIN32)
-        set(RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_reflection_accumulation_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_REFLECTION_ACCUMULATION_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_REFLECTION_ACCUMULATION_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX}"
-            COMMAND "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_REFLECTION_ACCUMULATION_BUILD_SCRIPT}"
-                "${RAYD_REFLECTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_REFLECTION_ACCUMULATION_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_REFLECTION_ACCUMULATION_PTX}"
-            DEPENDS
-                "${RAYD_REFLECTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_REFLECTION_ACCUMULATION_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_REFLECTION_ACCUMULATION_PTX}
-            -DOUTPUT_FILE=${RAYD_REFLECTION_ACCUMULATION_PTX_H}
-            -DVAR_NAME=reflection_accumulation_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_REFLECTION_ACCUMULATION_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_REFLECTION_ACCUMULATION_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_ACCUMULATION_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed reflection_accumulation PTX header at "
-            "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_REFLECTION_ACCUMULATION_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_DIFFRACTION_ACCUMULATION_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_accumulation.cu")
-set(RAYD_DIFFRACTION_ACCUMULATION_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/diffraction_accumulation_ptx.h")
-set(RAYD_DIFFRACTION_ACCUMULATION_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ptx.h")
-
-if(RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate diffraction_accumulation PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX.")
-    endif()
-
-    set(RAYD_DIFFRACTION_ACCUMULATION_PTX "${CMAKE_CURRENT_BINARY_DIR}/diffraction_accumulation.ptx")
-    if(WIN32)
-        set(RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_accumulation_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_DIFFRACTION_ACCUMULATION_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_DIFFRACTION_ACCUMULATION_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_PTX}"
-            COMMAND "${RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_DIFFRACTION_ACCUMULATION_BUILD_SCRIPT}"
-                "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_DIFFRACTION_ACCUMULATION_PTX}"
-            DEPENDS
-                "${RAYD_DIFFRACTION_ACCUMULATION_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_DIFFRACTION_ACCUMULATION_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_DIFFRACTION_ACCUMULATION_PTX}
-            -DOUTPUT_FILE=${RAYD_DIFFRACTION_ACCUMULATION_PTX_H}
-            -DVAR_NAME=diffraction_accumulation_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_DIFFRACTION_ACCUMULATION_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_DIFFRACTION_ACCUMULATION_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_ACCUMULATION_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_DIFFRACTION_ACCUMULATION_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed diffraction_accumulation PTX header at "
-            "${RAYD_DIFFRACTION_ACCUMULATION_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_ACCUMULATION_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_DIFFRACTION_PATHS_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_paths.cu")
-set(RAYD_DIFFRACTION_PATHS_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/diffraction_paths_ptx.h")
-set(RAYD_DIFFRACTION_PATHS_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_ptx.h")
-
-if(RAYD_REGENERATE_DIFFRACTION_PATHS_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate diffraction_paths PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_DIFFRACTION_PATHS_PTX.")
-    endif()
-
-    set(RAYD_DIFFRACTION_PATHS_PTX "${CMAKE_CURRENT_BINARY_DIR}/diffraction_paths.ptx")
-    if(WIN32)
-        set(RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_diffraction_paths_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_DIFFRACTION_PATHS_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_DIFFRACTION_PATHS_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_DIFFRACTION_PATHS_PTX}"
-            COMMAND "${RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_DIFFRACTION_PATHS_BUILD_SCRIPT}"
-                "${RAYD_DIFFRACTION_PATHS_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_DIFFRACTION_PATHS_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_DIFFRACTION_PATHS_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_DIFFRACTION_PATHS_PTX}"
-            DEPENDS
-                "${RAYD_DIFFRACTION_PATHS_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_DIFFRACTION_PATHS_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_DIFFRACTION_PATHS_PTX}
-            -DOUTPUT_FILE=${RAYD_DIFFRACTION_PATHS_PTX_H}
-            -DVAR_NAME=diffraction_paths_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_DIFFRACTION_PATHS_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_DIFFRACTION_PATHS_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_PATHS_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_DIFFRACTION_PATHS_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed diffraction_paths PTX header at "
-            "${RAYD_DIFFRACTION_PATHS_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_DIFFRACTION_PATHS_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_DIFFRACTION_PATHS_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_SEGMENT_VISIBILITY_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu")
-set(RAYD_SEGMENT_VISIBILITY_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/multipath/segment_visibility_ptx.h")
-set(RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_ptx.h")
-
-if(RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate segment_visibility PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX.")
-    endif()
-
-    set(RAYD_SEGMENT_VISIBILITY_PTX "${CMAKE_CURRENT_BINARY_DIR}/segment_visibility.ptx")
-    if(WIN32)
-        set(RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_segment_visibility_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SEGMENT_VISIBILITY_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SEGMENT_VISIBILITY_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX}"
-            COMMAND "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_SEGMENT_VISIBILITY_BUILD_SCRIPT}"
-                "${RAYD_SEGMENT_VISIBILITY_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_SEGMENT_VISIBILITY_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_SEGMENT_VISIBILITY_PTX}"
-            DEPENDS
-                "${RAYD_SEGMENT_VISIBILITY_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_SEGMENT_VISIBILITY_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_SEGMENT_VISIBILITY_PTX}
-            -DOUTPUT_FILE=${RAYD_SEGMENT_VISIBILITY_PTX_H}
-            -DVAR_NAME=segment_visibility_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_SEGMENT_VISIBILITY_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_SEGMENT_VISIBILITY_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed segment_visibility PTX header at "
-            "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SEGMENT_VISIBILITY_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_SURFEL_TRACE_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/surfel/surfel_trace.cu")
-set(RAYD_SURFEL_TRACE_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/surfel/surfel_trace_ptx.h")
-set(RAYD_SURFEL_TRACE_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_ptx.h")
-
-if(RAYD_REGENERATE_SURFEL_TRACE_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate surfel_trace PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_SURFEL_TRACE_PTX.")
-    endif()
-
-    set(RAYD_SURFEL_TRACE_PTX "${CMAKE_CURRENT_BINARY_DIR}/surfel_trace.ptx")
-    if(WIN32)
-        set(RAYD_SURFEL_TRACE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_surfel_trace_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_SURFEL_TRACE_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_SURFEL_TRACE_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_SURFEL_TRACE_PTX}"
-            COMMAND "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_SURFEL_TRACE_BUILD_SCRIPT}"
-                "${RAYD_SURFEL_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_SURFEL_TRACE_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_SURFEL_TRACE_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_SURFEL_TRACE_PTX}"
-            DEPENDS
-                "${RAYD_SURFEL_TRACE_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_SURFEL_TRACE_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_SURFEL_TRACE_PTX}
-            -DOUTPUT_FILE=${RAYD_SURFEL_TRACE_PTX_H}
-            -DVAR_NAME=surfel_trace_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_SURFEL_TRACE_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_SURFEL_TRACE_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SURFEL_TRACE_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed surfel_trace PTX header at "
-            "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_SURFEL_TRACE_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_SURFEL_TRACE_PTX_H_COMMITTED}")
-endif()
-
-set(RAYD_EDGE_OPTIX_CU "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu")
-set(RAYD_EDGE_OPTIX_PTX_H "${CMAKE_CURRENT_BINARY_DIR}/rayd/edge/edge_optix_ptx.h")
-set(RAYD_EDGE_OPTIX_PTX_H_COMMITTED
-    "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_ptx.h")
-
-if(RAYD_REGENERATE_EDGE_OPTIX_PTX)
-    find_path(OPTIX_INCLUDE_DIR optix.h
-        HINTS
-            ENV OPTIX_INCLUDE_DIR
-            ENV OPTIX_PATH
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 9.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.1.0"
-            "$ENV{PROGRAMDATA}/NVIDIA Corporation/OptiX SDK 8.0.0"
-            "/usr/local/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/usr/local/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-9.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.1.0-linux64-x86_64"
-            "/opt/NVIDIA-OptiX-SDK-8.0.0-linux64-x86_64"
-        PATH_SUFFIXES include
-    )
-    if(NOT OPTIX_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "Could not locate OptiX SDK headers needed to regenerate edge_optix PTX. "
-            "Set OPTIX_INCLUDE_DIR or OPTIX_PATH, or disable RAYD_REGENERATE_EDGE_OPTIX_PTX.")
-    endif()
-
-    set(RAYD_EDGE_OPTIX_PTX "${CMAKE_CURRENT_BINARY_DIR}/edge_optix.ptx")
-    if(WIN32)
-        set(RAYD_EDGE_OPTIX_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_edge_optix_ptx.bat")
-        file(GENERATE OUTPUT "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}" CONTENT
-"@echo off\r\n\
-${RAYD_MSVC_SETUP}\
-if errorlevel 1 exit /b %errorlevel%\r\n\
-\"${CUDA_NVCC_EXECUTABLE}\" -ptx --use_fast_math -std=c++17 -arch=compute_70 \"${RAYD_EDGE_OPTIX_CU}\" -I\"${OPTIX_INCLUDE_DIR}\" ${RAYD_CUDA_INCLUDE_FLAGS} ${RAYD_CUDA_DEFINITIONS} -o \"${RAYD_EDGE_OPTIX_PTX}\"\r\n\
-")
-        add_custom_command(
-            OUTPUT "${RAYD_EDGE_OPTIX_PTX}"
-            COMMAND "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
-            DEPENDS
-                "${RAYD_EDGE_OPTIX_BUILD_SCRIPT}"
-                "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT "${RAYD_EDGE_OPTIX_PTX}"
-            COMMAND "${CUDA_NVCC_EXECUTABLE}" -ptx --use_fast_math -std=c++17 -arch=compute_70
-                    "${RAYD_EDGE_OPTIX_CU}"
-                    -I"${OPTIX_INCLUDE_DIR}"
-                    ${RAYD_CUDA_INCLUDE_FLAGS_LIST}
-                    ${RAYD_CUDA_DEFINITIONS_LIST}
-                    -o "${RAYD_EDGE_OPTIX_PTX}"
-            DEPENDS
-                "${RAYD_EDGE_OPTIX_CU}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
-                "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
-            VERBATIM
-        )
-    endif()
-
-    add_custom_command(
-        OUTPUT "${RAYD_EDGE_OPTIX_PTX_H}"
-        COMMAND ${CMAKE_COMMAND}
-            -DPTX_FILE=${RAYD_EDGE_OPTIX_PTX}
-            -DOUTPUT_FILE=${RAYD_EDGE_OPTIX_PTX_H}
-            -DVAR_NAME=edge_optix_ptx
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        DEPENDS
-            "${RAYD_EDGE_OPTIX_PTX}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_ptx.cmake"
-        VERBATIM
-    )
-    set_source_files_properties("${RAYD_EDGE_OPTIX_PTX_H}" PROPERTIES GENERATED TRUE)
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_EDGE_OPTIX_PTX_H}")
-else()
-    if(NOT EXISTS "${RAYD_EDGE_OPTIX_PTX_H_COMMITTED}")
-        message(FATAL_ERROR
-            "Missing committed edge_optix PTX header at "
-            "${RAYD_EDGE_OPTIX_PTX_H_COMMITTED}. "
-            "Restore it or enable RAYD_REGENERATE_EDGE_OPTIX_PTX with OptiX SDK headers available.")
-    endif()
-    list(APPEND RAYD_CORE_SOURCE_FILES "${RAYD_EDGE_OPTIX_PTX_H_COMMITTED}")
-endif()
+# OptiX device programs. Wheels consume the committed *_ptx.h headers; the
+# RAYD_REGENERATE_*_PTX options rebuild them from source against an OptiX SDK.
+#
+# ADR-0035 profile: fast_math at compute_70 for all eight, set once in the
+# shared PTX command shape. Divergence D2: the Torch backend targets compute_75.
+# Divergence D9: every option below defaults OFF, so these flags describe how a
+# module is regenerated, not provably how the committed header was produced.
+rayd_embed_ptx(
+    NAME reflection_trace
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_trace.cu"
+    HEADER multipath/reflection_trace_ptx.h
+    OPTION RAYD_REGENERATE_REFLECTION_TRACE_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/reflection/reflection_geometry.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+)
+rayd_embed_ptx(
+    NAME reflection_epc
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_epc.cu"
+    HEADER multipath/reflection_epc_ptx.h
+    OPTION RAYD_REGENERATE_REFLECTION_EPC_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+)
+rayd_embed_ptx(
+    NAME reflection_accumulation
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/reflection_accumulation.cu"
+    HEADER multipath/reflection_accumulation_ptx.h
+    OPTION RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/field_math.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+)
+rayd_embed_ptx(
+    NAME diffraction_accumulation
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_accumulation.cu"
+    HEADER multipath/diffraction_accumulation_ptx.h
+    OPTION RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/rayd.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/types.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/utils.h"
+)
+rayd_embed_ptx(
+    NAME diffraction_paths
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/diffraction_paths.cu"
+    HEADER multipath/diffraction_paths_ptx.h
+    OPTION RAYD_REGENERATE_DIFFRACTION_PATHS_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_math.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/utd/utd_types.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/rayd.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/types.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/utils.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
+)
+rayd_embed_ptx(
+    NAME segment_visibility
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/multipath/segment_visibility.cu"
+    HEADER multipath/segment_visibility_ptx.h
+    OPTION RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+)
+rayd_embed_ptx(
+    NAME surfel_trace
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/surfel/surfel_trace.cu"
+    HEADER surfel/surfel_trace_ptx.h
+    OPTION RAYD_REGENERATE_SURFEL_TRACE_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
+)
+rayd_embed_ptx(
+    NAME edge_optix
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_SOURCE_DIR}/edge/edge_optix.cu"
+    HEADER edge/edge_optix_ptx.h
+    OPTION RAYD_REGENERATE_EDGE_OPTIX_PTX
+    OUT_SOURCES RAYD_CORE_SOURCE_FILES
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/edge/edge_distance_math.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../shared/include/rayd/shared/math/vec3.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/pipeline_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
+)
 
 set(RAYD_NANOBIND_ARGS NB_DOMAIN drjit)
 if(RAYD_NANOBIND_NOMINSIZE)
