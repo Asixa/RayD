@@ -216,6 +216,14 @@ class DfrPaths:
     p2: torch.Tensor
 
 @dataclass(frozen=True)
+class SdfIntersection:
+    t: torch.Tensor
+    hit_mask: torch.Tensor
+    position: torch.Tensor
+    normal: torch.Tensor
+    steps: torch.Tensor
+
+@dataclass(frozen=True)
 class SceneGlobalGeometry:
     vertices: torch.Tensor
     faces: torch.Tensor
