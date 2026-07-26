@@ -67,6 +67,12 @@ py::tuple intersect_backward_optional_op(int64_t, at::Tensor, at::Tensor, at::Te
 py::tuple intersect_backward_t_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, bool, bool, bool, bool);
 py::tuple intersect_jvp_optional_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, py::object, py::object, py::object, int64_t);
 
+// ADR-0037 SDF intersection: registered GIL-free from the start, so the ops are
+// the pure C++ implementations with no pybind round-trip.
+std::vector<at::Tensor> sdf_intersect_forward_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, double, int64_t, double, double);
+std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>, bool, bool, bool, bool, bool, bool);
+std::vector<at::Tensor> sdf_intersect_jvp_impl(at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>, c10::optional<at::Tensor>);
+
 py::tuple nearest_edge_forward_op(int64_t, at::Tensor);
 py::tuple nearest_edge_forward_noad_op(int64_t, at::Tensor);
 py::tuple nearest_edge_ray_forward_op(int64_t, at::Tensor, at::Tensor, at::Tensor, at::Tensor);
@@ -479,6 +485,10 @@ TORCH_LIBRARY_FRAGMENT(rayd_torch, m) {
     m.def("intersect_backward_t(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor active, Tensor tape_prim_id, Tensor tape_barycentric, Tensor grad_t, bool need_grad_vertices, bool need_grad_ray_o, bool need_grad_ray_d, bool need_grad_ray_tmax) -> Tensor?[]");
     m.def("intersect_jvp_optional(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor active, Tensor tape_prim_id, Tensor tape_barycentric, Tensor? tangent_vertices, Tensor? tangent_ray_o, Tensor? tangent_ray_d, int flags) -> Tensor?[]");
 
+    m.def("sdf_intersect_forward(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, Tensor directions, float tmax, int max_steps, float relaxation, float eps_hit) -> Tensor[]");
+    m.def("sdf_intersect_backward(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, Tensor directions, Tensor tape_t, Tensor tape_hit, Tensor tape_base, Tensor? grad_t, Tensor? grad_hit_position, Tensor? grad_normal, bool need_grad_values, bool need_grad_position, bool need_grad_rotation, bool need_grad_scale, bool need_grad_origins, bool need_grad_directions) -> Tensor?[]");
+    m.def("sdf_intersect_jvp(Tensor values, Tensor position, Tensor rotation, Tensor scale, Tensor origins, Tensor directions, Tensor tape_t, Tensor tape_hit, Tensor tape_base, Tensor? tangent_values, Tensor? tangent_position, Tensor? tangent_rotation, Tensor? tangent_scale, Tensor? tangent_origins, Tensor? tangent_directions) -> Tensor[]");
+
     m.def("nearest_edge_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point) -> Tensor?[]");
     m.def("nearest_edge_forward_noad(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor point) -> Tensor?[]");
     m.def("nearest_edge_ray_forward(" RAYD_TORCH_SCHEMA_SCENE " scene, Tensor ray_o, Tensor ray_d, Tensor ray_tmax, Tensor active) -> Tensor?[]");
@@ -539,6 +549,9 @@ TORCH_LIBRARY_IMPL(rayd_torch, CUDA, m) {
     m.impl("intersect_backward_optional", TORCH_FN(intersect_backward_optional_dispatch));
     m.impl("intersect_backward_t", TORCH_FN(intersect_backward_t_dispatch));
     m.impl("intersect_jvp_optional", TORCH_FN(intersect_jvp_optional_dispatch));
+    m.impl("sdf_intersect_forward", TORCH_FN(sdf_intersect_forward_impl));
+    m.impl("sdf_intersect_backward", TORCH_FN(sdf_intersect_backward_impl));
+    m.impl("sdf_intersect_jvp", TORCH_FN(sdf_intersect_jvp_impl));
     m.impl("nearest_edge_forward", TORCH_FN(nearest_edge_forward_dispatch));
     m.impl("nearest_edge_forward_noad", TORCH_FN(nearest_edge_forward_noad_dispatch));
     m.impl("nearest_edge_ray_forward", TORCH_FN(nearest_edge_ray_forward_dispatch));
