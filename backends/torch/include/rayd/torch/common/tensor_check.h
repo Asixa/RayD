@@ -6,6 +6,8 @@
 namespace rayd::torch_backend {
 
 void require_cuda(const at::Tensor &tensor, std::string_view name);
+void require_same_device(
+    const at::Tensor &tensor, const at::Tensor &reference, std::string_view name);
 void require_contiguous(const at::Tensor &tensor, std::string_view name);
 void require_dtype(const at::Tensor &tensor, at::ScalarType dtype, std::string_view name);
 void require_rank(const at::Tensor &tensor, int64_t rank, std::string_view name);

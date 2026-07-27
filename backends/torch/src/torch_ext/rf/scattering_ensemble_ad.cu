@@ -21,6 +21,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/torch/rf/scattering.h>
@@ -602,6 +603,7 @@ rayd::torch::ScatteringEnsembleEvalBackwardResult scattering_ensemble_eval_backw
                           cos_i, r1, a_te2, a_tm2, weights, material_id,
                           backup_axis, rx_pol, rc_idx, sc_idx, fte_flat, ftm_flat,
                           table_offset, table_dims, material_slot, count, samples);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wo_rows.get_device()));
     at::Tensor storage[3];
     const at::Tensor* g_gain = optional_arg(
         std::move(grad_gain), storage[0], "grad_gain", at::kFloat, {count}, wo_rows);
@@ -738,6 +740,7 @@ rayd::torch::ScatteringEnsembleEvalJvpResult scattering_ensemble_eval_jvp_impl(
                           cos_i, r1, a_te2, a_tm2, weights, material_id,
                           backup_axis, rx_pol, rc_idx, sc_idx, fte_flat, ftm_flat,
                           table_offset, table_dims, material_slot, count, samples);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wo_rows.get_device()));
     at::Tensor storage[14];
     const at::Tensor* tw_wo = optional_arg(
         std::move(t_wo_rows), storage[0], "t_wo_rows", at::kFloat, {count, 3}, wo_rows);

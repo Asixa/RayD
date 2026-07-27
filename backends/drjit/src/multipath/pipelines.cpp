@@ -246,6 +246,7 @@ void OptixLaunchPipeline::build(OptixDeviceContext context,
     params_buffer_size_ = std::max<size_t>(params_size_, 1024);
     params_buffer_ = jit_malloc(AllocType::Device, params_buffer_size_);
     hitgroup_record_count_ = hitgroup_record_count;
+    device_ = jit_cuda_device();
     ready_ = true;
 }
 
@@ -286,6 +287,19 @@ void OptixLaunchPipeline::launch_impl(int raygen_index,
                                        size_t actual_params_size,
                                        unsigned int n_rays) const {
     require(ready_, "OptixLaunchPipeline::launch(): pipeline is not ready.");
+    // The OptiX module, SBT records, and params buffer were allocated on the
+    // build-time Dr.Jit device, while the launch below uses the stream of
+    // whichever device is current. Reject the mismatch instead of corrupting.
+    const int current_device = jit_cuda_device();
+    if (current_device != device_) {
+        throw std::runtime_error(
+            "OptixLaunchPipeline::launch(): pipeline was built on Dr.Jit CUDA "
+            "device " + std::to_string(device_) + " but the current Dr.Jit CUDA "
+            "device is " + std::to_string(current_device) +
+            ". Multipath pipelines are bound to their build device; call "
+            "rayd.drjit.set_device(" + std::to_string(device_) +
+            ") before launching, or rebuild the scene on the current device.");
+    }
     require(raygen_index >= 0 &&
                 raygen_index < static_cast<int>(sbt_raygen_records_.size()),
             "OptixLaunchPipeline::launch(): raygen index out of range.");

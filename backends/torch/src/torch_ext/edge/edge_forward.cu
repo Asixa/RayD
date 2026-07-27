@@ -450,6 +450,10 @@ void launch_edge_query(
 
 } // namespace
 
+// Device contract: the public edge ops in edge/ops_edge.cpp make the scene
+// device current with a c10::cuda::CUDAGuard before dispatching here, so the
+// host launchers below resolve their stream on the scene device through
+// current_torch_cuda_context() and add no guard of their own.
 EdgeForwardOutputs edge_forward_cuda(const SceneCache &scene, const at::Tensor &point) {
     require_edge_cache_dtypes(scene);
     const int64_t point_count = point.size(0);

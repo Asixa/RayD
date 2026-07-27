@@ -323,6 +323,10 @@ __global__ void edge_ray_jvp_kernel(
 
 } // namespace
 
+// Device contract: the public edge ops in edge/ops_edge.cpp make the scene
+// device current with a c10::cuda::CUDAGuard before dispatching here, so every
+// host launcher below resolves its stream on the scene device and adds no
+// guard of its own.
 EdgeBackwardOutputs edge_backward_cuda(
     const at::Tensor &vertices,
     const at::Tensor &edge_v0,

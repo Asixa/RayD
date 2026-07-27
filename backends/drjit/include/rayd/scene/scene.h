@@ -372,6 +372,10 @@ private:
     void ensure_scene_edge_data_ready() const;
     void ensure_edge_bvh_ready() const;
     void ensure_reflection_epc_geometry_ready() const;
+    // Every buffer, acceleration structure, and OptiX resource below belongs to
+    // the Dr.Jit CUDA device that ran build(); \p context names the failing
+    // entry point in the error message.
+    void require_build_device(const char *context) const;
     int mesh_count_ = 0;
     std::vector<SceneMeshRecord> mesh_records_;
 
@@ -398,6 +402,7 @@ private:
     uint64_t scene_version_ = 0;
     uint64_t edge_version_ = 0;
     int edge_count_ = 0;
+    int build_device_ = -1;
     mutable bool edge_bvh_dirty_ = false;
     mutable std::vector<EdgeDirtyRange> pending_edge_bvh_dirty_ranges_;
     TraceBackendKind triangle_kind_ = TraceBackendKind::None;

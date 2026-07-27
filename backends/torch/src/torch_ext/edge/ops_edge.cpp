@@ -2,9 +2,15 @@
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
 
+#include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>
 
 namespace rayd::torch_backend {
+
+// Device contract for this file: every public edge op makes the scene device
+// current before dispatching, so the launchers in edge_forward.cu,
+// edge_topk.cu, and edge_backward.cu resolve their stream on the scene device
+// and add no guard of their own.
 
 namespace {
 
@@ -28,6 +34,7 @@ void require_ray_tmax(const at::Tensor &ray_tmax, int64_t ray_count) {
 py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
     require_vec3f(point, "point");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeForwardOutputs out = scene.edge_backend == EdgeBackend::Cuda
         ? edge_forward_bvh_cuda(scene, point)
         : edge_forward_cuda(scene, point);
@@ -46,6 +53,7 @@ py::tuple nearest_edge_forward_op(int64_t scene_handle, at::Tensor point) {
 py::tuple nearest_edge_forward_noad_op(int64_t scene_handle, at::Tensor point) {
     require_vec3f(point, "point");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeForwardPublicOutputs out = scene.edge_backend == EdgeBackend::Cuda
         ? edge_forward_noad_bvh_cuda(scene, point)
         : edge_forward_noad_cuda(scene, point);
@@ -73,6 +81,7 @@ py::tuple nearest_edges_topk_forward_op(
     if (point.get_device() != scene.device_index ||
         (active.numel() != 0 && active.get_device() != scene.device_index))
         throw std::runtime_error("point and active must be on the scene CUDA device.");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     if (point.size(0) != 0 && scene.edge_v0.numel() != 0)
         ensure_custom_edge_bvh(scene);
     EdgeTopKForwardOutputs out = edge_topk_forward_cuda(scene, point, k, active);
@@ -101,6 +110,7 @@ py::tuple nearest_edge_backward_op(
     at::Tensor grad_edge_point,
         at::Tensor grad_edge_t) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeBackwardOutputs out = edge_backward_cuda(
         scene.global_vertices,
         scene.edge_v0,
@@ -134,6 +144,7 @@ py::tuple nearest_edge_backward_optional_op(
     const at::Tensor *grad_edge_t = optional_tensor(grad_edge_t_obj, grad_edge_t_storage);
     const at::Tensor *grad_edge_t_alias = optional_tensor(grad_edge_t_alias_obj, grad_edge_t_alias_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeBackwardOutputs out = edge_backward_optional_cuda(
         scene.global_vertices,
         scene.edge_v0,
@@ -163,6 +174,7 @@ py::tuple nearest_edge_ray_forward_op(
         (active.numel() != 0 && active.size(0) != ray_o.size(0)))
         throw std::runtime_error("ray_d, ray_tmax, and active must match ray_o batch size.");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeRayForwardOutputs out = scene.edge_backend == EdgeBackend::Cuda
         ? edge_ray_forward_bvh_cuda(scene, ray_o, ray_d, ray_tmax, active)
         : edge_ray_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
@@ -207,6 +219,7 @@ py::tuple nearest_edge_ray_backward_optional_op(
     const at::Tensor *grad_edge_point =
         optional_tensor(grad_edge_point_obj, grad_edge_point_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeRayBackwardOutputs out = edge_ray_backward_optional_cuda(
         scene.global_vertices,
         scene.edge_v0,
@@ -246,6 +259,7 @@ py::tuple nearest_edge_ray_jvp_optional_op(
     const at::Tensor *tangent_ray_d =
         optional_tensor(tangent_ray_d_obj, tangent_ray_d_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor tangent_vertices_global;
     if (tangent_vertices != nullptr &&
         tangent_vertices->sizes() != scene.global_vertices.sizes()) {
@@ -289,6 +303,7 @@ py::tuple nearest_edge_jvp_op(
     at::Tensor tangent_vertices,
         at::Tensor tangent_point) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeJvpOutputs out = edge_jvp_cuda(
         scene.global_vertices,
         scene.edge_v0,
@@ -320,6 +335,7 @@ py::tuple nearest_edge_jvp_optional_op(
     const at::Tensor *tangent_vertices = optional_tensor(tangent_vertices_obj, tangent_vertices_storage);
     const at::Tensor *tangent_point = optional_tensor(tangent_point_obj, tangent_point_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     EdgeJvpOutputs out = edge_jvp_optional_cuda(
         scene.global_vertices,
         scene.edge_v0,

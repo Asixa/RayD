@@ -250,18 +250,20 @@ SegmentPenetrationNativeOutputs forward_native(
         params.policy = validated.policy;
         params.failure_bit = request.failure_bit;
         params.scene_diagonal = validated.scene_diagonal;
-        TorchCudaContext context = current_torch_cuda_context();
-        OptixDeviceContextEntry &optix = get_optix_context(context.device_index);
+        // The context, the pipeline, and the stream all belong to the validated
+        // scene device, not to whichever device happens to be ambient.
+        const int device_index = static_cast<int>(validated.scene.device_index);
+        OptixDeviceContextEntry &optix = get_optix_context(device_index);
         shared_optix_launch_pipeline(
             optix.optix_context,
-            context.device_index,
+            device_index,
             params.mesh_count,
             segment_penetration_pipeline_config())
             ->launch(
                 0,
                 params,
                 static_cast<unsigned int>(validated.segment_count),
-                context.stream);
+                at::cuda::getCurrentCUDAStream(device_index).stream());
     }
     segment_penetration_sanitize_cuda(outputs, request.capacity_failure_state);
     return outputs;

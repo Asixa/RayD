@@ -29,6 +29,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/complex.h>
 #include <c10/util/Exception.h>
 
@@ -355,6 +356,7 @@ rayd::torch::ScatteringPatchIntegralEvalResult scattering_patch_integral_eval_im
         TORCH_CHECK(t.get_device() == patch_tris.get_device(),
                     "patch-integral tensors must share device");
     }
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
     auto integral = at::empty(
         {row_count}, patch_tris.options().dtype(at::kComplexFloat));
     auto row_value = at::empty_like(integral);

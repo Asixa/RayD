@@ -617,6 +617,7 @@ std::vector<at::Tensor> visible_pair_forward_impl(
     require_scene_device(scene, end_b, "end_b");
     require_scene_device(scene, ignore_prim_ids, "ignore_prim_ids");
     require_scene_device(scene, active, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = start.size(0);
     at::Tensor visible_a = at::empty({ray_count}, start.options().dtype(at::kBool));
     at::Tensor visible_b = at::empty({ray_count}, start.options().dtype(at::kBool));
@@ -829,6 +830,7 @@ std::vector<at::Tensor> trace_reflections_forward_native_impl(
     require_scene_device(scene, ray_d, "ray_d");
     require_scene_device(scene, ray_tmax, "ray_tmax");
     require_scene_device(scene, active_ptr, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
 
     const int64_t ray_count = ray_o.size(0);
     auto fopts = ray_o.options();
@@ -1056,6 +1058,7 @@ ReflectionBackwardOutputs integration_trace_reflections_backward_impl(
     require_scene_device(scene, image_sources, "image_sources");
     require_scene_device(scene, grad_t, "grad_t");
     require_scene_device(scene, grad_image_sources, "grad_image_sources");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     return reflection_chain_backward_cuda(
@@ -1206,6 +1209,7 @@ ReflectionJvpOutputs integration_trace_reflections_jvp_impl(
     require_scene_device(scene, tangent_ray_o, "tangent_ray_o");
     require_scene_device(scene, tangent_ray_d, "tangent_ray_d");
     require_scene_device(scene, image_sources, "image_sources");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
     return reflection_chain_jvp_cuda(
         scene.global_vertices,
@@ -1239,6 +1243,7 @@ py::tuple trace_reflections_backward_op(
     at::Tensor grad_t,
     at::Tensor grad_image_sources) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflectionBackwardOutputs out = reflection_chain_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1270,6 +1275,7 @@ py::tuple trace_reflections_backward_optional_op(
     py::object grad_t_obj,
     py::object grad_image_sources_obj) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor grad_t_storage;
     at::Tensor grad_image_sources_storage;
     const at::Tensor *grad_t = optional_tensor(grad_t_obj, grad_t_storage);
@@ -1305,6 +1311,7 @@ py::tuple trace_reflections_jvp_op(
     at::Tensor tangent_ray_d,
     at::Tensor image_sources) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflectionJvpOutputs out = reflection_chain_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1336,6 +1343,7 @@ py::tuple trace_reflections_jvp_optional_op(
     py::object tangent_ray_d_obj,
     at::Tensor image_sources) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     at::Tensor tangent_vertices_storage;
     at::Tensor tangent_ray_o_storage;
     at::Tensor tangent_ray_d_storage;
@@ -1374,6 +1382,10 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(
         throw std::runtime_error("max_bounces must be at least 1.");
 
     SceneCache &scene = get_scene(scene_handle);
+    require_scene_device(scene, source, "source");
+    require_scene_device(scene, receiver, "receiver");
+    require_scene_device(scene, active_ptr, "active");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = source.size(0);
     const int64_t slot_count = ray_count * max_bounces;
     auto fopts = source.options();
@@ -1458,7 +1470,7 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(
     setup_params.first_blocked_prim = first_blocked_prim.data_ptr<int>();
     setup_params.first_blocked_group = first_blocked_group.data_ptr<int>();
     setup_params.tape_barycentric = tape_barycentric.data_ptr<float>();
-    reflection_epc_forward_setup_gpu(setup_params);
+    reflection_epc_forward_setup_gpu(setup_params, static_cast<int>(scene.device_index));
 
     ReflEpcParams epc_params = {};
     epc_params.primary_handle = scene.triangle_ias.traversable;
@@ -1554,7 +1566,7 @@ std::vector<at::Tensor> trace_refl_epc_field_forward_native_impl(
     field_params.out_field_x_im = field_imag.data_ptr<float>();
     field_params.out_first_resolved_prim_id = resolved_first.data_ptr<int>();
     field_params.out_first_trace_prim_id = tape_prim_id.data_ptr<int>();
-    reflection_epc_field_gpu(field_params);
+    reflection_epc_field_gpu(field_params, static_cast<int>(scene.device_index));
 
     return {
         field_real,
@@ -1642,6 +1654,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     require_scene_device(scene, surface_group_id, "surface_group_id");
     require_scene_device(scene, surface_group_size, "surface_group_size");
     require_scene_device(scene, surface_group_members, "surface_group_members");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t ray_count = source.size(0);
     const int64_t slot_count = ray_count * max_bounces;
     auto fopts = source.options();
@@ -1718,7 +1731,7 @@ std::vector<at::Tensor> reflection_epc_paths_forward_native_impl(
     setup_params.first_blocked_prim = first_blocked_prim.data_ptr<int>();
     setup_params.first_blocked_group = first_blocked_group.data_ptr<int>();
     setup_params.tape_barycentric = tape_barycentric.data_ptr<float>();
-    reflection_epc_forward_setup_gpu(setup_params);
+    reflection_epc_forward_setup_gpu(setup_params, static_cast<int>(scene.device_index));
 
     ReflEpcParams epc_params = {};
     epc_params.primary_handle = scene.triangle_ias.traversable;
@@ -1876,6 +1889,7 @@ py::tuple trace_refl_epc_field_backward_op(
         if (grad_path_length->size(0) != ray_count)
             throw std::runtime_error("grad_path_length must match the EPC batch size.");
     }
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflEpcBackwardOutputs out = refl_epc_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1930,6 +1944,7 @@ py::tuple trace_refl_epc_field_jvp_op(
         if (tangent_receiver->size(0) != receiver.size(0))
             throw std::runtime_error("tangent_receiver must match the EPC batch size.");
     }
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     ReflEpcJvpOutputs out = refl_epc_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -2011,6 +2026,7 @@ py::tuple reflection_dedup_forward_op(
         at::Tensor img_y_c = img_y.contiguous();
         at::Tensor img_z_c = img_z.contiguous();
         unique_count = reflection_dedup_gpu(
+            static_cast<int>(bounce_count.get_device()),
             static_cast<int32_t>(ray_count),
             static_cast<int32_t>(max_bounces),
             bounce_count_c.data_ptr<int>(),
@@ -2174,6 +2190,7 @@ ReflectionAccumulationNativeOutputs reflection_accumulation_forward_native_impl(
     require_scene_device(scene, material_mu_r, "material_mu_r");
     require_scene_device(scene, material_gain, "material_gain");
     require_scene_device(scene, material_valid, "material_valid");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     const int64_t material_count = material_eta_r.size(0);
     if (material_count != scene.global_faces.size(0) ||
         material_sigma.size(0) != material_count ||
@@ -2543,6 +2560,7 @@ ReflEpcPathsBackwardOutputs integration_reflection_epc_paths_backward_impl(
     require_scene_device(scene, grad_points, "grad_points");
     require_scene_device(scene, grad_normals, "grad_normals");
     require_scene_device(scene, grad_path_length, "grad_path_length");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     return reflection_epc_paths_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -2593,6 +2611,7 @@ ReflEpcPathsJvpOutputs integration_reflection_epc_paths_jvp_impl(
     require_scene_device(scene, tangent_vertices, "tangent_vertices");
     require_scene_device(scene, tangent_source, "tangent_source");
     require_scene_device(scene, tangent_receiver, "tangent_receiver");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     return reflection_epc_paths_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -2618,6 +2637,7 @@ at::Tensor integration_scene_face_normals_backward_impl(
     require_scene_device(scene, grad_face_normals, "grad_face_normals");
     if (grad_face_normals.size(0) != scene.global_faces.size(0))
         throw std::runtime_error("grad_face_normals must match the scene global face table.");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     return scene_face_normals_backward_cuda(
         scene.global_vertices, scene.global_faces, grad_face_normals);
 }
@@ -2628,6 +2648,7 @@ at::Tensor integration_scene_face_normals_jvp_impl(
     require_optional_tangent_vertices(
         &tangent_vertices, scene.global_vertices, "tangent_vertices");
     require_scene_device(scene, tangent_vertices, "tangent_vertices");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     return scene_face_normals_jvp_cuda(
         scene.global_vertices, scene.global_faces, tangent_vertices);
 }

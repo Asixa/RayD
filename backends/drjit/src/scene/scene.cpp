@@ -205,6 +205,27 @@ Scene::Scene(const std::string &edge_bvh_backend, const std::string &trace_backe
 
 Scene::~Scene() = default;
 
+void Scene::require_build_device(const char *context) const {
+    if (build_device_ < 0) {
+        return;
+    }
+
+    const int current_device = jit_cuda_device();
+    if (current_device == build_device_) {
+        return;
+    }
+
+    throw std::runtime_error(
+        std::string(context) +
+        " requires the Dr.Jit CUDA device the scene was built on (device " +
+        std::to_string(build_device_) + "), but the current Dr.Jit CUDA device is " +
+        std::to_string(current_device) +
+        ". Scene buffers, acceleration structures, and OptiX resources are bound "
+        "to their build device; call rayd.drjit.set_device(" +
+        std::to_string(build_device_) +
+        ") before querying, or rebuild the scene on the current device.");
+}
+
 std::string Scene::to_string() const {
     std::stringstream stream;
     stream << "Scene[num_meshes=" << mesh_count_
@@ -715,12 +736,14 @@ void Scene::build() {
     }
     is_ready_ = true;
     pending_updates_ = false;
+    build_device_ = jit_cuda_device();
     ++scene_version_;
     ++edge_version_;
 }
 
 void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD &positions) {
     require(is_ready(), "Scene::update_mesh_vertices(): scene is not built.");
+    require_build_device("Scene::update_mesh_vertices()");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::update_mesh_vertices(): target mesh is not dynamic.");
@@ -734,6 +757,7 @@ void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD &positions) {
 
 void Scene::set_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool set_left) {
     require(is_ready(), "Scene::set_mesh_transform(): scene is not built.");
+    require_build_device("Scene::set_mesh_transform()");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::set_mesh_transform(): target mesh is not dynamic.");
@@ -745,6 +769,7 @@ void Scene::set_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool set_l
 
 void Scene::append_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool append_left) {
     require(is_ready(), "Scene::append_mesh_transform(): scene is not built.");
+    require_build_device("Scene::append_mesh_transform()");
 
     SceneMeshRecord &record = mesh_record(mesh_id);
     require(record.dynamic, "Scene::append_mesh_transform(): target mesh is not dynamic.");
@@ -758,6 +783,7 @@ void Scene::set_edge_mask(const Mask &mask) {
     require(is_ready(), "Scene::set_edge_mask(): scene is not built.");
     require(static_cast<int>(mask.size()) == edge_count_,
             "Scene::set_edge_mask(): mask size must match the scene edge count.");
+    require_build_device("Scene::set_edge_mask()");
 
     if (mask.size() == edge_mask_.size() && drjit::all(mask == edge_mask_)) {
         return;
@@ -772,6 +798,7 @@ void Scene::set_edge_mask(const Mask &mask) {
 void Scene::sync() {
     ScopedNativeLaunchStage native_launch_stage(NativeLaunchStage::Sync);
     require(is_ready(), "Scene::sync(): scene is not built.");
+    require_build_device("Scene::sync()");
     last_sync_profile_ = SceneSyncProfile();
 
     if (!pending_updates_) {
@@ -896,6 +923,7 @@ void Scene::sync() {
 SceneEdgeInfo Scene::edge_info() const {
     require(is_ready(), "Scene::edge_info(): scene is not built.");
     require(!pending_updates_, "Scene::edge_info(): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::edge_info()");
 
     ensure_scene_edge_data_ready();
 
@@ -921,17 +949,20 @@ SceneEdgeBVHStats Scene::edge_bvh_stats() const {
     require(is_ready(), "Scene::edge_bvh_stats(): scene is not built.");
     require(!pending_updates_,
             "Scene::edge_bvh_stats(): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::edge_bvh_stats()");
     ensure_edge_bvh_ready();
     return edge_bvh_backend_ == EdgeBVHBackend::Optix ? edge_optix_->stats() : edge_bvh_->stats();
 }
 
 const SceneEdgeTopology &Scene::edge_topology() const {
     require(is_ready(), "Scene::edge_topology(): scene is not built.");
+    require_build_device("Scene::edge_topology()");
     return edge_topology_;
 }
 
 const Mask &Scene::edge_mask() const {
     require(is_ready(), "Scene::edge_mask(): scene is not built.");
+    require_build_device("Scene::edge_mask()");
     return edge_mask_;
 }
 
@@ -939,11 +970,13 @@ const SceneGeometry &Scene::global_geometry() const {
     require(is_ready(), "Scene::global_geometry(): scene is not built.");
     require(!pending_updates_,
             "Scene::global_geometry(): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::global_geometry()");
     return global_geometry_;
 }
 
 VectoriT<3, true> Scene::triangle_edge_indices(const Int &prim_id, bool global) const {
     require(is_ready(), "Scene::triangle_edge_indices(): scene is not built.");
+    require_build_device("Scene::triangle_edge_indices()");
 
     const int query_count = static_cast<int>(slices(prim_id));
     VectoriT<3, true> result(full<Int>(-1, query_count),
@@ -977,6 +1010,7 @@ VectoriT<3, true> Scene::triangle_edge_indices(const Int &prim_id, bool global) 
 
 VectoriT<2, true> Scene::edge_adjacent_faces(const Int &edge_id, bool global) const {
     require(is_ready(), "Scene::edge_adjacent_faces(): scene is not built.");
+    require_build_device("Scene::edge_adjacent_faces()");
 
     const int query_count = static_cast<int>(slices(edge_id));
     VectoriT<2, true> result(full<Int>(-1, query_count),
@@ -1019,12 +1053,17 @@ OptixTraceBackend &Scene::optix_backend() const {
             "Scene: this operation requires the OptiX trace backend; the scene was "
             "built with trace_backend='cuda'. CUDA multipath arrives with the "
             "CudaFusedExecutor (P4).");
+    // Every triangle-backend query funnels through this accessor, so the
+    // build-device check here also covers the query entry points that live in
+    // the other Scene translation units.
+    require_build_device("Scene: this operation");
     return *static_cast<OptixTraceBackend *>(trace_backend_.get());
 }
 
 CudaTraceBackend &Scene::cuda_backend() const {
     require(trace_backend_ != nullptr && triangle_kind_ == TraceBackendKind::Cuda,
             "Scene: this operation requires the CUDA trace backend.");
+    require_build_device("Scene: this operation");
     return *static_cast<CudaTraceBackend *>(trace_backend_.get());
 }
 
@@ -1035,6 +1074,7 @@ std::vector<int> Scene::cuda_first_blocker_selftest(const Vector3f &origin,
     require(is_ready(), "Scene::cuda_first_blocker_selftest(): scene is not built.");
     require(!pending_updates_,
             "Scene::cuda_first_blocker_selftest(): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::cuda_first_blocker_selftest()");
     return cuda_backend().first_blocker_selftest(origin, direction, tmax, ignore_prim_ids);
 }
 
@@ -1056,6 +1096,7 @@ template <bool Detached>
 NearestPointEdgeT<Detached> Scene::nearest_edge(const Vector3fT<Detached> &point, MaskT<Detached> active) const {
     require(is_ready(), "Scene::nearest_edge(point): scene is not built.");
     require(!pending_updates_, "Scene::nearest_edge(point): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::nearest_edge(point)");
 
     const int query_count = static_cast<int>(slices(point));
     NearestPointEdgeT<Detached> result = initialize_nearest_point_edge_result<Detached>(query_count);
@@ -1152,6 +1193,7 @@ template <bool Detached>
 NearestRayEdgeT<Detached> Scene::nearest_edge(const RayT<Detached> &ray, MaskT<Detached> active) const {
     require(is_ready(), "Scene::nearest_edge(ray): scene is not built.");
     require(!pending_updates_, "Scene::nearest_edge(ray): scene has pending updates. Call Scene::sync() first.");
+    require_build_device("Scene::nearest_edge(ray)");
 
     const int query_count = static_cast<int>(slices(ray.o));
     NearestRayEdgeT<Detached> result = initialize_nearest_ray_edge_result<Detached>(query_count);
@@ -1343,6 +1385,7 @@ NearestEdgesTopKT<Detached> Scene::nearest_edges(const Vector3fT<Detached> &poin
             "Scene::nearest_edges(point): scene has pending updates. Call Scene::sync() first.");
     require(k > 0, "Scene::nearest_edges(point): k must be positive.");
     require(k <= 16, "Scene::nearest_edges(point): k must be <= 16.");
+    require_build_device("Scene::nearest_edges(point)");
 
     const int query_count = static_cast<int>(slices(point));
     const int output_count = query_count * k;

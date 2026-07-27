@@ -1,6 +1,7 @@
 #include <rayd/torch/reflection/dedup.h>
 #include <rayd/shared/multipath/reflection_dedup.h>
 
+#include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
@@ -174,6 +175,7 @@ void check_sequence_status(const shared::multipath::ReflectionDedupSequenceStatu
 } // namespace
 
 int reflection_dedup_gpu(
+    int device_index,
     int n_rays,
     int max_bounces,
     const int *bounce_count,
@@ -221,7 +223,8 @@ int reflection_dedup_gpu(
         return 0;
     }
 
-    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream());
+    c10::cuda::CUDAGuard guard(device_index);
+    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream(device_index));
 
     constexpr int block_size = 256;
     const int block_count = (n_rays + block_size - 1) / block_size;

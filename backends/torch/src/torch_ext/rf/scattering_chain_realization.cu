@@ -588,6 +588,7 @@ rayd::torch::ScatteringChainRealizationEvalResult scattering_chain_realization_e
         layer_mu_r, quad_a, quad_b, quad_w);
     const int64_t material_count = layer_offset.size(0);
     TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     auto complex_options = patch_tris.options().dtype(at::kComplexFloat);
     auto integral = at::empty({row_count}, complex_options);

@@ -219,6 +219,10 @@ __global__ void finalize_topk_kernel(
 
 } // namespace
 
+// Device contract: the public edge ops in edge/ops_edge.cpp make the scene
+// device current with a c10::cuda::CUDAGuard before dispatching here, so every
+// host launcher below resolves its stream on the scene device and adds no
+// guard of its own.
 EdgeTopKForwardOutputs edge_topk_forward_cuda(
     const SceneCache &scene,
     const at::Tensor &point,

@@ -4,6 +4,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/torch/rf/scattering.h>
@@ -118,6 +119,7 @@ rayd::torch::ScatteringTableEvalResult scattering_table_eval_impl(at::Tensor val
     TORCH_CHECK(valid.size(0)==wi.size(0),"valid must match wi rows"); TORCH_CHECK(wi.sizes()==wo.sizes(),"wi and wo shapes must match");
     TORCH_CHECK(fte.sizes()==ftm.sizes(),"f_te and f_tm shapes must match");
     TORCH_CHECK(valid.get_device()==wi.get_device() && wi.get_device()==fte.get_device() && wo.get_device()==wi.get_device() && ftm.get_device()==wi.get_device(),"scattering tensors must share device");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wi.get_device()));
     auto te=at::empty({wi.size(0)},wi.options()), tm=at::empty_like(te);
     if (wi.size(0)>0) { auto s=at::cuda::getCurrentCUDAStream(wi.get_device()).stream(); scattering_eval_kernel<<<blocks(wi.size(0)),kBlockSize,0,s>>>(wi.size(0),valid.data_ptr<bool>(),wi.data_ptr<float>(),wo.data_ptr<float>(),fte.data_ptr<float>(),ftm.data_ptr<float>(),fte.size(0),fte.size(1),fte.size(2),fte.size(3),te.data_ptr<float>(),tm.data_ptr<float>()); C10_CUDA_KERNEL_LAUNCH_CHECK(); }
     return {te, tm};
@@ -127,6 +129,7 @@ at::Tensor scattering_table_pdf_impl(at::Tensor valid, at::Tensor wi, at::Tensor
     rayd::torch::detail::check_tensor(valid,"valid",at::kBool,1);
     rayd::torch::detail::check_vec3_table(wi,"wi"); rayd::torch::detail::check_vec3_table(wo,"wo"); check_table(density,"sample_density");
     TORCH_CHECK(valid.size(0)==wi.size(0),"valid must match wi rows"); TORCH_CHECK(wi.sizes()==wo.sizes(),"wi and wo shapes must match"); TORCH_CHECK(valid.get_device()==wi.get_device() && wi.get_device()==density.get_device(),"scattering tensors must share device");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wi.get_device()));
     auto out=at::empty({wi.size(0)},wi.options()); if(wi.size(0)>0){auto s=at::cuda::getCurrentCUDAStream(wi.get_device()).stream();scattering_pdf_kernel<<<blocks(wi.size(0)),kBlockSize,0,s>>>(wi.size(0),valid.data_ptr<bool>(),wi.data_ptr<float>(),wo.data_ptr<float>(),density.data_ptr<float>(),density.size(0),density.size(1),density.size(2),density.size(3),reverse,out.data_ptr<float>());C10_CUDA_KERNEL_LAUNCH_CHECK();} return out;
 }
 
@@ -134,6 +137,7 @@ rayd::torch::ScatteringTableSampleResult scattering_table_sample_impl(at::Tensor
     rayd::torch::detail::check_tensor(valid,"valid",at::kBool,1);
     rayd::torch::detail::check_vec3_table(wi,"wi"); rayd::torch::detail::check_tensor(uniforms,"uniforms",at::kFloat,2); rayd::torch::detail::check_tensor(marginal,"marginal_cdf",at::kFloat,3); check_table(conditional,"conditional_cdf"); check_table(density,"sample_density");
     TORCH_CHECK(valid.size(0)==wi.size(0),"valid must match wi rows"); TORCH_CHECK(uniforms.size(0)==wi.size(0)&&uniforms.size(1)==2,"uniforms must have shape (N,2)"); TORCH_CHECK(valid.get_device()==wi.get_device()&&marginal.get_device()==wi.get_device()&&conditional.get_device()==wi.get_device()&&density.get_device()==wi.get_device()&&uniforms.get_device()==wi.get_device(),"scattering tensors must share device");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wi.get_device()));
     auto wo=at::empty_like(wi), pf=at::empty({wi.size(0)},wi.options()), pr=at::empty_like(pf); if(wi.size(0)>0){auto s=at::cuda::getCurrentCUDAStream(wi.get_device()).stream();scattering_sample_kernel<<<blocks(wi.size(0)),kBlockSize,0,s>>>(wi.size(0),valid.data_ptr<bool>(),wi.data_ptr<float>(),uniforms.data_ptr<float>(),marginal.data_ptr<float>(),conditional.data_ptr<float>(),density.data_ptr<float>(),density.size(0),density.size(1),density.size(2),density.size(3),wo.data_ptr<float>(),pf.data_ptr<float>(),pr.data_ptr<float>());C10_CUDA_KERNEL_LAUNCH_CHECK();} return {wo, pf, pr};
 }
 

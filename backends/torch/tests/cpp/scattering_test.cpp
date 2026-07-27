@@ -250,6 +250,112 @@ ScatteringPatchIntegralEvalRequest nonempty_patch_request() {
     };
 }
 
+ScatteringTableSampleRequest nonempty_table_sample_request() {
+    const auto primal = nonempty_table_request();
+    const auto floats = cuda_options(at::kFloat);
+    auto marginal = at::empty({2, 2, 2}, floats);
+    marginal.select(2, 0).fill_(0.5F);
+    marginal.select(2, 1).fill_(1.0F);
+    auto conditional = at::empty({2, 2, 2, 2}, floats);
+    conditional.select(3, 0).fill_(0.5F);
+    conditional.select(3, 1).fill_(1.0F);
+    return {
+        primal.valid,
+        primal.wi,
+        at::tensor({0.25F, 0.25F}, floats).reshape({1, 2}),
+        marginal,
+        conditional,
+        at::full({2, 2, 2, 2}, 0.25F, floats),
+    };
+}
+
+ScatteringTablePdfRequest nonempty_table_pdf_request() {
+    const auto primal = nonempty_table_request();
+    return {
+        primal.valid,
+        primal.wi,
+        primal.wo,
+        at::full({2, 2, 2, 2}, 0.25F, cuda_options(at::kFloat)),
+        false,
+    };
+}
+
+LayerStackRequest nonempty_layer_stack_request() {
+    const auto floats = cuda_options(at::kFloat);
+    const auto ints = cuda_options(at::kInt);
+    return {
+        at::tensor({0.55F}, floats),
+        at::tensor({0}, ints),
+        at::tensor({0}, ints),
+        at::tensor({1}, ints),
+        at::tensor({0.12F}, floats),
+        at::tensor({4.0F}, floats),
+        at::tensor({0.025F}, floats),
+        at::tensor({1.0F}, floats),
+        3.5e9,
+    };
+}
+
+TransmissionSequenceRequest nonempty_transmission_request() {
+    const auto floats = cuda_options(at::kFloat);
+    const auto ints = cuda_options(at::kInt);
+    const auto bools = cuda_options(at::kBool);
+    return {
+        at::ones({1}, bools),
+        at::tensor({0.0F, 0.0F, 2.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 0.0F, -2.0F}, floats).reshape({1, 3}),
+        at::zeros({1, 1, 3}, floats),
+        at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 1, 3}),
+        at::zeros({1, 1}, ints),
+        at::ones({1, 1}, bools),
+        at::ones({1}, floats),
+        at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3}),
+        at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3}),
+        at::zeros({1}, ints),
+        at::ones({1}, ints),
+        at::tensor({0.1F}, floats),
+        at::tensor({4.0F}, floats),
+        at::tensor({0.05F}, floats),
+        at::ones({1}, floats),
+        3.5e9,
+    };
+}
+
+DiffractionWedgeRequest nonempty_wedge_request() {
+    const auto floats = cuda_options(at::kFloat);
+    const auto masks = cuda_options(at::kBool);
+    DiffractionWedgeRequest request;
+    request.valid = at::ones({1}, masks);
+    request.source = at::tensor({-1.2F, -0.8F, 0.2F}, floats).reshape({1, 3});
+    request.target = at::tensor({1.0F, 1.1F, -0.1F}, floats).reshape({1, 3});
+    request.edge_position = at::zeros({1, 3}, floats);
+    request.edge_direction =
+        at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 3});
+    request.edge_t_min = at::tensor({-1.0F}, floats);
+    request.edge_t_max = at::tensor({1.0F}, floats);
+    request.edge_n0 = at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3});
+    request.edge_n1 = at::tensor({-1.0F, 0.0F, 0.0F}, floats).reshape({1, 3});
+    request.exterior_angle = at::tensor({4.71238898F}, floats);
+    request.face0_valid = at::ones({1}, masks);
+    request.face0_eps_r = at::tensor({4.0F}, floats);
+    request.face0_sigma_e = at::tensor({0.01F}, floats);
+    request.face0_mu_r = at::tensor({1.0F}, floats);
+    request.face0_gain = at::tensor({1.0F}, floats);
+    request.face1_valid = at::ones({1}, masks);
+    request.face1_eps_r = at::tensor({3.0F}, floats);
+    request.face1_sigma_e = at::tensor({0.02F}, floats);
+    request.face1_mu_r = at::tensor({1.0F}, floats);
+    request.face1_gain = at::tensor({0.9F}, floats);
+    request.tx_power = at::tensor({2.0F}, floats);
+    request.frequency_hz = 3.5e9;
+    request.vertex_v0 = at::tensor({0.0F, 0.0F, -1.0F}, floats).reshape({1, 3});
+    request.vertex_v1 = at::tensor({0.0F, 0.0F, 1.0F}, floats).reshape({1, 3});
+    request.vertex_opp0 = at::tensor({1.0F, 0.0F, 0.0F}, floats).reshape({1, 3});
+    request.vertex_opp1 = at::tensor({0.0F, 1.0F, 0.0F}, floats).reshape({1, 3});
+    request.edge_boundary = at::zeros({1}, masks);
+    return request;
+}
+
 void test_table_empty_contracts() {
     const auto primal = empty_table_request();
     const auto result = scattering_table_eval(primal);
@@ -743,22 +849,167 @@ void test_invalid_contracts_fail_loudly() {
     require_throws(
         [&] { (void)scattering_patch_integral_eval_jvp(patch_jvp); },
         "wrong optional patch tangent dtype must fail loudly");
+}
 
-    if (at::cuda::device_count() > 1) {
-        auto bad_ensemble_device = nonempty_ensemble_request();
-        bad_ensemble_device.n_o =
-            bad_ensemble_device.n_o.to(at::Device(at::kCUDA, 1));
-        require_throws(
-            [&] { (void)scattering_ensemble_eval(bad_ensemble_device); },
-            "cross-device ensemble input must fail loudly");
-
-        auto bad_patch_device = nonempty_patch_request();
-        bad_patch_device.heights =
-            bad_patch_device.heights.to(at::Device(at::kCUDA, 1));
-        require_throws(
-            [&] { (void)scattering_patch_integral_eval(bad_patch_device); },
-            "cross-device patch input must fail loudly");
+// Every guarded entry point resolves exactly one CUDA device from its primal
+// request, so a request whose tensors straddle two devices must fail loudly
+// instead of launching against foreign pointers. Each fixture is exercised on
+// device 0 first, so a rejection below is a rejection of the device split and
+// not of an unrelated contract.
+void test_cross_device_inputs_fail_loudly() {
+    if (at::cuda::device_count() < 2) {
+        std::cout << "single CUDA device; cross-device rejection skipped\n";
+        return;
     }
+    const auto second = at::Device(at::kCUDA, 1);
+
+    const auto table = nonempty_table_request();
+    (void)scattering_table_eval(table);
+    auto bad_table_direction_device = table;
+    bad_table_direction_device.wo = bad_table_direction_device.wo.to(second);
+    require_throws(
+        [&] { (void)scattering_table_eval(bad_table_direction_device); },
+        "cross-device table direction must fail loudly");
+    auto bad_table_payload_device = table;
+    bad_table_payload_device.f_tm = bad_table_payload_device.f_tm.to(second);
+    require_throws(
+        [&] { (void)scattering_table_eval(bad_table_payload_device); },
+        "cross-device table payload must fail loudly");
+
+    ScatteringTableEvalBackwardRequest table_backward;
+    table_backward.primal = table;
+    table_backward.grad_f_te = at::ones({1}, table.wi.options().device(second));
+    table_backward.need_grad_directions = true;
+    require_throws(
+        [&] { (void)scattering_table_eval_backward(table_backward); },
+        "cross-device table cotangent must fail loudly");
+
+    ScatteringTableEvalJvpRequest table_jvp;
+    table_jvp.primal = table;
+    table_jvp.tangent_wi = at::ones({1, 3}, table.wi.options().device(second));
+    require_throws(
+        [&] { (void)scattering_table_eval_jvp(table_jvp); },
+        "cross-device table tangent must fail loudly");
+
+    const auto sample = nonempty_table_sample_request();
+    (void)scattering_table_sample(sample);
+    auto bad_sample_device = sample;
+    bad_sample_device.sample_density = bad_sample_device.sample_density.to(second);
+    require_throws(
+        [&] { (void)scattering_table_sample(bad_sample_device); },
+        "cross-device table sample density must fail loudly");
+
+    const auto pdf = nonempty_table_pdf_request();
+    (void)scattering_table_pdf(pdf);
+    auto bad_pdf_device = pdf;
+    bad_pdf_device.sample_density = bad_pdf_device.sample_density.to(second);
+    require_throws(
+        [&] { (void)scattering_table_pdf(bad_pdf_device); },
+        "cross-device table PDF density must fail loudly");
+
+    const auto ensemble = nonempty_ensemble_request();
+    (void)scattering_ensemble_eval(ensemble);
+    auto bad_ensemble_device = ensemble;
+    bad_ensemble_device.n_o = bad_ensemble_device.n_o.to(second);
+    require_throws(
+        [&] { (void)scattering_ensemble_eval(bad_ensemble_device); },
+        "cross-device ensemble input must fail loudly");
+
+    ScatteringEnsembleEvalBackwardRequest ensemble_backward;
+    ensemble_backward.primal = ensemble;
+    ensemble_backward.grad_gain = at::ones({1}, ensemble.wo_rows.options().device(second));
+    ensemble_backward.need_grad_rows = true;
+    require_throws(
+        [&] { (void)scattering_ensemble_eval_backward(ensemble_backward); },
+        "cross-device ensemble cotangent must fail loudly");
+
+    ScatteringEnsembleEvalJvpRequest ensemble_jvp;
+    ensemble_jvp.primal = ensemble;
+    ensemble_jvp.tangent_r2_rows = at::ones({1}, ensemble.r2_rows.options().device(second));
+    require_throws(
+        [&] { (void)scattering_ensemble_eval_jvp(ensemble_jvp); },
+        "cross-device ensemble tangent must fail loudly");
+
+    const auto patch = nonempty_patch_request();
+    (void)scattering_patch_integral_eval(patch);
+    auto bad_patch_device = patch;
+    bad_patch_device.heights = bad_patch_device.heights.to(second);
+    require_throws(
+        [&] { (void)scattering_patch_integral_eval(bad_patch_device); },
+        "cross-device patch input must fail loudly");
+
+    ScatteringPatchIntegralEvalBackwardRequest patch_backward;
+    patch_backward.primal = patch;
+    patch_backward.grad_total = at::ones({}, cuda_options(at::kComplexFloat).device(second));
+    patch_backward.need_grad_heights = true;
+    require_throws(
+        [&] { (void)scattering_patch_integral_eval_backward(patch_backward); },
+        "cross-device patch cotangent must fail loudly");
+
+    ScatteringPatchIntegralEvalJvpRequest patch_jvp;
+    patch_jvp.primal = patch;
+    patch_jvp.tangent_heights = at::ones(
+        patch.heights.sizes(), patch.heights.options().device(second));
+    require_throws(
+        [&] { (void)scattering_patch_integral_eval_jvp(patch_jvp); },
+        "cross-device patch tangent must fail loudly");
+
+    const auto transmission = nonempty_transmission_request();
+    (void)field_transmission_sequence(transmission);
+    auto bad_transmission_device = transmission;
+    bad_transmission_device.layer_eps_r =
+        bad_transmission_device.layer_eps_r.to(second);
+    require_throws(
+        [&] { (void)field_transmission_sequence(bad_transmission_device); },
+        "cross-device transmission input must fail loudly");
+
+    TransmissionSequenceJvpRequest transmission_jvp;
+    transmission_jvp.primal = transmission;
+    transmission_jvp.tangent_source =
+        at::ones({1, 3}, transmission.source.options().device(second));
+    require_throws(
+        [&] { (void)field_transmission_sequence_jvp(transmission_jvp); },
+        "cross-device transmission tangent must fail loudly");
+
+    const auto layer_stack = nonempty_layer_stack_request();
+    (void)em_layer_stack_eval(layer_stack);
+    auto bad_layer_stack_device = layer_stack;
+    bad_layer_stack_device.layer_eps_r =
+        bad_layer_stack_device.layer_eps_r.to(second);
+    require_throws(
+        [&] { (void)em_layer_stack_eval(bad_layer_stack_device); },
+        "cross-device layer-stack input must fail loudly");
+
+    LayerStackBackwardRequest layer_stack_backward;
+    layer_stack_backward.primal = layer_stack;
+    layer_stack_backward.grad_outputs[0] =
+        at::ones({1}, layer_stack.cos_theta.options().device(second));
+    layer_stack_backward.need_cos_theta = true;
+    require_throws(
+        [&] { (void)em_layer_stack_backward(layer_stack_backward); },
+        "cross-device layer-stack cotangent must fail loudly");
+
+    const auto wedge = nonempty_wedge_request();
+    (void)field_diffraction_wedge(wedge);
+    auto bad_wedge_device = wedge;
+    bad_wedge_device.target = bad_wedge_device.target.to(second);
+    require_throws(
+        [&] { (void)field_diffraction_wedge(bad_wedge_device); },
+        "cross-device wedge input must fail loudly");
+    auto bad_wedge_vertex_device = wedge;
+    bad_wedge_vertex_device.vertex_opp1 =
+        bad_wedge_vertex_device.vertex_opp1->to(second);
+    require_throws(
+        [&] { (void)field_diffraction_wedge(bad_wedge_vertex_device); },
+        "cross-device wedge vertex must fail loudly");
+
+    DiffractionWedgeJvpRequest wedge_jvp;
+    wedge_jvp.primal = wedge;
+    wedge_jvp.tangent_source =
+        at::ones({1, 3}, wedge.source.options().device(second));
+    require_throws(
+        [&] { (void)field_diffraction_wedge_jvp(wedge_jvp); },
+        "cross-device wedge tangent must fail loudly");
 }
 
 }  // namespace
@@ -787,6 +1038,8 @@ int main() {
         test_invalid_rows_short_circuit_poison();
         std::cout << "[RUN] test_invalid_contracts_fail_loudly\n";
         test_invalid_contracts_fail_loudly();
+        std::cout << "[RUN] test_cross_device_inputs_fail_loudly\n";
+        test_cross_device_inputs_fail_loudly();
         std::cout << "rayd::torch scattering direct contracts passed\n";
         return 0;
     } catch (const std::exception& error) {

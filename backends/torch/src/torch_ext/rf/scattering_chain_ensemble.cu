@@ -38,6 +38,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/torch/rf/scattering.h>
@@ -404,6 +405,7 @@ rayd::torch::ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval_im
         TORCH_CHECK(t.get_device() == tx_pol.get_device(),
                     "chain ensemble tensors must share device");
     }
+    const c10::cuda::CUDAGuard guard(static_cast<int>(tx_pol.get_device()));
     auto gain = at::empty({count}, tx_pol.options());
     auto amplitude = at::empty({count}, tx_pol.options());
     auto length = at::empty({count}, tx_pol.options());

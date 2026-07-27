@@ -121,9 +121,11 @@ struct ReflEpcForwardSetupParams {
 };
 
 /// Initialize the EPC forward temporary buffers and per-ray SoA inputs in one launch.
-void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params);
+/// \p device_index is the CUDA device that owns every pointer in \p params.
+void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params, int device_index);
 
 /// Evaluate the complex reflected field for each ray from precomputed EPC geometry.
-void reflection_epc_field_gpu(const ReflEpcFieldParams &params);
+/// \p device_index is the CUDA device that owns every pointer in \p params.
+void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index);
 
 } // namespace rayd::torch_backend

@@ -874,6 +874,7 @@ rayd::torch::ScatteringChainEnsembleEvalBackwardResult scattering_chain_ensemble
         "(need_grad_geometry) is not implemented in this wave; use the _jvp "
         "companion for forward-mode geometry gradients.");
     TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(tx_pol.get_device()));
     const int64_t table_size = fte_flat.size(0);
 
     at::Tensor gg_storage;
@@ -1043,6 +1044,7 @@ rayd::torch::ScatteringChainEnsembleEvalJvpResult scattering_chain_ensemble_eval
     double tangent_frequency) {
     const int64_t count = check_chain_primal(tx_pol);
     TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(tx_pol.get_device()));
     const int64_t table_size = fte_flat.size(0);
 
     at::Tensor s_c1_eps, s_c1_sigma, s_c1_gain, s_c1_thick;

@@ -24,6 +24,7 @@
 #include <rayd/torch/common/tensor_check.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>
 
 #include <algorithm>
@@ -554,6 +555,7 @@ DiffractionPathOutputs diffraction_paths_order1_forward_impl(
     require_scene_device(scene, material_mu_r, "material_mu_r");
     require_scene_device(scene, material_gain, "material_gain");
     require_scene_device(scene, material_valid, "material_valid");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
 
     auto fopts = tx_pos.options();
     auto iopts = state_edge_index.options();
@@ -1159,6 +1161,7 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     require_scene_device(scene, recursive_state_exterior_angle, "recursive_state_exterior_angle");
     require_scene_device(scene, sample_state_index, "sample_state_index");
     require_scene_device(scene, sample_edge_weight, "sample_edge_weight");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     auto bopts = state_edge_index.options().dtype(at::kBool);
@@ -1732,6 +1735,7 @@ py::tuple diffraction_accumulation_direct_backward_op(
         throw std::runtime_error("material_valid must match material_gain width.");
 
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
     Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
@@ -1958,6 +1962,7 @@ py::tuple diffraction_accumulation_direct_jvp_op(
     require_optional_vec3f_strided(dot_state_wi, "dot_state_wi");
     require_optional_scalar_f_strided(dot_material_gain, "dot_material_gain");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
     Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
@@ -2214,6 +2219,7 @@ py::tuple diffraction_accumulation_chain_backward_op(
         throw std::runtime_error("material_valid must match material_gain width.");
 
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
     Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
@@ -2491,6 +2497,7 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     require_flat_f32_strided(material_gain, "material_gain");
     require_mask_strided(material_valid, "material_valid");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     TriangleSoA tri = make_scene_triangle_soa(scene);
     Vec3Input state_edge_pos_view = vec3_input(state_edge_pos, "state_edge_pos");
     Vec3Input state_edge_dir_view = vec3_input(state_edge_dir, "state_edge_dir");
@@ -2851,6 +2858,7 @@ CoherentDiffractionOutputs diffraction_coherent_accumulation_forward_impl(
     require_scene_device(scene, material_mu_r, "material_mu_r");
     require_scene_device(scene, material_gain, "material_gain");
     require_scene_device(scene, material_valid, "material_valid");
+    c10::cuda::CUDAGuard guard(static_cast<c10::DeviceIndex>(scene.device_index));
     auto fopts = state_src.options();
     auto iopts = state_edge_index.options();
     at::Tensor direct_x_re = at::zeros({cell_count}, fopts);

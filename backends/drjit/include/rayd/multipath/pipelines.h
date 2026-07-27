@@ -45,6 +45,8 @@ public:
                int hitgroup_record_count,
                const OptixPipelineConfig &config);
     bool is_ready() const { return ready_; }
+    /// Dr.Jit CUDA device the pipeline was built on, or -1 before build().
+    int device() const { return device_; }
 
     template <typename Params>
     void launch(int raygen_index, const Params &params) const {
@@ -61,6 +63,9 @@ private:
                      unsigned int n_rays) const;
 
     bool ready_ = false;
+    // The module, SBT records, and params buffer below are allocated on the
+    // Dr.Jit CUDA device that ran build(); launches are rejected elsewhere.
+    int device_ = -1;
     int hitgroup_record_count_ = 0;
     size_t params_size_ = 0;
     size_t params_buffer_size_ = 0;

@@ -1,6 +1,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
@@ -788,6 +789,8 @@ rayd::torch::field_transmission_sequence_backward(
     const auto [depth, material_count] =
         check_transmission_primal(request.primal);
     const auto& primal = request.primal;
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
     const int64_t layer_total = primal.layer_thickness_m.size(0);
 
@@ -931,6 +934,8 @@ rayd::torch::field_transmission_sequence_jvp(
     const auto [depth, material_count] =
         check_transmission_primal(request.primal);
     const auto& primal = request.primal;
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
     const int64_t layer_total = primal.layer_thickness_m.size(0);
     at::Tensor tt_storage;

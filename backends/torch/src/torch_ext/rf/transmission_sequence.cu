@@ -1,6 +1,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
@@ -307,6 +308,8 @@ rayd::torch::TransmissionSequenceResult
 rayd::torch::field_transmission_sequence(
     const rayd::torch::TransmissionSequenceRequest& request) {
     const auto [depth, material_count] = check_transmission_primal(request);
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(request.source.get_device()));
     const int64_t count = request.source.size(0);
     auto complex_options = request.source.options().dtype(at::kComplexFloat);
     auto field_vector = at::empty({count, 3}, complex_options);

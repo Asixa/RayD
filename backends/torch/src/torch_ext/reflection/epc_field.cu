@@ -1,6 +1,7 @@
 #include <rayd/torch/reflection/epc_field.h>
 #include <rayd/shared/contracts.h>
 
+#include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -170,7 +171,7 @@ void check_cuda_last_error(const char *message) {
 
 } // namespace
 
-void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params) {
+void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params, int device_index) {
     require(params.n_rays >= 0,
             "reflection_epc_forward_setup_gpu(): n_rays must be non-negative.");
     require(params.max_bounces > 0,
@@ -179,7 +180,8 @@ void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params) {
         return;
     }
 
-    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream());
+    c10::cuda::CUDAGuard guard(device_index);
+    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream(device_index));
     const int slot_count = params.n_rays * params.max_bounces;
     const int total = std::max(params.n_rays, slot_count);
     const int block_size = 128;
@@ -197,7 +199,7 @@ void reflection_epc_forward_setup_gpu(const ReflEpcForwardSetupParams &params) {
         "reflection_epc_forward_setup_gpu(): failed to launch setup kernel");
 }
 
-void reflection_epc_field_gpu(const ReflEpcFieldParams &params) {
+void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index) {
     require(params.n_rays >= 0,
             "reflection_epc_field_gpu(): n_rays must be non-negative.");
     require(params.max_bounces > 0,
@@ -206,7 +208,8 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params) {
         return;
     }
 
-    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream());
+    c10::cuda::CUDAGuard guard(device_index);
+    cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream(device_index));
 
     const int block_size = 128;
     const int block_count = (params.n_rays + block_size - 1) / block_size;

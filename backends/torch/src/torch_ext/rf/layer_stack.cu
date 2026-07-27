@@ -1,6 +1,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/shared/rf/layer_stack.cuh>
@@ -347,6 +348,7 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_eval(
         TORCH_CHECK(tensor.get_device() == cos_theta.get_device(),
                     "em_layer_stack_eval tensors must share one CUDA device");
     TORCH_CHECK(frequency_hz > 0.0, "frequency_hz must be positive");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(cos_theta.get_device()));
 
     auto options = cos_theta.options();
     at::Tensor outputs[12];
@@ -490,6 +492,7 @@ rayd::torch::LayerStackBackwardResult rayd::torch::em_layer_stack_backward(
     check_stack_primal(
         cos_theta, material_id, layer_offset, layer_count, layer_thickness_m,
         layer_eps_r, layer_sigma_e, layer_mu_r, frequency_hz);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(cos_theta.get_device()));
     const int64_t count = cos_theta.size(0);
     const int64_t material_count = layer_offset.size(0);
     const int64_t layer_total = layer_thickness_m.size(0);
@@ -553,6 +556,7 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_jvp(
     check_stack_primal(
         cos_theta, material_id, layer_offset, layer_count, layer_thickness_m,
         layer_eps_r, layer_sigma_e, layer_mu_r, frequency_hz);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(cos_theta.get_device()));
     const int64_t count = cos_theta.size(0);
     const int64_t material_count = layer_offset.size(0);
     const int64_t layer_total = layer_thickness_m.size(0);

@@ -23,6 +23,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/torch/rf/scattering.h>
@@ -230,6 +231,7 @@ rayd::torch::ScatteringTableEvalBackwardResult scattering_table_eval_backward_im
     int64_t count = 0;
     int nti = 0, npi = 0, nto = 0, npo = 0;
     check_table_eval_inputs(valid, wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wi.get_device()));
 
     at::Tensor storage[2];
     const at::Tensor* g_te = optional_arg(
@@ -289,6 +291,7 @@ rayd::torch::ScatteringTableEvalJvpResult scattering_table_eval_jvp_impl(
     int64_t count = 0;
     int nti = 0, npi = 0, nto = 0, npo = 0;
     check_table_eval_inputs(valid, wi, wo, f_te, f_tm, count, nti, npi, nto, npo);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wi.get_device()));
 
     at::Tensor storage[4];
     const at::Tensor* tw_wi = optional_arg(

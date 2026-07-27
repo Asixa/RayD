@@ -3,6 +3,7 @@
 #include <rayd/shared/contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda_runtime.h>
@@ -382,6 +383,9 @@ CoopLaunchConfig coop_launch_config_for_device(int device) {
     if (it != configs.end())
         return it->second;
 
+    // The occupancy query below reads the current device, so the cached config
+    // must be computed with the requested device made current.
+    c10::cuda::CUDAGuard guard(device);
     CoopLaunchConfig config;
     cudaDeviceProp prop{};
     cudaError_t status = cudaGetDeviceProperties(&prop, device);
@@ -421,6 +425,7 @@ bool launch_intersect_backward_t_vertices_coop(
     CoopLaunchConfig config = coop_launch_config_for_device(device);
     if (!config.supported || config.max_blocks <= 0)
         return false;
+    c10::cuda::CUDAGuard guard(device);
     constexpr int threads = 128;
     int64_t vertex_count = vertices.size(0);
     int64_t ray_count = ray_d.size(0);
@@ -660,6 +665,7 @@ IntersectBackwardOutputs intersect_backward_optional_cuda(
     bool need_grad_ray_tmax) {
     (void)ray_tmax;
     const int64_t ray_count = ray_d.size(0);
+    c10::cuda::CUDAGuard guard(static_cast<int>(vertices.get_device()));
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     IntersectBackwardOutputs out;
     out.grad_vertices = need_grad_vertices ? at::empty(vertices.sizes(), vertices.options()) : at::Tensor();
@@ -727,6 +733,7 @@ IntersectBackwardOutputs intersect_backward_t_cuda(
     bool need_grad_ray_d,
     bool need_grad_ray_tmax) {
     const int64_t ray_count = ray_d.size(0);
+    c10::cuda::CUDAGuard guard(static_cast<int>(vertices.get_device()));
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(vertices.get_device()).stream();
     IntersectBackwardOutputs out;
     out.grad_vertices = need_grad_vertices ? at::empty(vertices.sizes(), vertices.options()) : at::Tensor();
@@ -825,6 +832,7 @@ IntersectJvpOutputs intersect_jvp_optional_cuda(
     const at::Tensor *tangent_ray_d,
     int64_t flags) {
     const int64_t ray_count = ray_d.size(0);
+    c10::cuda::CUDAGuard guard(static_cast<int>(vertices.get_device()));
     const bool want_geometric = (flags & kRayFlagsGeometric) != 0;
     const bool want_shading = (flags & kRayFlagsShadingN) != 0;
     const bool want_uv = (flags & kRayFlagsUV) != 0;

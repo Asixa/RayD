@@ -16,6 +16,12 @@ void require_cuda(const at::Tensor &tensor, std::string_view name) {
         throw std::runtime_error(message(name, "must be CUDA."));
 }
 
+void require_same_device(
+    const at::Tensor &tensor, const at::Tensor &reference, std::string_view name) {
+    if (tensor.get_device() != reference.get_device())
+        throw std::runtime_error(message(name, "must share one CUDA device."));
+}
+
 void require_contiguous(const at::Tensor &tensor, std::string_view name) {
     if (!tensor.is_contiguous())
         throw std::runtime_error(message(name, "must be contiguous."));

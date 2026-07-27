@@ -1236,6 +1236,7 @@ rayd::torch::ScatteringChainRealizationEvalBackwardResult scattering_chain_reali
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
     TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(),
                 "grad_total must share the primal device");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
     grad_total = grad_total.contiguous();
     at::Tensor gpf_storage, gpg_storage;
     const at::Tensor* gpf = optional_grad(
@@ -1386,6 +1387,7 @@ rayd::torch::ScatteringChainRealizationEvalJvpResult scattering_chain_realizatio
         l2_rows, sp1_rows, sp2_rows, centroids, heights, cos_spec, material_id,
         layer_offset, layer_count, layer_thickness_m, layer_eps_r, layer_sigma_e,
         layer_mu_r, quad_a, quad_b, quad_w);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
     const int64_t layer_total = layer_thickness_m.size(0);
     at::Tensor s[23];
     const at::Tensor* th = optional_grad(std::move(t_heights), s[0], "t_heights", at::kFloat, heights.sizes(), patch_tris);

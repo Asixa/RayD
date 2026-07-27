@@ -265,6 +265,38 @@ for `scattering_chain_realization_ad.cu`. The unchanged shared table and chain-A
 helper pins remain those recorded above. Historical Phase 10B hashes remain
 evidence only; governance pins the live API version 3 successors.
 
+Multi-GPU Phase 0 device-correctness hardening re-pins the eleven affected
+implementation sources. That change adds exactly one `c10::cuda::CUDAGuard` per
+RF host entry, ahead of output allocation and launch, so the ambient device
+matches the device whose current stream the entry already selected. It changes
+no operation family, declaration, kernel body, launch count, fusion, per-TU
+numeric flag, reduction order, backward atomic, AD support matrix, row schema,
+or failure behavior, and it is numerically inert for every request whose
+tensors already shared one device index. The live successor pins are
+`061f41fe99435a60eb2afd5763f7422ccba800595e126963f2efe81d599569dd`
+for `scattering.cu`,
+`e96a4a0229d626a6ad55cacdbf71a16a48c438b248c18442b2d63a7a1850d60c`
+for `scattering_table_eval_ad.cu`,
+`e77f5a3888186ef675ba88516fa059fb2d252db6bb1420099e8b37614637d544`
+for `scattering_ensemble.cu`,
+`89f50f631233775d10bf33719482ec06ad16861bae7d9696d2d793fbf934910b`
+for `scattering_ensemble_ad.cu`,
+`61a9e2e86854880bd60ab35c77bc3d0308c07c3c61f560f4cce4f05b109a874c`
+for `scattering_patch_integral.cu`,
+`f5db3d5f93efe38273e28c9dad548da56cbccfc43a53f634064cc592545bfb1b`
+for `scattering_patch_integral_ad.cu`,
+`529e8777750c26cef2aed691a8799dda1f5035af02fdaa0a71725cf8584044ac`
+for `scattering_chain_ad_common.cuh`,
+`28e520b86ed622ab65509e2d8fa46a1f5f04c7cdfe64f79943fcd805adddb545`
+for `scattering_chain_ensemble.cu`,
+`49afe510215b5251ce4d220712f96f0b876a529401306683bb7439ade031c01f`
+for `scattering_chain_ensemble_ad.cu`,
+`8b41199b7e3f8c796bf933de5d8aa43432df2fcce2cfbf19764e5292f763733d`
+for `scattering_chain_realization.cu`, and
+`55db93ec294f91b3355876eedf6089170f49fad43f1608197e848bd53ce17eb5`
+for `scattering_chain_realization_ad.cu`. The `scattering.h`,
+`scattering_table.cuh`, and `scattering_chain_checks.h` pins are unchanged.
+
 Rollback changes Channel's lock to the prior complete, accepted RayD commit.
 It never selects an owner at runtime and never adds CPU, Torch-expression,
 finite-difference, legacy-dispatch, reduced-algorithm, zero-result, or detached-

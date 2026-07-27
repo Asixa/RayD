@@ -12,7 +12,7 @@ __global__ void reflection_trace_stats_kernel(
     const float *__restrict__ t,
     int64_t ray_count,
     int64_t max_bounces,
-    long long *__restrict__ counts,
+    int64_t *__restrict__ counts,
     double *__restrict__ checksum) {
     const int ray_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (ray_idx >= ray_count)
@@ -42,10 +42,10 @@ __global__ void diffraction_path_stats_kernel(
     const bool *__restrict__ valid,
     const float *__restrict__ delay,
     int64_t capacity,
-    long long *__restrict__ valid_count,
+    int64_t *__restrict__ valid_count,
     double *__restrict__ checksum) {
     if (blockIdx.x == 0 && threadIdx.x == 0) {
-        valid_count[0] = static_cast<long long>(count[0]);
+        valid_count[0] = static_cast<int64_t>(count[0]);
     }
     const int path_idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (path_idx >= capacity)
@@ -119,7 +119,7 @@ std::tuple<at::Tensor, at::Tensor> reflection_trace_stats_cuda(
         t.data_ptr<float>(),
         ray_count,
         max_bounces,
-        counts.data_ptr<long long>(),
+        counts.data_ptr<int64_t>(),
         checksum.data_ptr<double>());
     return std::make_tuple(counts, checksum);
 }
@@ -141,7 +141,7 @@ std::tuple<at::Tensor, at::Tensor> diffraction_path_stats_cuda(
         valid.data_ptr<bool>(),
         delay.data_ptr<float>(),
         capacity,
-        valid_count.data_ptr<long long>(),
+        valid_count.data_ptr<int64_t>(),
         checksum.data_ptr<double>());
     return std::make_tuple(valid_count, checksum);
 }

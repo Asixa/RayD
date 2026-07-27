@@ -1,8 +1,10 @@
 #include <rayd/torch/edge/bvh.h>
-#include <rayd/torch/common/optix_context.h>
 #include <rayd/shared/edge/edge_aabb.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_reduce.cuh>
+
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #include <limits>
 #include <stdexcept>
@@ -74,7 +76,10 @@ void compute_edge_optix_aabbs_cuda(
     require_local(out_aabbs.data_ptr<float>() != nullptr,
                   "compute_edge_optix_aabbs_cuda(): output pointer is null.");
 
-    TorchCudaContext torch_ctx = current_torch_cuda_context();
+    // The edge SoA and the AABB buffer are scene-owned, so the launch follows
+    // the buffers' device instead of whatever device happens to be current.
+    c10::cuda::CUDAGuard guard(out_aabbs.device());
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream(out_aabbs.get_device()).stream();
     rayd::shared::edge::launch_edge_aabb(
         static_cast<int>(edge_count),
         edge_p0_x.data_ptr<float>(),
@@ -85,7 +90,7 @@ void compute_edge_optix_aabbs_cuda(
         edge_e1_z.data_ptr<float>(),
         radius,
         out_aabbs.data_ptr<float>(),
-        torch_ctx.stream);
+        stream);
 }
 
 size_t edge_bvh_bounds_reduce_scratch_bytes(int64_t edge_count, cudaStream_t stream) {

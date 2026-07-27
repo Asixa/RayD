@@ -34,6 +34,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/complex.h>
 #include <c10/util/Exception.h>
 
@@ -811,6 +812,7 @@ rayd::torch::ScatteringPatchIntegralEvalBackwardResult scattering_patch_integral
     check_tensor(grad_total, "grad_total", at::kComplexFloat, 0);
     TORCH_CHECK(grad_total.get_device() == patch_tris.get_device(),
                 "grad_total must share the primal device");
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     at::Tensor grad_heights, grad_r_te, grad_r_tm, grad_d_i, grad_d_o, grad_r1,
         grad_r2, grad_centroids, grad_k0;
@@ -905,6 +907,7 @@ rayd::torch::ScatteringPatchIntegralEvalJvpResult scattering_patch_integral_eval
     const int64_t row_count = check_patch_inputs(
         valid, patch_tris, patch_uvs, rows, d_i, d_o, n_rows, r_te, r_tm, pol_t, pol_r,
         r1_rows, r2_rows, centroids, heights, quad_a, quad_b, quad_w);
+    const c10::cuda::CUDAGuard guard(static_cast<int>(patch_tris.get_device()));
 
     at::Tensor storage[8];
     const at::Tensor* th = optional_arg(

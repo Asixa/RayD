@@ -1,6 +1,7 @@
 #include <rayd/torch/sdf/kernels.h>
 #include <rayd/torch/common/tensor_check.h>
 
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Optional.h>
 
 #include <cstdint>
@@ -15,6 +16,11 @@
 // Validation is structural only. Value conditions that would need a device read
 // (positive `scale`, finite `values`) are the device path's job and surface as
 // misses, so nothing here synchronizes or copies from the device.
+//
+// Every entry guards the grid's CUDA device before the device path runs, since
+// that path launches on the input device's current stream and would otherwise
+// be submitted to whichever device happens to be ambient. The guard only sets
+// the current device: it changes no shape, order, or value.
 
 namespace rayd::torch_backend {
 
@@ -174,6 +180,7 @@ std::vector<at::Tensor> sdf_intersect_forward_impl(
     // here; the Python layer rejects an explicit non-positive request.
     const SdfTraceParams params{tmax, max_steps, relaxation, eps_hit};
     require_trace_params(params);
+    c10::cuda::CUDAGuard guard(grid.values.device());
     SdfIntersectForwardOutputs out = sdf_intersect_forward_cuda(grid, origins, directions, params);
     return {
         out.t,
@@ -225,6 +232,7 @@ std::vector<c10::optional<at::Tensor>> sdf_intersect_backward_impl(
     require_row_tensor(request.grad_t, ray_count, 0, device_index, "grad_t");
     require_row_tensor(request.grad_hit_position, ray_count, 3, device_index, "grad_hit_position");
     require_row_tensor(request.grad_normal, ray_count, 3, device_index, "grad_normal");
+    c10::cuda::CUDAGuard guard(grid.values.device());
     SdfIntersectBackwardOutputs out =
         sdf_intersect_backward_cuda(grid, origins, directions, tape, request);
     std::vector<c10::optional<at::Tensor>> result;
@@ -279,6 +287,7 @@ std::vector<at::Tensor> sdf_intersect_jvp_impl(
     require_like(tangents.scale, grid.scale, device_index, "tangent_scale");
     require_row_tensor(tangents.origins, ray_count, 3, device_index, "tangent_origins");
     require_row_tensor(tangents.directions, ray_count, 3, device_index, "tangent_directions");
+    c10::cuda::CUDAGuard guard(grid.values.device());
     SdfIntersectJvpOutputs out =
         sdf_intersect_jvp_cuda(grid, origins, directions, tape, tangents);
     return {out.tangent_t, out.tangent_hit_position, out.tangent_normal};

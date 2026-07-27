@@ -2,6 +2,7 @@
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/complex.h>
 #include <rayd/shared/rf/field_transport.cuh>
 #include <rayd/torch/common/tensor_check.h>
@@ -846,6 +847,8 @@ rayd::torch::DiffractionWedgeResult rayd::torch::field_diffraction_wedge(
     const DiffractionWedgeRequest& primal) {
     check_wedge_primal(primal);
     const WedgeVertexArgs vertex_args = resolve_wedge_vertices(primal);
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
     auto field_vector = at::empty(
         {count, 3}, primal.source.options().dtype(at::kComplexFloat));
@@ -873,6 +876,8 @@ rayd::torch::field_diffraction_wedge_backward(
     TORCH_CHECK(
         !request.need_grad_vertices || vertex_args.v0 != nullptr,
         "vertex gradients require the wedge vertex inputs");
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
     const at::Tensor* g_field = optional_tensor(
         request.grad_field_vector, "grad_field_vector", at::kComplexFloat,
@@ -994,6 +999,8 @@ rayd::torch::field_diffraction_wedge_jvp(
     const auto& primal = request.primal;
     check_wedge_primal(primal);
     const WedgeVertexArgs vertex_args = resolve_wedge_vertices(primal);
+    const c10::cuda::CUDAGuard guard(
+        static_cast<int>(primal.source.get_device()));
     const int64_t count = primal.source.size(0);
     const at::Tensor* t_source = optional_tensor(
         request.tangent_source, "tangent_source", at::kFloat,

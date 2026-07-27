@@ -8,8 +8,12 @@ namespace rayd::torch_backend {
 /// and writes the kept paths plus a per-kept discovery_count and representative ray index
 /// into the caller-owned out_* buffers. All pointers are flat device arrays.
 ///
+/// \p device_index is the CUDA device that owns every pointer below; the dedup
+/// launches, temporary allocations, and stream all follow it.
+///
 /// \return Number of unique paths kept.
 int reflection_dedup_gpu(
+    int device_index,
     int n_rays,
     int max_bounces,
     const int *bounce_count,

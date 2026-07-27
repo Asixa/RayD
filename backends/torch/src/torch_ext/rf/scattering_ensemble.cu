@@ -20,6 +20,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
 #include <rayd/torch/rf/scattering.h>
@@ -233,6 +234,7 @@ rayd::torch::ScatteringEnsembleEvalResult scattering_ensemble_eval_impl(
         TORCH_CHECK(t.get_device() == wo_rows.get_device(),
                     "ensemble tensors must share device");
     }
+    const c10::cuda::CUDAGuard guard(static_cast<int>(wo_rows.get_device()));
     auto gain = at::empty({count}, r2_rows.options());
     auto amplitude = at::empty({count}, r2_rows.options());
     auto length = at::empty({count}, r2_rows.options());

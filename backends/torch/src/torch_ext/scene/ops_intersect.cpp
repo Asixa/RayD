@@ -2,6 +2,7 @@
 #include <rayd/torch/scene/cache.h>
 #include <rayd/torch/common/tensor_check.h>
 
+#include <c10/cuda/CUDAGuard.h>
 #include <torch/csrc/autograd/custom_function.h>
 #include <torch/extension.h>
 
@@ -276,6 +277,7 @@ class IntersectAdFunction : public torch::autograd::Function<IntersectAdFunction
         torch::autograd::Variable active,
         int64_t flags) {
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectForwardOutputs out =
             intersect_forward_ad_flags_cuda(scene, ray_o, ray_d, ray_tmax, active, flags);
         ctx->set_materialize_grads(false);
@@ -338,6 +340,7 @@ class IntersectAdFunction : public torch::autograd::Function<IntersectAdFunction
             !tensor_has_values(grad_outputs[4]) &&
             !tensor_has_values(grad_outputs[5]);
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectBackwardOutputs out;
         if ((flags == 0 || only_t_grad) && tensor_has_values(grad_t)) {
             out = intersect_backward_t_cuda(
@@ -410,6 +413,7 @@ class IntersectTAdFunction : public torch::autograd::Function<IntersectTAdFuncti
         torch::autograd::Variable ray_tmax,
         torch::autograd::Variable active) {
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectForwardOutputs out =
             intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, active);
         ctx->set_materialize_grads(false);
@@ -449,9 +453,10 @@ class IntersectTAdFunction : public torch::autograd::Function<IntersectTAdFuncti
             };
         }
         const at::Tensor &grad_t = grad_outputs[0];
+        SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectBackwardOutputs out;
         if (tensor_has_values(grad_t)) {
-            SceneCache &scene = get_scene(scene_handle);
             out = intersect_backward_t_cuda(
                 scene.global_vertices,
                 scene.global_faces,
@@ -467,7 +472,6 @@ class IntersectTAdFunction : public torch::autograd::Function<IntersectTAdFuncti
                 need_grad_ray_d,
                 need_grad_ray_tmax);
         } else {
-            SceneCache &scene = get_scene(scene_handle);
             out.grad_vertices = need_grad_vertices ? at::zeros_like(scene.global_vertices) : at::Tensor();
             out.grad_ray_o = need_grad_ray_o ? at::zeros_like(ray_o) : at::Tensor();
             out.grad_ray_d = need_grad_ray_d ? at::zeros_like(ray_d) : at::Tensor();
@@ -495,6 +499,7 @@ class IntersectTVerticesAdFunction
         (void)vertices;
         IntersectRequest request = take_intersect_request(request_handle);
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectForwardOutputs out =
             intersect_forward_tape_cuda(scene, request.ray_o, request.ray_d, request.ray_tmax, request.active);
         ctx->set_materialize_grads(false);
@@ -515,6 +520,7 @@ class IntersectTVerticesAdFunction
         const int64_t scene_handle = ctx->saved_data["scene_handle"].toInt();
         const at::Tensor &grad_t = grad_outputs[0];
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectBackwardOutputs out;
         if (tensor_has_values(grad_t)) {
             out = intersect_backward_t_cuda(
@@ -553,6 +559,7 @@ class IntersectTNoActiveVerticesAdFunction
         (void)vertices;
         IntersectRequest request = take_intersect_request(request_handle);
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectForwardOutputs out =
             intersect_forward_tape_cuda(scene, request.ray_o, request.ray_d, request.ray_tmax, at::Tensor());
         ctx->set_materialize_grads(false);
@@ -571,6 +578,7 @@ class IntersectTNoActiveVerticesAdFunction
         const int64_t scene_handle = ctx->saved_data["scene_handle"].toInt();
         const at::Tensor &grad_t = grad_outputs[0];
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectBackwardOutputs out;
         if (tensor_has_values(grad_t)) {
             out = intersect_backward_t_cuda(
@@ -610,6 +618,7 @@ class IntersectVerticesAdFunction
         (void)vertices;
         IntersectRequest request = take_intersect_request(request_handle);
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectForwardOutputs out =
             intersect_forward_ad_flags_cuda(scene, request.ray_o, request.ray_d, request.ray_tmax, request.active, flags);
         ctx->set_materialize_grads(false);
@@ -651,6 +660,7 @@ class IntersectVerticesAdFunction
             !tensor_has_values(grad_outputs[4]) &&
             !tensor_has_values(grad_outputs[5]);
         SceneCache &scene = get_scene(scene_handle);
+        c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
         IntersectBackwardOutputs out;
         if ((flags == 0 || only_t_grad) && tensor_has_values(grad_t)) {
             out = intersect_backward_t_cuda(
@@ -719,6 +729,7 @@ py::tuple intersect_forward_op(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectForwardOutputs out = intersect_forward_cuda(scene, ray_o, ray_d, ray_tmax, active);
     return py::make_tuple(
         out.t,
@@ -762,6 +773,7 @@ py::tuple intersect_forward_flags_op(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectForwardOutputs out =
         intersect_forward_flags_cuda(scene, ray_o, ray_d, ray_tmax, active, flags);
     return intersection_public_tuple(out);
@@ -788,6 +800,7 @@ IntersectForwardOutputs integration_intersect_forward_impl(
     require_scene_device(scene, ray_d, "ray_d");
     require_scene_device(scene, ray_tmax, "ray_tmax");
     require_scene_device(scene, active, "active");
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectForwardOutputs out =
         intersect_forward_flags_cuda(scene, ray_o, ray_d, ray_tmax, active_storage, flags);
     return out;
@@ -845,6 +858,7 @@ IntersectBackwardOutputs integration_intersect_backward_impl(
     require_scene_device(scene, grad_barycentric, "grad_barycentric");
     at::Tensor ray_tmax_storage = ray_tmax == nullptr ? at::Tensor() : *ray_tmax;
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectBackwardOutputs out = intersect_backward_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -903,6 +917,7 @@ IntersectJvpOutputs integration_intersect_jvp_impl(
     require_scene_device(scene, tangent_ray_o, "tangent_ray_o");
     require_scene_device(scene, tangent_ray_d, "tangent_ray_d");
     at::Tensor active_storage = active == nullptr ? at::Tensor() : *active;
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectJvpOutputs out = intersect_jvp_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -932,6 +947,7 @@ at::Tensor intersect_forward_t_op(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     return intersect_forward_t_only_cuda(scene, ray_o, ray_d, ray_tmax, active);
 }
 
@@ -947,6 +963,7 @@ py::tuple intersect_forward_ad_flags_op(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_py(active_obj, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     EmptyIntersectionTensors empty_tensors = empty_intersection_tensors(ray_o, scene.global_faces);
     at::Tensor active_ctx = active.defined() ? active : empty_tensors.active;
     IntersectForwardOutputs out =
@@ -1041,6 +1058,7 @@ at::Tensor intersect_ad_t_nograd_impl(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectForwardOutputs out =
         intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, active);
     return out.t;
@@ -1182,6 +1200,7 @@ std::vector<c10::optional<at::Tensor>> intersect_ad_flags_nograd_impl(
     require_ray_tmax(ray_tmax, ray_o.size(0));
     at::Tensor active = optional_active_from_optional(active_opt, ray_o.size(0), "active");
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     if (flags == 0) {
         IntersectForwardOutputs out =
             intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, active);
@@ -1254,6 +1273,7 @@ std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_impl(
     require_vec3f(ray_d, "ray_d");
     require_ray_tmax(ray_tmax, ray_o.size(0));
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectForwardOutputs out =
         intersect_forward_tape_cuda(scene, ray_o, ray_d, ray_tmax, at::Tensor());
     return std::make_tuple(out.t, out.tape_prim_id);
@@ -1270,6 +1290,7 @@ at::Tensor intersect_backward_t_h_impl(
     if (vertices.sizes() != scene.global_vertices.sizes())
         throw std::runtime_error(
             "intersect_backward_t_h: vertices shape does not match scene geometry.");
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectBackwardOutputs out = intersect_backward_t_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1302,6 +1323,7 @@ py::tuple intersect_backward_op(
     at::Tensor grad_uv,
     at::Tensor grad_barycentric) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectBackwardOutputs out = intersect_backward_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1352,6 +1374,7 @@ py::tuple intersect_backward_optional_op(
     const at::Tensor *grad_barycentric =
         optional_tensor(grad_barycentric_obj, grad_barycentric_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectBackwardOutputs out = intersect_backward_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1402,6 +1425,7 @@ py::tuple intersect_backward_t_op(
         throw std::runtime_error("grad_t has the wrong length.");
     }
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectBackwardOutputs out = intersect_backward_t_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1430,6 +1454,7 @@ py::tuple intersect_jvp_op(
     at::Tensor tangent_ray_o,
     at::Tensor tangent_ray_d) {
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectJvpOutputs out = intersect_jvp_cuda(
         scene.global_vertices,
         scene.global_faces,
@@ -1469,6 +1494,7 @@ py::tuple intersect_jvp_optional_op(
     const at::Tensor *tangent_ray_o = optional_tensor(tangent_ray_o_obj, tangent_ray_o_storage);
     const at::Tensor *tangent_ray_d = optional_tensor(tangent_ray_d_obj, tangent_ray_d_storage);
     SceneCache &scene = get_scene(scene_handle);
+    c10::cuda::CUDAGuard guard(static_cast<int>(scene.device_index));
     IntersectJvpOutputs out = intersect_jvp_optional_cuda(
         scene.global_vertices,
         scene.global_faces,
