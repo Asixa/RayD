@@ -403,11 +403,21 @@ rd.set_device(0)
 ```
 
 Existing scenes and OptiX resources should not be reused across device switches
-in the same process.
+in the same process. Multi-GPU use of this backend is one process per GPU, with
+each rank pinned through `CUDA_VISIBLE_DEVICES`.
 
 The Torch backend follows the device of its CUDA tensors and launches work on
 the current Torch CUDA stream. Keep every tensor participating in one query on
-the same device.
+the same device. Operations are independent of the ambient CUDA device: a scene
+built on `cuda:1` answers queries correctly while `cuda:0` is current, and the
+ambient device is unchanged on return.
+
+Multi-device execution is manual today: one `Scene` per device, driven either
+from one process per GPU or from one host thread per device. The operational
+contract, the per-device OptiX warm-up cost, the per-process
+`OPTIX_CACHE_PATH` requirement for process-parallel launches, and an open
+intermittent hang under concurrent in-process driving are documented in
+[`docs/dev/multi_gpu_operations.md`](docs/dev/multi_gpu_operations.md).
 
 ## Building from Source
 
