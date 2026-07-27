@@ -504,8 +504,32 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
 
         # Torch: no target-wide or global CUDA numeric flag may exist, otherwise
         # every per-source profile in the contract silently gains it.
+        #
+        # CMAKE_CUDA_FLAGS is global, so it is the most dangerous place a numeric
+        # flag could appear. The backend touches it only to give CODE GENERATION
+        # one owner: find_package(Torch) leaves Caffe2's per-architecture
+        # `-gencode` pairs there, which nvcc would honour alongside the grouped
+        # families and compile every architecture twice. Pin those statements and
+        # require each to stay free of numeric flags. ADR-0035 governs numeric
+        # flags, not code-generation targets.
         torch_text = strip_comments((TORCH / "CMakeLists.txt").read_text(encoding="utf-8"))
-        self.assertNotIn("CMAKE_CUDA_FLAGS", torch_text)
+        cuda_flag_writes = [body for body in call_bodies(torch_text, "string")
+                            if "CMAKE_CUDA_FLAGS" in body]
+        self.assertEqual(len(cuda_flag_writes), 4, cuda_flag_writes)
+        for body in cuda_flag_writes:
+            with self.subTest(write=" ".join(tokens(body))[:80]):
+                self.assertEqual(numeric_flags(tokens(body)), set())
+        # The only set() allowed to name it captures the caller's value so the
+        # gencode strip can restore it; it must not assign the variable itself.
+        for body in call_bodies(torch_text, "set"):
+            if "CMAKE_CUDA_FLAGS" not in body:
+                continue
+            with self.subTest(write=" ".join(tokens(body))[:80]):
+                self.assertEqual(tokens(body)[0], "RAYD_TORCH_CALLER_CUDA_FLAGS")
+                self.assertEqual(numeric_flags(tokens(body)), set())
+        # add_compile_options() would reach every CUDA unit at once.
+        for body in call_bodies(torch_text, "add_compile_options"):
+            self.assertNotIn("CMAKE_CUDA_FLAGS", body)
         for body in call_bodies(torch_text, "target_compile_options"):
             self.assertEqual(numeric_flags(tokens(body)), set())
 
