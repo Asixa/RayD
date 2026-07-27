@@ -4,8 +4,16 @@
 
 namespace rayd::torch_backend {
 
+/// Replay window of a tape produced by a sharded accumulation launch. The AD
+/// kernels re-enter the shared device body with the global lane
+/// `lane_offset + local lane`, which is the lane the forward launch used, and
+/// the host rebases the `tape_*` pointers by `-lane_offset` so the local tape
+/// slots stay local. `n_rays` is the end of the window (`lane_offset + tape
+/// rows`), so `n_rays - lane_offset` is the number of lanes to launch. Both
+/// fields are zero / the full tape for an unsharded launch.
 struct DfrDirectAccumADParams {
     int n_rays;
+    int lane_offset;
     int state_count;
     int material_count;
     int grid_axis;
@@ -157,8 +165,11 @@ struct DfrDirectAccumADParams {
 void dfr_direct_accum_jvp_gpu(const DfrDirectAccumADParams &params);
 void dfr_direct_accum_vjp_gpu(const DfrDirectAccumADParams &params);
 
+/// Chain twin of DfrDirectAccumADParams; `n_rays` / `lane_offset` carry the
+/// same replay-window meaning.
 struct DfrChainAccumADParams {
     int n_rays;
+    int lane_offset;
     int state_count;
     int recursive_state_count;
     int material_count;

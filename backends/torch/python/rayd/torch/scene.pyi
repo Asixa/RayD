@@ -1,7 +1,8 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import overload
 import torch
 from .mesh import Mesh
+from ._multi import MultiDeviceOptions
 from .types import (
     AxialEdgeVisibility,
     DfrAccum,
@@ -28,6 +29,9 @@ class Scene:
         self,
         trace_backend: str = ...,
         edge_bvh_backend: str = ...,
+        *,
+        devices: Sequence[int | str | torch.device] | None = ...,
+        options: MultiDeviceOptions | None = ...,
     ) -> None: ...
     def add_mesh(self, mesh: Mesh, dynamic: bool = ...) -> int: ...
     def build(self) -> None: ...
@@ -126,6 +130,8 @@ class Scene:
         keller_samples: int = ...,
         suffix_samples: int = ...,
         seed: int = ...,
+        lane_offset: int = ...,
+        lane_count: int = ...,
     ) -> DfrAccum: ...
     def accum_dfr(
         self,
@@ -141,6 +147,8 @@ class Scene:
         suffix_samples: int = ...,
         seed: int = ...,
         max_order: int = ...,
+        lane_offset: int = ...,
+        lane_count: int = ...,
         **kwargs: object,
     ) -> DfrAccum: ...
     def accum_dfr_coherent_direct(

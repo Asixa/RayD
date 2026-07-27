@@ -804,8 +804,23 @@ void register_scene_cache(std::unique_ptr<SceneCache> scene) {
 void destroy_scene(int64_t handle) {
     if (handle == 0)
         return;
-    std::lock_guard<std::mutex> lock(scenes_mutex);
-    scenes.erase(handle);
+    // The GIL is the outermost lock in this process: every TORCH_LIBRARY op
+    // wrapper holds it and then takes `scenes_mutex` through get_scene(). A
+    // SceneCache owns the caller's mesh tensors, and releasing a tensor that
+    // carries a Python object re-enters Python (THPVariable_clear drops the
+    // GIL around the TensorImpl release and takes it back afterwards). Running
+    // that destructor under `scenes_mutex` therefore waits for the GIL while
+    // holding a RayD lock, which is the reverse order and deadlocks against
+    // any thread that is inside an op. Detach the entry under the lock and
+    // destroy it after the lock is gone; the map never exposes a dying scene.
+    std::unique_ptr<SceneCache> scene;
+    {
+        std::lock_guard<std::mutex> lock(scenes_mutex);
+        auto node = scenes.extract(handle);
+        if (node.empty())
+            return;
+        scene = std::move(node.mapped());
+    }
 }
 
 SceneCache &get_scene(int64_t handle) {

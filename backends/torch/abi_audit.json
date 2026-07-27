@@ -107,11 +107,11 @@
   "inventory": {
     "compatibility_pybind_export_count": 2,
     "legacy_dispatcher_operator_count": 57,
-    "py_object_occurrence_count": 101,
+    "py_object_occurrence_count": 102,
     "py_object_occurrences_by_file": {
       "src/torch_ext/diffraction/ops.cpp": 1,
       "src/torch_ext/edge/ops_edge.cpp": 15,
-      "src/torch_ext/library.cpp": 48,
+      "src/torch_ext/library.cpp": 49,
       "src/torch_ext/reflection/ops.cpp": 19,
       "src/torch_ext/scene/ops_intersect.cpp": 17,
       "src/torch_ext/scene/ops_scene.cpp": 1
@@ -140,6 +140,6 @@
       "segment_penetration_complete_family": "dormant_same_graph_batched_optix_fixed_winner_ad"
     }
   },
-  "source_sha256": "98ddfddd56935b393eca0762562ecfe114800933a1ad9181d0cb7c7ecb876507",
+  "source_sha256": "f3fff1075fd838c71171cea0c4f3d9a235bd1e2cd81e095ed61aa1fcfdae4611",
   "version": 2
 }

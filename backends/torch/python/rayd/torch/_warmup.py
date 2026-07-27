@@ -10,10 +10,10 @@ worker thread and issues one 1-ray call of each requested op, so the
 pipelines every replica will need are already linked and cached when the
 caller's own scene runs.
 
-One worker thread per device is the intended shape, but the device work
-itself is currently serialized by `_DEVICE_WORK_LOCK` — see that comment. Once
-the native layer tolerates concurrent host threads, dropping the lock is the
-only change needed here and the per-device JIT starts overlapping.
+One worker thread per device is the intended shape, and the workers run their
+device work concurrently: the native layer tolerates concurrent host threads
+since the `destroy_scene` lock-order fix of 2026-07-27 (see
+`docs/dev/multi_gpu_operations.md`).
 
 This module is private. It is not exported from `rayd.torch`, carries no
 `.pyi`, and Phase 2 is its only intended caller (from `Scene(devices=...)`).
@@ -22,23 +22,11 @@ Importing it does no CUDA work, so it stays importable on a CPU-only machine.
 
 from __future__ import annotations
 
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Sequence
 
 import torch
-
-
-# Two host threads issuing RayD Torch ops concurrently deadlock in the current
-# native layer: one thread blocks inside the op while the other never sees its
-# stream drain. Measured 2026-07-27 on 2x RTX A6000 at roughly one run in three,
-# and reproduced with both threads on a *single* device, so it is a host-thread
-# defect rather than anything multi-device. Until it is fixed, this helper takes
-# the loss and serializes each device's work; a warm-up that intermittently
-# hangs the caller is worse than one that does not overlap. Remove this lock —
-# and nothing else here — once concurrent host threads are supported.
-_DEVICE_WORK_LOCK = threading.Lock()
 
 
 # The three OptiX pipelines a replicated scene reaches on its first launches:
@@ -164,26 +152,24 @@ def _run_op(scene, name: str, device: torch.device) -> None:
 def _warm_up_device(index: int, ops: tuple[str, ...]) -> float:
     """Warm one device on the calling (worker) thread; returns its wall time.
 
-    The clock starts after `_DEVICE_WORK_LOCK` is held, so the reported time is
-    this device's own warm-up and not how long it waited behind another device.
-    The current device is thread-local in Torch, so setting it here does not
-    disturb the thread that called `warm_up_devices`.
+    Nothing here serializes against the other devices' workers, so the returned
+    times overlap. The current device is thread-local in Torch, so setting it
+    here does not disturb the thread that called `warm_up_devices`.
     """
     device = torch.device("cuda", index)
-    with _DEVICE_WORK_LOCK:
-        start = time.perf_counter()
-        with torch.cuda.device(index):
-            scene = _throwaway_scene(device)
-            for name in ops:
-                _run_op(scene, name, device)
-            # The JIT itself is host-side, but synchronizing makes the reported
-            # time cover the launches it enabled rather than just their
-            # submission. Only this worker's own stream is waited on: a
-            # device-wide sync would reach across into whatever else the caller
-            # has running.
-            torch.cuda.current_stream(device).synchronize()
-            del scene
-        return time.perf_counter() - start
+    start = time.perf_counter()
+    with torch.cuda.device(index):
+        scene = _throwaway_scene(device)
+        for name in ops:
+            _run_op(scene, name, device)
+        # The JIT itself is host-side, but synchronizing makes the reported
+        # time cover the launches it enabled rather than just their
+        # submission. Only this worker's own stream is waited on: a
+        # device-wide sync would reach across into whatever else the caller
+        # has running.
+        torch.cuda.current_stream(device).synchronize()
+        del scene
+    return time.perf_counter() - start
 
 
 def warm_up_devices(
@@ -194,8 +180,8 @@ def warm_up_devices(
     """Pre-link the OptiX pipelines for `ops` on every device in `devices`.
 
     Returns wall time in seconds per device index, in the order given. Each
-    device gets its own worker thread, but the device work is serialized by
-    `_DEVICE_WORK_LOCK`, so the returned times do not overlap today. An empty
+    device gets its own worker thread and the workers run concurrently, so the
+    returned times overlap and their sum exceeds the call's wall time. An empty
     `devices` is a no-op and touches no CUDA state at all.
     """
     indices = _normalize_devices(devices)

@@ -188,7 +188,8 @@ static __forceinline__ __device__ void add_unit_vjp_strided(
 #include <rayd/shared/multipath/diffraction_accumulation_ad_vjp_device.cuh>
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
-    const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int lane =
+        params.lane_offset + static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     DirectPrimal p;
     if (!load_primal(params, lane, p)) {
         return;
@@ -207,7 +208,8 @@ __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
 }
 
 __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
-    const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int lane =
+        params.lane_offset + static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     DirectPrimal p;
     if (!load_primal(params, lane, p)) {
         return;
@@ -315,7 +317,8 @@ __global__ void dfr_direct_accum_vjp_kernel(DfrDirectAccumADParams params) {
 }
 
 __global__ void dfr_chain_accum_jvp_kernel(DfrChainAccumADParams params) {
-    const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int lane =
+        params.lane_offset + static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     ChainPrimal p;
     if (!load_chain_primal(params, lane, p)) {
         return;
@@ -335,7 +338,8 @@ __global__ void dfr_chain_accum_jvp_kernel(DfrChainAccumADParams params) {
 }
 
 __global__ void dfr_chain_accum_vjp_kernel(DfrChainAccumADParams params) {
-    const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+    const int lane =
+        params.lane_offset + static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     ChainPrimal p;
     if (!load_chain_primal(params, lane, p)) {
         return;
@@ -377,12 +381,14 @@ template <typename Params, typename Kernel>
 void launch_ad_kernel(const char *name,
                       Kernel kernel,
                       const Params &params) {
-    if (params.n_rays <= 0) {
+    // The replay window is [lane_offset, n_rays); one lane per tape row.
+    const int lane_count = params.n_rays - params.lane_offset;
+    if (lane_count <= 0) {
         return;
     }
     cudaStream_t stream = reinterpret_cast<cudaStream_t>(jit_cuda_stream());
     const int block_size = 128;
-    const int block_count = (params.n_rays + block_size - 1) / block_size;
+    const int block_count = (lane_count + block_size - 1) / block_size;
     audit_cuda_kernel_launch(name,
                              static_cast<uint32_t>(block_count),
                              1,
@@ -390,7 +396,7 @@ void launch_ad_kernel(const char *name,
                              static_cast<uint32_t>(block_size),
                              1,
                              1,
-                             static_cast<uint64_t>(params.n_rays));
+                             static_cast<uint64_t>(lane_count));
     kernel<<<block_count, block_size, 0, stream>>>(params);
     check_cuda_last_error("dfr_direct_accum_ad_gpu(): failed to launch kernel");
 }

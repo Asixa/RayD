@@ -2,6 +2,7 @@ from ._capabilities import api_manifest as api_manifest
 from ._capabilities import backend_capabilities as backend_capabilities
 from .camera import Camera as Camera
 from .mesh import Mesh as Mesh
+from ._multi import MultiDeviceOptions as MultiDeviceOptions
 from .scene import Scene as Scene
 from .sdf import SdfGrid as SdfGrid
 from .sdf import sdf_intersect as sdf_intersect

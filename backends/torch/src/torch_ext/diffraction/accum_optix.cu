@@ -274,6 +274,19 @@ extern "C" {
 __constant__ DfrAccumParams params;
 }
 
+namespace {
+
+/// Global Monte-Carlo lane of this raygen invocation. The shared algorithm is
+/// entered with the global lane so that a `(lane_offset, launch width)` window
+/// draws exactly the samples the unsharded launch would draw at those lanes;
+/// the host rebases every per-lane buffer by `-lane_offset` so the local slots
+/// stay local. `lane_offset == 0` reproduces `optixGetLaunchIndex().x`.
+__forceinline__ __device__ unsigned int global_lane() {
+  return optixGetLaunchIndex().x + static_cast<unsigned int>(params.lane_offset);
+}
+
+} // namespace
+
 extern "C" __global__ void __closesthit__diffraction_accumulation() {
   Device::closesthit();
 }
@@ -283,75 +296,85 @@ extern "C" __global__ void __miss__diffraction_accumulation() {
 }
 
 extern "C" __global__ void __raygen__diffraction_order1_accumulation() {
-  Device::run_diffraction_order1_accumulation_raygen<false, false, true, true,
-                                                     true>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      false, false, true, true, true>(global_lane());
 }
 
 extern "C" __global__ void __raygen__diffraction_order1_accumulation_primary() {
-  Device::run_diffraction_order1_accumulation_raygen<true, false, true, true,
-                                                     true>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      true, false, true, true, true>(global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_accumulation_no_suffix() {
-  Device::run_diffraction_order1_accumulation_raygen<false, false, true, true,
-                                                     false>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      false, false, true, true, false>(global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_accumulation_no_suffix_primary() {
-  Device::run_diffraction_order1_accumulation_raygen<true, false, true, true,
-                                                     false>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      true, false, true, true, false>(global_lane());
 }
 
 extern "C" __global__ void __raygen__diffraction_order1_accumulation_suffix() {
-  Device::run_diffraction_order1_accumulation_raygen<false, false, false, false,
-                                                     true>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      false, false, false, false, true>(global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_accumulation_suffix_primary() {
-  Device::run_diffraction_order1_accumulation_raygen<true, false, false, false,
-                                                     true>();
+  Device::make_algo().run_diffraction_order1_accumulation_algo<
+      true, false, false, false, true>(global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_source_visibility_primary() {
-  Device::run_diffraction_order1_source_visibility_raygen<true>();
+  Device::make_algo().run_diffraction_order1_source_visibility_algo<true>(
+      global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_no_suffix_target_accumulation_primary() {
 
-  Device::run_diffraction_order1_no_suffix_target_accumulation_raygen<true>();
+  Device::make_algo()
+      .run_diffraction_order1_no_suffix_target_accumulation_algo<true>(
+          global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_suffix_first_visibility_primary() {
-  Device::run_diffraction_order1_suffix_first_visibility_raygen<true>();
+  Device::make_algo().run_diffraction_order1_suffix_first_visibility_algo<true>(
+      global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_suffix_target_accumulation_primary() {
-  Device::run_diffraction_order1_suffix_target_accumulation_raygen<true>();
+  Device::make_algo()
+      .run_diffraction_order1_suffix_target_accumulation_algo<true>(
+          global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_coherent_accumulation() {
-  Device::run_diffraction_order1_coherent_accumulation_raygen<false>();
+  Device::make_algo().run_diffraction_order1_coherent_accumulation_algo<false>(
+      global_lane());
 }
 
 extern "C" __global__ void
 __raygen__diffraction_order1_coherent_accumulation_primary() {
-  Device::run_diffraction_order1_coherent_accumulation_raygen<true>();
+  Device::make_algo().run_diffraction_order1_coherent_accumulation_algo<true>(
+      global_lane());
 }
 
 extern "C" __global__ void __raygen__diffraction_chain_accumulation() {
-  Device::run_diffraction_chain_accumulation_raygen<false>();
+  Device::make_algo().run_diffraction_chain_accumulation_algo<false>(
+      global_lane());
 }
 
 extern "C" __global__ void __raygen__diffraction_chain_accumulation_primary() {
-  Device::run_diffraction_chain_accumulation_raygen<true>();
+  Device::make_algo().run_diffraction_chain_accumulation_algo<true>(
+      global_lane());
 }
 
 } // namespace rayd::torch_backend

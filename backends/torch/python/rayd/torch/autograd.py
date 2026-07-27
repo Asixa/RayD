@@ -1272,7 +1272,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
         return tuple(torch.ops.rayd_torch.diffraction_accumulation_forward(
             *args[:21],
             int(args[21]),
-            *args[22:],
+            *args[22:36],
             1,
             0,
             None,
@@ -1287,6 +1287,10 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             None,
             None,
             1,
+            None,
+            None,
+            int(args[36]),
+            int(args[37]),
         ))
 
     @staticmethod
@@ -1308,6 +1312,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
         ctx.keller_samples = int(inputs[33])
         ctx.suffix_samples = int(inputs[34])
         ctx.seed = int(inputs[35])
+        ctx.lane_offset = int(inputs[36])
         ctx.has_state_wi = inputs[14] is not None
         saved = (
             inputs[3],
@@ -1402,8 +1407,9 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
             ctx.seed,
             grad_power,
             grad_field_x_re,
+            ctx.lane_offset,
         )
-        grads = [None] * 36
+        grads = [None] * 38
         grads[3] = grad_state_edge_pos
         grads[4] = grad_state_edge_dir
         grads[5] = grad_state_edge_t_min
@@ -1485,6 +1491,7 @@ class _DfrDirectAccumFunction(torch.autograd.Function):
                 _native_tangent_or_none(tangent_at(13)),
                 _native_tangent_or_none(tangent_at(14)) if ctx.has_state_wi else None,
                 _native_tangent_or_none(tangent_at(19)),
+                ctx.lane_offset,
             )
         return (
             dot_power,
@@ -1521,6 +1528,8 @@ def accum_dfr_direct_native(
     keller_samples: int = 0,
     suffix_samples: int = 0,
     seed: int = 0,
+    lane_offset: int = 0,
+    lane_count: int = -1,
 ) -> DfrAccum:
     active_arg = active
     if not _needs_reverse_or_forward_ad(
@@ -1586,6 +1595,10 @@ def accum_dfr_direct_native(
             None,
             None,
             0,
+            None,
+            None,
+            int(lane_offset),
+            int(lane_count),
         )
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         return DfrAccum(grid_cell_count, *values[:14])
@@ -1627,6 +1640,8 @@ def accum_dfr_direct_native(
         int(keller_samples),
         int(suffix_samples),
         int(seed),
+        int(lane_offset),
+        int(lane_count),
     )
     grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
     return DfrAccum(grid_cell_count, *values[:14])
@@ -1643,6 +1658,10 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             int(args[22]),
             *args[38:49],
             int(args[49]),
+            None,
+            None,
+            int(args[50]),
+            int(args[51]),
         ))
 
     @staticmethod
@@ -1666,6 +1685,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
         ctx.suffix_samples = int(inputs[35])
         ctx.seed = int(inputs[36])
         ctx.max_order = int(inputs[37])
+        ctx.lane_offset = int(inputs[50])
         saved = (
             inputs[2],
             inputs[3],
@@ -1779,8 +1799,9 @@ class _DfrChainAccumFunction(torch.autograd.Function):
             ctx.max_order,
             grad_power,
             grad_field_x_re,
+            ctx.lane_offset,
         )
-        grads = [None] * 50
+        grads = [None] * 52
         grads[3] = grad_state_edge_pos
         grads[4] = grad_state_edge_dir
         grads[5] = grad_state_edge_t_min
@@ -1881,6 +1902,7 @@ class _DfrChainAccumFunction(torch.autograd.Function):
                 _native_tangent_or_none(tangent_at(43)),
                 _native_tangent_or_none(tangent_at(48)),
                 _native_tangent_or_none(tangent_at(19)),
+                ctx.lane_offset,
             )
         return (
             dot_power,
@@ -1920,6 +1942,8 @@ def accum_dfr_chain_native(
     suffix_samples: int = 0,
     seed: int = 0,
     max_order: int = 2,
+    lane_offset: int = 0,
+    lane_count: int = -1,
 ) -> DfrAccum:
     _require_native_dispatcher()
     active_arg = active
@@ -1990,6 +2014,10 @@ def accum_dfr_chain_native(
             recursive_states.prim1,
             recursive_states.exterior_angle,
             0,
+            None,
+            None,
+            int(lane_offset),
+            int(lane_count),
         )
         grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
         return DfrAccum(grid_cell_count, *values[:14])
@@ -2044,6 +2072,8 @@ def accum_dfr_chain_native(
         recursive_states.prim1,
         recursive_states.exterior_angle,
         1,
+        int(lane_offset),
+        int(lane_count),
     )
     grid_cell_count = int(grid.resolution0) * int(grid.resolution1)
     return DfrAccum(grid_cell_count, *values[:14])

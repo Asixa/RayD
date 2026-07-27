@@ -39,10 +39,8 @@ Coverage for these properties lives in
 
 ## 2. Driving several devices from one process
 
-One host thread per device is the intended in-process shape, and the per-device
-results it produces are correct — but read
-[the known issue below](#known-issue-concurrent-driving-can-hang) before relying
-on it unattended. The typical shape is:
+One host thread per device is the intended in-process shape. The typical shape
+is:
 
 ```python
 import threading
@@ -76,42 +74,65 @@ for t in threads:
 Per-device results are bitwise equal to the same work run alone on that
 device; there is no cross-device state.
 
-### Known issue: concurrent driving can hang
+### Resolved: the concurrent-driving hang (2026-07-27)
 
-The bits are right; the concurrency itself is not yet a guarantee. On this
-repository's verification machine (2x RTX A6000) the pattern above
-intermittently deadlocks in the native layer instead of finishing:
+Concurrent in-process driving used to deadlock intermittently in the native
+layer. It is fixed; the shape above is supported, and nothing in caller code
+has to work around it any more.
 
-| Shape | Hangs |
-| --- | ---: |
-| Snippet above, cold module JIT (`OPTIX_CACHE_MAXSIZE=0`) | 4 / 30 |
-| Snippet above, warm OptiX disk cache | 0 / 40 |
-| Same work serially, one device after another, cold JIT | 0 / 23 |
-| Threaded variant where one worker returns while the other is still in a RayD op | 6–11 per batch of 8–12 |
-| Same variant, per-device scenes kept alive past the workers | 0 / 12 |
+**Root cause.** The GIL is the outermost lock in this process: Torch drops it
+before entering a boxed op, and every RayD op wrapper in
+[`library.cpp`](../../backends/torch/src/torch_ext/library.cpp) re-acquires it
+for the duration of the call, then takes RayD's own mutexes — first the scene
+registry, through `get_scene()`. `destroy_scene()` broke that order. It held
+the registry mutex across the whole `SceneCache` destructor, and a `SceneCache`
+owns the caller's mesh tensors: releasing an `at::Tensor` that carries a Python
+object re-enters Python, and Torch's `THPVariable_clear` gives the GIL up
+around the release and takes it back afterwards. So a thread dropping a scene
+held the registry mutex and then waited for the GIL, while any thread inside an
+op held the GIL and waited for the registry mutex — a textbook ABBA deadlock,
+caught in the act by `gdb` on a hung process. The fix detaches the map entry
+under the mutex and destroys the scene after releasing it, so no RayD lock is
+ever held across code that can acquire the GIL. Nothing about the op wrappers,
+op semantics, or single-thread behavior changed.
 
-`faulthandler` dumps of the hangs show both worker threads stuck in native code
-with no Python frames below `threading.run` — one inside `scene.intersect`, the
-other past its last statement — while the main thread blocks in `join`. The
-fault is in the native layer, not in caller code. Concurrency is necessary (the
-serial control never hung) and cold OptiX work makes it far more likely, but a
-warm cache did not remove it from every threaded shape. It is intermittent and
-timing-sensitive: long clean batches prove nothing.
+That explains every measurement in the original report: concurrency was
+necessary (a serial control never hung), scenes being created and destroyed
+inside short-lived workers was necessary (keeping them alive never hung), and
+cold OptiX JIT only widened the window by making the op that holds the GIL take
+longer.
 
-Until the native fix lands, treat one thread per device as usable but
-provisional:
+The history, measured on this repository's verification machine (2x RTX A6000)
+before and after the fix. Every "after" batch ran against the same repro
+scripts, with a 120 s watchdog per trial:
 
-- For unattended or production runs, prefer one process per GPU (section 3).
-  Each rank then drives its device from a single thread, which is the shape
-  that has never hung here.
-- If you do use threads, build the per-device scenes once and keep them alive
-  for the life of the process instead of creating and destroying them inside
-  short-lived workers.
-- A warm OptiX disk cache helps but is not a fix: a serial in-process warm-up
-  followed by threaded work still hung 3 times in 15 with the disk cache
-  disabled and 2 times in 15 with it warm.
-- Give long threaded jobs a watchdog. The failure mode is a hang, not an
-  exception, so a timeout is the only thing that will notice it.
+| Shape | Before | After |
+| --- | ---: | ---: |
+| Snippet above, cold module JIT (`OPTIX_CACHE_MAXSIZE=0`) | 4 / 30 | 0 / 42 |
+| Snippet above, warm OptiX disk cache | 0 / 40 | 0 / 42 |
+| Threaded variant where one worker returns while the other is still in a RayD op | 6–11 per batch of 8–12 | 0 / 42 |
+| The same variant, private OptiX cache per trial | 4 / 12 | 0 / 42 |
+| Serial in-process warm-up, then the threaded pattern, cold JIT | 3 / 15 | 0 / 42 |
+| First touch of both devices from two threads, cold JIT | — | 0 / 42 |
+| Threaded cold warm-up helper (`_warmup.warm_up_devices`) | 6 / 12 | 0 / 20 |
+| Same work serially, one device after another, cold JIT (control) | 0 / 23 | — |
+| Per-device scenes kept alive past the workers | 0 / 12 | — |
+
+The regression guard is
+`ConcurrentHostThreadTests.test_building_and_dropping_scenes_concurrently_completes`
+in
+[`backends/torch/tests/torch_backend/test_warmup.py`](../../backends/torch/tests/torch_backend/test_warmup.py):
+two host threads build, query and drop scenes at once, which is the shape that
+reproduced the deadlock. It needs only one CUDA device — the defect was a
+host-thread defect, not a multi-device one.
+
+One property to keep in mind when changing native code: **no RayD native lock
+may be held across anything that can acquire the GIL**, tensor releases
+included. The rule is written into the wrappers' header comment in
+`library.cpp` and into `destroy_scene`.
+
+Long threaded jobs still deserve a watchdog, for the same reason any long
+GPU job does — but not because of this issue.
 
 ### OptiX creation is serialized, launches are not
 
@@ -137,6 +158,12 @@ Consequences worth planning around:
   it; they never race. Measured on the verification machine, a cold first
   `intersect` on two devices takes ~0.47 s from two threads against ~0.52 s
   device-after-device, so the overlap is real but partial.
+- **The GIL is a second serializer, above those locks.** Op wrappers hold the
+  GIL for the whole native call (see the header comment in `library.cpp` for
+  why), so whatever build or launch work happens inside an op does not overlap
+  with another Python thread's op. Scene construction — where the OptiX
+  context and the acceleration structures are built — runs GIL-free, which is
+  why per-device warm-up still overlaps well in practice.
 - **After warm-up, launches on distinct devices do not serialize against each
   other.** Launch-side locking is per pipeline object, and pipeline objects
   are per device context.
@@ -157,11 +184,10 @@ pinning it downstream. Code that wants a stable equivalent gets the same
 effect by issuing one tiny throwaway query per device at startup, which
 exercises the same creation paths.
 
-Because it drives one worker thread per device, the helper is concurrent
-cold-start work by construction, which is exactly the shape of the
-[known issue above](#known-issue-concurrent-driving-can-hang) — on a machine
-with no OptiX disk cache it hung 6 times in 12 runs here. Warming devices one
-after another on the calling thread is slower but has not reproduced the hang.
+It drives one worker thread per device and the workers run concurrently, so
+the per-device build cost overlaps instead of summing. That is the whole point
+of the helper; it was serialized while the concurrent-driving deadlock was open
+and is not any more.
 
 ## 3. One process per GPU
 
@@ -206,8 +232,7 @@ Notes:
 
 Threads inside one process do not need this: one process opens the cache
 database once, and RayD's own locks keep two threads from building the same
-OptiX resource twice. The in-process hazard is a different one — see
-[the known issue](#known-issue-concurrent-driving-can-hang).
+OptiX resource twice.
 
 ## 4. Not covered in this phase
 
@@ -223,16 +248,16 @@ OptiX resource twice. The in-process hazard is a different one — see
   bits, Monte-Carlo lane assignment) are defined per launch. Splitting a batch
   by hand changes them; see D5/D6 in [`multi_gpu_plan.md`](multi_gpu_plan.md)
   before doing so.
-- No guarantee that concurrent in-process driving always completes: the
-  intermittent native hang described in section 2 is open, so
-  process-per-GPU is the route to pick when a stall would be expensive.
+- No cross-thread parallelism inside a single op: op wrappers hold the GIL for
+  the native call, so per-device threads overlap on scene construction and on
+  their own stream waits, not on the op bodies themselves. Removing that needs
+  refcounted scene ownership and is a Phase 2 question, not a correctness one.
 
 ## 5. Checklist
 
 - One `Scene` per device, every query tensor on that device.
 - No `torch.cuda.device(...)` wrapper needed; ambient device is irrelevant.
-- One host thread per device, each on its own stream — with a watchdog, and
-  with long-lived scenes; the concurrent-hang issue in section 2 is open.
+- One host thread per device, each on its own stream.
 - Warm every device before timing (`_warmup.warm_up_devices`, or one throwaway
   query per device).
 - Process-parallel: `CUDA_VISIBLE_DEVICES` per rank **and** a private

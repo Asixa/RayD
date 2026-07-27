@@ -149,15 +149,18 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
                 self.assertEqual(hit.t.device.index, index)
                 self.assertAlmostEqual(float(hit.t[0]), 1.0, places=5)
 
-    def test_device_work_never_overlaps(self):
-        """`_DEVICE_WORK_LOCK` is load-bearing: concurrent ops hang the driver.
+    def test_device_work_overlaps(self):
+        """Nothing serializes the per-device work any more.
 
-        The real warm-up runs here; only the observation is injected. If the
-        lock were dropped while the native layer still deadlocks on concurrent
-        host threads, this records the overlap that precedes the hang.
+        The real warm-up runs here; only the observation is injected. The
+        helper exists to overlap the per-device OptiX build, so two devices
+        must be inside `_run_op` at the same time at least once. This is also
+        the regression guard for the native concurrent-driving deadlock: it
+        hangs rather than fails if that ever comes back.
         """
         real_run_op = _warmup._run_op
         lock = threading.Lock()
+        entered = threading.Barrier(2, timeout=120.0)
         active: list[int] = []
         overlaps: list[tuple[int, ...]] = []
 
@@ -167,24 +170,26 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
                 if len(active) > 1:
                     overlaps.append(tuple(active))
             try:
+                # Both workers must reach a real op before either may leave it,
+                # so the overlap is forced instead of raced for.
+                entered.wait()
                 real_run_op(scene, name, device)
             finally:
                 with lock:
                     active.remove(device.index)
 
         with mock.patch.object(_warmup, "_run_op", tracked):
-            elapsed = _warmup.warm_up_devices([0, 1])
+            elapsed = _warmup.warm_up_devices([0, 1], ops=("intersect",))
 
         self.assertEqual(sorted(elapsed), [0, 1])
-        self.assertEqual(overlaps, [], "device work overlapped across threads")
+        self.assertNotEqual(overlaps, [], "device work never overlapped")
 
     def test_workers_are_dispatched_concurrently(self):
         """The executor itself must dispatch every device at once.
 
-        The device work is serialized further in, so this asserts the shape
-        that survives that: one live worker thread per device, all started
-        before any of them finishes. A rendezvous barrier is the assertion —
-        dispatching the devices one after another would break it instead.
+        One live worker thread per device, all started before any of them
+        finishes. A rendezvous barrier is the assertion — dispatching the
+        devices one after another would break it instead.
         """
         barrier = threading.Barrier(2, timeout=30.0)
         observed: dict[int, str] = {}
@@ -220,6 +225,62 @@ class WarmUpMultiDeviceTests(unittest.TestCase):
                 _warmup.warm_up_devices([0, 1])
 
         self.assertIn("cuda:0", str(caught.exception))
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "a CUDA device is required")
+class ConcurrentHostThreadTests(unittest.TestCase):
+    """Regression guard for the concurrent-driving deadlock fixed 2026-07-27.
+
+    Op wrappers hold the GIL and then take the scene-registry mutex, so nothing
+    holding that mutex may wait for the GIL. `destroy_scene` used to release
+    the scene's mesh tensors under it, and releasing a tensor that carries a
+    Python object gives the GIL up and takes it back — the reverse order, and
+    an ABBA deadlock against any thread inside an op.
+
+    Building, querying and dropping scenes from several threads at once is the
+    shape that reproduced it. One device is enough; the second is used when it
+    is there because that is the documented multi-device shape.
+    """
+
+    ROUNDS = 12
+    TIMEOUT_S = 120.0
+
+    @staticmethod
+    def _churn(index: int, rounds: int, failures: list[BaseException]) -> None:
+        device = torch.device("cuda", index)
+        try:
+            with torch.cuda.device(index):
+                for _ in range(rounds):
+                    scene = _warmup._throwaway_scene(device)
+                    _warmup._run_op(scene, "intersect", device)
+                    # Dropping the scene here is the point: its destructor runs
+                    # while the other thread is inside an op.
+                    del scene
+        except BaseException as error:  # noqa: BLE001 - reported by the test
+            failures.append(error)
+
+    def test_building_and_dropping_scenes_concurrently_completes(self):
+        indices = list(range(min(2, torch.cuda.device_count())))
+        failures: list[BaseException] = []
+        threads = [
+            threading.Thread(
+                target=self._churn,
+                args=(index, self.ROUNDS, failures),
+                name=f"rayd-churn-{index}",
+                daemon=True,
+            )
+            # Two threads even on one device: the deadlock is a host-thread
+            # defect, not a multi-device one.
+            for index in (indices * 2)[:2]
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=self.TIMEOUT_S)
+
+        stuck = [thread.name for thread in threads if thread.is_alive()]
+        self.assertEqual(stuck, [], f"threads never finished: {stuck}")
+        self.assertEqual(failures, [])
 
 
 if __name__ == "__main__":

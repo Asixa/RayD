@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -42,6 +43,41 @@ namespace {
 
 constexpr int64_t kStagedDfrAccumMinSamples = 2048;
 constexpr int64_t kStagedDfrAccumMinSamplesPerCell = 4;
+
+/// Rebase a per-lane device buffer for a sharded accumulation launch.
+///
+/// The diffraction accumulation device body indexes every per-lane buffer by
+/// the *global* Monte-Carlo lane, while a shard only allocates the lanes it
+/// launches. Subtracting `lane_offset` elements from the base pointer maps the
+/// global lane back onto the local slot. Only lanes in
+/// `[lane_offset, lane_offset + launch width)` run, so the rebased pointer is
+/// never dereferenced outside the buffer. `lane_offset == 0` is a no-op, which
+/// keeps the unsharded launch bit-identical.
+template <typename T>
+T *rebase_lane_buffer(T *ptr, int32_t lane_offset, int32_t element_stride = 1) {
+    if (ptr == nullptr || lane_offset == 0)
+        return ptr;
+    const std::uintptr_t back =
+        static_cast<std::uintptr_t>(static_cast<int64_t>(lane_offset) * element_stride) *
+        sizeof(T);
+    return reinterpret_cast<T *>(reinterpret_cast<std::uintptr_t>(ptr) - back);
+}
+
+/// Number of lanes a `(lane_offset, lane_count)` window launches out of a
+/// `total_samples`-wide Monte-Carlo lane space. `lane_count < 0` means "every
+/// remaining lane", so the default `(0, -1)` window is the whole space.
+int64_t resolve_lane_window(int64_t lane_offset, int64_t lane_count, int64_t total_samples) {
+    if (lane_offset < 0)
+        throw std::runtime_error("lane_offset must be non-negative.");
+    if (lane_offset > total_samples)
+        throw std::runtime_error("lane_offset must not exceed the total sample count.");
+    const int64_t remaining = total_samples - lane_offset;
+    if (lane_count < 0)
+        return remaining;
+    if (lane_count > remaining)
+        throw std::runtime_error("lane_offset + lane_count must not exceed the total sample count.");
+    return lane_count;
+}
 
 void require_same_batch(const at::Tensor &a, const at::Tensor &b, const char *name) {
     if (a.size(0) != b.size(0))
@@ -979,7 +1015,9 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     c10::optional<at::Tensor> recursive_state_exterior_angle,
     int64_t export_tape,
     c10::optional<at::Tensor> sample_state_index,
-    c10::optional<at::Tensor> sample_edge_weight) {
+    c10::optional<at::Tensor> sample_edge_weight,
+    int64_t lane_offset,
+    int64_t lane_count) {
     require_optional_mask(active, "active");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
     require_vec3f_strided(state_edge_pos, "state_edge_pos");
@@ -1115,7 +1153,16 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     const int32_t direct_launch_count = checked_i32(direct_samples, "direct_samples");
     const int32_t keller_launch_count = checked_i32(keller_samples, "keller_samples");
     const int32_t suffix_launch_count = checked_i32(suffix_samples, "suffix_samples");
-    const int32_t launch_count = checked_i32(direct_samples + keller_samples + suffix_samples, "launch_count");
+    // direct/keller/suffix always describe the *global* Monte-Carlo lane space;
+    // (lane_offset, lane_count) selects the window of it this launch executes.
+    const int32_t total_samples =
+        checked_i32(direct_samples + keller_samples + suffix_samples, "total_samples");
+    const int32_t lane_begin = checked_i32(lane_offset, "lane_offset");
+    const int32_t launch_count = checked_i32(
+        resolve_lane_window(lane_offset, lane_count, total_samples), "launch_count");
+    if (lane_begin != 0 && scene.trace_backend == TraceBackend::Cuda)
+        throw std::runtime_error(
+            "diffraction accumulation lane_offset requires the OptiX trace backend.");
     const bool use_sample_state_index = has_defined_optional_tensor(sample_state_index);
     const bool use_sample_edge_weight = has_defined_optional_tensor(sample_edge_weight);
     if (use_sample_state_index) {
@@ -1295,16 +1342,23 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     params.primary_handle = scene.triangle_ias.traversable;
     params.secondary_handle = 0;
     params.split_mode = 0;
-    params.n_rays = launch_count;
+    params.n_rays = total_samples;
+    params.lane_offset = lane_begin;
     params.active_mask = optional_mask_ptr(active_contig);
     params.active_width = active_width_for_states(active_contig, "active_width");
     params.active_stride = active_stride_for_states(active_contig, "active_stride");
-    params.sample_state_index = use_sample_state_index ? sample_state_index->data_ptr<int>() : nullptr;
     params.sample_state_index_stride =
         use_sample_state_index ? stride_i32(*sample_state_index, 0, "sample_state_index_stride") : 0;
-    params.sample_edge_weight = use_sample_edge_weight ? sample_edge_weight->data_ptr<float>() : nullptr;
+    params.sample_state_index = rebase_lane_buffer(
+        use_sample_state_index ? sample_state_index->data_ptr<int>() : nullptr,
+        lane_begin,
+        params.sample_state_index_stride);
     params.sample_edge_weight_stride =
         use_sample_edge_weight ? stride_i32(*sample_edge_weight, 0, "sample_edge_weight_stride") : 0;
+    params.sample_edge_weight = rebase_lane_buffer(
+        use_sample_edge_weight ? sample_edge_weight->data_ptr<float>() : nullptr,
+        lane_begin,
+        params.sample_edge_weight_stride);
     params.state_count = checked_i32(state_count, "state_count");
     params.state_edge_index = state_edge_index.data_ptr<int>();
     params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
@@ -1426,7 +1480,7 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     params.wavelength = static_cast<float>(wavelength);
     params.k = static_cast<float>(2.0 * 3.14159265358979323846 / wavelength);
     params.seed = checked_i32(seed, "seed");
-    params.samples = launch_count;
+    params.samples = total_samples;
     params.max_order = checked_i32(max_order, "max_order");
     params.direct_samples = direct_launch_count;
     params.keller_samples = keller_launch_count;
@@ -1459,16 +1513,26 @@ DiffractionAccumulationOutputs diffraction_accumulation_forward_impl(
     params.out_edge_vis_rejects = edge_vis_rejects.data_ptr<int>();
     params.out_utd_rejects = utd_rejects.data_ptr<int>();
     params.out_edge_uses = edge_uses.data_ptr<int>();
-    params.temp_visibility = mutable_mask_ptr(temp_visibility);
-    params.tape_active = write_tape ? mutable_mask_ptr(tape_active) : nullptr;
-    params.tape_state_idx = write_tape ? tape_state_idx.data_ptr<int>() : nullptr;
-    params.tape_cell = write_tape ? tape_cell.data_ptr<int>() : nullptr;
-    params.tape_material_idx = write_tape ? tape_material_idx.data_ptr<int>() : nullptr;
-    params.tape_edge_u = write_tape ? tape_edge_u.data_ptr<float>() : nullptr;
-    params.stage_cell = staged_no_suffix_accum ? stage_cell.data_ptr<int>() : nullptr;
-    params.stage_value = staged_no_suffix_accum
-        ? reinterpret_cast<float4 *>(stage_value.data_ptr<float>())
-        : nullptr;
+    // Per-lane buffers stay shard-local; the device body reaches them through
+    // the global lane, so their bases move back by lane_offset elements.
+    params.temp_visibility = rebase_lane_buffer(mutable_mask_ptr(temp_visibility), lane_begin);
+    params.tape_active =
+        rebase_lane_buffer(write_tape ? mutable_mask_ptr(tape_active) : nullptr, lane_begin);
+    params.tape_state_idx =
+        rebase_lane_buffer(write_tape ? tape_state_idx.data_ptr<int>() : nullptr, lane_begin);
+    params.tape_cell =
+        rebase_lane_buffer(write_tape ? tape_cell.data_ptr<int>() : nullptr, lane_begin);
+    params.tape_material_idx =
+        rebase_lane_buffer(write_tape ? tape_material_idx.data_ptr<int>() : nullptr, lane_begin);
+    params.tape_edge_u =
+        rebase_lane_buffer(write_tape ? tape_edge_u.data_ptr<float>() : nullptr, lane_begin);
+    params.stage_cell =
+        rebase_lane_buffer(staged_no_suffix_accum ? stage_cell.data_ptr<int>() : nullptr, lane_begin);
+    params.stage_value = rebase_lane_buffer(
+        staged_no_suffix_accum
+            ? reinterpret_cast<float4 *>(stage_value.data_ptr<float>())
+            : nullptr,
+        lane_begin);
 
     std::shared_ptr<OptixLaunchPipeline> pipeline;
     if (scene.trace_backend != TraceBackend::Cuda)
@@ -1600,7 +1664,9 @@ py::tuple diffraction_accumulation_forward_op(
     c10::optional<at::Tensor> recursive_state_exterior_angle,
     int64_t export_tape,
     c10::optional<at::Tensor> sample_state_index,
-    c10::optional<at::Tensor> sample_edge_weight) {
+    c10::optional<at::Tensor> sample_edge_weight,
+    int64_t lane_offset,
+    int64_t lane_count) {
     return diffraction_accumulation_outputs_to_tuple(diffraction_accumulation_forward_impl(
         get_scene(scene_handle),
         active,
@@ -1653,7 +1719,9 @@ py::tuple diffraction_accumulation_forward_op(
         recursive_state_exterior_angle,
         export_tape,
         sample_state_index,
-        sample_edge_weight));
+        sample_edge_weight,
+        lane_offset,
+        lane_count));
 }
 
 
@@ -1692,7 +1760,8 @@ py::tuple diffraction_accumulation_direct_backward_op(
     int64_t suffix_samples,
     int64_t seed,
     c10::optional<at::Tensor> grad_power,
-    c10::optional<at::Tensor> grad_field_x_re) {
+    c10::optional<at::Tensor> grad_field_x_re,
+    int64_t lane_offset) {
     require_mask(tape_active, "tape_active");
     require_flat_i32(tape_state_idx, "tape_state_idx");
     require_flat_i32(tape_cell, "tape_cell");
@@ -1768,7 +1837,12 @@ py::tuple diffraction_accumulation_direct_backward_op(
     Vec3Output grad_wi_view = state_wi_present ? vec3_output(grad_wi, "grad_wi") : Vec3Output();
 
     DfrDirectAccumADParams params = {};
-    params.n_rays = checked_i32(launch_count, "n_rays");
+    // The tape rows are the shard's local lanes; the AD body replays them at the
+    // global lanes [lane_offset, lane_offset + rows) the forward launch used.
+    if (lane_offset < 0)
+        throw std::runtime_error("lane_offset must be non-negative.");
+    params.lane_offset = checked_i32(lane_offset, "lane_offset");
+    params.n_rays = checked_i32(lane_offset + launch_count, "n_rays");
     params.state_count = checked_i32(state_count, "state_count");
     params.material_count = checked_i32(material_count, "material_count");
     params.grid_axis = checked_i32(grid_axis, "grid_axis");
@@ -1786,11 +1860,14 @@ py::tuple diffraction_accumulation_direct_backward_op(
     params.wavelength = static_cast<float>(wavelength);
     params.seed = checked_i32(seed, "seed");
     params.n_triangles = tri.n_triangles;
-    params.tape_active = mask_ptr(tape_active);
-    params.tape_state_idx = tape_state_idx.data_ptr<int>();
-    params.tape_cell = tape_cell.data_ptr<int>();
-    params.tape_material_idx = tape_material_idx.data_ptr<int>();
-    params.tape_edge_u = tape_edge_u.data_ptr<float>();
+    params.tape_active = rebase_lane_buffer(mask_ptr(tape_active), params.lane_offset);
+    params.tape_state_idx =
+        rebase_lane_buffer(tape_state_idx.data_ptr<int>(), params.lane_offset);
+    params.tape_cell = rebase_lane_buffer(tape_cell.data_ptr<int>(), params.lane_offset);
+    params.tape_material_idx =
+        rebase_lane_buffer(tape_material_idx.data_ptr<int>(), params.lane_offset);
+    params.tape_edge_u =
+        rebase_lane_buffer(tape_edge_u.data_ptr<float>(), params.lane_offset);
     params.state_edge_pos_x = state_edge_pos_view.x;
     params.state_edge_pos_y = state_edge_pos_view.y;
     params.state_edge_pos_z = state_edge_pos_view.z;
@@ -1934,7 +2011,8 @@ py::tuple diffraction_accumulation_direct_jvp_op(
     c10::optional<at::Tensor> dot_state_src,
     c10::optional<at::Tensor> dot_state_src_power,
     c10::optional<at::Tensor> dot_state_wi,
-    c10::optional<at::Tensor> dot_material_gain) {
+    c10::optional<at::Tensor> dot_material_gain,
+    int64_t lane_offset) {
     require_mask(tape_active, "tape_active");
     require_flat_i32(tape_state_idx, "tape_state_idx");
     require_flat_i32(tape_cell, "tape_cell");
@@ -2011,7 +2089,12 @@ py::tuple diffraction_accumulation_direct_jvp_op(
     at::Tensor zero_tri = at::zeros({tri.n_triangles}, state_edge_pos.options());
 
     DfrDirectAccumADParams params = {};
-    params.n_rays = checked_i32(launch_count, "n_rays");
+    // The tape rows are the shard's local lanes; the AD body replays them at the
+    // global lanes [lane_offset, lane_offset + rows) the forward launch used.
+    if (lane_offset < 0)
+        throw std::runtime_error("lane_offset must be non-negative.");
+    params.lane_offset = checked_i32(lane_offset, "lane_offset");
+    params.n_rays = checked_i32(lane_offset + launch_count, "n_rays");
     params.state_count = checked_i32(state_count, "state_count");
     params.material_count = checked_i32(material_count, "material_count");
     params.grid_axis = checked_i32(grid_axis, "grid_axis");
@@ -2029,11 +2112,14 @@ py::tuple diffraction_accumulation_direct_jvp_op(
     params.wavelength = static_cast<float>(wavelength);
     params.seed = checked_i32(seed, "seed");
     params.n_triangles = tri.n_triangles;
-    params.tape_active = mask_ptr(tape_active);
-    params.tape_state_idx = tape_state_idx.data_ptr<int>();
-    params.tape_cell = tape_cell.data_ptr<int>();
-    params.tape_material_idx = tape_material_idx.data_ptr<int>();
-    params.tape_edge_u = tape_edge_u.data_ptr<float>();
+    params.tape_active = rebase_lane_buffer(mask_ptr(tape_active), params.lane_offset);
+    params.tape_state_idx =
+        rebase_lane_buffer(tape_state_idx.data_ptr<int>(), params.lane_offset);
+    params.tape_cell = rebase_lane_buffer(tape_cell.data_ptr<int>(), params.lane_offset);
+    params.tape_material_idx =
+        rebase_lane_buffer(tape_material_idx.data_ptr<int>(), params.lane_offset);
+    params.tape_edge_u =
+        rebase_lane_buffer(tape_edge_u.data_ptr<float>(), params.lane_offset);
     params.state_edge_pos_x = state_edge_pos_view.x;
     params.state_edge_pos_y = state_edge_pos_view.y;
     params.state_edge_pos_z = state_edge_pos_view.z;
@@ -2165,7 +2251,8 @@ py::tuple diffraction_accumulation_chain_backward_op(
     int64_t seed,
     int64_t max_order,
     c10::optional<at::Tensor> grad_power,
-    c10::optional<at::Tensor> grad_field_x_re) {
+    c10::optional<at::Tensor> grad_field_x_re,
+    int64_t lane_offset) {
     require_mask(tape_active, "tape_active");
     require_flat_i32(tape_cell, "tape_cell");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
@@ -2261,7 +2348,12 @@ py::tuple diffraction_accumulation_chain_backward_op(
         vec3_output(grad_recursive_edge_dir, "grad_recursive_edge_dir");
 
     DfrChainAccumADParams params = {};
-    params.n_rays = checked_i32(launch_count, "n_rays");
+    // The tape rows are the shard's local lanes; the AD body replays them at the
+    // global lanes [lane_offset, lane_offset + rows) the forward launch used.
+    if (lane_offset < 0)
+        throw std::runtime_error("lane_offset must be non-negative.");
+    params.lane_offset = checked_i32(lane_offset, "lane_offset");
+    params.n_rays = checked_i32(lane_offset + launch_count, "n_rays");
     params.state_count = checked_i32(state_count, "state_count");
     params.recursive_state_count = checked_i32(recursive_state_count, "recursive_state_count");
     params.material_count = checked_i32(material_count, "material_count");
@@ -2281,8 +2373,8 @@ py::tuple diffraction_accumulation_chain_backward_op(
     params.wavelength = static_cast<float>(wavelength);
     params.seed = checked_i32(seed, "seed");
     params.n_triangles = tri.n_triangles;
-    params.tape_active = mask_ptr(tape_active);
-    params.tape_cell = tape_cell.data_ptr<int>();
+    params.tape_active = rebase_lane_buffer(mask_ptr(tape_active), params.lane_offset);
+    params.tape_cell = rebase_lane_buffer(tape_cell.data_ptr<int>(), params.lane_offset);
     params.state_edge_index = state_edge_index.data_ptr<int>();
     params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
     params.state_edge_pos_x = state_edge_pos_view.x;
@@ -2473,7 +2565,8 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     c10::optional<at::Tensor> dot_recursive_state_edge_t_min,
     c10::optional<at::Tensor> dot_recursive_state_edge_t_max,
     c10::optional<at::Tensor> dot_recursive_state_exterior_angle,
-    c10::optional<at::Tensor> dot_material_gain) {
+    c10::optional<at::Tensor> dot_material_gain,
+    int64_t lane_offset) {
     require_mask(tape_active, "tape_active");
     require_flat_i32(tape_cell, "tape_cell");
     require_flat_i32_strided(state_edge_index, "state_edge_index");
@@ -2574,7 +2667,12 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     at::Tensor zero_tri = at::zeros({tri.n_triangles}, state_edge_pos.options());
 
     DfrChainAccumADParams params = {};
-    params.n_rays = checked_i32(launch_count, "n_rays");
+    // The tape rows are the shard's local lanes; the AD body replays them at the
+    // global lanes [lane_offset, lane_offset + rows) the forward launch used.
+    if (lane_offset < 0)
+        throw std::runtime_error("lane_offset must be non-negative.");
+    params.lane_offset = checked_i32(lane_offset, "lane_offset");
+    params.n_rays = checked_i32(lane_offset + launch_count, "n_rays");
     params.state_count = checked_i32(state_count, "state_count");
     params.recursive_state_count = checked_i32(recursive_state_count, "recursive_state_count");
     params.material_count = checked_i32(material_count, "material_count");
@@ -2594,8 +2692,8 @@ py::tuple diffraction_accumulation_chain_jvp_op(
     params.wavelength = static_cast<float>(wavelength);
     params.seed = checked_i32(seed, "seed");
     params.n_triangles = tri.n_triangles;
-    params.tape_active = mask_ptr(tape_active);
-    params.tape_cell = tape_cell.data_ptr<int>();
+    params.tape_active = rebase_lane_buffer(mask_ptr(tape_active), params.lane_offset);
+    params.tape_cell = rebase_lane_buffer(tape_cell.data_ptr<int>(), params.lane_offset);
     params.state_edge_index = state_edge_index.data_ptr<int>();
     params.state_edge_index_stride = stride_i32(state_edge_index, 0, "state_edge_index_stride");
     params.state_edge_pos_x = state_edge_pos_view.x;
@@ -3326,7 +3424,11 @@ DiffractionAccumulationResult diffraction_accumulation_forward(
         recursive_exterior_angle,
         config.export_tape ? 1 : 0,
         optional_defined_tensor(config.sample_state_index),
-        optional_defined_tensor(config.sample_edge_weight));
+        optional_defined_tensor(config.sample_edge_weight),
+        // The stable typed boundary always runs the whole Monte-Carlo lane
+        // space; lane sharding stays a Python-side control for now.
+        0,
+        -1);
     return {
         result.power,
         result.field_x_re,

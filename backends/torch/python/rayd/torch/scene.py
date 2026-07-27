@@ -63,6 +63,9 @@ class Scene:
         self,
         trace_backend: str = "auto",
         edge_bvh_backend: str = "auto",
+        *,
+        devices=None,
+        options=None,
     ) -> None:
         trace_backends = {"auto": 0, "optix": 1, "cuda": 2}
         edge_backends = {"auto": 0, "optix": 1, "cuda": 2}
@@ -79,12 +82,29 @@ class Scene:
         self._native_handle = 0
         self._ready = False
         self._pending_updates = False
+        # `None` for every scene that did not ask for several devices or for
+        # chunked execution, which is what every op checks before dispatching.
+        # `rayd.torch._multi` is imported only when `devices=` is passed, and it
+        # still returns `None` for a one-device scene that wants nothing from
+        # the chunked executor, so the single-device path is untouched (D9).
+        self._multi = None
+        if devices is not None or options is not None:
+            from ._multi import plan as _plan_multi_device
+
+            self._multi = _plan_multi_device(
+                devices,
+                options,
+                trace_backend=trace_backend,
+                edge_bvh_backend=edge_bvh_backend,
+            )
 
     def add_mesh(self, mesh: Mesh, dynamic: bool = False) -> int:
         if not isinstance(mesh, Mesh):
             raise TypeError("Scene.add_mesh() expects rayd.torch.Mesh.")
         if self._native_scene is not None:
             self._native_scene = None
+        if self._multi is not None:
+            self._multi.discard()
         self._meshes.append((mesh, bool(dynamic)))
         self._ready = False
         self._pending_updates = False
@@ -104,6 +124,15 @@ class Scene:
         }
 
     def build(self) -> None:
+        if self._multi is not None:
+            # One ordinary single-device Scene per device; the master replica's
+            # native scene answers this object's scene-level metadata.
+            self._multi.build(self._meshes)
+            self._native_scene = self._multi.master_native_scene()
+            self._native_handle = int(self._native_scene.handle())
+            self._ready = True
+            self._pending_updates = False
+            return
         _require_native_dispatcher()
         specs = [self._mesh_spec(mesh, dynamic) for mesh, dynamic in self._meshes]
         mesh_flags = []
@@ -191,6 +220,8 @@ class Scene:
         return int(scene.version())
 
     def intersect(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
+        if self._multi is not None:
+            return self._multi.intersect(ray, active, int(flags))
         scene = self._require_native_scene()
         flags_value = int(flags)
         if len(self._meshes) == 1 and torch.autograd.forward_ad._current_level < 0:
@@ -256,6 +287,8 @@ class Scene:
         )
 
     def nearest_edge(self, point: torch.Tensor | Ray):
+        if self._multi is not None:
+            return self._multi.nearest_edge(point)
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
         if isinstance(point, Ray):
@@ -272,10 +305,14 @@ class Scene:
         )
 
     def visible(self, start: torch.Tensor, end: torch.Tensor, active=None):
+        if self._multi is not None:
+            return self._multi.visible(start, end, active)
         scene = self._require_native_scene()
         return _visible(scene, start, end, active)
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active=None):
+        if self._multi is not None:
+            return self._multi.trace_reflections(ray, int(max_bounces), active)
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
         return _trace_reflections(
@@ -296,6 +333,10 @@ class Scene:
         max_bounces: int,
         active=None,
     ):
+        if self._multi is not None:
+            return self._multi.trace_refl_epc_field(
+                source, receiver, int(max_bounces), active
+            )
         scene = self._require_native_scene()
         mesh_vertices = self._mesh_vertex_tensors()
         return _trace_refl_epc_field(
@@ -323,6 +364,8 @@ class Scene:
         max_paths: int | None = None,
         wavelength: float = 1.0,
     ):
+        if self._multi is not None:
+            self._multi.unsupported("trace_dfr_paths")
         scene = self._require_native_scene()
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
@@ -351,6 +394,8 @@ class Scene:
         keller_samples: int = 0,
         suffix_samples: int = 0,
         seed: int = 0,
+        lane_offset: int = 0,
+        lane_count: int = -1,
     ):
         scene = self._require_native_scene()
         if states is None:
@@ -363,6 +408,22 @@ class Scene:
             )
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
+        if self._multi is not None:
+            # Sharded over the Monte-Carlo lane space, not over a batch axis:
+            # every device runs the same states over its own sample window.
+            return self._multi.accum_dfr_direct(
+                states=states,
+                grid=grid,
+                material=material,
+                active=active,
+                wavelength=float(wavelength),
+                direct_samples=int(direct_samples),
+                keller_samples=int(keller_samples),
+                suffix_samples=int(suffix_samples),
+                seed=int(seed),
+                lane_offset=int(lane_offset),
+                lane_count=int(lane_count),
+            )
         return _accum_dfr_direct(
             scene,
             states,
@@ -374,6 +435,8 @@ class Scene:
             keller_samples=int(keller_samples),
             suffix_samples=int(suffix_samples),
             seed=int(seed),
+            lane_offset=int(lane_offset),
+            lane_count=int(lane_count),
         )
 
     def accum_dfr(
@@ -390,10 +453,16 @@ class Scene:
         suffix_samples: int = 0,
         seed: int = 0,
         max_order: int = 2,
+        lane_offset: int = 0,
+        lane_count: int = -1,
         **kwargs,
     ):
         if initial_states is None and recursive_states is None:
-            return self.accum_dfr_direct(**kwargs)
+            return self.accum_dfr_direct(
+                lane_offset=int(lane_offset),
+                lane_count=int(lane_count),
+                **kwargs,
+            )
         scene = self._require_native_scene()
         if initial_states is None or recursive_states is None or grid is None:
             raise TypeError(
@@ -401,6 +470,23 @@ class Scene:
             )
         if material is None:
             material = self._default_dfr_material(like=initial_states.edge_pos)
+        if self._multi is not None:
+            return self._multi.accum_dfr(
+                initial_states=initial_states,
+                recursive_states=recursive_states,
+                grid=grid,
+                material=material,
+                active=active,
+                recursive_active=recursive_active,
+                wavelength=float(wavelength),
+                direct_samples=int(direct_samples),
+                keller_samples=int(keller_samples),
+                suffix_samples=int(suffix_samples),
+                seed=int(seed),
+                max_order=int(max_order),
+                lane_offset=int(lane_offset),
+                lane_count=int(lane_count),
+            )
         return _accum_dfr_chain(
             scene,
             initial_states,
@@ -415,6 +501,8 @@ class Scene:
             suffix_samples=int(suffix_samples),
             seed=int(seed),
             max_order=int(max_order),
+            lane_offset=int(lane_offset),
+            lane_count=int(lane_count),
         )
 
     def accum_dfr_coherent_direct(
@@ -428,6 +516,8 @@ class Scene:
         select_diffraction_point: bool = True,
         prefilter_visibility: bool = True,
     ):
+        if self._multi is not None:
+            self._multi.unsupported("accum_dfr_coherent_direct")
         scene = self._require_native_scene()
         if material is None:
             material = self._default_dfr_material(like=states.edge_pos)
@@ -450,11 +540,21 @@ class Scene:
                 "Scene.update_mesh_vertices(): target mesh is not dynamic."
             )
         mesh.vertices = positions.contiguous()
+        if self._multi is not None:
+            # Broadcast: every replica takes its own copy of the new positions,
+            # including the master, whose native scene this object reads.
+            self._multi.update_mesh_vertices(int(mesh_id), mesh.vertices)
+            self._pending_updates = True
+            return
         with torch._C._DisableFuncTorch():
             scene.update_vertices(int(mesh_id), _native_scene_tensor(mesh.vertices))
         self._pending_updates = True
 
     def sync(self) -> None:
+        if self._multi is not None:
+            self._multi.sync()
+            self._pending_updates = False
+            return
         scene = self._require_native_scene()
         with torch._C._DisableFuncTorch():
             scene.sync()
@@ -469,6 +569,8 @@ class Scene:
         k: int,
         active: torch.Tensor | None = None,
     ):
+        if self._multi is not None:
+            return self._multi.nearest_edges(point, int(k), active)
         from .autograd import nearest_edges as _nearest_edges
 
         scene = self._require_native_scene()
@@ -488,6 +590,9 @@ class Scene:
 
     def set_edge_mask(self, mask: torch.Tensor) -> None:
         scene = self._require_native_scene()
+        if self._multi is not None:
+            self._multi.set_edge_mask(mask)
+            return
         scene.set_edge_mask(mask)
 
     def global_geometry(self):
@@ -504,6 +609,8 @@ class Scene:
         ignore_prim_ids: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ):
+        if self._multi is not None:
+            return self._multi.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
         from .types import SegmentPairVisibility
 
         scene = self._require_native_scene()
@@ -522,6 +629,16 @@ class Scene:
         sample_fractions=(0.0, 0.25, 0.5, 0.75, 1.0),
         active: torch.Tensor | None = None,
     ):
+        if self._multi is not None:
+            return self._multi.visible_edge(
+                source,
+                edge_position,
+                edge_direction,
+                edge_t_min,
+                edge_t_max,
+                sample_fractions,
+                active,
+            )
         from .types import AxialEdgeVisibility
 
         scene = self._require_native_scene()
@@ -544,6 +661,10 @@ class Scene:
         ignore_prim_per_segment: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
     ):
+        if self._multi is not None:
+            return self._multi.visible_chain(
+                points, chain_length, ignore_prim_per_segment, active
+            )
         from .types import SegmentChainVisibility
 
         scene = self._require_native_scene()

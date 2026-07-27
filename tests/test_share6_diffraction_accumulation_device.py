@@ -89,8 +89,17 @@ class SharedDiffractionAccumulationDeviceTests(unittest.TestCase):
         self.assertIn("__raygen__diffraction_order1_accumulation", expected)
         self.assertIn("__raygen__diffraction_order1_coherent_accumulation", expected)
         self.assertIn("__raygen__diffraction_chain_accumulation", expected)
+        # Both adapters dispatch all 14 raygen entries into the shared device
+        # struct and own no algorithm body. Dr.Jit uses its raygen wrappers,
+        # which read the launch index themselves; the Torch adapter enters the
+        # same struct through make_algo() because it offsets the launch index
+        # into the global Monte-Carlo lane space first (DfrAccumParams::
+        # lane_offset), which the shared wrappers cannot express.
+        self.assertEqual(self.drjit.count("Device::run_diffraction_"), 14)
+        self.assertEqual(self.torch.count("Device::make_algo()"), 14)
+        self.assertEqual(self.torch.count("_algo<"), 14)
+        self.assertEqual(self.torch.count("params.lane_offset"), 1)
         for source in (self.drjit, self.torch):
-            self.assertEqual(source.count("Device::run_diffraction_"), 14)
             self.assertIn("Device::closesthit();", source)
             self.assertIn("Device::miss();", source)
 

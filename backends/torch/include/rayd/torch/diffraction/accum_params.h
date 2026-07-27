@@ -29,7 +29,17 @@ struct DfrAccumParams {
     OptixTraversableHandle secondary_handle;
     int split_mode;
 
-    int n_rays;  ///< Number of sample lanes launched by OptiX.
+    int n_rays;  ///< Size of the global Monte-Carlo lane space.
+
+    /// First global Monte-Carlo lane executed by this launch. Local lane `l`
+    /// (`0 <= l < launch width`) runs global lane `lane_offset + l`, so a
+    /// launch of `n_rays` samples can be partitioned into disjoint
+    /// `(lane_offset, launch width)` windows that reproduce the single-launch
+    /// lane space exactly. Per-lane buffers (`sample_*`, `temp_visibility`,
+    /// `tape_*`, `stage_*`) stay local: the host rebases their pointers by
+    /// `-lane_offset` so the global lane addresses the local slot. Zero (the
+    /// default) is the unsharded launch.
+    int lane_offset;
 
     const uint8_t *active_mask;
     int active_width;
