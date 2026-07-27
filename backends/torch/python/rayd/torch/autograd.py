@@ -331,6 +331,93 @@ def intersect(
     return Intersection(*values[:10])
 
 
+def _contiguous_or_none(value: torch.Tensor | None) -> torch.Tensor | None:
+    """Make an upstream gradient or tangent readable by the SDF dispatcher.
+
+    The native operation reads these buffers with contiguous arithmetic, while
+    autograd hands out an expanded stride-0 gradient for the common
+    `output.sum()` objective.
+    """
+    if value is None:
+        return None
+    return value.contiguous()
+
+
+class _SdfIntersectFunction(torch.autograd.Function):
+    """ADR-0037 SDF ray intersection under the frozen-winner IFT.
+
+    The six differentiable inputs come first so `ctx.needs_input_grad` lines up
+    with the native gradient request; the four trailing march parameters are
+    host scalars and carry no derivative. Backward and JVP consume the frozen
+    tape and never re-march.
+    """
+
+    @staticmethod
+    def forward(values, position, rotation, scale, origins, directions, tmax, max_steps, relaxation, eps_hit):
+        _require_native_dispatcher()
+        return tuple(torch.ops.rayd_torch.sdf_intersect_forward(
+            values,
+            position,
+            rotation,
+            scale,
+            origins,
+            directions,
+            tmax,
+            max_steps,
+            relaxation,
+            eps_hit,
+        ))
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        ctx.set_materialize_grads(False)
+        _t, hit_mask, _position, _normal, steps, tape_t, tape_base = output
+        saved = tuple(
+            torch.autograd.forward_ad.unpack_dual(value).primal for value in inputs[:6]
+        ) + (tape_t, hit_mask, tape_base)
+        ctx.save_for_backward(*saved)
+        ctx.save_for_forward(*saved)
+        ctx.mark_non_differentiable(hit_mask, steps, tape_t, tape_base)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        values, position, rotation, scale, origins, directions, tape_t, tape_hit, tape_base = ctx.saved_tensors
+        grads = torch.ops.rayd_torch.sdf_intersect_backward(
+            values,
+            position,
+            rotation,
+            scale,
+            origins,
+            directions,
+            tape_t,
+            tape_hit,
+            tape_base,
+            _contiguous_or_none(grad_outputs[0]),
+            _contiguous_or_none(grad_outputs[2]),
+            _contiguous_or_none(grad_outputs[3]),
+            *(bool(flag) for flag in ctx.needs_input_grad[:6]),
+        )
+        return (*grads, None, None, None, None)
+
+    @staticmethod
+    def jvp(ctx, *tangents):
+        values, position, rotation, scale, origins, directions, tape_t, tape_hit, tape_base = ctx.saved_tensors
+        with torch._C._DisableFuncTorch():
+            tangent_t, tangent_position, tangent_normal = torch.ops.rayd_torch.sdf_intersect_jvp(
+                _native_tensor(values),
+                _native_tensor(position),
+                _native_tensor(rotation),
+                _native_tensor(scale),
+                _native_tensor(origins),
+                _native_tensor(directions),
+                _native_tensor(tape_t),
+                _native_tensor(tape_hit),
+                _native_tensor(tape_base),
+                *(_contiguous_or_none(_native_tangent_or_none(value)) for value in tangents[:6]),
+            )
+        return tangent_t, None, tangent_position, tangent_normal, None, None, None
+
+
 def _make_nearest_edge_function(fused: bool):
     """Build the point nearest-edge autograd Function.
 

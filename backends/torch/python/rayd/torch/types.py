@@ -510,6 +510,22 @@ class DfrPaths:
 
 
 @dataclass(frozen=True)
+class SdfIntersection:
+    """ADR-0037 section 5 result of one SDF sphere trace.
+
+    `t`, `position` and `normal` are differentiable; `hit_mask` and `steps`
+    carry no derivative. A missed lane reports `t = +inf` and exact positive
+    zero in `position` and `normal`.
+    """
+
+    t: torch.Tensor
+    hit_mask: torch.Tensor
+    position: torch.Tensor
+    normal: torch.Tensor
+    steps: torch.Tensor
+
+
+@dataclass(frozen=True)
 class SceneGlobalGeometry:
     vertices: torch.Tensor
     faces: torch.Tensor

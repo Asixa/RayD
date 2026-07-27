@@ -31,6 +31,7 @@ from .camera import Camera
 from ._capabilities import api_manifest, backend_capabilities
 from .mesh import Mesh
 from .scene import Scene
+from .sdf import SdfGrid, sdf_intersect
 from .types import (
     DfrAccum,
     DfrCoherentAccum,
@@ -48,6 +49,7 @@ from .types import (
     ReflEpcField,
     ReflectionChain,
     SceneGlobalGeometry,
+    SdfIntersection,
     SegmentChainVisibility,
     SegmentPairVisibility,
 )
@@ -71,8 +73,11 @@ __all__ = [
     "ReflectionChain",
     "Scene",
     "SceneGlobalGeometry",
+    "SdfGrid",
+    "SdfIntersection",
     "SegmentChainVisibility",
     "SegmentPairVisibility",
     "api_manifest",
     "backend_capabilities",
+    "sdf_intersect",
 ]

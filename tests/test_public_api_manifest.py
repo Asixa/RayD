@@ -261,7 +261,7 @@ class PublicApiManifestTests(unittest.TestCase):
 
     def test_torch_public_python_modules_match_their_stubs(self):
         package = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
-        for stem in ("autograd", "camera", "mesh", "path_exchange", "scene", "types"):
+        for stem in ("autograd", "camera", "mesh", "path_exchange", "scene", "sdf", "types"):
             source_tree = ast.parse((package / f"{stem}.py").read_text(encoding="utf-8"))
             stub_tree = ast.parse((package / f"{stem}.pyi").read_text(encoding="utf-8"))
             source_defs = {

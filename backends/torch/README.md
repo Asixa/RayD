@@ -41,6 +41,38 @@ ADR-0033 segment-penetration family remain OptiX-only by contract. Requesting
 either from a CUDA scene raises an explicit unsupported-backend error; RayD
 does not substitute a numerically different implementation.
 
+## SDF Grid Intersection
+
+`rt.SdfGrid` and `rt.sdf_intersect` sphere-trace a caller-owned dense signed
+distance field. The grid holds vertex-centred float32 samples of shape
+`[Nx, Ny, Nz]` in world-metric distance with the negative-inside sign
+convention, placed by an oriented box given as a world centre, a scalar-first
+quaternion, and full side lengths:
+
+```python
+result = rt.sdf_intersect(
+    rt.SdfGrid(values, position=position, rotation=rotation, scale=scale),
+    origins,
+    directions,
+    tmax=10.0,
+)
+result.t.sum().backward()
+```
+
+The march is relaxed, recovers from overshoot by bisecting the bracketing sign
+change, and clips the traced interval to the ray/box overlap, so an origin
+inside the box is a supported case. `t`, `position`, and `normal` carry
+gradients and tangents to the grid values, the box transform, and the rays under
+the frozen-winner implicit function theorem; `hit_mask` and `steps` carry none.
+Missed lanes report `t = +inf` and are bitwise inert: zero outputs, zero
+derivatives, and no atomic contribution. The operation performs no
+device-to-host copy and no stream synchronization, including for its
+resolution-derived `eps_hit` default.
+
+The primitive is standalone and Torch-only: no OptiX, no `Scene` membership, no
+mixing with triangle geometry, and no silhouette gradients in v1. See
+[`docs/adr/0037-differentiable-sdf-intersection.md`](../../docs/adr/0037-differentiable-sdf-intersection.md).
+
 ## Tensor ABI
 
 RayD Torch APIs accept CUDA `torch.float32` tensors for vector data and CUDA `torch.int32` tensors for index data. Vector tensors are row-major `(N, 3)` unless otherwise documented, masks are `torch.bool`, and tensors should be contiguous. Outputs and AD tapes are Torch-owned tensors.

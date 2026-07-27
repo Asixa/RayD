@@ -687,6 +687,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/reflection/ops.cpp
         src/torch_ext/diffraction/ops.cpp
         src/torch_ext/penetration/ops.cpp
+        src/torch_ext/sdf/ops_sdf.cpp
         src/torch_ext/scene/cache_kernels.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/src/scene/packing.cu
         src/torch_ext/scene/geometry_forward.cu
@@ -730,6 +731,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/diffraction/paths_init.cu
         src/torch_ext/common/stats.cu
         src/torch_ext/common/camera.cu
+        src/torch_ext/sdf/forward.cu
+        src/torch_ext/sdf/backward.cu
     )
 
     # ADR-0035 profile: fast_math, and divergence D3: this is the only Torch
