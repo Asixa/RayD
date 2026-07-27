@@ -179,9 +179,9 @@ jobs:
             LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
             CMAKE_C_COMPILER_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
             CMAKE_CXX_COMPILER_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
-            CMAKE_CUDA_COMPILER_LAUNCHER=
+            RAYD_NVCC_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
             SCCACHE_DIR=/host${{ github.workspace }}/.cache/rayd-sccache
-            SCCACHE_CACHE_SIZE=1G
+            SCCACHE_CACHE_SIZE=2G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
@@ -285,9 +285,9 @@ jobs:
             LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
             CMAKE_C_COMPILER_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
             CMAKE_CXX_COMPILER_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
-            CMAKE_CUDA_COMPILER_LAUNCHER=
+            CMAKE_CUDA_COMPILER_LAUNCHER=/host${{ github.workspace }}/.cache/sccache-bin/sccache
             SCCACHE_DIR=/host${{ github.workspace }}/.cache/rayd-sccache
-            SCCACHE_CACHE_SIZE=1G
+            SCCACHE_CACHE_SIZE=2G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
@@ -340,12 +340,14 @@ jobs:
       CMAKE_GENERATOR: Ninja
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      # Grouped multi-output CUDA compilation is not cached; grouping is what
-      # makes the CUDA half fast, and sccache owns the C and C++ half.
-      CMAKE_CUDA_COMPILER_LAUNCHER: ""
+      # CUDA is the dominant cost on both backends, so both get a launcher.
+      # Torch compiles CUDA through CMake's CUDA language; Dr.Jit uses
+      # hand-written nvcc command lines and needs the RAYD_NVCC_LAUNCHER shim.
+      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ matrix.backend == 'torch' && 'sccache' || '' }}
+      RAYD_NVCC_LAUNCHER: ${{ matrix.backend == 'drjit' && 'sccache' || '' }}
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.backend == 'drjit' && '4' || '2' }}
       SCCACHE_DIR: ${{ github.workspace }}\.cache\rayd-sccache
-      SCCACHE_CACHE_SIZE: 1G
+      SCCACHE_CACHE_SIZE: 2G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     steps:
       - uses: actions/checkout@v5
