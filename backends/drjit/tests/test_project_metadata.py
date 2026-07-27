@@ -69,15 +69,18 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertNotIn('nanobind==2.11.0', readme)
 
     def test_release_ci_covers_supported_python_and_cuda_architectures(self):
-        workflow = (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        # 4f0e953 deleted the monolithic dual-backend ci.yml but left this test
+        # reading it, so the assertions below are the surviving contract:
+        # pypi.yml is the only release workflow.
         release = (WORKSPACE_ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         cuda_helper = (ROOT / "cmake" / "rayd_cuda.cmake").read_text(encoding="utf-8")
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('requires-python = ">=3.10,<3.15"', pyproject)
-        for job in ("drjit:", "torch:", "parity:", "packaging:", "coexistence:"):
-            self.assertIn(job, workflow)
+        self.assertFalse(
+            (WORKSPACE_ROOT / ".github" / "workflows" / "ci.yml").exists(),
+            "ci.yml was deliberately removed; restoring it needs its own decision")
         self.assertIn("name: pypi-rayd-drjit", release)
         self.assertIn("name: pypi-rayd-torch", release)
         self.assertEqual(release.count("name: pypi\n"), 1)

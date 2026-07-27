@@ -140,13 +140,25 @@ set(RAYD_CUDA_GENCODE_ARCHES "" CACHE STRING
     "Comma-separated CUDA architectures that receive native SASS (for example 75,80,120).")
 set(RAYD_CUDA_PTX_ARCH "" CACHE STRING
     "CUDA architecture that additionally receives forward-compatible PTX.")
+# Grouped code generation. One `--generate-code` family emits a single NVCC
+# front end (parse plus PTX) shared by every real architecture listed in its
+# `code=[...]` set, instead of the one front end per architecture that the
+# per-architecture `-gencode` form below produces. Release CI passes the
+# families through the environment; local builds leave this empty and keep the
+# per-architecture path. The two forms are mutually exclusive: nvcc would
+# otherwise compile every architecture twice.
+set(RAYD_CUDA_GENCODE_FAMILIES "" CACHE STRING
+    "Space-separated complete nvcc --generate-code flags. Overrides RAYD_CUDA_GENCODE_ARCHES.")
 if(DEFINED ENV{RAYD_CUDA_GENCODE_ARCHES} AND NOT "$ENV{RAYD_CUDA_GENCODE_ARCHES}" STREQUAL "")
     set(RAYD_CUDA_GENCODE_ARCHES "$ENV{RAYD_CUDA_GENCODE_ARCHES}")
 endif()
 if(DEFINED ENV{RAYD_CUDA_PTX_ARCH} AND NOT "$ENV{RAYD_CUDA_PTX_ARCH}" STREQUAL "")
     set(RAYD_CUDA_PTX_ARCH "$ENV{RAYD_CUDA_PTX_ARCH}")
 endif()
-if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
+if(DEFINED ENV{RAYD_CUDA_GENCODE_FAMILIES} AND NOT "$ENV{RAYD_CUDA_GENCODE_FAMILIES}" STREQUAL "")
+    set(RAYD_CUDA_GENCODE_FAMILIES "$ENV{RAYD_CUDA_GENCODE_FAMILIES}")
+endif()
+if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "" AND RAYD_CUDA_GENCODE_FAMILIES STREQUAL "")
     find_program(RAYD_NVIDIA_SMI_EXECUTABLE NAMES nvidia-smi)
     if(RAYD_NVIDIA_SMI_EXECUTABLE)
         execute_process(
@@ -167,25 +179,44 @@ if(RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
         endif()
     endif()
 endif()
-string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
 set(RAYD_CUDA_GENCODE_FLAGS_LIST "")
-foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
-    string(STRIP "${RAYD_CUDA_ARCH}" RAYD_CUDA_ARCH)
-    if(RAYD_CUDA_ARCH STREQUAL "")
-        continue()
+if(NOT RAYD_CUDA_GENCODE_FAMILIES STREQUAL "")
+    if(NOT RAYD_CUDA_GENCODE_ARCHES STREQUAL "")
+        message(FATAL_ERROR
+            "RAYD_CUDA_GENCODE_FAMILIES and RAYD_CUDA_GENCODE_ARCHES are both set. "
+            "Grouped and per-architecture generation together compile every "
+            "architecture twice; pass exactly one.")
     endif()
-    if(NOT RAYD_CUDA_ARCH MATCHES "^[0-9]+$")
-        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_ARCH}' in RAYD_CUDA_GENCODE_ARCHES.")
+    string(REGEX MATCHALL "[^ \t\r\n]+" RAYD_CUDA_GENCODE_FLAGS_LIST
+        "${RAYD_CUDA_GENCODE_FAMILIES}")
+    foreach(RAYD_CUDA_FAMILY IN LISTS RAYD_CUDA_GENCODE_FLAGS_LIST)
+        if(NOT RAYD_CUDA_FAMILY MATCHES "^--generate-code=arch=compute_[0-9]+,code=")
+            message(FATAL_ERROR
+                "Invalid flag '${RAYD_CUDA_FAMILY}' in RAYD_CUDA_GENCODE_FAMILIES. "
+                "Every entry must be a complete --generate-code=arch=compute_<N>,code=... flag.")
+        endif()
+    endforeach()
+    message(STATUS "RayD grouped CUDA gencode families: ${RAYD_CUDA_GENCODE_FAMILIES}")
+else()
+    string(REPLACE "," ";" RAYD_CUDA_GENCODE_ARCH_LIST "${RAYD_CUDA_GENCODE_ARCHES}")
+    foreach(RAYD_CUDA_ARCH IN LISTS RAYD_CUDA_GENCODE_ARCH_LIST)
+        string(STRIP "${RAYD_CUDA_ARCH}" RAYD_CUDA_ARCH)
+        if(RAYD_CUDA_ARCH STREQUAL "")
+            continue()
+        endif()
+        if(NOT RAYD_CUDA_ARCH MATCHES "^[0-9]+$")
+            message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_ARCH}' in RAYD_CUDA_GENCODE_ARCHES.")
+        endif()
+        list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
+            "-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}")
+    endforeach()
+    if(NOT RAYD_CUDA_PTX_ARCH STREQUAL "")
+        if(NOT RAYD_CUDA_PTX_ARCH MATCHES "^[0-9]+$")
+            message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_PTX_ARCH}' in RAYD_CUDA_PTX_ARCH.")
+        endif()
+        list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
+            "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}")
     endif()
-    list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
-        "-gencode=arch=compute_${RAYD_CUDA_ARCH},code=sm_${RAYD_CUDA_ARCH}")
-endforeach()
-if(NOT RAYD_CUDA_PTX_ARCH STREQUAL "")
-    if(NOT RAYD_CUDA_PTX_ARCH MATCHES "^[0-9]+$")
-        message(FATAL_ERROR "Invalid CUDA architecture '${RAYD_CUDA_PTX_ARCH}' in RAYD_CUDA_PTX_ARCH.")
-    endif()
-    list(APPEND RAYD_CUDA_GENCODE_FLAGS_LIST
-        "-gencode=arch=compute_${RAYD_CUDA_PTX_ARCH},code=compute_${RAYD_CUDA_PTX_ARCH}")
 endif()
 string(JOIN " " RAYD_CUDA_GENCODE_FLAGS ${RAYD_CUDA_GENCODE_FLAGS_LIST})
 
@@ -257,7 +288,6 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/scene/scene_multipath_diffraction_accum.cpp
     ${RAYD_SOURCE_DIR}/scene/scene_multipath_diffraction_coherent.cpp
     ${RAYD_SOURCE_DIR}/scene/scene_multipath_visibility.cpp
-    ${RAYD_SOURCE_DIR}/scene/scene_custom_op.cpp
 
     ${RAYD_SOURCE_DIR}/optix.cpp
     ${RAYD_INCLUDE_DIR}/native_launch_audit.h
@@ -640,6 +670,25 @@ if(RAYD_REGENERATE_REFLECTION_TRACE_PTX OR
         ${CMAKE_CURRENT_BINARY_DIR}
     )
 endif()
+# scene_custom_op.cpp is the one unit in this backend that reaches nanobind and
+# through it the CPython C API. It lives in its own library so rayd_core needs
+# neither Python.h nor the nanobind headers, which makes rayd_core identical for
+# every supported CPython version.
+add_library(rayd_drjit_python_ops STATIC ${RAYD_SOURCE_DIR}/scene/scene_custom_op.cpp)
+set_target_properties(rayd_drjit_python_ops PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET rayd_drjit_python_ops PROPERTY CXX_STANDARD 17)
+target_include_directories(rayd_drjit_python_ops
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${RAYD_SHARED_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CUDA_INCLUDE_DIRS}
+    ${Python_INCLUDE_DIRS}
+    ${NB_DIR}/include
+)
+target_link_libraries(rayd_drjit_python_ops PUBLIC rayd_core)
+
 target_include_directories(rayd_core
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -648,8 +697,6 @@ target_include_directories(rayd_core
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CUDA_INCLUDE_DIRS}
-    ${Python_INCLUDE_DIRS}
-    ${NB_DIR}/include
 )
 target_compile_definitions(rayd_core PRIVATE
     RAYD_OPTIX_MODULE_OPT_LEVEL=${RAYD_OPTIX_MODULE_OPT_LEVEL}
@@ -660,6 +707,13 @@ target_compile_definitions(rayd_core PRIVATE
 
 if(WIN32)
     target_compile_options(rayd_core PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
+        $<$<COMPILE_LANGUAGE:CXX>:/MP>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RelWithDebInfo>>:/O2>
+        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:MinSizeRel>>:/O2>
+    )
+    target_compile_options(rayd_drjit_python_ops PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
         $<$<COMPILE_LANGUAGE:CXX>:/MP>
         $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2>
@@ -681,7 +735,7 @@ set_target_properties(rayd_core PROPERTIES
 )
 
 nanobind_add_module(_C ${RAYD_NANOBIND_ARGS} ${RAYD_SOURCE_DIR}/rayd.cpp)
-target_link_libraries(_C PRIVATE rayd_core)
+target_link_libraries(_C PRIVATE rayd_drjit_python_ops)
 if(WIN32)
     target_compile_options(_C PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4251>

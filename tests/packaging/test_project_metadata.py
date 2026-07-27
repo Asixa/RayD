@@ -43,12 +43,14 @@ class DistributionMetadataTests(unittest.TestCase):
         self.assertIn("publish-drjit:", workflow)
         self.assertIn("publish-torch:", workflow)
         self.assertIn("publish-rayd:", workflow)
-        self.assertIn("needs: [build-meta, publish-drjit, publish-torch]", workflow)
+        self.assertIn("needs: [scope, build-meta, publish-drjit, publish-torch]", workflow)
 
     def test_release_builds_complete_native_wheel_matrix(self):
         workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         for version in ("3.10", "3.11", "3.12", "3.13", "3.14"):
             self.assertIn(f'"{version}"', workflow)
+        for build in ("cp310", "cp311", "cp312", "cp313", "cp314"):
+            self.assertIn(f"{build}-manylinux_x86_64", workflow)
         for marker in (
             "build-drjit-linux:",
             "build-torch-linux:",
@@ -67,6 +69,28 @@ class DistributionMetadataTests(unittest.TestCase):
         guard = "github.event_name == 'release' && github.event.action == 'published'"
         self.assertEqual(workflow.count(guard), 3)
         self.assertIn("id-token: write", workflow)
+
+    def test_ordinary_pushes_do_not_start_ci(self):
+        """GITHUB_ACTIONS_PREBUILD_MATRIX.md: only a `run-ci` label, an explicit
+        dispatch, or a published release may start a paid RayD build."""
+        for name in ("pypi.yml", "stable-abi-ci.yml"):
+            workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+            with self.subTest(workflow=name):
+                self.assertNotIn("\n  push:\n", workflow)
+                self.assertIn("  pull_request:\n    types: [labeled]\n", workflow)
+                self.assertIn("github.event.label.name == 'run-ci'", workflow)
+
+    def test_reduced_architecture_artifacts_cannot_publish(self):
+        """A smoke run builds sm_87/sm_120 only, so every publishing job must
+        additionally require the resolved full scope."""
+        workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("needs.scope.outputs.full == 'true'"), 4)
+        self.assertIn(
+            "gencode-families=--generate-code=arch=compute_87,code=sm_87 "
+            "--generate-code=arch=compute_120,code=[sm_120,compute_120]",
+            workflow,
+        )
+        self.assertIn("gencode-families=--generate-code=arch=compute_70,", workflow)
 
 
 if __name__ == "__main__":

@@ -504,8 +504,31 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
 
         # Torch: no target-wide or global CUDA numeric flag may exist, otherwise
         # every per-source profile in the contract silently gains it.
+        #
+        # CMAKE_CUDA_FLAGS is global, so it is the most dangerous place a numeric
+        # flag could appear. It is written only to give CODE GENERATION exactly
+        # one owner -- Caffe2's duplicate per-architecture `-gencode` pairs are
+        # stripped, and grouped `--generate-code` families are appended in their
+        # place. Pin those writes and require every one of them to stay free of
+        # numeric flags; a fourth write, or a numeric flag in any of them, fails
+        # here. ADR-0035 governs numeric flags, not code-generation targets.
         torch_text = strip_comments((TORCH / "CMakeLists.txt").read_text(encoding="utf-8"))
-        self.assertNotIn("CMAKE_CUDA_FLAGS", torch_text)
+        cuda_flag_writes = [body for body in call_bodies(torch_text, "string")
+                            if "CMAKE_CUDA_FLAGS" in body]
+        self.assertEqual(len(cuda_flag_writes), 3, cuda_flag_writes)
+        for body in cuda_flag_writes:
+            with self.subTest(write=" ".join(tokens(body))[:80]):
+                self.assertEqual(numeric_flags(tokens(body)), set())
+        appends = [body for body in cuda_flag_writes if tokens(body)[:1] == ["APPEND"]]
+        self.assertEqual(len(appends), 1, appends)
+        # The appended value is the grouped family list, whose every entry the
+        # backend validates as `--generate-code=arch=compute_<N>,code=...`.
+        self.assertIn("RAYD_TORCH_CUDA_GENCODE_FLAGS", appends[0])
+        # set(CMAKE_CUDA_FLAGS ...) and add_compile_options() would bypass the
+        # pinned writes above.
+        for opener in ("set", "add_compile_options"):
+            for body in call_bodies(torch_text, opener):
+                self.assertNotIn("CMAKE_CUDA_FLAGS", body)
         for body in call_bodies(torch_text, "target_compile_options"):
             self.assertEqual(numeric_flags(tokens(body)), set())
 

@@ -7,7 +7,15 @@ import zipfile
 from pathlib import Path
 
 
-EXPECTED_SASS = ("70", "75", "80", "86", "87", "89", "90", "100", "101", "120")
+# GITHUB_ACTIONS_PREBUILD_MATRIX.md defines exactly two legal architecture sets.
+# They are frozen here as named profiles so a smoke run cannot be used to weaken
+# the release gate: "release" is the complete set every published wheel must
+# carry, "smoke" is the reduced compile/package gate allowed for opt-in
+# pull-request builds and manual smoke dispatches.
+SASS_PROFILES = {
+    "release": ("70", "75", "80", "86", "87", "89", "90", "100", "101", "120"),
+    "smoke": ("87", "120"),
+}
 EXPECTED_PTX_TARGET = "sm_120"
 
 
@@ -87,7 +95,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Verify CUDA SASS and PTX targets in RayD release binaries.")
     parser.add_argument("inputs", nargs="+", type=Path)
     parser.add_argument("--stem", action="append", required=True)
+    parser.add_argument(
+        "--profile",
+        choices=sorted(SASS_PROFILES),
+        default="release",
+        help="Architecture set to require. Defaults to the complete release set.",
+    )
     args = parser.parse_args()
+    expected_sass = SASS_PROFILES[args.profile]
 
     with tempfile.TemporaryDirectory(prefix="rayd_cuda_arch_verify_") as temp_dir:
         binaries = _collect_binaries(args.inputs, tuple(args.stem), Path(temp_dir))
@@ -96,7 +111,7 @@ def main() -> None:
 
         for binary in binaries:
             elf_listing = _cuobjdump("--list-elf", binary)
-            missing_sass = [arch for arch in EXPECTED_SASS if f"sm_{arch}" not in elf_listing]
+            missing_sass = [arch for arch in expected_sass if f"sm_{arch}" not in elf_listing]
             if missing_sass:
                 raise SystemExit(f"{binary} is missing SASS targets: {', '.join(missing_sass)}")
 
@@ -104,7 +119,7 @@ def main() -> None:
             if f".target {EXPECTED_PTX_TARGET}" not in ptx_dump:
                 raise SystemExit(f"{binary} is missing compute 12.0 PTX.")
 
-            print(f"Verified CUDA architectures in {binary}")
+            print(f"Verified {args.profile} CUDA architectures in {binary}")
 
 
 if __name__ == "__main__":

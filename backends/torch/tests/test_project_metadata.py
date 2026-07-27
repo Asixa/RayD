@@ -100,14 +100,37 @@ class ProjectMetadataTests(unittest.TestCase):
         expected_torch = "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
         pypi = (root / ".github/workflows/pypi.yml").read_text(encoding="utf-8")
         stable = (root / ".github/workflows/stable-abi-ci.yml").read_text(encoding="utf-8")
+        # Grouped generation replaces the per-architecture form: five families
+        # cover the same ten SASS targets plus compute_120 PTX with five NVCC
+        # front ends instead of eleven.
+        release_families = (
+            "--generate-code=arch=compute_70,code=[sm_70,sm_75] "
+            "--generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89] "
+            "--generate-code=arch=compute_90,code=sm_90 "
+            "--generate-code=arch=compute_100,code=[sm_100,sm_101] "
+            "--generate-code=arch=compute_120,code=[sm_120,compute_120]"
+        )
         for workflow in (pypi, stable):
-            self.assertIn(expected_cmake, workflow)
+            self.assertIn(release_families, workflow)
             self.assertIn(expected_torch, workflow)
+        self.assertIn(f"gencode-families={release_families}", pypi)
+        self.assertIn(f"torch-arch-list={expected_torch}", pypi)
+        # The per-architecture form must not survive anywhere in CI: nvcc honours
+        # both spellings at once and would compile every architecture twice.
+        for workflow in (pypi, stable):
+            self.assertNotIn(expected_cmake, workflow)
         torch_linux_env = pypi.split("CIBW_ENVIRONMENT_LINUX:", 2)[2].split(
             "CIBW_REPAIR_WHEEL_COMMAND_LINUX:", 1
         )[0]
-        self.assertIn(f'CMAKE_CUDA_ARCHITECTURES="{expected_cmake}"', torch_linux_env)
-        self.assertIn(f'TORCH_CUDA_ARCH_LIST="{expected_torch}"', torch_linux_env)
+        self.assertIn(
+            'RAYD_TORCH_CUDA_GENCODE_FLAGS="${{ needs.scope.outputs.gencode-families }}"',
+            torch_linux_env,
+        )
+        self.assertIn(
+            'TORCH_CUDA_ARCH_LIST="${{ needs.scope.outputs.torch-arch-list }}"',
+            torch_linux_env,
+        )
+        self.assertNotIn("CMAKE_CUDA_ARCHITECTURES=", torch_linux_env)
         for python, tag in (
             ("3.10", "cp310"),
             ("3.11", "cp311"),
@@ -116,19 +139,35 @@ class ProjectMetadataTests(unittest.TestCase):
             ("3.14", "cp314"),
         ):
             self.assertIn(
-                f'{{python-version: "{python}", cibw-build: "{tag}-manylinux_x86_64"}}',
+                f'{{"python-version":"{python}","cibw-build":"{tag}-manylinux_x86_64"}}',
                 pypi,
             )
         self.assertIn(
-            "name: release-rayd-torch-linux-py${{ matrix.python-version }}",
+            "name: release-rayd-torch-linux-py${{ matrix.py.python-version }}",
             pypi,
         )
-        self.assertIn("name: release-rayd-torch-linux-py3.10", pypi)
+        self.assertIn("abi-source-python=3.10", pypi)
         torch_verifier = (
             "--stem _legacy_ops --stem _stable_ops"
         )
         self.assertEqual(pypi.count(torch_verifier), 2)
         self.assertNotIn("--stem _C --stem _stable_ops", pypi)
+
+    def test_code_generation_has_exactly_one_owner(self):
+        """Caffe2 appends its own per-architecture `-gencode` pairs to
+        CMAKE_CUDA_FLAGS. nvcc honours those alongside whatever this project
+        emits, so leaving them in place compiles every architecture twice."""
+        cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")
+        strip = cmake.index('string(REGEX REPLACE "-gencode[ =]+arch=compute_[0-9]+,code=[^ ]+" ""')
+        self.assertLess(cmake.index("find_package(Torch REQUIRED)"), strip)
+        self.assertIn(
+            'if(CMAKE_CUDA_FLAGS MATCHES "gencode|generate-code")',
+            cmake,
+        )
+        # Grouped generation turns CMAKE_CUDA_ARCHITECTURES off so CMake adds
+        # none of its own code-generation flags on top of the families.
+        self.assertIn("RAYD_TORCH_CUDA_GENCODE_FLAGS", cmake)
+        self.assertIn("set(CMAKE_CUDA_ARCHITECTURES OFF)", cmake)
 
     def test_explicit_torch_architecture_precedes_environment_and_gpu_detection(self):
         cmake = Path("CMakeLists.txt").read_text(encoding="utf-8")

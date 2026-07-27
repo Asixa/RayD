@@ -11,8 +11,43 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type for RayD Torch native targets." FORCE)
 endif()
 
+# Grouped code generation. One `--generate-code` family emits a single NVCC
+# front end (parse plus PTX) shared by every real architecture in its
+# `code=[...]` set, instead of the one front end per architecture that
+# CMAKE_CUDA_ARCHITECTURES produces. When set, it owns code generation
+# completely: CMAKE_CUDA_ARCHITECTURES is turned off so CMake emits nothing of
+# its own. Release CI passes the families through the environment; local builds
+# leave this empty and keep the per-architecture path.
+set(RAYD_TORCH_CUDA_GENCODE_FLAGS "" CACHE STRING
+    "Space-separated complete nvcc --generate-code flags. Overrides CMAKE_CUDA_ARCHITECTURES.")
+if(DEFINED ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}
+   AND NOT "$ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}" STREQUAL "")
+    set(RAYD_TORCH_CUDA_GENCODE_FLAGS "$ENV{RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+endif()
+if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+    string(REGEX MATCHALL "[^ \t\r\n]+" RAYD_TORCH_CUDA_GENCODE_FLAGS_LIST
+        "${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+    foreach(RAYD_TORCH_CUDA_FAMILY IN LISTS RAYD_TORCH_CUDA_GENCODE_FLAGS_LIST)
+        if(NOT RAYD_TORCH_CUDA_FAMILY MATCHES "^--generate-code=arch=compute_[0-9]+,code=")
+            message(FATAL_ERROR
+                "Invalid flag '${RAYD_TORCH_CUDA_FAMILY}' in RAYD_TORCH_CUDA_GENCODE_FLAGS. "
+                "Every entry must be a complete --generate-code=arch=compute_<N>,code=... flag.")
+        endif()
+    endforeach()
+endif()
+
 set(RAYD_TORCH_DEFAULT_CUDA_ARCHITECTURES "native")
-if(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
+if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+    # Grouped generation is the only code-generation source. Turning
+    # CMAKE_CUDA_ARCHITECTURES off here also skips the "native" default, so a
+    # cross-compiling builder never needs a local GPU to configure.
+    set(
+        CMAKE_CUDA_ARCHITECTURES
+        OFF
+        CACHE STRING
+        "CUDA architectures for RayD Torch native kernels."
+        FORCE)
+elseif(DEFINED ENV{CMAKE_CUDA_ARCHITECTURES}
    AND NOT "$ENV{CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     set(
         CMAKE_CUDA_ARCHITECTURES
@@ -165,13 +200,34 @@ if(RAYD_TORCH_BUILD_NATIVE)
         endif()
     endif()
     find_package(Torch REQUIRED)
-    if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
-        set(CMAKE_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
+
+    # Caffe2 appends its own per-architecture `-gencode arch=...` pairs to
+    # CMAKE_CUDA_FLAGS, derived from TORCH_CUDA_ARCH_LIST. Those duplicate
+    # whatever this project generates below, and nvcc honours both: every
+    # architecture would be compiled twice. Strip them unconditionally so code
+    # generation has exactly one owner.
+    string(REGEX REPLACE "-gencode[ =]+arch=compute_[0-9]+,code=[^ ]+" ""
+        CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
+    string(REGEX REPLACE " +" " " CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
+    if(CMAKE_CUDA_FLAGS MATCHES "gencode|generate-code")
+        message(FATAL_ERROR
+            "Caffe2 code-generation flags survived removal: ${CMAKE_CUDA_FLAGS}")
     endif()
-    if(NOT CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "OFF")
-        message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayD Torch kernels would build without -gencode flags.")
+
+    if(NOT RAYD_TORCH_CUDA_GENCODE_FLAGS STREQUAL "")
+        # Grouped generation owns code generation; CMake must emit none of its own.
+        set(CMAKE_CUDA_ARCHITECTURES OFF)
+        string(APPEND CMAKE_CUDA_FLAGS " ${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+        message(STATUS "RayD Torch grouped CUDA gencode families: ${RAYD_TORCH_CUDA_GENCODE_FLAGS}")
+    else()
+        if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
+            set(CMAKE_CUDA_ARCHITECTURES "${RAYD_TORCH_REQUESTED_CUDA_ARCHITECTURES}")
+        endif()
+        if(NOT CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "OFF")
+            message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES resolved to '${CMAKE_CUDA_ARCHITECTURES}'; RayD Torch kernels would build without -gencode flags.")
+        endif()
+        message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     endif()
-    message(STATUS "RayD Torch CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
     message(STATUS "RayD Torch/Caffe2 CUDA architectures: ${TORCH_CUDA_ARCH_LIST}")
 
     # Stable ABI shims are exported by torch_cpu and torch_cuda. Link those
@@ -775,10 +831,60 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PROPERTIES
             COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>")
 
-    add_library(rayd_torch_native_core STATIC ${RAYD_TORCH_NATIVE_CORE_SOURCES})
-    set_target_properties(rayd_torch_native_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(
+    # Exactly these seven units reach torch/extension.h, and through it pybind11
+    # and the CPython C API, so only they are Python-version dependent. The
+    # remaining units -- every CUDA translation unit and nine more C++ units --
+    # compile identically for every supported CPython version. The two live in
+    # separate static libraries so a build can produce the Python-free half once
+    # and reuse it. `rayd_torch_native_core` stays the name every consumer and
+    # the ADR-0035 contract parser already use.
+    set(RAYD_TORCH_PYTHON_OPS_SOURCES
+        src/torch_ext/common/ops_stats.cpp
+        src/torch_ext/common/ops_camera.cpp
+        src/torch_ext/scene/ops_scene.cpp
+        src/torch_ext/scene/ops_intersect.cpp
+        src/torch_ext/edge/ops_edge.cpp
+        src/torch_ext/reflection/ops.cpp
+        src/torch_ext/diffraction/ops.cpp)
+    set(RAYD_TORCH_DEVICE_CORE_SOURCES ${RAYD_TORCH_NATIVE_CORE_SOURCES})
+    list(REMOVE_ITEM RAYD_TORCH_DEVICE_CORE_SOURCES ${RAYD_TORCH_PYTHON_OPS_SOURCES})
+    list(LENGTH RAYD_TORCH_NATIVE_CORE_SOURCES RAYD_TORCH_CORE_SOURCE_COUNT)
+    list(LENGTH RAYD_TORCH_DEVICE_CORE_SOURCES RAYD_TORCH_DEVICE_SOURCE_COUNT)
+    math(EXPR RAYD_TORCH_REMOVED_COUNT
+        "${RAYD_TORCH_CORE_SOURCE_COUNT} - ${RAYD_TORCH_DEVICE_SOURCE_COUNT}")
+    if(NOT RAYD_TORCH_REMOVED_COUNT EQUAL 7)
+        message(FATAL_ERROR
+            "Expected to split 7 Python-coupled units out of "
+            "RAYD_TORCH_NATIVE_CORE_SOURCES, removed ${RAYD_TORCH_REMOVED_COUNT}. "
+            "A renamed or dropped source silently leaves it in the Python-free "
+            "half; re-audit the torch/extension.h include closure.")
+    endif()
+
+    add_library(rayd_torch_device_core STATIC ${RAYD_TORCH_DEVICE_CORE_SOURCES})
+    add_library(rayd_torch_python_ops STATIC ${RAYD_TORCH_PYTHON_OPS_SOURCES})
+    add_library(rayd_torch_native_core INTERFACE)
+    target_link_libraries(
         rayd_torch_native_core
+        INTERFACE rayd_torch_python_ops rayd_torch_device_core)
+    set_target_properties(
+        rayd_torch_device_core rayd_torch_python_ops
+        PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # The Python-free half must not see Python.h: losing that include directory
+    # is what makes it reusable across CPython versions.
+    target_include_directories(
+        rayd_torch_device_core
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${RAYD_SHARED_INCLUDE_DIR}
+        PRIVATE
+            "${TORCH_INSTALL_PREFIX}/include"
+            "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+            ${CMAKE_CURRENT_BINARY_DIR}/generated
+            ${CUDAToolkit_INCLUDE_DIRS}
+            ${OPTIX_INCLUDE_DIR}
+    )
+    target_include_directories(
+        rayd_torch_python_ops
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${RAYD_SHARED_INCLUDE_DIR}
@@ -791,7 +897,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${OPTIX_INCLUDE_DIR}
     )
     add_dependencies(
-        rayd_torch_native_core
+        rayd_torch_device_core
         rayd_torch_optix_ptx
         rayd_torch_edge_optix_ptx
         rayd_torch_reflection_trace_optix_ptx
@@ -802,14 +908,24 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_diffraction_paths_optix_ptx
         rayd_torch_diffraction_accumulation_optix_ptx
         rayd_torch_segment_penetration_optix_ptx)
+    add_dependencies(rayd_torch_python_ops rayd_torch_device_core)
     target_link_libraries(
-        rayd_torch_native_core
+        rayd_torch_device_core
+        PUBLIC
+            "${TORCH_LIBRARIES}"
+            CUDA::cudart
+            CUDA::cuda_driver)
+    # libtorch_python is the Python-version dependent half of LibTorch and is
+    # needed only by the units that reach torch/extension.h.
+    target_link_libraries(
+        rayd_torch_python_ops
         PUBLIC
             "${TORCH_LIBRARIES}"
             "${TORCH_PYTHON_LIBRARY}"
             CUDA::cudart
             CUDA::cuda_driver)
-    target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
+    target_compile_features(rayd_torch_device_core PUBLIC cxx_std_17)
+    target_compile_features(rayd_torch_python_ops PUBLIC cxx_std_17)
 
     if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
         add_executable(

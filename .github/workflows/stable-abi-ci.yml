@@ -1,19 +1,30 @@
 name: Stable ABI Build
 
 on:
-  push:
-    branches:
-      - main
+  # GITHUB_ACTIONS_PREBUILD_MATRIX.md: ordinary pushes and pull-request pushes
+  # must not start RayD CI. See .github/workflows/pypi.yml for the same gate.
   pull_request:
+    types: [labeled]
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "Build scope"
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - full
 
 concurrency:
-  group: stable-abi-${{ github.ref }}
+  group: stable-abi-${{ github.ref }}-${{ github.event_name }}-${{ inputs.scope || 'default' }}
   cancel-in-progress: true
 
 jobs:
   torch-stable-abi:
-    name: Torch Stable ABI / ${{ matrix.os }}
+    name: Torch Stable ABI / ${{ matrix.os }} / ${{ inputs.scope == 'full' && 'release' || 'smoke' }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.label.name == 'run-ci'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -22,8 +33,9 @@ jobs:
         os: [ubuntu-22.04, windows-2022]
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: "2"
-      CMAKE_CUDA_ARCHITECTURES: "70-real;75-real;80-real;86-real;87-real;89-real;90-real;100-real;101-real;120-real;120-virtual"
-      TORCH_CUDA_ARCH_LIST: "7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX"
+      RAYD_ARCH_PROFILE: ${{ inputs.scope == 'full' && 'release' || 'smoke' }}
+      RAYD_TORCH_CUDA_GENCODE_FLAGS: ${{ inputs.scope == 'full' && '--generate-code=arch=compute_70,code=[sm_70,sm_75] --generate-code=arch=compute_80,code=[sm_80,sm_86,sm_87,sm_89] --generate-code=arch=compute_90,code=sm_90 --generate-code=arch=compute_100,code=[sm_100,sm_101] --generate-code=arch=compute_120,code=[sm_120,compute_120]' || '--generate-code=arch=compute_87,code=sm_87 --generate-code=arch=compute_120,code=[sm_120,compute_120]' }}
+      TORCH_CUDA_ARCH_LIST: ${{ inputs.scope == 'full' && '7.0;7.5;8.0;8.6;8.7;8.9;9.0;10.0;10.1;12.0+PTX' || '8.7;12.0+PTX' }}
       OPTIX_INCLUDE_DIR: ${{ github.workspace }}/.optix/include
 
     steps:
@@ -114,6 +126,7 @@ jobs:
         shell: bash
         run: |
           python backends/drjit/scripts/verify_cuda_binary_arches.py \
+            --profile "$RAYD_ARCH_PROFILE" \
             --stem _stable_ops \
             "$RAYD_STABLE_LIBRARY"
 
