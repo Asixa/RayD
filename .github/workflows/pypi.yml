@@ -184,6 +184,7 @@ jobs:
             SCCACHE_CACHE_SIZE=2G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
+            SKBUILD_BUILD_DIR=/project/artifacts/skbuild
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair --plat manylinux_2_28_x86_64
             --exclude libcuda.so.1
@@ -290,6 +291,7 @@ jobs:
             SCCACHE_CACHE_SIZE=2G
             SCCACHE_BASEDIRS=/project
             SCCACHE_IGNORE_SERVER_IO_ERROR=1
+            SKBUILD_BUILD_DIR=/project/artifacts/skbuild
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair --plat manylinux_2_28_x86_64
             --exclude libcuda.so.1
@@ -409,7 +411,9 @@ jobs:
       - name: Build Dr.Jit wheel
         if: matrix.backend == 'drjit'
         working-directory: backends/drjit
-        run: python -m build --wheel --no-isolation --outdir ../../dist/drjit
+        run: >-
+          python -m build --wheel --no-isolation --outdir ../../dist/drjit
+          -Cbuild-dir=artifacts/skbuild
       - name: Build Torch wheel
         if: matrix.backend == 'torch'
         working-directory: backends/torch
