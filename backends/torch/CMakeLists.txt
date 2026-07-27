@@ -841,11 +841,62 @@ if(RAYD_TORCH_BUILD_NATIVE)
         PROPERTIES
             COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>")
 
-    add_library(rayd_torch_native_core STATIC ${RAYD_TORCH_NATIVE_CORE_SOURCES})
-    set_target_properties(rayd_torch_native_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    rayd_torch_apply_cuda_gencode(rayd_torch_native_core)
-    target_include_directories(
+    # Exactly these seven units reach torch/extension.h, and through it pybind11
+    # and the CPython C API, so only they are Python-version dependent. The rest
+    # -- every CUDA translation unit and nine more C++ units -- compile
+    # identically for every supported CPython version. Keeping the two halves in
+    # separate static libraries lets a build produce the Python-free half once
+    # and reuse it across the per-version wheel jobs. `rayd_torch_native_core`
+    # stays the name every consumer and the ADR-0035 contract parser already use.
+    set(RAYD_TORCH_PYTHON_OPS_SOURCES
+        src/torch_ext/common/ops_stats.cpp
+        src/torch_ext/common/ops_camera.cpp
+        src/torch_ext/scene/ops_scene.cpp
+        src/torch_ext/scene/ops_intersect.cpp
+        src/torch_ext/edge/ops_edge.cpp
+        src/torch_ext/reflection/ops.cpp
+        src/torch_ext/diffraction/ops.cpp)
+    set(RAYD_TORCH_DEVICE_CORE_SOURCES ${RAYD_TORCH_NATIVE_CORE_SOURCES})
+    list(REMOVE_ITEM RAYD_TORCH_DEVICE_CORE_SOURCES ${RAYD_TORCH_PYTHON_OPS_SOURCES})
+    list(LENGTH RAYD_TORCH_NATIVE_CORE_SOURCES RAYD_TORCH_CORE_SOURCE_COUNT)
+    list(LENGTH RAYD_TORCH_DEVICE_CORE_SOURCES RAYD_TORCH_DEVICE_SOURCE_COUNT)
+    math(EXPR RAYD_TORCH_REMOVED_COUNT
+        "${RAYD_TORCH_CORE_SOURCE_COUNT} - ${RAYD_TORCH_DEVICE_SOURCE_COUNT}")
+    if(NOT RAYD_TORCH_REMOVED_COUNT EQUAL 7)
+        message(FATAL_ERROR
+            "Expected to split 7 Python-coupled units out of "
+            "RAYD_TORCH_NATIVE_CORE_SOURCES, removed ${RAYD_TORCH_REMOVED_COUNT}. "
+            "A renamed or dropped source silently leaves it in the Python-free "
+            "half; re-audit the torch/extension.h include closure.")
+    endif()
+
+    add_library(rayd_torch_device_core STATIC ${RAYD_TORCH_DEVICE_CORE_SOURCES})
+    add_library(rayd_torch_python_ops STATIC ${RAYD_TORCH_PYTHON_OPS_SOURCES})
+    add_library(rayd_torch_native_core INTERFACE)
+    target_link_libraries(
         rayd_torch_native_core
+        INTERFACE rayd_torch_python_ops rayd_torch_device_core)
+    set_target_properties(
+        rayd_torch_device_core rayd_torch_python_ops
+        PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    rayd_torch_apply_cuda_gencode(rayd_torch_device_core)
+    rayd_torch_apply_cuda_gencode(rayd_torch_python_ops)
+    # The Python-free half must not see Python.h: losing that include directory
+    # is what makes it reusable across CPython versions.
+    target_include_directories(
+        rayd_torch_device_core
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${RAYD_SHARED_INCLUDE_DIR}
+        PRIVATE
+            "${TORCH_INSTALL_PREFIX}/include"
+            "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+            ${CMAKE_CURRENT_BINARY_DIR}/generated
+            ${CUDAToolkit_INCLUDE_DIRS}
+            ${OPTIX_INCLUDE_DIR}
+    )
+    target_include_directories(
+        rayd_torch_python_ops
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${RAYD_SHARED_INCLUDE_DIR}
@@ -858,7 +909,7 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${OPTIX_INCLUDE_DIR}
     )
     add_dependencies(
-        rayd_torch_native_core
+        rayd_torch_device_core
         rayd_torch_optix_ptx
         rayd_torch_edge_optix_ptx
         rayd_torch_reflection_trace_optix_ptx
@@ -869,14 +920,24 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_diffraction_paths_optix_ptx
         rayd_torch_diffraction_accumulation_optix_ptx
         rayd_torch_segment_penetration_optix_ptx)
+    add_dependencies(rayd_torch_python_ops rayd_torch_device_core)
     target_link_libraries(
-        rayd_torch_native_core
+        rayd_torch_device_core
+        PUBLIC
+            "${TORCH_LIBRARIES}"
+            CUDA::cudart
+            CUDA::cuda_driver)
+    # libtorch_python is the Python-version dependent half of LibTorch and is
+    # needed only by the units that reach torch/extension.h.
+    target_link_libraries(
+        rayd_torch_python_ops
         PUBLIC
             "${TORCH_LIBRARIES}"
             "${TORCH_PYTHON_LIBRARY}"
             CUDA::cudart
             CUDA::cuda_driver)
-    target_compile_features(rayd_torch_native_core PUBLIC cxx_std_17)
+    target_compile_features(rayd_torch_device_core PUBLIC cxx_std_17)
+    target_compile_features(rayd_torch_python_ops PUBLIC cxx_std_17)
 
     if(BUILD_TESTING AND RAYD_TORCH_BUILD_CPP_TESTS)
         add_executable(

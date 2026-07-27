@@ -148,12 +148,17 @@ class ProjectMetadataTests(unittest.TestCase):
         )
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
-        self.assertIn(
-            "CMAKE_CUDA_COMPILER_LAUNCHER: "
-            "${{ matrix.backend == 'drjit' && 'sccache' || '' }}",
-            windows_wheel_job,
-        )
+        # Both backends cache CUDA, through the two different mechanisms their
+        # build shapes require: Torch compiles CUDA with CMake's CUDA language,
+        # Dr.Jit with hand-written nvcc command lines that only the
+        # RAYD_NVCC_LAUNCHER shim can wrap.
+        self.assertIn("CMAKE_CUDA_COMPILER_LAUNCHER: sccache", windows_wheel_job)
+        self.assertIn("RAYD_NVCC_LAUNCHER: sccache", windows_wheel_job)
         self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER=', pypi)
+        # A pinned build directory keeps compile command lines byte-identical
+        # between runs; without it every compile hashes to a fresh cache key.
+        self.assertEqual(pypi.count("SKBUILD_BUILD_DIR=/project/artifacts/skbuild"), 2)
+        self.assertEqual(pypi.count("-Cbuild-dir=artifacts/skbuild"), 2)
         self.assertIn('mozilla-actions/sccache-action@v0.0.10', pypi)
         for grouped_flag in (
             "--generate-code=arch=compute_70,code=[sm_70,sm_75]",
@@ -169,7 +174,11 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("RAYD_TORCH_CALLER_CUDA_FLAGS", cmake)
         self.assertIn("-gencode[ \\t]+arch=[^ \\t]+,code=[^ \\t]+", cmake)
         self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_stable_ops)", cmake)
-        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_native_core)", cmake)
+        # The former rayd_torch_native_core is split into a Python-free half and
+        # the seven units that reach torch/extension.h; both compile CUDA, so
+        # both need the grouped flags.
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_device_core)", cmake)
+        self.assertIn("rayd_torch_apply_cuda_gencode(rayd_torch_python_ops)", cmake)
         self.assertIn('CMAKE_CUDA_ARCHITECTURES: "87-real;120-real;120-virtual"', pull_request)
         self.assertIn("--expected-sass 87,120", pull_request)
         self.assertNotIn("self-hosted", pull_request)
