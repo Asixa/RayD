@@ -506,6 +506,97 @@ class ChunkedTwoDeviceTests(unittest.TestCase):
         )
         self.assertTrue(torch.equal(_bits(streamed), _bits(self.reference["visible"])))
 
+    def test_the_two_gather_modes_agree(self):
+        """The pipelined gather has two shapes; only one of them is differentiable.
+
+        Without gradients the executor allocates the operation's whole output
+        once and every chunk copies its rows straight into it; with gradients
+        it falls back to a per-chunk copy and a concatenation, because filling
+        one buffer slice by slice would make each chunk's backward walk the
+        whole buffer's `CopySlices` chain. The two must produce the same bits.
+        """
+        vertices, faces = _grid_mesh(self.device)
+        ray = self.inputs["ray"]
+
+        def run(requires_grad: bool):
+            leaf = vertices.clone().requires_grad_(requires_grad)
+            scene = rt.Scene(
+                devices=[0, 1],
+                options=rt.MultiDeviceOptions(
+                    warm_up=False, min_rays_per_device=1, pipeline_chunks_per_device=3
+                ),
+            )
+            scene.add_mesh(rt.Mesh(leaf, faces))
+            scene.build()
+            hit = scene.intersect(ray, flags=rt.RayFlags.All)
+            self.assertEqual(scene._multi.last_dispatch, "pipelined")
+            return hit
+
+        direct = run(False)
+        traced = run(True)
+        self.assertFalse(direct.t.requires_grad)
+        self.assertTrue(traced.t.requires_grad)
+        for name in ("t", "p", "n", "prim_id", "barycentric"):
+            self.assertTrue(
+                torch.equal(_bits(getattr(direct, name)), _bits(getattr(traced, name))),
+                f"{name} differs between the buffered and the concatenated gather",
+            )
+
+    def test_a_pipelined_backward_reaches_the_master_leaf(self):
+        """The executor's streams are the ones backward runs on; the sum still lands."""
+        vertices, faces = _grid_mesh(self.device)
+        ray = self.inputs["ray"]
+
+        def gradient(devices, **options):
+            leaf = vertices.clone().requires_grad_(True)
+            if devices is None:
+                scene = rt.Scene()
+            else:
+                scene = rt.Scene(
+                    devices=devices,
+                    options=rt.MultiDeviceOptions(warm_up=False, **options),
+                )
+            scene.add_mesh(rt.Mesh(leaf, faces))
+            scene.build()
+            hit = scene.intersect(ray)
+            chain = scene.trace_reflections(ray, max_bounces=2)
+            reduced = torch.where(chain.valid, chain.t, torch.zeros_like(chain.t)).sum()
+            (
+                torch.where(torch.isfinite(hit.t), hit.t, torch.zeros_like(hit.t)).sum()
+                + reduced
+            ).backward()
+            return leaf.grad, getattr(scene._multi, "last_dispatch", None)
+
+        expected, _ = gradient(None)
+        self.assertGreater(float(expected.abs().max()), 0.0)
+        for chunks in (2, 5):
+            with self.subTest(chunks=chunks):
+                piped, dispatch = gradient(
+                    [0, 1], min_rays_per_device=1, pipeline_chunks_per_device=chunks
+                )
+                self.assertEqual(dispatch, "pipelined")
+                torch.testing.assert_close(piped, expected, rtol=1e-5, atol=1e-6)
+
+    def test_the_pipeline_streams_are_created_once_and_reused(self):
+        """A per-call stream would leak one CUDA stream per query."""
+        scene = self._scene(min_rays_per_device=1)
+        scene.intersect(self.inputs["ray"])
+        streams = dict(scene._multi._streams)
+        self.assertEqual(sorted(streams), [0, 1])
+        # The master needs no copy streams; the other device needs one per
+        # direction on each side of the pair.
+        self.assertIsNone(streams[0].scatter_src)
+        self.assertIsNone(streams[0].gather_dst)
+        self.assertIsNotNone(streams[1].scatter_src)
+        self.assertIsNotNone(streams[1].gather_dst)
+        self.assertEqual(streams[1].scatter_src.device.index, 0)
+        self.assertEqual(streams[1].scatter_dst.device.index, 1)
+        self.assertEqual(streams[1].gather_src.device.index, 1)
+        self.assertEqual(streams[1].gather_dst.device.index, 0)
+        for _ in range(3):
+            scene.visible(self.inputs["origins"], self.inputs["end"])
+        self.assertEqual(scene._multi._streams, streams)
+
     def test_a_two_device_chunked_gradient_matches_the_single_device_gradient(self):
         # Torch warns that the master leaf's AccumulateGrad node runs on a
         # different stream than the chunk that produced the gradient; that is

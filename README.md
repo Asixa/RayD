@@ -412,13 +412,21 @@ the same device. Operations are independent of the ambient CUDA device: a scene
 built on `cuda:1` answers queries correctly while `cuda:0` is current, and the
 ambient device is unchanged on return.
 
-Multi-device execution is manual today: one `Scene` per device, driven either
-from one process per GPU or from one host thread per device. The operational
-contract, the per-device OptiX warm-up cost, the per-process
+Multi-device execution has a manual route: one `Scene` per device, driven
+either from one process per GPU or from one host thread per device. The
+operational contract, the per-device OptiX warm-up cost, the per-process
 `OPTIX_CACHE_PATH` requirement for process-parallel launches, and the
 GIL/native-lock ordering rule that concurrent in-process driving depends on
 are documented in
 [`docs/dev/multi_gpu_operations.md`](docs/dev/multi_gpu_operations.md).
+
+Whether a second GPU is worth engaging is a property of the workload: sharded
+rays travel twice, so multi-GPU pays off for compute-heavy per-ray work and
+large accumulations and loses for cheap queries with wide results. The measured
+scaling on 2x RTX A6000, the transfer-bound/compute-bound crossover arithmetic,
+and the benchmark that reproduces both
+([`backends/torch/tests/benchmark_multi_device.py`](backends/torch/tests/benchmark_multi_device.py))
+are in the multi-GPU performance section of the same note.
 
 ## Building from Source
 

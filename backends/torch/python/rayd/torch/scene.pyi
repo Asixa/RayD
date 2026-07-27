@@ -1,8 +1,8 @@
-from collections.abc import Iterable, Sequence
-from typing import overload
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, overload
 import torch
 from .mesh import Mesh
-from ._multi import MultiDeviceOptions
+from ._multi import DeviceCalibration, MultiDeviceOptions
 from .types import (
     AxialEdgeVisibility,
     DfrAccum,
@@ -36,6 +36,18 @@ class Scene:
     def add_mesh(self, mesh: Mesh, dynamic: bool = ...) -> int: ...
     def build(self) -> None: ...
     def is_ready(self) -> bool: ...
+    def calibrate_devices(
+        self,
+        *,
+        rays: int = ...,
+        max_bounces: int = ...,
+        probe: Callable[[Any, torch.device], object] | None = ...,
+        repeats: int = ...,
+        warm_up: int = ...,
+        refine: bool = ...,
+    ) -> DeviceCalibration: ...
+    @property
+    def device_weights(self) -> tuple[float, ...] | None: ...
     @property
     def trace_backend(self) -> str: ...
     @property

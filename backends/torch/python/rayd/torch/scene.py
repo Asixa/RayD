@@ -168,6 +168,67 @@ class Scene:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_scene
 
+    def calibrate_devices(
+        self,
+        *,
+        rays: int = 1 << 20,
+        max_bounces: int = 0,
+        probe=None,
+        repeats: int = 3,
+        warm_up: int = 1,
+        refine: bool = True,
+    ):
+        """Measure this scene's devices and set the shard split from what it sees.
+
+        Only a scene built with more than one device has a split to set;
+        anything else raises, because silently doing nothing -- or answering a
+        one-device scene with the `(1.0,)` it already had -- would look like a
+        calibration. That includes a one-device `Scene(devices=[d],
+        options=MultiDeviceOptions(chunk_rays=...))`, which is orchestrated
+        (the chunked executor is a per-device memory story, D7) but has nothing
+        to shard. Every replica first runs the same probe on its own device with resident
+        inputs, so what is measured is the device rather than the interconnect,
+        and the weights come out inversely proportional to the times. The
+        refinement stage then times the real multi-device dispatch of the same
+        probe at a ladder of remote shares down to zero and keeps the fastest,
+        which is what catches an operation that moves more bytes per row than
+        it spends compute on. The returned record (also kept on the scene)
+        carries the per-device seconds, the ladder, and the weights they
+        produced, so a caller can log exactly what it is running.
+
+        The default probe is `rays` rays drawn from a fixed seed inside this
+        scene's bounding box, put through `intersect` -- or through
+        `trace_reflections` when `max_bounces` is set. It is an op *shape*, not
+        a workload: pass `probe(scene, device)` to time the call that actually
+        matters. Calibration only chooses weights; at fixed weights, execution
+        stays as reproducible as it was.
+        """
+        if self._multi is None or len(self._multi.devices) < 2:
+            raise RuntimeError(
+                "Scene.calibrate_devices() needs a scene with more than one device; "
+                "build the Scene with devices=[...] first. There is no shard split "
+                "to measure on one device."
+            )
+        return self._multi.calibrate(
+            rows=int(rays),
+            max_bounces=int(max_bounces),
+            probe=probe,
+            repeats=int(repeats),
+            warm_up=int(warm_up),
+            refine=bool(refine),
+        )
+
+    @property
+    def device_weights(self):
+        """The shard split in `devices` order, or `None` when nothing orchestrates.
+
+        A one-device scene that engaged the chunked executor answers `(1.0,)`:
+        it has a (degenerate) split, it just has no way to change it.
+        """
+        if self._multi is None:
+            return None
+        return self._multi.weights
+
     def _mesh_vertex_tensors(self) -> tuple[torch.Tensor, ...]:
         return tuple(mesh.vertices for mesh, _dynamic in self._meshes)
 

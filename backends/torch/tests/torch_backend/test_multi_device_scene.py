@@ -359,6 +359,56 @@ class SingleDeviceStaysOnThePreExistingPathTests(
         options = rt.MultiDeviceOptions()
         self.assertIsNone(options.weights)
         self.assertTrue(options.warm_up)
+        # Phase 2d: pipelined dispatch is the default, four chunks per shard,
+        # and a batch under 256Ki rows per device stays on the master.
+        self.assertTrue(options.pipeline)
+        self.assertEqual(options.pipeline_chunks_per_device, 4)
+        self.assertEqual(options.min_rays_per_device, 262144)
+
+    def test_the_throughput_knobs_are_validated(self):
+        for options in (
+            rt.MultiDeviceOptions(pipeline=1),
+            rt.MultiDeviceOptions(pipeline_chunks_per_device=1.5),
+            rt.MultiDeviceOptions(min_rays_per_device=True),
+        ):
+            with self.assertRaises(TypeError):
+                rt.Scene(devices=[0], options=options)
+        for options in (
+            rt.MultiDeviceOptions(pipeline_chunks_per_device=1),
+            rt.MultiDeviceOptions(pipeline_chunks_per_device=0),
+            rt.MultiDeviceOptions(min_rays_per_device=0),
+        ):
+            with self.assertRaises(ValueError):
+                rt.Scene(devices=[0], options=options)
+
+    def test_calibrating_a_single_device_scene_is_refused(self):
+        scene = _build_scene(torch.device("cuda", 0))
+        with self.assertRaises(RuntimeError) as raised:
+            scene.calibrate_devices()
+        self.assertIn("devices=[...]", str(raised.exception))
+        self.assertIsNone(scene.device_weights)
+
+    def test_calibrating_a_one_device_chunked_scene_is_refused_too(self):
+        """A chunked one-device scene is orchestrated but has nothing to shard.
+
+        `Scene(devices=[d], options=MultiDeviceOptions(chunk_rays=...))` gets
+        an orchestrator (the chunked executor is a per-device memory story,
+        D7), so the refusal cannot be "is there a multi layer?" -- it has to be
+        "is there a split?". Calibrating it would return the `(1.0,)` it
+        already had and look like a measurement.
+        """
+        scene = _build_scene(
+            torch.device("cuda", 0),
+            devices=[0],
+            options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8),
+        )
+        self.assertIsNotNone(scene._multi)
+        with self.assertRaises(RuntimeError) as raised:
+            scene.calibrate_devices(rays=1024, repeats=1, warm_up=0)
+        self.assertIn("more than one device", str(raised.exception))
+        # The refusal changed nothing: the degenerate split is still readable.
+        self.assertEqual(scene.device_weights, (1.0,))
+        self.assertIsNone(scene._multi.last_calibration)
 
     def test_chunked_one_device_accumulation_matches_the_unchunked_scene(self):
         """The lane executor is a memory story on one device too (D7)."""
@@ -407,11 +457,16 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
     def tearDown(self) -> None:
         torch.cuda.set_device(self._entry_device)
 
-    def _multi_scene(self, weights=None, warm_up: bool = False) -> rt.Scene:
+    def _multi_scene(self, weights=None, warm_up: bool = False, **options) -> rt.Scene:
+        # `min_rays_per_device=1` is what keeps these comparisons about
+        # sharding: at the shipped floor a 33-row batch is a master-only call
+        # (which `SmallBatchFallbackTests` covers on its own terms), and every
+        # equality here would hold vacuously.
+        options.setdefault("min_rays_per_device", 1)
         return _build_scene(
             self.device,
             devices=[0, 1],
-            options=rt.MultiDeviceOptions(weights=weights, warm_up=warm_up),
+            options=rt.MultiDeviceOptions(weights=weights, warm_up=warm_up, **options),
         )
 
     def test_every_covered_op_matches_single_device_at_several_weightings(self):
@@ -463,12 +518,17 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         """The default path (`Scene(devices=[...])`, warm-up on) is covered too."""
         if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
             self.skipTest("bitwise cross-device equality needs identical devices")
-        scene = _build_scene(self.device, devices=[0, 1])
+        scene = _build_scene(
+            self.device,
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(min_rays_per_device=1),
+        )
         self.assert_same_results(
             self.reference,
             _covered_op_results(scene, self.inputs),
             "default options",
         )
+        self.assertEqual(scene._multi.last_dispatch, "pipelined")
 
     def test_master_vertex_gradient_matches_single_device(self):
         """D4: every replica's gradient is reduced onto the master leaf by autograd."""
@@ -481,7 +541,10 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
                 scene = rt.Scene()
             else:
                 scene = rt.Scene(
-                    devices=devices, options=rt.MultiDeviceOptions(warm_up=False)
+                    devices=devices,
+                    options=rt.MultiDeviceOptions(
+                        warm_up=False, min_rays_per_device=1
+                    ),
                 )
             scene.add_mesh(rt.Mesh(leaf, faces))
             scene.build()
@@ -506,7 +569,10 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         vertices, faces = _grid_mesh(self.device)
         moved = (vertices + torch.tensor([[0.05, -0.02, 0.15]], device=self.device)).contiguous()
 
-        scene = rt.Scene(devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False))
+        scene = rt.Scene(
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1),
+        )
         scene.add_mesh(rt.Mesh(vertices.clone(), faces), dynamic=True)
         scene.build()
         scene.update_mesh_vertices(0, moved)
@@ -605,6 +671,505 @@ class MultiDeviceSceneTests(MultiDeviceResultMixin, unittest.TestCase):
         self.assertEqual(
             tuple(scene.trace_reflections(ray, max_bounces=2).valid.shape), (0, 2)
         )
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
+    "two CUDA devices are required",
+)
+class PipelinedDispatchTests(MultiDeviceResultMixin, unittest.TestCase):
+    """Phase 2d: the pipelined path is the plain path, only overlapped.
+
+    Everything here is a *sameness* claim. The pipelined dispatch runs each
+    shard as a stream of chunks on private copy streams so that scatter,
+    compute and gather overlap; none of that is allowed to change a result, a
+    gradient, or a run's reproducibility. The throughput claims themselves are
+    not unit-testable on a shared machine and live in the phase's benchmark.
+    """
+
+    def setUp(self) -> None:
+        self._entry_device = torch.cuda.current_device()
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda", 0)
+        self.inputs = _query_inputs(self.device)
+        self.single = _build_scene(self.device)
+        self.reference = _covered_op_results(self.single, self.inputs)
+
+    def tearDown(self) -> None:
+        torch.cuda.set_device(self._entry_device)
+
+    def _scene(self, **options) -> rt.Scene:
+        options.setdefault("warm_up", False)
+        options.setdefault("min_rays_per_device", 1)
+        return _build_scene(
+            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options)
+        )
+
+    def test_the_pipelined_result_is_the_unpipelined_result_bitwise(self):
+        """The pipeline is an execution shape, not a numerical one."""
+        if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
+            self.skipTest("bitwise cross-device equality needs identical devices")
+        for weights in (None, [9.0, 1.0]):
+            for chunks in (2, 4, 32):
+                with self.subTest(weights=weights, chunks=chunks):
+                    plain = self._scene(weights=weights, pipeline=False)
+                    piped = self._scene(
+                        weights=weights, pipeline_chunks_per_device=chunks
+                    )
+                    plain_results = _covered_op_results(plain, self.inputs)
+                    self.assertEqual(plain._multi.last_dispatch, "sharded")
+                    self.assert_same_results(
+                        plain_results,
+                        _covered_op_results(piped, self.inputs),
+                        f"weights={weights} chunks={chunks}",
+                    )
+                    self.assertEqual(piped._multi.last_dispatch, "pipelined")
+                    # ... and the unpipelined path is still the single-device
+                    # result, so this is not two wrongs agreeing.
+                    self.assert_same_results(
+                        self.reference, plain_results, "unpipelined vs single"
+                    )
+
+    def test_the_auto_chunking_gives_every_shard_at_least_two_chunks(self):
+        """The overlap the pipeline needs: the remote shard is never one launch."""
+        scene = self._scene(pipeline_chunks_per_device=4)
+        scene.intersect(self.inputs["ray"])
+        plan = scene._multi.last_chunk_plan
+        self.assertEqual(plan.source, "pipeline")
+        # 33 rows split 16/17: the master runs one launch (nothing to overlap),
+        # the remote shard is cut into four.
+        self.assertEqual(plan.chunk_rays, -(-17 // 4))
+        self.assertEqual(plan.chunk_count, 1 + 4)
+        remote, master = scene._multi._pipeline_rows(_BATCH)
+        self.assertEqual((remote, master), (5, 16))
+
+    def test_a_degenerate_split_is_dispatched_as_a_single_device_call(self):
+        """`weights=[1, 0]` is the master alone, and is run as the master alone."""
+        scene = self._scene(weights=[1.0, 0.0])
+        self.assert_same_results(
+            self.reference,
+            _covered_op_results(scene, self.inputs),
+            "weights=[1, 0]",
+        )
+        self.assertEqual(scene._multi.last_dispatch, "master")
+
+    def test_the_pipelined_gradient_matches_the_single_device_gradient(self):
+        """D4 through the pipeline: backward runs on the executor's own streams."""
+        vertices, faces = _grid_mesh(self.device)
+        weight = (
+            torch.arange(_BATCH, device=self.device, dtype=torch.float32) + 1.0
+        ) / _BATCH
+
+        def gradient(options):
+            leaf = vertices.clone().requires_grad_(True)
+            scene = rt.Scene(**({} if options is None else {"devices": [0, 1], "options": options}))
+            scene.add_mesh(rt.Mesh(leaf, faces))
+            scene.build()
+            hit = scene.intersect(self.inputs["ray"])
+            t = torch.where(torch.isfinite(hit.t), hit.t, torch.zeros_like(hit.t))
+            chain = scene.trace_reflections(self.inputs["ray"], max_bounces=2)
+            bounces = torch.where(chain.valid, chain.t, torch.zeros_like(chain.t))
+            ((t * weight).sum() + bounces.sum()).backward()
+            return leaf.grad, getattr(scene._multi, "last_dispatch", None)
+
+        single, _ = gradient(None)
+        self.assertGreater(float(single.abs().max()), 0.0)
+        piped, dispatch = gradient(
+            rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1)
+        )
+        self.assertEqual(dispatch, "pipelined")
+        # Per-shard atomics reduced onto the master leaf: float32 order only.
+        torch.testing.assert_close(piped, single, rtol=1e-5, atol=1e-6)
+
+    def test_two_identical_pipelined_runs_are_bitwise_identical(self):
+        """Deterministic at fixed weights and chunking, run to run."""
+        scene = self._scene(weights=[3.0, 2.0])
+        first = _covered_op_results(scene, self.inputs)
+        first = {name: value.clone() for name, value in first.items()}
+        second = _covered_op_results(scene, self.inputs)
+        self.assert_same_results(first, second, "repeat run")
+
+    def test_a_busy_master_stream_does_not_race_the_gather(self):
+        """The caller's stream reads the result only after the gather events.
+
+        The executor's only ordering guarantee is an event edge onto the
+        stream the caller is on; loading it up before the query is what would
+        expose a missing one.
+        """
+        scene = self._scene(pipeline_chunks_per_device=8)
+        noise = torch.randn((2048, 2048), device=self.device)
+        for _ in range(24):
+            noise = noise @ noise.t() * 1e-4
+        results = _covered_op_results(scene, self.inputs)
+        self.assertTrue(bool(torch.isfinite(noise).any()))
+        self.assert_same_results(self.reference, results, "busy master stream")
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
+    "two CUDA devices are required",
+)
+class PipelinedStreamOrderingTests(MultiDeviceResultMixin, unittest.TestCase):
+    """The executor's private streams are ordered against every device's own.
+
+    The rest of `PipelinedDispatchTests` runs a 33-row fixture batch on a
+    static scene, which is blind to this: the whole batch is scattered,
+    computed and gathered inside a fraction of a millisecond, so nothing that
+    was still in flight on a replica's *own* stream is still in flight when
+    the pipeline reaches it.
+
+    Two things are in flight there. `sync()` enqueues the triangle GAS refit
+    and the IAS rebuild for each replica on that replica's device stream and
+    returns without a host synchronization; `build()` ends the same way. The
+    pipeline runs each shard on a private compute stream, which is ordered
+    against nothing on that device unless it is told to be -- so a query
+    issued straight after `update_mesh_vertices()` + `sync()` can traverse a
+    half-rebuilt acceleration structure and answer, silently, from geometry
+    that is partly stale.
+
+    The mesh here is deliberately big enough (2.1M triangles, dynamic, edges
+    off so the edge-side host synchronization cannot mask the window) that the
+    refit is real work: at this size the unfixed executor lost hits on 7 of 8
+    rounds on this repository's 2x RTX A6000, and at the fixture's 128
+    triangles on none.
+    """
+
+    _CELLS = 1024
+    _RAYS = 1 << 16
+    _ROUNDS = 8
+
+    def setUp(self) -> None:
+        self._entry_device = torch.cuda.current_device()
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda", 0)
+        self.vertices, self.faces = _grid_mesh(self.device, cells=self._CELLS)
+        generator = torch.Generator().manual_seed(20260728)
+        origins = torch.rand((self._RAYS, 3), generator=generator) * 1.8 - 0.9
+        origins[:, 2] = -1.0
+        directions = torch.randn((self._RAYS, 3), generator=generator)
+        directions[:, 2] = directions[:, 2].abs() + 0.25
+        directions = directions / directions.norm(dim=1, keepdim=True)
+        self.ray = rt.Ray(
+            origins.contiguous().to(self.device),
+            directions.contiguous().to(self.device),
+        )
+
+    def tearDown(self) -> None:
+        torch.cuda.set_device(self._entry_device)
+
+    def _scene(self) -> rt.Scene:
+        scene = rt.Scene(
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=1),
+        )
+        scene.add_mesh(
+            rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False),
+            dynamic=True,
+        )
+        scene.build()
+        return scene
+
+    def _hit(self, scene: rt.Scene) -> tuple[torch.Tensor, torch.Tensor]:
+        hit = scene.intersect(self.ray, flags=rt.RayFlags.All)
+        return hit.t.clone(), hit.p.clone()
+
+    def test_a_query_issued_straight_after_build_sees_the_built_geometry(self):
+        """`build()`'s stream-ordered tail is the same hazard as `sync()`'s."""
+        scene = self._scene()
+        # No synchronization between build() and the query: the replicas'
+        # acceleration structures are still being built on their own streams.
+        fast_t, fast_p = self._hit(scene)
+        self.assertEqual(scene._multi.last_dispatch, "pipelined")
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+        ref_t, ref_p = self._hit(scene)
+        self.assertGreater(int(torch.isfinite(ref_t).sum()), self._RAYS // 8)
+        self.assertTrue(torch.equal(_bits(fast_t), _bits(ref_t)), "t after build")
+        self.assertTrue(torch.equal(_bits(fast_p), _bits(ref_p)), "p after build")
+
+    def test_a_query_issued_straight_after_a_broadcast_sync_sees_the_new_geometry(self):
+        """update_mesh_vertices + sync + immediate pipelined query, repeatedly."""
+        scene = self._scene()
+        self._hit(scene)
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+
+        stale = 0
+        for round_index in range(self._ROUNDS):
+            offset = 0.35 if round_index % 2 == 0 else -0.35
+            moved = self.vertices.clone()
+            moved[:, 2] = offset
+            scene.update_mesh_vertices(0, moved)
+            scene.sync()
+            # Deliberately no synchronization here: this is the window.
+            fast_t, fast_p = self._hit(scene)
+            self.assertEqual(scene._multi.last_dispatch, "pipelined")
+            torch.cuda.synchronize(0)
+            torch.cuda.synchronize(1)
+            ref_t, ref_p = self._hit(scene)
+            torch.cuda.synchronize(0)
+            torch.cuda.synchronize(1)
+            self.assertGreater(int(torch.isfinite(ref_t).sum()), self._RAYS // 8)
+            if not (
+                torch.equal(_bits(fast_t), _bits(ref_t))
+                and torch.equal(_bits(fast_p), _bits(ref_p))
+            ):
+                stale += 1
+        self.assertEqual(
+            stale,
+            0,
+            f"{stale}/{self._ROUNDS} pipelined queries answered from geometry that "
+            "the preceding sync() had already replaced",
+        )
+
+    def test_a_broadcast_sync_issued_straight_after_a_query_does_not_disturb_it(self):
+        """The same edge backwards: a refit may not overwrite a live traversal."""
+        scene = self._scene()
+        moved = self.vertices.clone()
+        moved[:, 2] = 0.35
+        scene.update_mesh_vertices(0, moved)
+        scene.sync()
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+        ref_t, ref_p = self._hit(scene)
+        torch.cuda.synchronize(0)
+        torch.cuda.synchronize(1)
+
+        for round_index in range(self._ROUNDS):
+            live = scene.intersect(self.ray, flags=rt.RayFlags.All)
+            live_t, live_p = live.t, live.p
+            # Issued while the shards are still traversing, on the stream the
+            # replicas' refits are enqueued on.
+            other = self.vertices.clone()
+            other[:, 2] = -0.35 if round_index % 2 == 0 else 0.9
+            scene.update_mesh_vertices(0, other)
+            scene.sync()
+            live_t, live_p = live_t.clone(), live_p.clone()
+            torch.cuda.synchronize(0)
+            torch.cuda.synchronize(1)
+            self.assertTrue(
+                torch.equal(_bits(live_t), _bits(ref_t))
+                and torch.equal(_bits(live_p), _bits(ref_p)),
+                f"round {round_index}: a later sync() disturbed a query in flight",
+            )
+            scene.update_mesh_vertices(0, moved)
+            scene.sync()
+            torch.cuda.synchronize(0)
+            torch.cuda.synchronize(1)
+
+    def test_a_real_chunk_sized_batch_is_the_single_device_result_bitwise(self):
+        """Chunks of ~131k rows, not of five: the shipped shape, checked bitwise."""
+        if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
+            self.skipTest("bitwise cross-device equality needs identical devices")
+        generator = torch.Generator().manual_seed(20260729)
+        count = 1 << 20
+        origins = torch.rand((count, 3), generator=generator) * 1.8 - 0.9
+        origins[:, 2] = -1.0
+        directions = torch.randn((count, 3), generator=generator)
+        directions[:, 2] = directions[:, 2].abs() + 0.25
+        directions = directions / directions.norm(dim=1, keepdim=True)
+        ray = rt.Ray(
+            origins.contiguous().to(self.device),
+            directions.contiguous().to(self.device),
+        )
+
+        single = rt.Scene()
+        single.add_mesh(rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False))
+        single.build()
+        reference = single.intersect(ray, flags=rt.RayFlags.All)
+        expected = {"t": reference.t.clone(), "p": reference.p.clone()}
+        expected["prim"] = reference.global_prim_id.clone()
+
+        scene = rt.Scene(
+            devices=[0, 1], options=rt.MultiDeviceOptions(warm_up=False)
+        )
+        scene.add_mesh(rt.Mesh(self.vertices.clone(), self.faces, edges_enabled=False))
+        scene.build()
+        hit = scene.intersect(ray, flags=rt.RayFlags.All)
+        self.assertEqual(scene._multi.last_dispatch, "pipelined")
+        plan = scene._multi.last_chunk_plan
+        # The default floor lets a 1M-row batch shard; the remote half is cut
+        # into four chunks of 131072 rows, which is the shipped chunk shape.
+        self.assertEqual(plan.source, "pipeline")
+        self.assertEqual(plan.chunk_rays, (count // 2) // 4)
+        self.assertEqual(plan.chunk_count, 1 + 4)
+        self.assertGreater(int(torch.isfinite(expected["t"]).sum()), count // 8)
+        self.assert_same_results(
+            expected,
+            {
+                "t": hit.t,
+                "p": hit.p,
+                "prim": hit.global_prim_id,
+            },
+            "1M-row pipelined batch",
+        )
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
+    "two CUDA devices are required",
+)
+class SmallBatchFallbackTests(MultiDeviceResultMixin, unittest.TestCase):
+    """A batch too small to pay for its own copies runs on the master alone.
+
+    `min_rays_per_device` is measured, not guessed: on this repository's 2x
+    RTX A6000 the pipelined dispatch costs ~3 ms of host time before any
+    device work (one native launch per chunk plus one copy per output field
+    per chunk), so a batch whose single-device time is under that cannot win
+    however well the copies overlap. On a compute-bound probe (2M-triangle
+    scene, incoherent rays, 6.3 ns/ray) the crossover measured 524288 rows,
+    which is the shipped floor of 262144 rows per device on two devices.
+    """
+
+    def setUp(self) -> None:
+        self._entry_device = torch.cuda.current_device()
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda", 0)
+        self.inputs = _query_inputs(self.device)
+        self.single = _build_scene(self.device)
+        self.reference = _covered_op_results(self.single, self.inputs)
+
+    def tearDown(self) -> None:
+        torch.cuda.set_device(self._entry_device)
+
+    def test_a_small_batch_is_bitwise_the_master_only_result(self):
+        scene = _build_scene(self.device, devices=[0, 1])
+        results = _covered_op_results(scene, self.inputs)
+        self.assertEqual(scene._multi.last_dispatch, "master")
+        # Bitwise, not "within tolerance": below the floor the operation is
+        # literally the single-device call, on the caller's own tensors.
+        self.assert_same_results(self.reference, results, "below the floor")
+
+    def test_the_floor_is_per_device_and_the_batch_above_it_shards(self):
+        scene = _build_scene(
+            self.device,
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=17),
+        )
+        layer = scene._multi
+        self.assertEqual(layer._dispatch_mode(33), "master")
+        self.assertEqual(layer._dispatch_mode(34), "pipelined")
+        self.assertEqual(layer._dispatch_mode(0), "master")
+
+    def test_an_explicit_chunking_contract_outranks_the_floor(self):
+        """`chunk_rays` is a memory bound; it is honoured at every batch size."""
+        scene = _build_scene(
+            self.device,
+            devices=[0, 1],
+            options=rt.MultiDeviceOptions(warm_up=False, chunk_rays=8),
+        )
+        scene.intersect(self.inputs["ray"])
+        self.assertEqual(scene._multi.last_dispatch, "chunked")
+        self.assertEqual(scene._multi.last_chunk_plan.source, "requested")
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available() and torch.cuda.device_count() >= 2,
+    "two CUDA devices are required",
+)
+class CalibrationTests(unittest.TestCase):
+    """`calibrate_devices()` picks weights; it never changes what a weight means."""
+
+    def setUp(self) -> None:
+        self._entry_device = torch.cuda.current_device()
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda", 0)
+        self.inputs = _query_inputs(self.device)
+
+    def tearDown(self) -> None:
+        torch.cuda.set_device(self._entry_device)
+
+    def _scene(self, **options) -> rt.Scene:
+        options.setdefault("warm_up", False)
+        options.setdefault("min_rays_per_device", 1)
+        return _build_scene(
+            self.device, devices=[0, 1], options=rt.MultiDeviceOptions(**options)
+        )
+
+    def test_the_throughput_stage_measures_every_device_and_sets_the_weights(self):
+        scene = self._scene()
+        record = scene.calibrate_devices(rays=4096, repeats=2, warm_up=1, refine=False)
+        self.assertEqual(record.devices, (0, 1))
+        self.assertEqual(len(record.seconds), 2)
+        self.assertTrue(all(value > 0.0 for value in record.seconds))
+        self.assertEqual([len(values) for values in record.samples], [2, 2])
+        self.assertEqual(record.candidates, ())
+        # Weights are the reciprocal times, normalized to one per device.
+        self.assertAlmostEqual(sum(record.weights), 2.0, places=6)
+        for weight, seconds in zip(record.weights, record.seconds):
+            self.assertAlmostEqual(
+                weight,
+                2.0 * (1.0 / seconds) / sum(1.0 / value for value in record.seconds),
+                places=6,
+            )
+        self.assertEqual(scene.device_weights, record.weights)
+        self.assertEqual(scene._multi.last_calibration, record)
+        self.assertIn("Mrow/s", record.describe())
+
+    def test_the_refinement_stage_times_the_dispatch_and_keeps_the_best(self):
+        scene = self._scene()
+        record = scene.calibrate_devices(rays=4096, repeats=2, warm_up=1)
+        self.assertEqual(len(record.candidates), len(record.candidate_seconds))
+        self.assertGreaterEqual(len(record.candidates), 2)
+        # The ladder scales only the non-master weights, and ends at zero.
+        for candidate in record.candidates:
+            self.assertEqual(candidate[0], record.throughput_weights[0])
+        self.assertEqual(record.candidates[-1][1], 0.0)
+        # The rung kept is the first one within tolerance of the fastest, so a
+        # near-tie resolves towards using the second device rather than away
+        # from it.
+        from rayd.torch._multi import _REFINE_TOLERANCE
+
+        best = min(record.candidate_seconds)
+        chosen = record.candidates.index(record.weights)
+        self.assertLessEqual(
+            record.candidate_seconds[chosen], best * (1.0 + _REFINE_TOLERANCE)
+        )
+        for seconds in record.candidate_seconds[:chosen]:
+            self.assertGreater(seconds, best * (1.0 + _REFINE_TOLERANCE))
+        self.assertEqual(scene.device_weights, record.weights)
+        self.assertIn("chosen", record.describe())
+
+    def test_a_custom_probe_is_used_for_both_stages(self):
+        scene = self._scene()
+        seen = []
+
+        def probe(target, device):
+            seen.append((type(target).__name__, device.index))
+            points = self.inputs["points"].to(device)
+            target.nearest_edge(points)
+
+        record = scene.calibrate_devices(probe=probe, repeats=1, warm_up=0)
+        self.assertGreater(len(seen), 0)
+        self.assertEqual({name for name, _index in seen}, {"Scene", "_ReplicatedScene"})
+        self.assertEqual(
+            {index for name, index in seen if name == "_ReplicatedScene"}, {0}
+        )
+        self.assertEqual(record.rows, 1 << 20)
+
+    def test_calibration_only_chooses_weights_and_leaves_results_alone(self):
+        if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
+            self.skipTest("bitwise cross-device equality needs identical devices")
+        single = _build_scene(self.device)
+        reference = _covered_op_results(single, self.inputs)
+        scene = self._scene()
+        scene.calibrate_devices(rays=4096, repeats=2, warm_up=1)
+        first = {
+            name: value.clone()
+            for name, value in _covered_op_results(scene, self.inputs).items()
+        }
+        second = _covered_op_results(scene, self.inputs)
+        mixin = MultiDeviceResultMixin()
+        mixin.assertEqual = self.assertEqual
+        mixin.assertTrue = self.assertTrue
+        mixin.assert_same_results(reference, first, "after calibration")
+        mixin.assert_same_results(first, second, "twice after calibration")
+
+    def test_the_measured_weights_survive_a_rebuild_of_the_replicas(self):
+        scene = self._scene()
+        record = scene.calibrate_devices(rays=4096, repeats=1, warm_up=0, refine=False)
+        scene.build()
+        self.assertEqual(scene.device_weights, record.weights)
 
 
 def _dfr_states(device: torch.device, requires_grad: bool = False) -> rt.DfrStates:
