@@ -138,6 +138,37 @@ dispatcher, host count read, partial result, or fallback. See
 - Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `backends.drjit.tests.drjit.test_optix_pipeline_cold_create` for public API cold-create coverage.
 - See `docs/optix_pipeline_create_failures.md` for the root-cause writeup and regression checklist.
 
+## Committed PTX Source Identity
+
+The Dr.Jit backend commits its eight generated OptiX `*_ptx.h` headers, and
+PTX regeneration is opt-in and OFF by default, so editing a `.cu` file or any
+header it reaches silently leaves the committed PTX describing older device
+code. `backends/drjit/ptx_sources.json` records each PTX module's transitive
+in-repository include closure and content digests, and
+`tests/test_ptx_source_digest.py` recomputes the record on every run. Check
+that record before editing any file it lists under `modules.*.sources`. A
+drifted digest is repaired only by actually regenerating the affected PTX,
+copying the regenerated header over the committed one, and re-running
+`python backends/drjit/scripts/audit_ptx_sources.py --write`; use `--check` to
+diagnose, and `--mark-verified <module>` only after byte-comparing the
+regenerated header against the committed one. The record states source
+identity, never correctness, and `--write` without a real regeneration only
+falsifies it.
+
+## CUDA Compile-Flag Policy
+
+`shared/contracts/compile_policy.json` declares the per-translation-unit CUDA
+numeric flag assignment for both backends over the four closed profiles
+`nvcc_default`, `fast_math`, `no_fmad`, and `precise_no_ftz`;
+`tests/test_compile_flag_policy_contract.py` re-derives the assignment from
+the CMake sources and fails when declaration and build disagree in either
+direction. The assignment is frozen by ADR-0035: changing any numeric flag,
+moving a unit between profiles, adding a profile, aligning a frozen
+divergence, or introducing a global or target-wide CUDA numeric flag is an
+ADR-level decision that needs its own accepted record with numerical and
+generated-code evidence. Editing the contract to match a flag change is not a
+fix; it is the drift the test exists to catch.
+
 ## Edge BVH Status
 
 Current edge-query acceleration design:

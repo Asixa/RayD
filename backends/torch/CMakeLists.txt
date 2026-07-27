@@ -88,6 +88,13 @@ if(RAYD_TORCH_INSTALL_SOURCE_BUNDLE)
         DESTINATION rayd/torch/_source)
 endif()
 
+# nvcc numeric flags are a contract. shared/contracts/compile_policy.json and
+# docs/adr/0035-cuda-compile-flag-policy.md declare the numeric profile of every
+# translation unit in this file, and tests/test_compile_flag_policy_contract.py
+# re-derives it from here. ADR-0035 profile: fast_math for the ten OptiX PTX
+# modules that read the variable below. Divergence D8: this option is the only
+# place either backend can be switched between profiles, and Dr.Jit has no
+# equivalent. Divergence D2: Dr.Jit targets compute_70.
 set(RAYD_TORCH_OPTIX_NVCC_FLAGS --std=c++17 --gpu-architecture=compute_75)
 if(RAYD_TORCH_OPTIX_FAST_MATH)
     list(APPEND RAYD_TORCH_OPTIX_NVCC_FLAGS --use_fast_math)
@@ -661,6 +668,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
         rayd_torch_segment_penetration_optix_ptx
         DEPENDS "${RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER}")
 
+    # ADR-0035 profile: nvcc_default for every CUDA source below that has no
+    # COMPILE_OPTIONS override in the three blocks that follow the list.
     set(
         RAYD_TORCH_NATIVE_CORE_SOURCES
         src/torch_ext/tensor_check.cpp
@@ -723,6 +732,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
         src/torch_ext/common/camera.cu
     )
 
+    # ADR-0035 profile: fast_math, and divergence D3: this is the only Torch
+    # consumer of the shared UTD math compiled that way, while the fused
+    # multipath executor reads the same headers at nvcc defaults and the nine
+    # scattering units below read them without FMA contraction. No family record
+    # explains the choice; it is recorded as uncontracted, not as approved.
     set_source_files_properties(
         src/torch_ext/rf/diffraction_wedge.cu
         PROPERTIES
@@ -732,6 +746,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
     # VJP/JVP companions to precise division/square-root and non-FTZ behavior,
     # while retaining the established default FMA-contraction behavior. The
     # standalone OptiX PTX command above carries the same family-local policy.
+    # ADR-0035 profile: precise_no_ftz, family-exhaustive. These three flags are
+    # nvcc's own defaults; they are spelled out so the family cannot inherit a
+    # fast-math option added elsewhere.
     set_source_files_properties(
         src/torch_ext/penetration/segment_penetration.cu
         PROPERTIES
@@ -740,6 +757,8 @@ if(RAYD_TORCH_BUILD_NATIVE)
     # ADR-0026 preserves the source-local arithmetic policy from Channel. The
     # sampling/eval primal in scattering.cu deliberately keeps target defaults;
     # the lockstep/AD translation units disable FMA contraction.
+    # ADR-0035 profile: no_fmad, family-exhaustive. No other translation unit in
+    # either backend may take this profile.
     set_source_files_properties(
         src/torch_ext/rf/scattering_table_eval_ad.cu
         src/torch_ext/rf/scattering_ensemble.cu

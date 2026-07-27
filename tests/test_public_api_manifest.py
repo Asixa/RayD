@@ -13,6 +13,25 @@ MANIFEST_PATH = CONTRACT_DIR / "public_api.json"
 SCHEMA_PATH = CONTRACT_DIR / "public_api.schema.json"
 MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+DRJIT_BINDING_SOURCE = ROOT / "backends" / "drjit" / "src" / "rayd.cpp"
+
+
+def _drjit_bound_names():
+    """Every public name bound by NB_MODULE(_C, m) in the Dr.Jit extension source.
+
+    `rayd.cpp` holds the single NB_MODULE and binds everything on the module
+    object `m`, so scanning it is authoritative. `re.S` is required: several
+    `nb::class_<...>` template argument lists wrap before `(m, "Name")`.
+    """
+    source = DRJIT_BINDING_SOURCE.read_text(encoding="utf-8")
+    names = set(
+        re.findall(
+            r'nb::(?:class_|enum_)<.*?>\s*\(\s*m,\s*"([A-Za-z0-9_]+)"', source, re.S
+        )
+    )
+    names.update(re.findall(r'\bm\.(?:def|attr)\(\s*"([A-Za-z0-9_]+)"', source))
+    names.discard("__name__")
+    return names
 
 
 class PublicApiManifestTests(unittest.TestCase):
@@ -151,10 +170,27 @@ class PublicApiManifestTests(unittest.TestCase):
         }
         self.assertEqual(runtime_exports, stub_exports)
 
-    def test_drjit_native_stub_covers_bound_public_symbols(self):
-        source = (ROOT / "backends" / "drjit" / "src" / "rayd.cpp").read_text(
-            encoding="utf-8"
+    def test_drjit_top_level_all_matches_native_bindings(self):
+        package = ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit"
+        runtime = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
+        all_node = next(
+            node for node in runtime.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
         )
+        declared = {
+            element.value for element in all_node.value.elts if isinstance(element, ast.Constant)
+        }
+        self.assertEqual(len(declared), len(all_node.value.elts))
+        expected = _drjit_bound_names() | {"api_manifest", "backend_capabilities"}
+        self.assertEqual(
+            declared,
+            expected,
+            "rayd.drjit.__all__ is out of sync with backends/drjit/src/rayd.cpp; "
+            f"missing={sorted(expected - declared)} stale={sorted(declared - expected)}",
+        )
+
+    def test_drjit_native_stub_covers_bound_public_symbols(self):
         stub_path = (
             ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit" / "_C.pyi"
         )
@@ -169,11 +205,7 @@ class PublicApiManifestTests(unittest.TestCase):
             for node in tree.body
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
         )
-        bound_names = set(
-            re.findall(r'nb::(?:class_|enum_)<[^;\n]*?\(m,\s*"([A-Za-z0-9_]+)"', source)
-        )
-        bound_names.update(re.findall(r'\bm\.(?:def|attr)\("([A-Za-z0-9_]+)"', source))
-        bound_names.discard("__name__")
+        bound_names = _drjit_bound_names()
         self.assertFalse(bound_names - stub_names, sorted(bound_names - stub_names))
 
     def test_drjit_key_classes_have_typed_members(self):

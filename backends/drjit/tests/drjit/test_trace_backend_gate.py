@@ -26,6 +26,8 @@ ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# `tests.golden` lives at the repository root; see backends/drjit/tests/__init__.py
+# for why it resolves from here under both documented invocations.
 from tests.golden import scenes as scene_defs  # noqa: E402
 
 EDGE_BASELINE = (

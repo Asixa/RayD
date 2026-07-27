@@ -5,8 +5,7 @@ import math
 
 import torch
 
-from . import _C
-from ._stable import AVAILABLE as _STABLE_AVAILABLE, camera_ops
+from ._stable import camera_ops
 from .types import Ray
 
 
@@ -49,22 +48,16 @@ class Camera:
         return tan_x, tan_x / self.aspect
 
     def sample_to_world(self, sample: torch.Tensor, depth: float = 1.0) -> torch.Tensor:
-        if _C is None and not _STABLE_AVAILABLE:
-            raise RuntimeError("RayD Torch extension is not built yet.")
         sample = self._require_sample(sample)
         tan_x, tan_y = self._tan_xy()
         return _CameraSampleToWorldFunction.apply(sample, tan_x, tan_y, float(depth))
 
     def world_to_sample(self, point: torch.Tensor) -> torch.Tensor:
-        if _C is None and not _STABLE_AVAILABLE:
-            raise RuntimeError("RayD Torch extension is not built yet.")
         point = self._require_point(point)
         tan_x, tan_y = self._tan_xy()
         return _CameraWorldToSampleFunction.apply(point, tan_x, tan_y)
 
     def sample_ray(self, sample: torch.Tensor) -> Ray:
-        if _C is None and not _STABLE_AVAILABLE:
-            raise RuntimeError("RayD Torch extension is not built yet.")
         sample = self._require_sample(sample)
         tan_x, tan_y = self._tan_xy()
         origin, direction = _CameraSampleRayFunction.apply(sample, tan_x, tan_y)

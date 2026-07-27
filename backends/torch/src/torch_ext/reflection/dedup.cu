@@ -83,8 +83,92 @@ void check_cuda_call(cudaError_t error, const char *message) {
             std::string(message) + ": " + cudaGetErrorString(error));
 }
 
-void check_cuda_last_error(const char *message) {
-    check_cuda_call(cudaGetLastError(), message);
+// Runs the sort/scan passes the shared sequence delegates back to this
+// backend. Keeping the CUB calls here keeps their template kernels
+// instantiated in this translation unit, exactly as before the sequence
+// orchestration moved to the shared layer.
+cudaError_t run_dedup_pass(const shared::multipath::ReflectionDedupSequenceParams &params,
+                           shared::multipath::ReflectionDedupDevicePass pass) {
+    using shared::multipath::ReflectionDedupDevicePass;
+    size_t sort_temp_bytes = params.sort_temp_bytes;
+    size_t scan_temp_bytes = params.scan_temp_bytes;
+    size_t cluster_sort_temp_bytes = params.cluster_sort_temp_bytes;
+    switch (pass) {
+    case ReflectionDedupDevicePass::kFirstSort:
+        return cub::DeviceRadixSort::SortPairs(params.sort_temp,
+                                               sort_temp_bytes,
+                                               params.keys_in,
+                                               params.keys_out,
+                                               params.ray_indices_in,
+                                               params.ray_indices_out,
+                                               params.ray_count,
+                                               0,
+                                               64,
+                                               params.stream);
+    case ReflectionDedupDevicePass::kFirstScan:
+        return cub::DeviceScan::InclusiveSum(params.scan_temp,
+                                             scan_temp_bytes,
+                                             params.boundary_flags,
+                                             params.hash_group_ids,
+                                             params.ray_count,
+                                             params.stream);
+    case ReflectionDedupDevicePass::kSecondSort:
+        return cub::DeviceRadixSort::SortPairs(params.cluster_sort_temp,
+                                               cluster_sort_temp_bytes,
+                                               params.cluster_keys_in,
+                                               params.cluster_keys_out,
+                                               params.cluster_ray_indices_in,
+                                               params.cluster_ray_indices_out,
+                                               params.ray_count,
+                                               0,
+                                               64,
+                                               params.stream);
+    case ReflectionDedupDevicePass::kSecondScan:
+        return cub::DeviceScan::InclusiveSum(params.scan_temp,
+                                             scan_temp_bytes,
+                                             params.boundary_flags,
+                                             params.unique_path_ids,
+                                             params.ray_count,
+                                             params.stream);
+    }
+    return cudaErrorInvalidValue;
+}
+
+// Per-step error strings stay in this backend verbatim; the shared sequence
+// only reports which step produced the failing CUDA result.
+const char *sequence_step_message(shared::multipath::ReflectionDedupSequenceStep step) {
+    using shared::multipath::ReflectionDedupSequenceStep;
+    switch (step) {
+    case ReflectionDedupSequenceStep::kBuildKeys:
+        return "reflection_dedup_gpu(): failed to launch build-keys kernel";
+    case ReflectionDedupSequenceStep::kFirstSort:
+        return "reflection_dedup_gpu(): failed to run first radix sort";
+    case ReflectionDedupSequenceStep::kFirstBoundaries:
+        return "reflection_dedup_gpu(): failed to launch first boundary kernel";
+    case ReflectionDedupSequenceStep::kFirstScan:
+        return "reflection_dedup_gpu(): failed to run first scan";
+    case ReflectionDedupSequenceStep::kFirstZeroBase:
+        return "reflection_dedup_gpu(): failed to launch first id-fix kernel";
+    case ReflectionDedupSequenceStep::kSubCluster:
+        return "reflection_dedup_gpu(): failed to launch sub-cluster kernel";
+    case ReflectionDedupSequenceStep::kSecondSort:
+        return "reflection_dedup_gpu(): failed to run second radix sort";
+    case ReflectionDedupSequenceStep::kSecondBoundaries:
+        return "reflection_dedup_gpu(): failed to launch second boundary kernel";
+    case ReflectionDedupSequenceStep::kSecondScan:
+        return "reflection_dedup_gpu(): failed to run second scan";
+    case ReflectionDedupSequenceStep::kSecondZeroBase:
+        return "reflection_dedup_gpu(): failed to launch second id-fix kernel";
+    case ReflectionDedupSequenceStep::kCompact:
+        return "reflection_dedup_gpu(): failed to launch compact kernel";
+    case ReflectionDedupSequenceStep::kNone:
+        break;
+    }
+    return "reflection_dedup_gpu(): dedup sequence failed";
+}
+
+void check_sequence_status(const shared::multipath::ReflectionDedupSequenceStatus &status) {
+    check_cuda_call(status.error, sequence_step_message(status.step));
 }
 
 } // namespace
@@ -174,26 +258,6 @@ int reflection_dedup_gpu(
                     "reflection_dedup_gpu(): failed to clear unique counter");
     audit_cuda_memset_async();
 
-    audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_build_keys({
-        n_rays,
-        max_bounces,
-        bounce_count,
-        shape_ids,
-        prim_ids,
-        face_offsets,
-        n_meshes,
-        canonical_prim_table,
-        canonical_table_size,
-        keys_in.get(),
-        ray_indices_in.get(),
-        stream
-    });
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch build-keys kernel");
-
     size_t sort_temp_size = 0;
     audit_cub_sort();
     check_cuda_call(cub::DeviceRadixSort::SortPairs(nullptr,
@@ -208,26 +272,6 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to size first radix sort");
     CudaBuffer<char> sort_temp(std::max<size_t>(sort_temp_size, 1));
-    audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(sort_temp.get(),
-                                                    sort_temp_size,
-                                                    keys_in.get(),
-                                                    keys_out.get(),
-                                                    ray_indices_in.get(),
-                                                    ray_indices_out.get(),
-                                                    n_rays,
-                                                    0,
-                                                    64,
-                                                    stream),
-                    "reflection_dedup_gpu(): failed to run first radix sort");
-
-    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_mark_boundaries(
-        n_rays, keys_out.get(), boundary_flags.get(), stream);
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch first boundary kernel");
 
     size_t scan_temp_size = 0;
     audit_cub_scan();
@@ -239,42 +283,6 @@ int reflection_dedup_gpu(
                                                   stream),
                     "reflection_dedup_gpu(): failed to size first scan");
     CudaBuffer<char> scan_temp(std::max<size_t>(scan_temp_size, 1));
-    audit_cub_scan();
-    check_cuda_call(cub::DeviceScan::InclusiveSum(scan_temp.get(),
-                                                  scan_temp_size,
-                                                  boundary_flags.get(),
-                                                  hash_group_ids.get(),
-                                                  n_rays,
-                                                  stream),
-                    "reflection_dedup_gpu(): failed to run first scan");
-    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_zero_base_ids(
-        n_rays, keys_out.get(), hash_group_ids.get(), stream);
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch first id-fix kernel");
-
-    audit_cuda_kernel_launch("reflection_dedup_sub_cluster_kernel",
-                             static_cast<uint32_t>(block_count), 1, 1,
-                             block_size, 1, 1,
-                             static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_sub_cluster({
-        n_rays,
-        max_bounces,
-        keys_out.get(),
-        ray_indices_out.get(),
-        hash_group_ids.get(),
-        bounce_count,
-        img_x,
-        img_y,
-        img_z,
-        image_source_tolerance,
-        cluster_keys_in.get(),
-        cluster_ray_indices_in.get(),
-        stream
-    });
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch sub-cluster kernel");
 
     size_t cluster_sort_temp_size = 0;
     audit_cub_sort();
@@ -290,89 +298,101 @@ int reflection_dedup_gpu(
                                                     stream),
                     "reflection_dedup_gpu(): failed to size second radix sort");
     CudaBuffer<char> cluster_sort_temp(std::max<size_t>(cluster_sort_temp_size, 1));
-    audit_cub_sort();
-    check_cuda_call(cub::DeviceRadixSort::SortPairs(cluster_sort_temp.get(),
-                                                    cluster_sort_temp_size,
-                                                    cluster_keys_in.get(),
-                                                    cluster_keys_out.get(),
-                                                    cluster_ray_indices_in.get(),
-                                                    cluster_ray_indices_out.get(),
-                                                    n_rays,
-                                                    0,
-                                                    64,
-                                                    stream),
-                    "reflection_dedup_gpu(): failed to run second radix sort");
 
+    audit_cuda_kernel_launch("reflection_dedup_build_keys_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
+    audit_cub_sort();
     audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
                              static_cast<uint32_t>(block_count), 1, 1,
                              block_size, 1, 1,
                              static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_mark_boundaries(
-        n_rays, cluster_keys_out.get(), boundary_flags.get(), stream);
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch second boundary kernel");
-
     audit_cub_scan();
-    check_cuda_call(cub::DeviceScan::InclusiveSum(scan_temp.get(),
-                                                  scan_temp_size,
-                                                  boundary_flags.get(),
-                                                  unique_path_ids.get(),
-                                                  n_rays,
-                                                  stream),
-                    "reflection_dedup_gpu(): failed to run second scan");
     audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
                              static_cast<uint32_t>(block_count), 1, 1,
                              block_size, 1, 1,
                              static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_zero_base_ids(
-        n_rays, cluster_keys_out.get(), unique_path_ids.get(), stream);
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch second id-fix kernel");
-
+    audit_cuda_kernel_launch("reflection_dedup_sub_cluster_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
+    audit_cub_sort();
+    audit_cuda_kernel_launch("reflection_dedup_mark_boundaries_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
+    audit_cub_scan();
+    audit_cuda_kernel_launch("reflection_dedup_zero_base_ids_kernel",
+                             static_cast<uint32_t>(block_count), 1, 1,
+                             block_size, 1, 1,
+                             static_cast<uint64_t>(n_rays));
     audit_cuda_kernel_launch("reflection_dedup_compact_kernel",
                              static_cast<uint32_t>(block_count), 1, 1,
                              block_size, 1, 1,
                              static_cast<uint64_t>(n_rays));
-    shared::multipath::launch_reflection_dedup_compact({
-        n_rays,
-        max_bounces,
-        cluster_keys_out.get(),
-        cluster_ray_indices_out.get(),
-        unique_path_ids.get(),
-        bounce_count,
-        shape_ids,
-        prim_ids,
-        t,
-        bary_u,
-        bary_v,
-        hit_x,
-        hit_y,
-        hit_z,
-        norm_x,
-        norm_y,
-        norm_z,
-        img_x,
-        img_y,
-        img_z,
-        unique_count_device.get(),
-        out_bounce_count,
-        out_shape_ids,
-        out_prim_ids,
-        out_t,
-        out_bary_u,
-        out_bary_v,
-        out_hit_x,
-        out_hit_y,
-        out_hit_z,
-        out_norm_x,
-        out_norm_y,
-        out_norm_z,
-        out_img_x,
-        out_img_y,
-        out_img_z,
-        out_discovery_count,
-        out_representative_ray_index,
-        stream
-    });
-    check_cuda_last_error("reflection_dedup_gpu(): failed to launch compact kernel");
+
+    shared::multipath::ReflectionDedupSequenceParams sequence{};
+    sequence.ray_count = n_rays;
+    sequence.max_bounces = max_bounces;
+    sequence.bounce_count = bounce_count;
+    sequence.shape_ids = shape_ids;
+    sequence.prim_ids = prim_ids;
+    sequence.face_offsets = face_offsets;
+    sequence.mesh_count = n_meshes;
+    sequence.canonical_table = canonical_prim_table;
+    sequence.canonical_table_size = canonical_table_size;
+    sequence.image_source_tolerance = image_source_tolerance;
+    sequence.raw_t = t;
+    sequence.raw_bary_u = bary_u;
+    sequence.raw_bary_v = bary_v;
+    sequence.raw_hit_x = hit_x;
+    sequence.raw_hit_y = hit_y;
+    sequence.raw_hit_z = hit_z;
+    sequence.raw_norm_x = norm_x;
+    sequence.raw_norm_y = norm_y;
+    sequence.raw_norm_z = norm_z;
+    sequence.raw_image_x = img_x;
+    sequence.raw_image_y = img_y;
+    sequence.raw_image_z = img_z;
+    sequence.keys_in = keys_in.get();
+    sequence.keys_out = keys_out.get();
+    sequence.ray_indices_in = ray_indices_in.get();
+    sequence.ray_indices_out = ray_indices_out.get();
+    sequence.boundary_flags = boundary_flags.get();
+    sequence.hash_group_ids = hash_group_ids.get();
+    sequence.cluster_keys_in = cluster_keys_in.get();
+    sequence.cluster_keys_out = cluster_keys_out.get();
+    sequence.cluster_ray_indices_in = cluster_ray_indices_in.get();
+    sequence.cluster_ray_indices_out = cluster_ray_indices_out.get();
+    sequence.unique_path_ids = unique_path_ids.get();
+    sequence.sort_temp = sort_temp.get();
+    sequence.sort_temp_bytes = sort_temp_size;
+    sequence.scan_temp = scan_temp.get();
+    sequence.scan_temp_bytes = scan_temp_size;
+    sequence.cluster_sort_temp = cluster_sort_temp.get();
+    sequence.cluster_sort_temp_bytes = cluster_sort_temp_size;
+    sequence.out_unique_count = unique_count_device.get();
+    sequence.out_bounce_count = out_bounce_count;
+    sequence.out_shape_ids = out_shape_ids;
+    sequence.out_prim_ids = out_prim_ids;
+    sequence.out_t = out_t;
+    sequence.out_bary_u = out_bary_u;
+    sequence.out_bary_v = out_bary_v;
+    sequence.out_hit_x = out_hit_x;
+    sequence.out_hit_y = out_hit_y;
+    sequence.out_hit_z = out_hit_z;
+    sequence.out_norm_x = out_norm_x;
+    sequence.out_norm_y = out_norm_y;
+    sequence.out_norm_z = out_norm_z;
+    sequence.out_image_x = out_img_x;
+    sequence.out_image_y = out_img_y;
+    sequence.out_image_z = out_img_z;
+    sequence.out_discovery_count = out_discovery_count;
+    sequence.out_representative_ray_index = out_representative_ray_index;
+    sequence.run_pass = &run_dedup_pass;
+    sequence.stream = stream;
+    check_sequence_status(shared::multipath::launch_reflection_dedup_sequence(sequence));
 
     int unique_count = 0;
     audit_cuda_memcpy_async();
