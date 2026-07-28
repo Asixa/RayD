@@ -10,7 +10,7 @@ from typing import Any
 
 import torch
 
-from .benchmark_C_rayd_mitsuba_stress import (
+from .benchmark_rayd_torch_drjit_mitsuba_stress import (
     RAYDI_ROOT,
     _cleanup_drjit,
     _cleanup_torch,

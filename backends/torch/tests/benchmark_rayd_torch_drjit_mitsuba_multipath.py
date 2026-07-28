@@ -17,7 +17,7 @@ import torch
 import rayd.torch as rt
 
 try:
-    from .benchmark_C_rayd_mitsuba_stress import (
+    from .benchmark_rayd_torch_drjit_mitsuba_stress import (
         RAYDI_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
@@ -25,7 +25,7 @@ try:
         _try_import_mitsuba,
     )
 except ImportError:  # pragma: no cover - supports direct script execution.
-    from benchmark_C_rayd_mitsuba_stress import (  # type: ignore
+    from benchmark_rayd_torch_drjit_mitsuba_stress import (  # type: ignore
         RAYDI_ROOT,
         _cleanup_drjit,
         _cleanup_torch,
