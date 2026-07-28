@@ -1217,7 +1217,7 @@ __device__ __forceinline__ void adj_wall_frame(
 
 // ---------------------------------------------------------------------------
 // Dual of the frozen legacy Sionna radiomap slab arithmetic
-// (transport::legacy_sionna_slab_fresnel, plan 07 AD-3). The .v computations
+// (transport::legacy_slab_fresnel, plan 07 AD-3). The .v computations
 // replicate the Legacy* helpers verbatim (hypotf sqrt, 1e-30 denominator
 // floor, exp clamp at 80) so a dual replay reproduces the seeded FP32
 // radiomap fingerprints bit for bit; the .d computations follow the same
@@ -1321,7 +1321,7 @@ __device__ __forceinline__ DualLC dlc_exp_neg_2i(DualLC q) {
 
 // Tangent seeds: d_eps / d_sigma / d_gain / d_thickness / d_wavelength.
 // Outputs are utd-complex duals so the callers can reuse adj_dot.
-__device__ __forceinline__ void legacy_sionna_slab_fresnel_dual(
+__device__ __forceinline__ void legacy_slab_fresnel_dual(
     float cos_theta,
     float eps_r,
     float sigma_e,
