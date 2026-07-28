@@ -1,8 +1,8 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/diffraction/paths_params.h>
+#include <src/runtime/math.cuh>
+#include <src/diffraction/paths_params.h>
 #include <rayd/shared/diffraction/utd_math.h>
 
 namespace rayd::torch_backend {

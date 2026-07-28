@@ -161,7 +161,8 @@ class Adr0038RecordTests(AdrTestCase):
     def test_header_block_matches_the_repository_adr_shape(self) -> None:
         head = self.adr.splitlines()[:6]
         self.assertEqual(head[0], "# ADR-0038: Replicated multi-device and chunked execution")
-        self.assertEqual(head[2], "- Status: Accepted")
+        self.assertRegex(head[2], r"^- Status: Accepted(?:; .+)?$")
+        self.assertIn("ADR-0040", head[2])
         self.assertEqual(head[3], "- Date: 2026-07-27")
         self.assertEqual(head[4], "- Decision ID: `replicated-multi-device-execution`")
         self.assertTrue(head[5].startswith("- Scope:"))

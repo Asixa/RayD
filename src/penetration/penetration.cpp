@@ -1,8 +1,8 @@
-#include <rayd/torch/penetration/segment_penetration_kernels.h>
+#include <src/penetration/segment_penetration_kernels.h>
 
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/bindings/tensor_contract.h>
-#include <rayd/torch/penetration/segment_penetration_params.h>
+#include <src/runtime/optix_context.h>
+#include <src/bindings/tensor_contract.h>
+#include <src/penetration/segment_penetration_params.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -441,11 +441,11 @@ SegmentPenetrationJvpResult segment_penetration_jvp(
 
 // ---- merged from src/penetration/pipeline_part.cpp ----
 
-#include <rayd/torch/penetration/segment_penetration_kernels.h>
-#include <rayd/torch/penetration/segment_penetration_params.h>
+#include <src/penetration/segment_penetration_kernels.h>
+#include <src/penetration/segment_penetration_params.h>
 
-#include <rayd/shared/optix/pipeline_contracts.h>
-#include <rayd/torch/segment_penetration_optix_ptx.h>
+#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/penetration/segment_torch_ptx.h>
 
 namespace rayd::torch_backend {
 

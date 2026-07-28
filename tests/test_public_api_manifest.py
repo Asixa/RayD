@@ -15,8 +15,8 @@ MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 DRJIT_BINDING_SOURCE = ROOT / "src" / "bindings" / "module_jit.cpp"
 
-DRJIT_PACKAGE = ROOT / "drjit" / "python" / "rayd" / "drjit"
-TORCH_PACKAGE = ROOT / "torch" / "python" / "rayd" / "torch"
+DRJIT_PACKAGE = ROOT / "python" / "rayd" / "drjit"
+TORCH_PACKAGE = ROOT / "python" / "rayd" / "torch"
 IMPL_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 DRJIT_CAPABILITIES = IMPL_PACKAGE / "capabilities_jit.py"
 TORCH_CAPABILITIES = IMPL_PACKAGE / "capabilities.py"

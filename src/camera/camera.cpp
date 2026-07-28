@@ -1,5 +1,5 @@
-#include <rayd/torch/camera/camera.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/camera/camera.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <torch/extension.h>
 

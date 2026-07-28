@@ -2,24 +2,25 @@
 #define NOMINMAX
 #endif
 
-#include <rayd/torch/diffraction/accum_params.h>
-#include <rayd/torch/diffraction/accum_ad.h>
-#include <rayd/torch/diffraction/paths_params.h>
-#include <rayd/torch/diffraction/pipeline.h>
-#include <rayd/torch/scene/geometry_kernels.h>
-#include <rayd/torch/runtime/optix_pipeline.h>
-#include <rayd/torch/reflection/kernels.h>
-#include <rayd/torch/reflection/pipeline.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/scene/multipath_cuda.h>
-#include <rayd/torch/reflection/accum_reduce.h>
-#include <rayd/torch/reflection/accum_params.h>
-#include <rayd/torch/reflection/dedup.h>
-#include <rayd/torch/reflection/epc_field.h>
-#include <rayd/torch/reflection/epc_params.h>
-#include <rayd/torch/reflection/trace_params.h>
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/diffraction/accum_params.h>
+#include <src/diffraction/accum_ad.h>
+#include <src/diffraction/paths_params.h>
+#include <src/diffraction/pipeline.h>
+#include <src/scene/geometry_kernels.h>
+#include <src/runtime/optix_pipeline.h>
+#include <src/reflection/kernels.h>
+#include <src/reflection/pipeline.h>
+#include <src/runtime/optix_context.h>
+#include <src/scene/multipath_cuda.h>
+#include <src/reflection/accum_reduce.h>
+#include <src/reflection/accum_params.h>
+#include <src/reflection/dedup.h>
+#include <src/reflection/epc_field.h>
+#include <src/reflection/epc_params.h>
+#include <src/reflection/trace_params.h>
+#include <src/scene/cache.h>
+#include <src/bindings/tensor_contract.h>
+#include <rayd/reflection/torch.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -2527,15 +2528,15 @@ ReflectionEpcJvpResult reflection_epc_paths_jvp(
 
 // ---- merged from src/reflection/pipeline_part.cpp ----
 
-#include <rayd/torch/reflection/pipeline.h>
+#include <src/reflection/pipeline.h>
 
-#include <rayd/torch/reflection/accum_params.h>
-#include <rayd/torch/reflection/epc_params.h>
-#include <rayd/torch/reflection/trace_params.h>
-#include <rayd/shared/optix/pipeline_contracts.h>
-#include <rayd/torch/reflection_accumulation_optix_ptx.h>
-#include <rayd/torch/reflection_epc_optix_ptx.h>
-#include <rayd/torch/reflection_trace_optix_ptx.h>
+#include <src/reflection/accum_params.h>
+#include <src/reflection/epc_params.h>
+#include <src/reflection/trace_params.h>
+#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/reflection/accumulation_torch_ptx.h>
+#include <rayd/reflection/epc_torch_ptx.h>
+#include <rayd/reflection/trace_torch_ptx.h>
 
 namespace rayd::torch_backend {
 

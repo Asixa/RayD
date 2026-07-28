@@ -36,7 +36,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_product_treelet_constants_have_one_shared_definition(self):
         shared = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
         edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
-        adapter = (ROOT / "include/rayd/edge/edge_bvh_config.h").read_text(
+        adapter = (ROOT / "include/rayd/edge/drjit/edge_bvh_config.h").read_text(
             encoding="utf-8"
         )
         for token in (

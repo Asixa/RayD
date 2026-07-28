@@ -1,5 +1,5 @@
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/visibility/visibility.h>
+#include <src/scene/cache.h>
+#include <src/visibility/visibility.h>
 
 #include <torch/extension.h>
 #include <torch/library.h>

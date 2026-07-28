@@ -41,7 +41,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 #include "scattering_internal.cuh"
 
@@ -485,7 +485,7 @@ ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(
 
 #include "scattering_internal.cuh"
 #include <rayd/shared/scattering/scattering_table.cuh>
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 namespace ad = rayd::torch::field_transport_ad;
 using ad::DualC;

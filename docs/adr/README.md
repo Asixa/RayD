@@ -25,6 +25,7 @@ why, so the sequence is not "tidied" by a later reader.
 | [0037](0037-differentiable-sdf-intersection.md) | Differentiable SDF ray intersection | `differentiable-sdf-intersection` | 2026-07-26 | Accepted |
 | [0038](0038-replicated-multi-device-execution.md) | Replicated multi-device and chunked execution | `replicated-multi-device-execution` | 2026-07-27 | Accepted |
 | [0039](0039-concept-axis-layout-and-backend-thinning.md) | Concept-axis source layout and thin backend frontends | `concept-axis-layout-and-backend-thinning` | 2026-07-28 | Accepted |
+| [0040](0040-internal-header-and-python-frontend-layout.md) | Internal-header ownership and centralized Python frontends | internal-header-and-python-frontend-layout | 2026-07-28 | Accepted |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.
@@ -102,8 +103,8 @@ exact-string form:
 - `tests/test_adr0033_segment_penetration.py` asserts
   `docs/adr/0033-batched-segment-penetration.md` exists.
 - `CLAUDE.md` and the byte-identical `AGENTS.md` cite ADR filenames directly, as
-  do `README.md`, `backends/torch/README.md`, and
-  `backends/torch/docs/torch_gap_analysis.md`.
+  do `README.md`, `torch/README.md`, and
+  `docs/torch/torch_gap_analysis.md`.
 - The Channel repository refers to RayD decisions by number from outside this
   repository, which this repository cannot update. For example
   `channel/docs/dev/audit/phase13-migration-delta.json` records `RayD ADR-024`

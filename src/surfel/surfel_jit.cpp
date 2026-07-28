@@ -2,7 +2,7 @@
 #include <array>
 #include <cmath>
 
-#include <rayd/surfel/surfel.h>
+#include <rayd/surfel/drjit.h>
 
 namespace rayd {
 
@@ -1144,9 +1144,9 @@ template MaskAD SurfelScene::visible<false>(const Vector3fAD &start, const Vecto
 #include <mutex>
 #include <vector>
 
-#include <rayd/native_launch_audit.h>
-#include <rayd/surfel/surfel_optix.h>
-#include <rayd/surfel/surfel_trace_params.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/surfel/drjit/surfel_optix.h>
+#include <rayd/surfel/drjit/surfel_trace_params.h>
 // Embedded native surfel OptiX programs: analytic first-hit tracing and k-buffer compositing.
 #include <surfel_trace_ptx.h>
 

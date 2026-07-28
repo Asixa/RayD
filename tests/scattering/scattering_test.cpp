@@ -1,4 +1,4 @@
-#include <rayd/torch/integration.h>
+#include <rayd/integration/torch.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>

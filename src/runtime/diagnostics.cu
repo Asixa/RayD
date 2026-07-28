@@ -1,4 +1,4 @@
-#include <rayd/torch/runtime/diagnostics.h>
+#include <src/runtime/diagnostics.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

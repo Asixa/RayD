@@ -1,5 +1,5 @@
-#include <rayd/torch/scene/geometry_kernels.h>
-#include <rayd/torch/reflection/kernels.h>
+#include <src/scene/geometry_kernels.h>
+#include <src/reflection/kernels.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

@@ -1,4 +1,4 @@
-#include <rayd/torch/integration.h>
+#include <rayd/integration/torch.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -23,7 +23,7 @@
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 6);
+static_assert(rayd::torch::kIntegrationApiVersion == 7);
 static_assert(!rayd::torch::kIntegrationHeaderIdentity.empty());
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[0] == 0x3ca3d70au);
 static_assert(rayd::torch::kDiffractionTxAxialEdgeFractionBits[1] == 0x3eaaaaabu);

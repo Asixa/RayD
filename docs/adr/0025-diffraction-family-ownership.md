@@ -1,13 +1,13 @@
 # ADR-0025: Diffraction operation-family ownership
 
-- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039
+- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039 and ADR-0040
 - Date: 2026-07-19
 - Decision ID: `diffraction-operation-family-ownership`
 - Scope: Channel Native direct-RayD integration, phases 7 and 8
 
-> **ADR-0039 supersession.** The `rayd/torch/rf/diffraction.h` path below is
+> **ADR-0039/0040 supersession.** The `rayd/torch/rf/diffraction.h` path below is
 > historical. The canonical public owner is
-> `include/rayd/torch/diffraction/wedge.h`, with shared UTD contracts under
+> `include/rayd/diffraction/torch.h`, with shared UTD contracts under
 > `include/rayd/shared/diffraction/`. Numerical, derivative, activation,
 > rollback, and downstream atomic-switch clauses remain in force.
 ## Context

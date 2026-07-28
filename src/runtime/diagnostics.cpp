@@ -1,5 +1,5 @@
-#include <rayd/torch/runtime/diagnostics.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/runtime/diagnostics.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>

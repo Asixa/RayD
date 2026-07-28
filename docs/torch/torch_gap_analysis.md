@@ -77,7 +77,7 @@ current ports.
 Current status:
 
 - Same-script, same-data, same-batch RayD vs RayDN performance comparison
-  is implemented in `backends/torch/tests/benchmark_rayd_backends.py` (named
+  is implemented in `benchmarks/torch/benchmark_rayd_backends.py` (named
   `tests/benchmark_rayd_vs_raydn.py` when this record was written).
 - Current corrected same-script results cover both static-vs-static and
   dynamic-vs-dynamic runs. RayDN is faster for scene build, `intersect`,

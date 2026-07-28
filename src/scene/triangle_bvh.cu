@@ -1,6 +1,6 @@
-#include <rayd/torch/scene/triangle_bvh.h>
+#include <src/scene/triangle_bvh.h>
 
-#include <rayd/torch/scene/cache.h>
+#include <src/scene/cache.h>
 #include <rayd/shared/bvh/triangle_query.h>
 #include <rayd/shared/contracts.h>
 

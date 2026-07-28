@@ -1,14 +1,14 @@
-#include <rayd/trace/cuda_trace_backend.h>
+#include <rayd/trace/drjit/cuda_trace_backend.h>
 
 #include <algorithm>
 #include <vector>
 
 #include <drjit-core/jit.h>
 
-#include <rayd/native_launch_audit.h>
-#include <rayd/trace/cuda_multipath_gpu.h>
-#include <rayd/trace/triangle_bvh_gpu.h>
-#include <rayd/utils.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <src/scene/cuda_multipath_gpu_jit.h>
+#include <rayd/trace/drjit/triangle_bvh_gpu.h>
+#include <rayd/core/drjit/utils.h>
 
 #include <rayd/shared/bvh/host_topology.h>
 #include <rayd/shared/bvh/topology.h>
@@ -615,7 +615,7 @@ template MaskAD CudaTraceBackend::shadow_test<false>(const RayAD &, MaskAD) cons
 } // namespace rayd
 
 // Consolidated OptiX trace backend implementation.
-#include <rayd/trace/optix_trace_backend.h>
+#include <rayd/trace/drjit/optix_trace_backend.h>
 
 #include <algorithm>
 #include <cctype>

@@ -1,13 +1,13 @@
-#include <rayd/torch/runtime/optix_pipeline.h>
-#include <rayd/shared/optix/pipeline_contracts.h>
+#include <src/runtime/optix_pipeline.h>
+#include <rayd/shared/rt/optix_pipeline_contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime_api.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/shared/optix/scene_edge_contracts.h>
+#include <src/runtime/optix_context.h>
+#include <rayd/shared/rt/optix_sbt.h>
 
 #include <algorithm>
 #include <cstring>
@@ -396,19 +396,20 @@ void OptixLaunchPipeline::launch_impl(
 
 // ---- merged from src/runtime/optix_context_part.cpp ----
 
-#include <rayd/torch/runtime/optix_context.h>
+#include <src/runtime/optix_context.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
-#include <rayd/torch/edge/optix_params.h>
-#include <rayd/torch/edge_optix_point_ray_ptx.h>
-#include <rayd/torch/edge_optix_topk_ptx.h>
-#include <rayd/torch/optix_intersect_ptx.h>
-#include <rayd/torch/reflection_trace_optix_ptx.h>
-#include <rayd/shared/optix/scene_edge_contracts.h>
+#include <src/edge/optix_params.h>
+#include <rayd/edge/point_ray_torch_ptx.h>
+#include <rayd/edge/topk_torch_ptx.h>
+#include <rayd/scene/intersection_torch_ptx.h>
+#include <rayd/reflection/trace_torch_ptx.h>
+#include <rayd/shared/edge/optix_contracts.h>
+#include <rayd/shared/scene/optix_contracts.h>
 
 #include <algorithm>
 #include <cctype>

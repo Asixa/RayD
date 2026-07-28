@@ -398,7 +398,7 @@ jobs:
         if: matrix.backend == 'drjit'
         working-directory: drjit
         run: >-
-          python -m build --wheel --no-isolation --outdir ../../dist/drjit
+          python -m build --wheel --no-isolation --outdir ../dist/drjit
           -Cbuild-dir=artifacts/skbuild
       - name: Build Torch wheel
         if: matrix.backend == 'torch'
@@ -406,7 +406,7 @@ jobs:
         shell: pwsh
         run: |
           $startedAt = Get-Date
-          python -m build --wheel --no-isolation --outdir ../../dist/torch `
+          python -m build --wheel --no-isolation --outdir ../dist/torch `
             -Cbuild-dir=artifacts/skbuild
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -556,7 +556,11 @@ jobs:
           echo "RAYD_META_WHEEL=$(find dist -maxdepth 1 -name 'rayd-*-none-any.whl' -print -quit)" >> "$GITHUB_ENV"
           echo "RAYD_DRJIT_WHEEL=$(find dist -maxdepth 1 -name 'rayd_drjit-*-cp312-cp312-manylinux_2_28_x86_64.whl' -print -quit)" >> "$GITHUB_ENV"
           echo "RAYD_TORCH_WHEEL=$(find dist -maxdepth 1 -name 'rayd_torch-*-cp312-cp312-manylinux_2_28_x86_64.whl' -print -quit)" >> "$GITHUB_ENV"
-      - run: python -m unittest tests.packaging.test_wheel_layout -v
+      - run: >-
+          python -m unittest
+          tests.packaging.test_wheel_layout
+          tests.packaging.test_wheel_install_matrix
+          -v
       - run: python -m twine check dist/*
 
   publish-drjit:

@@ -1,4 +1,4 @@
-#include <rayd/shared/multipath/reflection_dedup.h>
+#include <rayd/shared/reflection/dedup.h>
 
 #include <cuda_runtime.h>
 

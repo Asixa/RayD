@@ -837,12 +837,12 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/multipath/reflection_trace_algo.h",
-        "include/rayd/shared/multipath/segment_visibility_algo.h",
-        "include/rayd/shared/multipath/reflection_epc_algo.h",
-        "include/rayd/shared/multipath/reflection_accumulation_algo.h",
-        "include/rayd/shared/multipath/diffraction_paths_algo.h",
-        "include/rayd/shared/multipath/diffraction_accumulation_algo.h",
+        "include/rayd/shared/reflection/trace_algo.h",
+        "include/rayd/shared/visibility/segment_algo.h",
+        "include/rayd/shared/reflection/epc_algo.h",
+        "include/rayd/shared/reflection/accumulation_algo.h",
+        "include/rayd/shared/diffraction/paths_algo.h",
+        "include/rayd/shared/diffraction/accumulation_algo.h",
         "include/rayd/shared/diffraction/utd_math.h",
         "include/rayd/shared/bvh/triangle_intersect.h"
       ],
@@ -869,7 +869,7 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/multipath/reflection_trace_algo.h",
+        "include/rayd/shared/reflection/trace_algo.h",
         "include/rayd/shared/rt/numeric_policy.h"
       ],
       "evidence": [
@@ -1019,7 +1019,7 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/multipath/diffraction_paths_algo.h",
+        "include/rayd/shared/diffraction/paths_algo.h",
         "include/rayd/shared/diffraction/utd_math.h"
       ],
       "evidence": [
@@ -1139,53 +1139,51 @@
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/diffraction_accumulation_algo.h": [
+    "include/rayd/shared/diffraction/accumulation_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/diffraction_paths_algo.h": [
+    "include/rayd/shared/diffraction/paths_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/reflection_accumulation_algo.h": [
+    "include/rayd/shared/reflection/accumulation_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/reflection_epc_algo.h": [
+    "include/rayd/shared/reflection/epc_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/reflection_trace_algo.h": [
+    "include/rayd/shared/reflection/trace_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/multipath/segment_visibility_algo.h": [
+    "include/rayd/shared/visibility/segment_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/optix/diffraction_contracts.h": [
+    "include/rayd/shared/diffraction/contracts.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/optix/pipeline_contracts.h": [
-      "fast_math",
-      "nvcc_default",
-      "precise_no_ftz"
-    ],
-    "include/rayd/shared/optix/reflection_epc_params.h": [
+    "include/rayd/shared/rt/optix_pipeline_contracts.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/optix/reflection_trace_params.h": [
+    "include/rayd/shared/reflection/epc_params.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/optix/scene_edge_contracts.h": [
+    "include/rayd/shared/reflection/trace_params.h": [
       "fast_math",
-      "nvcc_default",
-      "precise_no_ftz"
+      "nvcc_default"
     ],
-    "include/rayd/shared/optix/segment_visibility_params.h": [
+    "include/rayd/shared/edge/optix_contracts.h": [
+      "fast_math",
+      "nvcc_default"
+    ],
+    "include/rayd/shared/visibility/segment_params.h": [
       "fast_math",
       "nvcc_default"
     ],

@@ -1,6 +1,6 @@
-#include <rayd/torch/scene/geometry_kernels.h>
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/scene/geometry_kernels.h>
+#include <src/scene/cache.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/csrc/autograd/custom_function.h>
@@ -1261,7 +1261,7 @@ py::tuple intersect_ad_flags_op(
 
 // Handle-based functional ops for the torch.compile path: plain int64 scene
 // handles avoid ScriptObject fakification, and autograd is registered from
-// Python via torch.library.register_autograd (see rayd/torch/_compile.py).
+// Python via torch.library.register_autograd (see python/rayd/_impl/runtime.py).
 std::tuple<at::Tensor, at::Tensor> intersect_forward_tape_h_impl(
     int64_t scene_handle,
     at::Tensor vertices,

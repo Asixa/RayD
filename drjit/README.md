@@ -1,6 +1,6 @@
 # RayD Dr.Jit
 
-[![PyPI](https://img.shields.io/pypi/v/rayd-drjit)](https://pypi.org/project/rayd-drjit/) [![License](https://img.shields.io/github/license/Asixa/RayD)](../../LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/rayd-drjit)](https://pypi.org/project/rayd-drjit/) [![License](https://img.shields.io/github/license/Asixa/RayD)](../LICENSE)
 
 RayD is a Dr.Jit-native GPU library for differentiable ray geometry and
 multipath simulation primitives with OptiX and pure-CUDA ray-tracing backends.
@@ -26,7 +26,7 @@ choice. An explicit OptiX request fails when unavailable, and operational
 pipeline, allocation, or CUDA failures are not converted into a fallback.
 `RAYD_DISABLE_OPTIX=1` forces capability discovery to report OptiX unavailable.
 
-RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind extension uses the CPython ABI, CI builds one wheel per Python version rather than one Python-independent wheel. The complete build matrix and release configuration are documented in [`CI_BUILD_MATRIX.md`](CI_BUILD_MATRIX.md).
+RayD is Dr.Jit-native and does not depend on PyTorch. Because its nanobind extension uses the CPython ABI, CI builds one wheel per Python version rather than one Python-independent wheel. The complete build matrix and release configuration are documented in [`ci_build_matrix.md`](../docs/dev/ci_build_matrix.md).
 
 ## Scope
 
@@ -170,26 +170,22 @@ RayD includes low-level reflection and visibility primitives for custom wave sim
 
 These APIs expose primitives, not a complete propagation simulator. Callers own the source model, receiver model, material policy, objective, and optimization loop.
 
-Naming rule: use `Dfr` for diffraction (`DfrStates`, `DfrAccum`, `accum_dfr_direct`), `Refl` for reflection-specific short names, keep `Epc` in equivalent-path-correction APIs, and reserve `AD` for automatic differentiation. See [`API_NAMING_STANDARD.md`](API_NAMING_STANDARD.md).
+Naming rule: use `Dfr` for diffraction (`DfrStates`, `DfrAccum`, `accum_dfr_direct`), `Refl` for reflection-specific short names, keep `Epc` in equivalent-path-correction APIs, and reserve `AD` for automatic differentiation. See [`api_naming_standard.md`](../docs/drjit/api_naming_standard.md).
 
 ## Examples
 
-- [`examples/basics/ray_mesh_intersection.py`](examples/basics/ray_mesh_intersection.py): custom rays against a mesh
-- [`examples/basics/nearest_edge_query.py`](examples/basics/nearest_edge_query.py): nearest-edge queries
-- [`examples/renderer/cornell_box.py`](examples/renderer/cornell_box.py): a compact renderer built on RayD primitives
+- [`examples/basics/ray_mesh_intersection.py`](../examples/drjit/basics/ray_mesh_intersection.py): custom rays against a mesh
+- [`examples/basics/nearest_edge_query.py`](../examples/drjit/basics/nearest_edge_query.py): nearest-edge queries
+- [`examples/renderer/cornell_box.py`](../examples/drjit/renderer/cornell_box.py): a compact renderer built on RayD primitives
 
 ## Performance
 
 The chart below was generated on March 25, 2026 on an `NVIDIA GeForce RTX 5080` and `AMD Ryzen 7 9800X3D`, comparing RayD (`0.1.2`) against Mitsuba `3.8.0` with the `cuda_ad_rgb` variant.
 
-Raw benchmark data is stored in [`docs/performance_benchmark.json`](../../docs/performance_benchmark.json).
-
 - RayD is consistently faster on static forward and static gradient workloads across all three scene sizes.
 - Dynamic reduced forward reaches parity or better from the medium scene onward, and dynamic full is effectively tied on the largest case.
 - On the largest `192x192` mesh / `384x384` ray benchmark, RayD vs Mitsuba average latency in milliseconds is: static full `0.162 vs 0.190`, static reduced `0.124 vs 0.224`, dynamic full `0.741 vs 0.740`, dynamic reduced `0.689 vs 0.714`, gradient static `0.411 vs 0.757`, gradient dynamic `1.324 vs 1.413`.
 - Correctness stayed aligned throughout the sweep: forward mismatch counts remained `0`, and the largest static gradient discrepancy was `9.54e-7`.
-
-![RayD vs Mitsuba performance benchmark](../../docs/performance_benchmark.png)
 
 ## Device Selection
 
@@ -224,37 +220,33 @@ python -m pip install drjit==1.3.1
 Install from the repository root:
 
 ```powershell
-python -m pip install .
+python -m pip install ./drjit
 ```
 
 For editable development builds:
 
 ```powershell
-python -m pip install --no-build-isolation -ve .
+python -m pip install --no-build-isolation -ve ./drjit
 ```
 
 ## Repository Layout
 
-- [`python/rayd/drjit/`](python/rayd/drjit): Python package and native extension loader
-- [`include/rayd/`](include/rayd): public C++ headers
-- [`include/rayd/edge/`](include/rayd/edge): edge-query data structures
-- [`include/rayd/multipath/`](include/rayd/multipath): multipath query result and option types
-- [`src/`](src): C++ and CUDA implementation
-- [`src/edge/`](src/edge): edge BVH and edge-query implementation
-- [`src/multipath/`](src/multipath): reflection, visibility, EPC, and accumulation kernels
-- [`src/rayd.cpp`](src/rayd.cpp): Python bindings
-- [`examples/`](examples): small usage examples
-- [`tests/drjit/`](tests/drjit): Dr.Jit-native geometry, edge, visibility, and multipath tests
-- [`tests/test_project_metadata.py`](tests/test_project_metadata.py): packaging and repository-boundary checks
+- [`../python/rayd/drjit/`](../python/rayd/drjit): public Python package and native extension loader
+- [`../python/rayd/_impl/`](../python/rayd/_impl): manifest-owned private Python implementation modules
+- [`../include/rayd/`](../include/rayd): C++ headers
+- [`../src/`](../src): concept-major C++ and CUDA implementation
+- [`../examples/drjit/`](../examples/drjit): Dr.Jit usage examples
+- [`../tests/`](../tests): concept-major Python and native tests
+
 
 ## Testing
 
 ```powershell
-python -m unittest tests.drjit.test_geometry -v
-python -m unittest tests.drjit.test_visibility_topk -v
-python -m unittest tests.drjit.test_reflection_epc -v
-python -m unittest tests.drjit.test_reflection_accumulation -v
-python -m unittest tests.test_project_metadata -v
+python -m unittest tests.scene.test_geometry_jit -v
+python -m unittest tests.visibility.test_visibility_topk_jit -v
+python -m unittest tests.reflection.test_epc_jit -v
+python -m unittest tests.reflection.test_accumulation_jit -v
+python -m unittest tests.packaging.test_project_metadata -v
 ```
 
 The default development environment used by this repository is:
@@ -291,4 +283,4 @@ RayD is developed with reference to:
 
 ## License
 
-BSD 3-Clause. See [LICENSE](../../LICENSE).
+BSD 3-Clause. See [LICENSE](../LICENSE).

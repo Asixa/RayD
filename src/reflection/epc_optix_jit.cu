@@ -1,5 +1,5 @@
-#include <rayd/multipath/reflection_epc_params.h>
-#include <rayd/shared/optix/reflection_epc_device.cuh>
+#include <src/reflection/epc_params_jit.h>
+#include <rayd/shared/reflection/epc_optix_device.cuh>
 
 namespace rayd::shared::optix {
 

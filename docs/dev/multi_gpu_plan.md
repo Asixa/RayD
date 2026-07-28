@@ -156,7 +156,7 @@ single-device behavior, derived from the mesh tensors), and every existing
 op (`scene.intersect`, `trace_reflections`, accumulation, ...) transparently
 shards/chunks when the scene was built with multiple devices. The
 orchestration machinery (replicas, sharder, chunked executor) lives in a
-private module (`backends/torch/python/rayd/torch/_multi.py`) and is not
+private module (`python/rayd/_impl/multi.py`) and is not
 public API. Process-per-GPU / distributed mode needs no API change at all
 (rank-local scenes). Tuning knobs (shard weights, chunk memory budget,
 offload hook) ride on an optional `MultiDeviceOptions` dataclass — additive
@@ -236,7 +236,7 @@ Acceptance:
       one, and it is still red.
 - [x] New cross-device rejection tests for the families that lacked them
       (table/ensemble/patch scattering, transmission, layer stack, wedge) —
-      `backends/torch/tests/cpp/scattering_test.cpp`, extended to all six
+      `tests/scattering/scattering_test.cpp`, extended to all six
       families in `f643336`.
 - [x] 2-GPU smoke suite (skipped when `torch.cuda.device_count() < 2`):
       same mesh built on dev0 and dev1, `intersect` results bitwise equal;
@@ -262,7 +262,7 @@ Acceptance:
 
 - [x] Two scenes on two devices, driven concurrently from two host threads on
       non-default streams, produce per-device results bitwise equal to
-      single-device runs (stress test in `backends/torch/tests`) —
+      single-device runs (stress test in `tests/scene`) —
       `test_multi_device_stress.py::test_two_threads_on_two_devices_`
       `reproduce_single_device_results`.
 - [x] Per-device OptiX cold-create passes (generalization of
@@ -278,7 +278,7 @@ Acceptance:
 
 ### Phase 2 — `rayd.torch.multi` orchestration layer (~3–5 weeks; the feature)
 
-Private module `backends/torch/python/rayd/torch/_multi.py`; public exposure
+Private module `python/rayd/_impl/multi.py`; public exposure
 is only `Scene(devices=[...])` plus the optional `MultiDeviceOptions`
 dataclass (D8). With `devices` absent or singular, `Scene` takes the
 pre-existing code path unchanged (D9).
@@ -434,7 +434,7 @@ Acceptance:
 - [x] Sharded `per_ray` results stay bitwise the single-device results at the
       benchmark's sizes (agreement 1.0 on every row of the recorded table), and
       merged accumulation grids stay within float32 merge order.
-- [x] Benchmark added: `backends/torch/tests/benchmark_multi_device.py`, which
+- [x] Benchmark added: `benchmarks/torch/benchmark_multi_device.py`, which
       runs both configurations, reports single vs multi times, speedups,
       calibrated weights, the per-chunk plan and each calibration's margin over
       running master-only (flagging the near-crossover decisions that do not
@@ -466,7 +466,7 @@ Work items:
    Dr.Jit path.
 2. Multi-node recipe: same script under multi-node `torchrun`; document that
    traffic is only grids + gradients (scene-sized, N-independent).
-3. Example scripts under `examples/` (or `backends/*/examples/`) with a
+3. Example scripts under `examples/torch/distributed/` with a
    smoke-test harness.
 4. Dr.Jit pure-CUDA hardening (quality items, not blocking for
    process-per-GPU): device recorded in `CudaBuffer`, `cudaDeviceSynchronize`
@@ -569,7 +569,7 @@ Acceptance:
       never running the GPU subset in the first place.
 - [x] PTX digest test green (regenerated if touched) —
       `tests/test_ptx_source_digest.py` green with
-      `backends/drjit/ptx_sources.json` untouched: the lane window lives in the
+      `drjit/ptx_sources.json` untouched: the lane window lives in the
       Torch backend and the Dr.Jit Phase 3 hardening changed host and object
       translation units only.
 

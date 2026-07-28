@@ -1,9 +1,9 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/shared/multipath/diffraction_accumulation_device.cuh>
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/diffraction/accum_params.h>
+#include <rayd/shared/diffraction/accumulation_optix_device.cuh>
+#include <src/runtime/math.cuh>
+#include <src/diffraction/accum_params.h>
 
 namespace rayd::torch_backend {
 

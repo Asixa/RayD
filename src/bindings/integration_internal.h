@@ -1,7 +1,7 @@
 #pragma once
 
-#include <rayd/torch/integration.h>
-#include <rayd/torch/scene/cache.h>
+#include <rayd/scene/torch.h>
+#include <src/scene/cache.h>
 
 namespace rayd::torch::detail {
 

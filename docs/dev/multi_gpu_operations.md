@@ -40,7 +40,7 @@ commands every multi-GPU verification in this repository has been run with.
   concatenation or reduction of results is the caller's job in this phase.
 
 Coverage for these properties lives in
-[`torch/tests/torch_backend/test_multi_device_smoke.py`](../../torch/tests/torch_backend/test_multi_device_smoke.py)
+[`tests/scene/test_multi_device_smoke.py`](../../tests/scene/test_multi_device_smoke.py)
 (skipped when fewer than two CUDA devices are visible).
 
 ## 2. Driving several devices from one process
@@ -271,7 +271,7 @@ faster than one GPU is a property of the *workload*, not of the layer: a second
 device can only win when a row's compute costs more than its bytes cost to
 move. This section is the measured version of that sentence, and the benchmark
 that produced it is
-[`torch/tests/benchmark_multi_device.py`](../../torch/tests/benchmark_multi_device.py):
+[`benchmarks/torch/benchmark_multi_device.py`](../../benchmarks/torch/benchmark_multi_device.py):
 
 By default construction also requires bidirectional CUDA peer access between
 the master and every replica. This is fail-safe: silently routing the pipeline
@@ -286,10 +286,10 @@ replica, matching the topology behind the bitwise `per_ray` evidence. Set
 mode has no cross-device bitwise or heterogeneous-calibration guarantee.
 
 ```bash
-python -m backends.torch.tests.benchmark_multi_device            # both configurations
-python -m backends.torch.tests.benchmark_multi_device --config light
-python -m backends.torch.tests.benchmark_multi_device --devices 0   # single-GPU baseline
-python -m backends.torch.tests.benchmark_multi_device \
+python -m benchmarks.torch.benchmark_multi_device            # both configurations
+python -m benchmarks.torch.benchmark_multi_device --config light
+python -m benchmarks.torch.benchmark_multi_device --devices 0   # single-GPU baseline
+python -m benchmarks.torch.benchmark_multi_device \
     --json artifacts/multi_gpu/benchmark.json
 ```
 
@@ -751,27 +751,27 @@ several chunks.
 
 Section 3 gives the per-process rules; this section is the worked recipe built
 on them. Two runnable examples live in
-[`torch/examples/distributed`](../../torch/examples/distributed):
+[`examples/torch/distributed`](../../examples/torch/distributed):
 
-- [`ddp_intersect_train.py`](../../torch/examples/distributed/ddp_intersect_train.py)
+- [`ddp_intersect_train.py`](../../examples/torch/distributed/ddp_intersect_train.py)
   — one rank per GPU, a rank-local `Scene` built from the same mesh, a global
   ray batch sharded by rank, a differentiable `intersect` loss, and one
   `all_reduce(SUM)` of `vertices.grad` per step. The optimizer then applies the
   same update to the same replicated parameter on every rank; the script
   asserts zero cross-rank drift every `--check-every` steps and prints a hash
   of the final parameter.
-- [`ddp_accum_grids.py`](../../torch/examples/distributed/ddp_accum_grids.py)
+- [`ddp_accum_grids.py`](../../examples/torch/distributed/ddp_accum_grids.py)
   — rank-sharded Monte-Carlo accumulation. Each rank calls `accum_dfr_direct`
   with the *same* `direct_samples` and its own `lane_offset` / `lane_count`
   window, so the ranks' windows partition one global lane space (§ D5 of
   [`multi_gpu_plan.md`](multi_gpu_plan.md)); `all_reduce(SUM)` on the grids
   reproduces the single launch's grid up to summation order.
-- [`README.md`](../../torch/examples/distributed/README.md) — the
+- [`README.md`](../../examples/torch/distributed/README.md) — the
   launcher commands, the `OPTIX_CACHE_PATH` requirement, the Dr.Jit variant,
   and the failure-behavior notes.
 
 Both are exercised by
-[`torch/tests/torch_backend/test_distributed_recipe.py`](../../torch/tests/torch_backend/test_distributed_recipe.py),
+[`tests/scene/test_distributed_recipe.py`](../../tests/scene/test_distributed_recipe.py),
 which launches them under `torchrun --nproc_per_node=2` in a subprocess and
 checks that the ranks' final parameters are bitwise equal and that the merged
 grid matches a single-process, single-device launch of the full sample count.
@@ -867,7 +867,7 @@ many: `$ROOT/rank-$RANK` has to be per-rank *and* on local disk.
 
 These are the commands every multi-GPU verification in this repository has been
 run with, on the two-device host of §5.1. Run them from the repository root
-with the backend importable (`PYTHONPATH=torch/python`, or an editable
+with the backend importable (`PYTHONPATH=python`, or an editable
 install of `torch`). Nothing below needs a network or a second node.
 
 **They must be run on a host with two visible CUDA devices.** Every
@@ -886,10 +886,11 @@ module is deliberate: a default `Scene()` must never even import
 state is per process.
 
 ```bash
-export PYTHONPATH=torch/python
-for m in test_multi_device_smoke test_multi_device_stress test_multi_device_scene \
-         test_chunked_executor test_lane_offset; do
-    python -m unittest "backends.torch.tests.torch_backend.$m" -v || break
+export PYTHONPATH=python
+for m in tests.scene.test_multi_device_smoke tests.scene.test_multi_device_stress \
+         tests.scene.test_multi_device_scene tests.scene.test_chunked_executor \
+         tests.diffraction.test_lane_offset; do
+    python -m unittest "$m" -v || break
 done
 ```
 
@@ -910,7 +911,7 @@ grids against a single-process reference. It gives each rank its own
 it skips itself if `torchrun` is not next to the interpreter or on `PATH`.
 
 ```bash
-python -m unittest backends.torch.tests.torch_backend.test_distributed_recipe -v
+python -m unittest tests.scene.test_distributed_recipe -v
 ```
 
 **3. The governance suite.** No GPU needed; it is what keeps the ADR-0038
@@ -930,17 +931,17 @@ python -m unittest \
 **4. The whole Torch backend suite**, which is what each phase reported:
 
 ```bash
-python -m unittest discover -s torch/tests/torch_backend \
-    -t torch/tests
+python -m unittest -v tests.scene.test_multi_device_smoke \
+    tests.scene.test_distributed_recipe
 ```
 
 **5. The benchmark**, whose numerical speedups are measurements rather than
 fixed pass/fail thresholds (§5):
 
 ```bash
-python -m backends.torch.tests.benchmark_multi_device \
+python -m benchmarks.torch.benchmark_multi_device \
     --json artifacts/multi_gpu/benchmark.json
-python -m backends.torch.tests.benchmark_multi_device --devices 0   # baseline
+python -m benchmarks.torch.benchmark_multi_device --devices 0   # baseline
 ```
 
 The command itself is a gate: setup, CUDA, correctness, schema production or
@@ -949,8 +950,8 @@ thresholded.
 
 The Dr.Jit backend has no in-process multi-device route to test; its multi-GPU
 coverage is the process-per-GPU recipe of §3 plus the device-binding assertions
-of Phase 0 (`backends.drjit.tests.drjit.test_device_binding`, with an
-**absolute** `PYTHONPATH=<repo>/drjit/python` — the test spawns
+of Phase 0 (`tests.runtime.test_device_binding_jit`, with an
+**absolute** `PYTHONPATH=<repo>/python` — the test spawns
 subprocesses whose working directory differs, so a relative path makes them
 skip silently instead of running).
 

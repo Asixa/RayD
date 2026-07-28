@@ -2747,7 +2747,7 @@ Use these existing files as behavioral reference:
 
 - `src/edge/edge_optix.cu`
 - `src/edge/scene_edge_optix.cpp`
-- `include/rayd/edge/edge_optix_params.h`
+- `include/rayd/edge/drjit/edge_optix_params.h`
 
 Create raydn-native equivalents under `include/raydn/edge_*` and `src/torch_ext/kernels/edge_*`.
 

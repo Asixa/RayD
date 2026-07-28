@@ -1,7 +1,7 @@
 """P4 key gate: the migrated multipath algorithm headers compile host-only.
 
 The reflection-trace algorithm body was lifted out of the OptiX device header
-into shared/multipath/reflection_trace_algo.h so it is host-compilable: no
+into shared/reflection/trace_algo.h so it is host-compilable: no
 optixTrace / payload register / launch-index token, all ray casts routed through
 the rt::Traverser concept. This test proves that claim two ways:
 
@@ -21,18 +21,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-MULTIPATH_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "multipath"
+SHARED_ROOT = SHARED_INCLUDE / "rayd" / "shared"
 RT_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "rt"
 ALGO_HEADERS = (
-    MULTIPATH_INCLUDE / "reflection_trace_algo.h",
-    MULTIPATH_INCLUDE / "segment_visibility_algo.h",
-    MULTIPATH_INCLUDE / "reflection_epc_algo.h",
-    MULTIPATH_INCLUDE / "reflection_accumulation_algo.h",
-    MULTIPATH_INCLUDE / "diffraction_paths_algo.h",
-    MULTIPATH_INCLUDE / "diffraction_accumulation_algo.h",
+    SHARED_ROOT / "reflection" / "trace_algo.h",
+    SHARED_ROOT / "visibility" / "segment_algo.h",
+    SHARED_ROOT / "reflection" / "epc_algo.h",
+    SHARED_ROOT / "reflection" / "accumulation_algo.h",
+    SHARED_ROOT / "diffraction" / "paths_algo.h",
+    SHARED_ROOT / "diffraction" / "accumulation_algo.h",
 )
 # The full P4 grep gate scans every migrated multipath algorithm header AND every
-# rt/ contract header; the shared/optix/** OptiX shims are the only place these
+# rt/ contract header; concept-owned *_optix_device.cuh shims are where these
 # device-only tokens are allowed (grep-gate exception).
 RT_HEADERS = tuple(sorted(RT_INCLUDE.glob("*.h")))
 SMOKE_TU = ROOT / "tests" / "native" / "rt_host_compile_smoke.cpp"
@@ -118,11 +118,11 @@ class RtHostCompileTests(unittest.TestCase):
                 )
 
     def test_migrated_algo_headers_have_no_device_only_tokens(self):
-        # Every *_algo.h in the multipath tree is covered (not just the six known
+        # Every concept-owned *_algo.h is covered (not just the six known
         # names), so a future migrated pipeline is grep-gated automatically.
-        globbed = sorted(MULTIPATH_INCLUDE.glob("*_algo.h"))
+        globbed = sorted(SHARED_ROOT.glob("*/*_algo.h"))
         self.assertTrue(set(ALGO_HEADERS).issubset(set(globbed)),
-                        "known algo headers missing from the multipath tree")
+                        "known concept-owned algo headers missing from the shared tree")
         for header in globbed:
             self._assert_no_device_only_tokens(header)
 

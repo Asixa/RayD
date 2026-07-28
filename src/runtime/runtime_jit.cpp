@@ -1,9 +1,9 @@
 #include <drjit-core/optix.h>
 #define OPTIX_STUBS_IMPL
-#include <rayd/optix.h>
+#include <rayd/rt/drjit/optix.h>
 #undef OPTIX_STUBS_IMPL
 
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 
 #include <algorithm>
 #include <array>
@@ -531,7 +531,7 @@ void init_optix_api() {
 }
 
 // Consolidated native launch audit implementation.
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -735,7 +735,7 @@ bool native_launch_audit_timing_enabled() {
 } // namespace rayd
 
 // Consolidated multipath pipeline manager.
-#include <rayd/multipath/pipelines.h>
+#include <src/runtime/optix_pipelines_jit.h>
 
 #include <algorithm>
 #include <map>
@@ -746,8 +746,8 @@ bool native_launch_audit_timing_enabled() {
 
 #include <cuda_runtime_api.h>
 
-#include <rayd/native_launch_audit.h>
-#include <rayd/shared/optix/pipeline_contracts.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/shared/rt/optix_pipeline_contracts.h>
 
 #include <reflection_trace_ptx.h>
 #include <reflection_epc_ptx.h>
@@ -755,12 +755,12 @@ bool native_launch_audit_timing_enabled() {
 #include <diffraction_accumulation_ptx.h>
 #include <diffraction_paths_ptx.h>
 #include <segment_visibility_ptx.h>
-#include <rayd/multipath/reflection_trace_params.h>
-#include <rayd/multipath/reflection_epc_params.h>
-#include <rayd/multipath/reflection_accumulation_params.h>
-#include <rayd/multipath/diffraction_accumulation_params.h>
-#include <rayd/multipath/diffraction_paths_params.h>
-#include <rayd/multipath/segment_visibility_params.h>
+#include <src/reflection/trace_params_jit.h>
+#include <src/reflection/epc_params_jit.h>
+#include <src/reflection/accumulation_params_jit.h>
+#include <src/diffraction/accumulation_params_jit.h>
+#include <src/diffraction/paths_params_jit.h>
+#include <src/visibility/segment_params_jit.h>
 
 namespace rayd {
 
@@ -1330,14 +1330,14 @@ OptixPipelineConfig segment_chain_visibility_pipeline_config() {
 #include <string>
 #include <vector>
 
-#include <rayd/ray.h>
+#include <rayd/ray/drjit.h>
 #include "scene_internal_jit.h"
-#include <rayd/multipath/diffraction_accumulation_ad.h>
-#include <rayd/multipath/reflection_dedup.h>
-#include <rayd/multipath/reflection_epc_field.h>
-#include <rayd/multipath/pipelines.h>
-#include <rayd/native_launch_audit.h>
-#include <rayd/trace/cuda_multipath_gpu.h>
+#include <src/diffraction/accumulation_ad_jit.h>
+#include <src/reflection/dedup_jit.h>
+#include <src/reflection/epc_field_jit.h>
+#include <src/runtime/optix_pipelines_jit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <src/scene/cuda_multipath_gpu_jit.h>
 
 #include "multipath_internal_jit.h"
 

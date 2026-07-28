@@ -11,12 +11,12 @@
 
 #include <cstdint>
 
-#include <rayd/shared/multipath/diffraction_paths_algo.h>
-#include <rayd/shared/multipath/diffraction_accumulation_algo.h>
-#include <rayd/shared/multipath/reflection_accumulation_algo.h>
-#include <rayd/shared/multipath/reflection_epc_algo.h>
-#include <rayd/shared/multipath/reflection_trace_algo.h>
-#include <rayd/shared/multipath/segment_visibility_algo.h>
+#include <rayd/shared/diffraction/paths_algo.h>
+#include <rayd/shared/diffraction/accumulation_algo.h>
+#include <rayd/shared/reflection/accumulation_algo.h>
+#include <rayd/shared/reflection/epc_algo.h>
+#include <rayd/shared/reflection/trace_algo.h>
+#include <rayd/shared/visibility/segment_algo.h>
 #include <rayd/shared/rt/qualifiers.h>
 #include <rayd/shared/rt/traverser.h>
 

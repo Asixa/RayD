@@ -1,8 +1,8 @@
 #include <rayd/shared/math/vec3.h>
-#include <rayd/shared/multipath/segment_visibility_algo.h>
-#include <rayd/shared/optix/segment_visibility_device.cuh>
+#include <rayd/shared/visibility/segment_algo.h>
+#include <rayd/shared/visibility/segment_optix_device.cuh>
 #include <rayd/shared/rt/numeric_policy.h>
-#include <rayd/torch/visibility/axial_edge_visibility_params.h>
+#include <src/visibility/axial_edge_visibility_params.h>
 
 #include <cmath>
 #include <cstdint>

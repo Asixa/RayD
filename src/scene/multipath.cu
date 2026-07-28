@@ -1,14 +1,14 @@
-#include <rayd/torch/scene/multipath_cuda.h>
+#include <src/scene/multipath_cuda.h>
 
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/math.cuh>
+#include <src/scene/cache.h>
+#include <src/runtime/math.cuh>
 #include <rayd/shared/bvh/cuda_bvh_traverser.h>
-#include <rayd/shared/multipath/reflection_accumulation_algo.h>
-#include <rayd/shared/multipath/reflection_epc_algo.h>
-#include <rayd/shared/multipath/diffraction_paths_algo.h>
-#include <rayd/shared/multipath/diffraction_accumulation_algo.h>
-#include <rayd/shared/multipath/reflection_trace_algo.h>
-#include <rayd/shared/multipath/segment_visibility_algo.h>
+#include <rayd/shared/reflection/accumulation_algo.h>
+#include <rayd/shared/reflection/epc_algo.h>
+#include <rayd/shared/diffraction/paths_algo.h>
+#include <rayd/shared/diffraction/accumulation_algo.h>
+#include <rayd/shared/reflection/trace_algo.h>
+#include <rayd/shared/visibility/segment_algo.h>
 #include <rayd/shared/rt/traverser.h>
 
 #include <ATen/cuda/CUDAContext.h>

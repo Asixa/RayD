@@ -77,15 +77,27 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
 
     def run_probe(self, body: str) -> None:
         environment = os.environ.copy()
-        source_paths = [
-            str(ROOT / "python"),
-            str(TORCH / "python"),
-        ]
-        if environment.get("PYTHONPATH"):
-            source_paths.append(environment["PYTHONPATH"])
-        environment["PYTHONPATH"] = os.pathsep.join(source_paths)
+        # Do not let another checkout's regular ``rayd`` package shadow this
+        # worktree's PEP 420 namespace.
+        environment["PYTHONPATH"] = str(ROOT / "python")
+        bootstrap = (
+            "import importlib.machinery, sys, types\n"
+            "rayd = types.ModuleType(\"rayd\")\n"
+            f"rayd.__path__ = [{str(ROOT / 'python' / 'rayd')!r}]\n"
+            "rayd.__package__ = \"rayd\"\n"
+            "rayd.__spec__ = importlib.machinery.ModuleSpec("
+            "\"rayd\", loader=None, is_package=True)\n"
+            "sys.modules[\"rayd\"] = rayd\n"
+            "spec = importlib.util.spec_from_file_location("
+            "\"rayd.torch\", "
+            f"{str(ROOT / 'python' / 'rayd' / 'torch' / '__init__.py')!r}, "
+            f"submodule_search_locations=[{str(ROOT / 'python' / 'rayd' / 'torch')!r}])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "sys.modules[\"rayd.torch\"] = module\n"
+            "spec.loader.exec_module(module)\n"
+        )
         result = subprocess.run(
-            [sys.executable, "-c", textwrap.dedent(body)],
+            [sys.executable, "-c", bootstrap + textwrap.dedent(body)],
             cwd=ROOT,
             env=environment,
             text=True,
@@ -161,13 +173,14 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
         self.assertIsNone(re.search(r"torch\.ops\.rayd_torch(?!_stable)", stable_source))
 
     def test_plan13_extern_c_integration_surface_is_retired(self):
-        include = ROOT / "include" / "rayd" / "torch"
-        self.assertFalse((include / "integration_v2.h").exists())
-        typed = (include / "integration.h").read_text(encoding="utf-8")
+        include = ROOT / "include" / "rayd"
+        self.assertFalse((include / "integration" / "torch_v2.h").exists())
+        typed = (include / "integration" / "torch.h").read_text(encoding="utf-8")
+        scene = (include / "scene" / "torch.h").read_text(encoding="utf-8")
         self.assertIn("namespace rayd::torch", typed)
-        self.assertIn("kIntegrationApiVersion = 6", typed)
+        self.assertIn("kIntegrationApiVersion = 7", typed)
         self.assertIn('"rayd.torch.integration"', typed)
-        self.assertIn("at::Tensor", typed)
+        self.assertIn("at::Tensor", scene)
 
         self.assertFalse(
             (ROOT / "src" / "bindings" / "integration_v2_internal.h").exists()

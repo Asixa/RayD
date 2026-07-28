@@ -21,7 +21,7 @@ class SharedFieldMathTests(unittest.TestCase):
         # Since P4c the algorithm body (and its UTD delegation) lives in the
         # host-compilable algo header; the device header keeps the OptiX layer.
         shared_algo = (
-            SHARED / "multipath" / "diffraction_accumulation_algo.h"
+            SHARED / "diffraction" / "accumulation_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/diffraction/utd_math.h>", shared_algo)
         self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
@@ -33,7 +33,7 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in paths:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/shared/multipath/diffraction_accumulation_device.cuh>",
+                "<rayd/shared/diffraction/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("first_order_diffraction_parameter", source)
@@ -48,13 +48,13 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("is_standard_layout_v<Complex>", header)
 
         torch_compat = (
-            ROOT / "include" / "rayd" / "torch" / "reflection" / "complex.cuh"
+            ROOT / "src" / "reflection" / "complex.cuh"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/field_math.h>", torch_compat)
         self.assertNotIn("struct Complex {", torch_compat)
 
         shared_reflection_algo = (
-            SHARED / "multipath" / "reflection_accumulation_algo.h"
+            SHARED / "reflection" / "accumulation_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection_algo)
 
@@ -65,7 +65,7 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/shared/multipath/reflection_accumulation_device.cuh>",
+                "<rayd/shared/reflection/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("fresnel_reflection_coefficients", source)

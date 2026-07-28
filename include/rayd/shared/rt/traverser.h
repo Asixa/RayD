@@ -10,7 +10,7 @@ namespace rayd::shared::rt {
 
 // Backend-neutral, decoded closest-hit record produced by a Traverser
 // (RAY_TRACING_BACKEND_ARCHITECTURE.md §7). It is the host-side mirror of the
-// OptiX six-register TriangleHitPayload (shared/optix/device_hit.h) after the
+// OptiX six-register TriangleHitPayload (shared/reflection/optix_hit.h) after the
 // float-as-uint payload codec has been undone: `t`, `bary_u`, `bary_v` are plain
 // floats, `prim` is the mesh-local primitive id, `instance` is the shape id, and
 // `hit` is 0 on a miss. Keeping it a plain POD lets both the OptiX shim and the
@@ -31,7 +31,7 @@ static_assert(std::is_trivially_copyable_v<TriangleHit>);
 // backend-neutral, per-lane closest-hit/occlusion oracle over one acceleration
 // structure. Every migrated pipeline algorithm is templated over a Traverser and
 // calls only these four const methods; the concrete traversers
-// (shared/optix/optix_traverser.h, shared/bvh/cuda_bvh_traverser.h) each assert
+// (shared/reflection/optix_traverser.h, shared/bvh/cuda_bvh_traverser.h) each assert
 // themselves against is_traverser_v so a signature drift is a compile error, not
 // a silent divergence.
 //

@@ -1,4 +1,4 @@
-#include <rayd/rayd.h>
+#include <rayd/core/drjit.h>
 
 #include <algorithm>
 #include <cctype>
@@ -8,16 +8,16 @@
 #include <nanobind/stl/vector.h>
 #include <drjit/python.h>
 
-#include <rayd/ray.h>
-#include <rayd/transform.h>
-#include <rayd/edge/edge.h>
-#include <rayd/multipath/segment_visibility.h>
-#include <rayd/mesh.h>
-#include <rayd/optix.h>
-#include <rayd/surfel/surfel.h>
-#include <rayd/scene/scene.h>
+#include <rayd/ray/drjit.h>
+#include <rayd/math/drjit/transform.h>
+#include <rayd/edge/drjit.h>
+#include <rayd/visibility/drjit/segment.h>
+#include <rayd/scene/drjit/mesh.h>
+#include <rayd/rt/drjit/optix.h>
+#include <rayd/surfel/drjit.h>
+#include <rayd/scene/drjit.h>
 
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 
 namespace nb = nanobind;
 using namespace nb::literals;

@@ -40,8 +40,8 @@ class ProjectMetadataTests(unittest.TestCase):
 
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         bindings = (WORKSPACE_ROOT / "src" / "bindings" / "module_jit.cpp").read_text(encoding="utf-8")
-        fwd = (WORKSPACE_ROOT / "include" / "rayd" / "rayd.h").read_text(encoding="utf-8")
-        scene_header = (WORKSPACE_ROOT / "include" / "rayd" / "scene" / "scene.h").read_text(encoding="utf-8")
+        fwd = (WORKSPACE_ROOT / "include" / "rayd" / "core" / "drjit.h").read_text(encoding="utf-8")
+        scene_header = (WORKSPACE_ROOT / "include" / "rayd" / "scene" / "drjit.h").read_text(encoding="utf-8")
 
         self.assertNotIn("camera.h", cmake)
         self.assertNotIn("camera.cpp", cmake)
@@ -102,7 +102,7 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("RAYD_NVCC_LAUNCHER=", release)
         self.assertIn("if(DEFINED ENV{VSCMD_VER})", cmake)
         self.assertEqual(cmake.count('call \\"${RAYD_VSDEVCMD}\\" -arch=x64'), 1)
-        self.assertTrue((ROOT / "CI_BUILD_MATRIX.md").is_file())
+        self.assertTrue((WORKSPACE_ROOT / "docs" / "dev" / "ci_build_matrix.md").is_file())
         self.assertTrue((ROOT / "scripts" / "verify_cuda_binary_arches.py").is_file())
 
     def test_reflection_trace_ptx_header_is_committed(self):
@@ -211,11 +211,11 @@ class ProjectMetadataTests(unittest.TestCase):
             / "include"
             / "rayd"
             / "shared"
-            / "multipath"
-            / "segment_visibility_algo.h"
+            / "visibility"
+            / "segment_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "<rayd/shared/optix/segment_visibility_device.cuh>",
+            "<rayd/shared/visibility/segment_optix_device.cuh>",
             segment_source,
         )
         self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)

@@ -23,7 +23,7 @@ UNITS = {
         SHARED_SOURCE / "edge" / "edge_shared.cu",
     ),
     "dedup": (
-        SHARED_INCLUDE / "multipath" / "reflection_dedup.h",
+        SHARED_INCLUDE / "reflection" / "dedup.h",
         SHARED_SOURCE / "reflection" / "dedup_shared.cu",
     ),
     "packing": (
@@ -204,8 +204,8 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
         }
         self.assertIn("<rayd/shared/edge/edge_aabb.h>", caller_text["drjit_aabb"])
         self.assertIn("<rayd/shared/edge/edge_aabb.h>", caller_text["torch_aabb"])
-        self.assertIn("<rayd/shared/multipath/reflection_dedup.h>", caller_text["drjit_dedup"])
-        self.assertIn("<rayd/shared/multipath/reflection_dedup.h>", caller_text["torch_dedup"])
+        self.assertIn("<rayd/shared/reflection/dedup.h>", caller_text["drjit_dedup"])
+        self.assertIn("<rayd/shared/reflection/dedup.h>", caller_text["torch_dedup"])
         self.assertIn("<rayd/shared/scene/packing.h>", caller_text["torch_packing"])
 
     def test_aabb_reference_covers_reversed_degenerate_and_negative_inflation(self):

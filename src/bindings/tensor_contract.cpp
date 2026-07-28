@@ -1,4 +1,4 @@
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <stdexcept>
 #include <string>

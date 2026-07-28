@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include/rayd/shared/multipath/reflection_accumulation_device.cuh"
-ALGO = ROOT / "include/rayd/shared/multipath/reflection_accumulation_algo.h"
+SHARED = ROOT / "include/rayd/shared/reflection/accumulation_optix_device.cuh"
+ALGO = ROOT / "include/rayd/shared/reflection/accumulation_algo.h"
 DRJIT = ROOT / "src/reflection/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/reflection/accumulation_optix.cu"
 
@@ -43,7 +43,7 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
         )
         for token in entry_tokens:
             self.assertIn(token, self.shared)
-        self.assertIn("reflection_accumulation_algo.h", self.shared)
+        self.assertIn("accumulation_algo.h", self.shared)
         # The former file-local HitPayload duplication dissolved into the
         # canonical shared types; forbid it from reappearing.
         self.assertIn("TriangleHit", self.algo)
@@ -107,10 +107,10 @@ class SharedReflectionAccumulationDeviceTests(unittest.TestCase):
         self.assertNotIn("reflection_accumulation_params.h", self.shared)
         self.assertNotIn("torch/reflection/accum_params.h", self.shared)
         self.assertIn(
-            "#include <rayd/multipath/reflection_accumulation_params.h>", self.drjit
+            "#include <src/reflection/accumulation_params_jit.h>", self.drjit
         )
         self.assertIn(
-            "#include <rayd/torch/reflection/accum_params.h>", self.torch
+            "#include <src/reflection/accum_params.h>", self.torch
         )
 
 

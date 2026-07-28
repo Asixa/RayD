@@ -1,5 +1,5 @@
-#include <rayd/torch/sdf/kernels.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/sdf/kernels.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Optional.h>

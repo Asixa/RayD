@@ -15,9 +15,10 @@ def read(relative: str) -> str:
 
 class Adr0033SegmentPenetrationTests(unittest.TestCase):
     def test_stable_typed_api_is_complete(self) -> None:
-        header = read("include/rayd/torch/integration.h")
-        self.assertIn("kIntegrationApiVersion = 6", header)
-        self.assertIn('"rayd.torch.integration"', header)
+        integration = read("include/rayd/integration/torch.h")
+        header = read("include/rayd/penetration/torch.h")
+        self.assertIn("kIntegrationApiVersion = 7", integration)
+        self.assertIn('"rayd.torch.integration"', integration)
         for name in (
             "SegmentPenetrationPolicy",
             "EnumeratedFullDistance",
@@ -40,7 +41,6 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         ):
             self.assertIn(name, header)
         family = header[header.index("enum class SegmentPenetrationPolicy") :]
-        family = family[: family.index("struct ReflectionTraceRequest")]
         self.assertNotIn("v2", family.lower())
         self.assertNotIn("wip", family.lower())
         self.assertNotIn("next", family.lower())
@@ -91,7 +91,7 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             self.assertNotIn(forbidden, family)
 
     def test_tape_freezes_restart_and_ad_never_retraces(self) -> None:
-        header = read("include/rayd/torch/integration.h")
+        header = read("include/rayd/penetration/torch.h")
         cuda = read(
             "src/penetration/penetration.cu"
         )
@@ -181,9 +181,14 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
 
     def test_family_is_typed_only_and_documented(self) -> None:
         library = read("src/bindings/library.cpp")
+        python_roots = (
+            ROOT / "python" / "rayd" / "torch",
+            ROOT / "python" / "rayd" / "_impl",
+        )
         python_sources = "\n".join(
             path.read_text(encoding="utf-8")
-            for path in (TORCH / "python").rglob("*.py")
+            for root in python_roots
+            for path in root.rglob("*.py")
         )
         self.assertNotIn("segment_penetration", library)
         self.assertNotIn("segment_penetration", python_sources)

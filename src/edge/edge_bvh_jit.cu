@@ -1,6 +1,6 @@
-#include <rayd/edge/edge_bvh.h>
-#include <rayd/edge/edge_bvh_config.h>
-#include <rayd/native_launch_audit.h>
+#include <rayd/edge/drjit/edge_bvh.h>
+#include <rayd/edge/drjit/edge_bvh_config.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 #include <rayd/shared/edge/bvh_build.h>
 #include <rayd/shared/edge/edge_aabb.h>
 

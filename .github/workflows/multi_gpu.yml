@@ -71,7 +71,7 @@ jobs:
       PYTHON: ${{ inputs.python || 'python' }}
       # The extension is built in-tree on this route (see the "Build" step),
       # so the backend package is imported from the working copy.
-      PYTHONPATH: ${{ github.workspace }}/python:${{ github.workspace }}/torch/python
+      PYTHONPATH: ${{ github.workspace }}/python
 
     steps:
       - uses: actions/checkout@v5

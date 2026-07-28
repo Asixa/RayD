@@ -12,8 +12,8 @@
 > or run an elevated profiler session before adding Nsight-backed claims.
 >
 > - Target GPU: NVIDIA GeForce RTX 5080 (Blackwell, compute_120), Torch CUDA 12.8, Windows.
-> - Benchmark of record: `backends/torch/tests/benchmark_torch_native.py`,
->   `backends/torch/tests/benchmark_rayd_backends.py`, and the RayD-latest-style
+> - Benchmark of record: `benchmarks/torch/benchmark_torch_native.py`,
+>   `benchmarks/torch/benchmark_rayd_backends.py`, and the RayD-latest-style
 >   three-backend intersection stress benchmark
 >   `tests/benchmark_raydn_rayd_mitsuba_stress.py`.
 > - Open performance risks per
@@ -757,7 +757,7 @@ Target of record: `build_ms` - 1550 (native, grid 192) / - 142 (grid 64 vs RayD 
 
 - Location: [trace_optix.cu:187-216](../src/torch_ext/reflection/trace_optix.cu#L187), feeding
   ~24 independent SoA output arrays defined in
-  [trace_params.h:44-67](../include/rayd/torch/reflection/trace_params.h#L44).
+  [trace_params.h:44-67](../../src/reflection/trace_params.h#L44).
 - Original problem: outputs were indexed `slot = ray_index * B + bounce`. For a fixed
   bounce, adjacent threads wrote addresses that differed by `B`, so each warp store could
   degenerate into many transactions.
@@ -954,11 +954,11 @@ performance-counter restriction lifted, else `ERR_NVGPUCTRPERM`.
 
 ```powershell
 # 0) Repository benchmark of record
-conda run -n witwin2 python -m backends.torch.tests.benchmark_torch_native --grid 192 --queries 65536
+conda run -n witwin2 python -m benchmarks.torch.benchmark_torch_native --grid 192 --queries 65536
 
 # 1) System timeline - is scene build CPU-bound? where are the D2H copies / AS builds?
 nsys profile -o prof --stats=true --force-overwrite=true `
-  python -m backends.torch.tests.benchmark_torch_native --grid 192 --queries 65536
+  python -m benchmarks.torch.benchmark_torch_native --grid 192 --queries 65536
 
 # 2) Reflection trace - store coalescing + occupancy (item 15)
 ncu --set full -k "raygen__reflection_trace" -c 5 -o refl <app>

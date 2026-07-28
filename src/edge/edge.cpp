@@ -1,6 +1,6 @@
-#include <rayd/torch/edge/kernels.h>
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/bindings/tensor_contract.h>
+#include <src/edge/kernels.h>
+#include <src/scene/cache.h>
+#include <src/bindings/tensor_contract.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <torch/extension.h>

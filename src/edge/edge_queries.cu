@@ -1,6 +1,6 @@
-#include <rayd/torch/edge/kernels.h>
-#include <rayd/torch/edge/optix_params.h>
-#include <rayd/torch/runtime/optix_context.h>
+#include <src/edge/kernels.h>
+#include <src/edge/optix_params.h>
+#include <src/runtime/optix_context.h>
 #include <rayd/shared/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -806,8 +806,8 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
 
 // ---- merged from src/edge/edge_backward_part.cu ----
 
-#include <rayd/torch/edge/kernels.h>
-#include <rayd/torch/math.cuh>
+#include <src/edge/kernels.h>
+#include <src/runtime/math.cuh>
 #include <rayd/shared/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -1394,9 +1394,9 @@ EdgeRayJvpOutputs edge_ray_jvp_optional_cuda(
 
 // ---- merged from src/edge/edge_topk_part.cu ----
 
-#include <rayd/torch/edge/kernels.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/scene/cache.h>
+#include <src/edge/kernels.h>
+#include <src/runtime/optix_context.h>
+#include <src/scene/cache.h>
 
 #include <rayd/shared/edge/bvh_query.h>
 #include <rayd/shared/edge/edge_distance_math.h>

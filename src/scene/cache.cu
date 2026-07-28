@@ -1,6 +1,6 @@
-#include <rayd/torch/scene/cache_kernels.h>
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/runtime/optix_context.h>
+#include <src/scene/cache_kernels.h>
+#include <src/runtime/math.cuh>
+#include <src/runtime/optix_context.h>
 #include <rayd/shared/scene/packing.h>
 
 #include <cub/cub.cuh>

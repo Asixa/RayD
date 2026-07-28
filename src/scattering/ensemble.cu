@@ -23,7 +23,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 #include "scattering_internal.cuh"
 #include <rayd/shared/scattering/scattering_table.cuh>
@@ -323,7 +323,7 @@ rayd::torch::ScatteringEnsembleEvalResult rayd::torch::scattering_ensemble_eval(
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 #include "scattering_internal.cuh"
 #include <rayd/shared/scattering/scattering_table.cuh>

@@ -1,8 +1,8 @@
-#include <rayd/torch/penetration/segment_penetration_kernels.h>
+#include <src/penetration/segment_penetration_kernels.h>
 
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/penetration/segment_penetration_params.h>
+#include <src/runtime/math.cuh>
+#include <src/runtime/optix_context.h>
+#include <src/penetration/segment_penetration_params.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

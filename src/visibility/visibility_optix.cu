@@ -1,5 +1,5 @@
-#include <rayd/shared/optix/segment_visibility_device.cuh>
-#include <rayd/torch/visibility/visibility_params.h>
+#include <rayd/shared/visibility/segment_optix_device.cuh>
+#include <src/visibility/visibility_params.h>
 
 namespace rayd::torch_backend {
 

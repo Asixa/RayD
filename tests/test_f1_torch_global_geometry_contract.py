@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE_HEADER = ROOT / "include/rayd/torch/scene/cache.h"
+CACHE_HEADER = ROOT / "src/scene/cache.h"
 CACHE_SOURCE = ROOT / "src/scene/scene.cpp"
 TYPES_SOURCE = ROOT / "python/rayd/_impl/geometry.py"
 

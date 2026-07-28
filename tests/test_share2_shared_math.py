@@ -76,41 +76,41 @@ class Share2SharedMathTests(unittest.TestCase):
             "reflection::reflect_point_across_plane",
         )
         # P4 Stage A moved the reflection-trace algorithm body out of the OptiX
-        # device header into the host-compilable shared/multipath algorithm; the
+        # device header into the host-compilable shared/reflection algorithm; the
         # shared reflect primitives now live there, and the OptiX entry header
         # funnels through it.
         algo = (
-            ROOT / "include/rayd/shared/multipath/reflection_trace_algo.h"
+            ROOT / "include/rayd/shared/reflection/trace_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", algo)
         for symbol in required:
             self.assertIn(symbol, algo)
         shared_device = (
-            ROOT / "include/rayd/shared/optix/reflection_trace_device.cuh"
+            ROOT / "include/rayd/shared/reflection/trace_optix_device.cuh"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/multipath/reflection_trace_algo.h>", shared_device)
+        self.assertIn("<rayd/shared/reflection/trace_algo.h>", shared_device)
 
         # P4 Stage B did the same for the reflection-EPC pipeline: the discovery
         # body (and with it the shared reflect / segment-plane primitives) moved to
         # the host-compilable algorithm header, and the OptiX entry header funnels
         # through it.
         epc_algo = (
-            ROOT / "include/rayd/shared/multipath/reflection_epc_algo.h"
+            ROOT / "include/rayd/shared/reflection/epc_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", epc_algo)
         self.assertIn("reflection::intersect_segment_plane", epc_algo)
         self.assertIn("reflection::reflect_point_across_plane", epc_algo)
         epc_device = (
-            ROOT / "include/rayd/shared/optix/reflection_epc_device.cuh"
+            ROOT / "include/rayd/shared/reflection/epc_optix_device.cuh"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/multipath/reflection_epc_algo.h>", epc_device)
+        self.assertIn("<rayd/shared/reflection/epc_algo.h>", epc_device)
 
         for relative in (
             "src/reflection/trace_optix_jit.cu",
             "src/reflection/trace_optix.cu",
         ):
             source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn("<rayd/shared/optix/reflection_trace_device.cuh>", source)
+            self.assertIn("<rayd/shared/reflection/trace_optix_device.cuh>", source)
 
 
 if __name__ == "__main__":

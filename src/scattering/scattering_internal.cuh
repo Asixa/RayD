@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 namespace rayd::torch::detail {
 
@@ -127,7 +127,7 @@ inline int64_t check_scattering_chain_ensemble_request(
 
 #include <optional>
 
-#include <rayd/torch/field_transport_ad.cuh>
+#include <rayd/field_transport/torch_ad.cuh>
 
 // Backward / JVP companion kernels for the field transport forwards
 // (plan 07 AD-1 materials/frequency, AD-2 geometry). Fixed-topology contract:
@@ -195,13 +195,13 @@ __device__ __forceinline__ c10::complex<float> to_c10(field::Complex value) {
 // Host entries.
 // ---------------------------------------------------------------------------
 
-int launch_blocks(int64_t count) {
+inline int launch_blocks(int64_t count) {
     return static_cast<int>((count + kBlockSize - 1) / kBlockSize);
 }
 
 // Gradient accumulators must start at zero; allocate raw and memset on the
 // current stream (same pattern as los.cu) instead of ATen zero-fill.
-at::Tensor zero_filled(at::IntArrayRef sizes, const at::TensorOptions& options) {
+inline at::Tensor zero_filled(at::IntArrayRef sizes, const at::TensorOptions& options) {
     auto tensor = at::empty(sizes, options);
     if (tensor.numel() > 0) {
         cudaStream_t stream =
@@ -215,7 +215,7 @@ at::Tensor zero_filled(at::IntArrayRef sizes, const at::TensorOptions& options) 
     return tensor;
 }
 
-const at::Tensor* optional_grad(
+inline const at::Tensor* optional_grad(
     std::optional<at::Tensor> value,
     at::Tensor& storage,
     const char* name,

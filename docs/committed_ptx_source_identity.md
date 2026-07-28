@@ -14,7 +14,7 @@ CUDA. Regeneration is opt-in through the eight `RAYD_REGENERATE_*_PTX` options,
 all `OFF` by default.
 
 The Torch backend is the opposite: `torch/CMakeLists.txt` writes all of
-its PTX headers into `${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/`,
+its PTX headers into concept-owned `${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/<concept>/` directories,
 regenerates every one of them on each native build, and hard-fails without the
 OptiX SDK. Torch therefore cannot go stale, commits no PTX, and is out of scope
 for this guard. `tests/test_ptx_source_digest.py` asserts that asymmetry so it

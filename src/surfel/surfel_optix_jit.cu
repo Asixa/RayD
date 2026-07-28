@@ -1,7 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/surfel/surfel_trace_params.h>
+#include <rayd/surfel/drjit/surfel_trace_params.h>
 
 namespace rayd {
 

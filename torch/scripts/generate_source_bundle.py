@@ -10,7 +10,18 @@ import subprocess
 from pathlib import Path
 
 
-INTEGRATION_ABI_PATH = "include/rayd/torch/integration.h"
+INTEGRATION_ABI_PATH = "include/rayd/integration/torch.h"
+INTEGRATION_ABI_PATHS = (
+    INTEGRATION_ABI_PATH,
+    "include/rayd/diffraction/torch.h",
+    "include/rayd/field_transport/torch_ad.cuh",
+    "include/rayd/penetration/torch.h",
+    "include/rayd/reflection/torch.h",
+    "include/rayd/scattering/torch.h",
+    "include/rayd/scene/torch.h",
+    "include/rayd/transmission/torch.h",
+    "include/rayd/visibility/torch.h",
+)
 SOURCE_INPUTS = (
     "LICENSE",
     "torch/CMakeLists.txt",
@@ -27,6 +38,25 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _normalized_text_sha256(path: Path) -> str:
+    content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(content).hexdigest()
+
+
+def _header_set(source_root: Path) -> tuple[list[dict[str, str]], str]:
+    headers = [
+        {"path": relative, "sha256": _normalized_text_sha256(source_root / relative)}
+        for relative in sorted(INTEGRATION_ABI_PATHS)
+    ]
+    digest = hashlib.sha256()
+    for header in headers:
+        digest.update(header["path"].encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(header["sha256"].encode("ascii"))
+        digest.update(b"\n")
+    return headers, digest.hexdigest()
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -107,15 +137,16 @@ def generate(
     _write_json(manifest_path, {"schema_version": 1, "files": manifest_files})
     integration_header = source_root / INTEGRATION_ABI_PATH
     header_text = integration_header.read_text(encoding="utf-8")
-    if "kIntegrationApiVersion = 6;" not in header_text:
-        raise RuntimeError("RayD integration API version is not the expected stable value 6")
+    if "kIntegrationApiVersion = 7;" not in header_text:
+        raise RuntimeError("RayD integration API version is not the expected stable value 7")
     if '"rayd.torch.integration"' not in header_text:
         raise RuntimeError("RayD integration identity is not rayd.torch.integration")
 
+    integration_headers, integration_digest = _header_set(source_root)
     _write_json(
         output / "rayd-source.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "distribution": {
                 "name": "rayd-torch",
                 "version": distribution_version,
@@ -129,10 +160,11 @@ def generate(
                 "sha256": _sha256(manifest_path),
             },
             "integration_abi": {
-                "kind": "source-header-sha256",
-                "path": INTEGRATION_ABI_PATH,
-                "sha256": _sha256(integration_header),
-                "api_version": 6,
+                "kind": "source-header-set-sha256",
+                "entrypoint": INTEGRATION_ABI_PATH,
+                "headers": integration_headers,
+                "sha256": integration_digest,
+                "api_version": 7,
                 "identity": "rayd.torch.integration",
             },
         },

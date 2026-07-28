@@ -1,4 +1,4 @@
-#include <rayd/torch/diffraction/paths_init.h>
+#include <src/diffraction/paths_init.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -126,9 +126,9 @@ void init_dfr_path_outputs_cuda(
 
 // ---- merged from src/diffraction/accum_reduce_part.cu ----
 
-#include <rayd/torch/diffraction/accum_reduce.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/diffraction/accum_params.h>
+#include <src/diffraction/accum_reduce.h>
+#include <src/runtime/optix_context.h>
+#include <src/diffraction/accum_params.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -559,15 +559,15 @@ void reduce_dfr_coherent_accum_staged_cuda(
 
 // ---- merged from src/diffraction/accum_ad_part.cu ----
 
-#include <rayd/torch/diffraction/accum_ad.h>
+#include <src/diffraction/accum_ad.h>
 
 #include <cuda_runtime.h>
 
 #include <cmath>
 #include <string>
 
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/native_compat.h>
+#include <src/runtime/math.cuh>
+#include <src/runtime/native_compat.h>
 
 namespace rayd::torch_backend {
 
@@ -691,7 +691,7 @@ static __forceinline__ __device__ float material_gain_for_prim(
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD) \
     read_i32_strided_or_default((P).F, (P).S, (HAS_THIRD) ? (THIRD) : (SECOND), -1)
 
-#include <rayd/shared/multipath/diffraction_accumulation_ad_device.cuh>
+#include <rayd/shared/diffraction/accumulation_ad_device.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(
     const DfrChainAccumADParams &params,
@@ -746,7 +746,7 @@ static __forceinline__ __device__ void add_unit_vjp_strided(
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) \
     add_chain_unit_vjp((P), (PR), (G), (P).F, 1, (I), (T))
 
-#include <rayd/shared/multipath/diffraction_accumulation_ad_vjp_device.cuh>
+#include <rayd/shared/diffraction/accumulation_ad_vjp_device.cuh>
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane =

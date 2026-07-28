@@ -1,6 +1,6 @@
 # Differentiable SDF Intersection — Implementation Plan
 
-Status: ACTIVE (Phases 0-4 in implementation; Phase 5 is a recorded backlog, DO NOT implement).
+Status: COMPLETED (Phases 0-4; Phase 5 remains a recorded backlog, DO NOT implement).
 Branch: `wt/sdf-intersection`. Owner: RayD Torch backend.
 
 ## 1. Goal
@@ -30,7 +30,7 @@ bbox transform, and the rays.
   (`SdfGrid` object + functional entry), NOT integrated into `Scene`, no OptiX,
   no mixing with triangle geometry. Scene-level composition is Phase 5.
 - **No OptiX**: pure CUDA kernels. New code must NOT include any header listed in
-  `backends/drjit/ptx_sources.json` include closures (would stale committed PTX).
+  `drjit/ptx_sources.json` include closures (would stale committed PTX).
 - **Algorithm**: sphere tracing with relaxation
   `t_{k+1} = t_k + lambda * step_scale * d(x_k)`, where
   `step_scale = min(scale_i / (N_i - 1)) / value_scale_safety` is NOT the design —
@@ -67,10 +67,10 @@ bbox transform, and the rays.
   numeric flags, no profile moves (would require its own ADR per ADR-0035).
 - **Dispatcher**: the new op is registered GIL-free from the start (pure C++
   `_impl` pattern like the intersect hot path in
-  `backends/torch/src/torch_ext/library.cpp:58-64`), NOT the `py::tuple` +
+  `src/bindings/library.cpp`), NOT the `py::tuple` +
   `gil_scoped_acquire` legacy pattern.
 - **Typed integration boundary**: v1 does NOT touch
-  `include/rayd/torch/integration.h` (no `kIntegrationApiVersion` bump).
+  `include/rayd/integration/torch.h`; ADR-0040 later advances the repository-wide boundary to API version 7.
   Typed same-graph exposure for Channel is Phase 5.
 
 ## 3. Public API (v1)
@@ -99,7 +99,7 @@ non-goals, contract-file impact list, Phase 5 backlog. Plus a guard test
 contract entries exist and match code (pattern: existing `test_adr003*.py`).
 
 ### Phase 1 — Pure-PyTorch reference implementation (tests only)
-`backends/torch/tests/torch_backend/_sdf_reference.py` (or similar under tests/):
+`tests/sdf/_reference.py` (or similar under tests/):
 detached march loop + differentiable last-step reattachment using
 `torch.nn.functional.grid_sample` (mind align_corners=True to match
 vertex-centered samples) or manual trilinear gather. Golden tests against
@@ -121,32 +121,32 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
 - Do NOT modify any existing shared header.
 
 ### Phase 3a — Torch backend native (CUDA + C++ + registration + build)
-- `backends/torch/include/rayd/torch/sdf/kernels.h`: `SdfIntersectForwardOutputs`
+- `src/sdf/kernels.h`: `SdfIntersectForwardOutputs`
   (t, hit_mask, steps, tape: frozen hit t / bracket data), launcher decls
   forward/backward/jvp.
-- `backends/torch/src/torch_ext/sdf/forward.cu`, `backward.cu` (VJP + JVP; JVP
+- `src/sdf/sdf.cu` (forward, VJP, and JVP kernels) (VJP + JVP; JVP
   may live in backward.cu or its own TU).
-- `backends/torch/src/torch_ext/sdf/ops_sdf.cpp`: validation (`tensor_check.h`),
+- `src/sdf/sdf.cpp`: validation (`tensor_check.h`),
   op bodies, GIL-free `_impl` functions.
-- `backends/torch/src/torch_ext/library.cpp`: schema `m.def` +
+- `src/bindings/library.cpp`: schema `m.def` +
   `TORCH_LIBRARY_IMPL(rayd_torch, CUDA, ...)` impls (`sdf_intersect_forward`,
   `sdf_intersect_backward`, `sdf_intersect_jvp`; naming consistent with existing
   ops).
-- `backends/torch/CMakeLists.txt`: add TUs to `RAYD_TORCH_NATIVE_CORE_SOURCES`.
+- `torch/CMakeLists.txt`: add TUs to `RAYD_TORCH_NATIVE_CORE_SOURCES`.
   No PTX step (no OptiX).
 - Must build cleanly: `.\scripts\build_local.cmd -Backend torch` and the ops
   must be callable from `torch.ops.rayd_torch`.
 
 ### Phase 3b — Torch backend Python (autograd + types + entry + tests)
-- `backends/torch/python/rayd/torch/types.py`: `SdfIntersection`.
-- `backends/torch/python/rayd/torch/sdf.py`: `SdfGrid`,
+- `python/rayd/_impl/geometry.py`: `SdfIntersection`.
+- `python/rayd/_impl/sdf.py`: `SdfGrid`,
   `sdf_intersect` dispatch (no-grad fast path / reverse-mode / forward-mode dual
   path), input validation with actionable messages.
-- `backends/torch/python/rayd/torch/autograd.py`: `_SdfIntersectFunction`
+- `python/rayd/_impl/multipath.py`: `_SdfIntersectFunction`
   (forward/setup_context/backward/jvp) following the `_make_intersect_function`
   conventions (named autograd function, optional-grad returns).
-- `backends/torch/python/rayd/torch/__init__.py`: export.
-- Tests `backends/torch/tests/torch_backend/test_sdf_intersect.py`: parity vs
+- `python/rayd/torch/__init__.py`: export.
+- Tests `tests/sdf/test_intersect.py`: parity vs
   Phase 1 reference (forward t/normal within tolerance; gradients within FD
   tolerance), gradcheck on small grids, forward-mode jvp checks, miss/inside/
   grazing cases, non-contiguous & wrong-device/dtype rejection, determinism of
@@ -160,10 +160,10 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
   grazing clamp + miss sentinel).
 - `tests/test_shared_operation_contract.py`: update the hard-coded operation-set
   literal.
-- `backends/drjit/python/rayd/drjit/_capabilities.py` AND
-  `backends/torch/python/rayd/torch/_capabilities.py`: same-change update incl.
+- `python/rayd/_impl/capabilities_jit.py` AND
+  `python/rayd/_impl/capabilities.py`: same-change update incl.
   pinned `_SCHEMA_SHA256` (ADR-0036: only the three allowed lines differ).
-- `shared/contracts/compile_policy.json`: new TUs under `nvcc_default`.
+- `contracts/compile_policy.json`: new TUs under `nvcc_default`.
 - Typing: the touched torch modules annotated inline (the Torch package ships no
   `.pyi` at all); `tests/test_public_api_manifest.py` green.
 - `FEATURE_LIST.md` (repo root or backend-level, follow existing location).

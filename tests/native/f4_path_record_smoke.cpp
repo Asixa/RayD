@@ -1,4 +1,4 @@
-#include <rayd/shared/multipath/path_record.h>
+#include <rayd/shared/path_exchange/record.h>
 
 using namespace rayd::shared::multipath;
 

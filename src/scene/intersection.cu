@@ -1,9 +1,9 @@
-#include <rayd/torch/scene/geometry_kernels.h>
+#include <src/scene/geometry_kernels.h>
 #include <rayd/shared/contracts.h>
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/scene/optix_intersect_params.h>
-#include <rayd/torch/scene/triangle_bvh.h>
+#include <src/runtime/math.cuh>
+#include <src/runtime/optix_context.h>
+#include <src/scene/optix_intersect_params.h>
+#include <src/scene/triangle_bvh.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -520,8 +520,8 @@ at::Tensor intersect_forward_t_only_cuda(
 
 // ---- merged from src/scene/intersection_backward_part.cu ----
 
-#include <rayd/torch/scene/geometry_kernels.h>
-#include <rayd/torch/math.cuh>
+#include <src/scene/geometry_kernels.h>
+#include <src/runtime/math.cuh>
 #include <rayd/shared/contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>

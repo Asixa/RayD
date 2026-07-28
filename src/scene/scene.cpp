@@ -1,7 +1,7 @@
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/scene/cache_kernels.h>
-#include <rayd/torch/bindings/tensor_contract.h>
-#include <rayd/torch/integration.h>
+#include <src/scene/cache.h>
+#include <src/scene/cache_kernels.h>
+#include <src/bindings/tensor_contract.h>
+#include <rayd/scene/torch.h>
 
 #include "../bindings/integration_internal.h"
 
@@ -284,12 +284,12 @@ SceneEdgeRecordsResult scene_edge_records(const SceneResource &scene) {
 
 // ---- merged from src/scene/scene_cache_part.cpp ----
 
-#include <rayd/torch/scene/cache.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/bindings/tensor_contract.h>
-#include <rayd/torch/edge/bvh.h>
-#include <rayd/torch/scene/cache_kernels.h>
-#include <rayd/torch/scene/triangle_bvh.h>
+#include <src/scene/cache.h>
+#include <src/runtime/optix_context.h>
+#include <src/bindings/tensor_contract.h>
+#include <src/edge/bvh.h>
+#include <src/scene/cache_kernels.h>
+#include <src/scene/triangle_bvh.h>
 #include <rayd/shared/bvh/build.h>
 #include <rayd/shared/bvh/host_topology.h>
 #include <rayd/shared/edge/bvh_build.h>

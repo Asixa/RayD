@@ -1,10 +1,14 @@
 # ADR-0033: Batched segment-penetration geometry
 
-- Status: Accepted
+- Status: Accepted; public include and API-version clauses superseded by ADR-0040
 - Date: 2026-07-21
 - Decision ID: `batched-segment-penetration`
 - Scope: RayD Torch stable typed integration, OptiX traversal, fixed-capacity
   geometry, and fixed-winner AD
+
+> **ADR-0040 supersession.** The operation and API-6 historical decision below
+> remain evidence. Its canonical public owner is now `rayd/penetration/torch.h`,
+> aggregated by `rayd/integration/torch.h` at API version 7.
 
 ## Context
 

@@ -1,13 +1,13 @@
 # ADR-0026: Generic scattering runtime ownership
 
-- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039
+- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039 and ADR-0040
 - Date: 2026-07-19
 - Decision ID: `generic-scattering-runtime-ownership`
 - Scope: Channel Native direct-RayD integration, phases 9 and 10
 
-> **ADR-0039 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
+> **ADR-0039/0040 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
 > `rf` ownership namespace below are historical. Canonical scattering owners
-> are `include/rayd/{shared,torch}/scattering/` and `src/scattering/`. The 17
+> are `include/rayd/shared/scattering/`, `include/rayd/scattering/torch.h`, and `src/scattering/`. The 17
 > operation contracts, compile profiles, fusion, stream, derivative, failure,
 > activation, rollback, and downstream atomic-switch clauses remain in force.
 ## Context

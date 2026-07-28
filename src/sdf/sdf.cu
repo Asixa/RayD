@@ -1,5 +1,5 @@
-#include <rayd/torch/sdf/kernels.h>
-#include <rayd/torch/sdf/device_math.cuh>
+#include <src/sdf/kernels.h>
+#include <src/sdf/device_math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -158,8 +158,8 @@ SdfIntersectForwardOutputs sdf_intersect_forward_cuda(
 
 // ---- merged from src/sdf/sdf_backward_part.cu ----
 
-#include <rayd/torch/sdf/kernels.h>
-#include <rayd/torch/sdf/device_math.cuh>
+#include <src/sdf/kernels.h>
+#include <src/sdf/device_math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

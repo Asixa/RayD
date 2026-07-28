@@ -69,7 +69,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
 
     def test_cpp_contract_freezes_pod_layout_and_enums(self):
         header = (
-            ROOT / "include" / "rayd" / "shared" / "multipath" / "path_record.h"
+            ROOT / "include" / "rayd" / "shared" / "path_exchange" / "record.h"
         ).read_text(encoding="utf-8")
         for token in (
             "PathInteractionKind",
@@ -89,10 +89,10 @@ class F4PathExchangeContractTests(unittest.TestCase):
         self.assertEqual(drjit_path.read_bytes(), torch_path.read_bytes())
 
         drjit_frontend = (
-            ROOT / "drjit" / "python" / "rayd" / "drjit" / "path_exchange.py"
+            ROOT / "python" / "rayd" / "drjit" / "path_exchange.py"
         ).read_text(encoding="utf-8")
         torch_frontend = (
-            ROOT / "torch" / "python" / "rayd" / "torch" / "path_exchange.py"
+            ROOT / "python" / "rayd" / "torch" / "path_exchange.py"
         ).read_text(encoding="utf-8")
         self.assertIn("rayd._impl.path_exchange_jit", drjit_frontend)
         self.assertIn("rayd._impl.path_exchange", torch_frontend)

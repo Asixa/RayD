@@ -7,13 +7,13 @@
 #include <drjit-core/jit.h>
 #include <drjit/while_loop.h>
 
-#include <rayd/edge/edge_bvh.h>
-#include <rayd/edge/edge_bvh_config.h>
+#include <rayd/edge/drjit/edge_bvh.h>
+#include <rayd/edge/drjit/edge_bvh_config.h>
 
 #include <rayd/shared/bvh/host_topology.h>
 
-#include <rayd/edge/scene_edge.h>
-#include <rayd/utils.h>
+#include <rayd/edge/drjit/scene_edge.h>
+#include <rayd/core/drjit/utils.h>
 
 namespace rayd {
 
@@ -2080,7 +2080,7 @@ template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const RayAD &ray,
 } // namespace rayd
 
 // Consolidated scene-edge OptiX host facade.
-#include <rayd/edge/scene_edge_optix.h>
+#include <rayd/edge/drjit/scene_edge_optix.h>
 
 #include <algorithm>
 #include <cmath>
@@ -2091,12 +2091,12 @@ template ClosestEdgeCandidate SceneEdge::nearest_edge<false>(const RayAD &ray,
 #include <string>
 #include <vector>
 
-#include <rayd/optix.h>
+#include <rayd/rt/drjit/optix.h>
 
-#include <rayd/edge/edge_bvh.h>
-#include <rayd/edge/edge_optix_params.h>
+#include <rayd/edge/drjit/edge_bvh.h>
+#include <rayd/edge/drjit/edge_optix_params.h>
 #include <edge_optix_ptx.h>
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 
 namespace rayd {
 

@@ -8,14 +8,14 @@
 #include <string>
 #include <vector>
 
-#include <rayd/ray.h>
+#include <rayd/ray/drjit.h>
 #include "scene_internal_jit.h"
-#include <rayd/multipath/diffraction_accumulation_ad.h>
-#include <rayd/multipath/reflection_dedup.h>
-#include <rayd/multipath/reflection_epc_field.h>
-#include <rayd/multipath/pipelines.h>
-#include <rayd/native_launch_audit.h>
-#include <rayd/trace/cuda_multipath_gpu.h>
+#include <src/diffraction/accumulation_ad_jit.h>
+#include <src/reflection/dedup_jit.h>
+#include <src/reflection/epc_field_jit.h>
+#include <src/runtime/optix_pipelines_jit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <src/scene/cuda_multipath_gpu_jit.h>
 
 namespace rayd {
 

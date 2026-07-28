@@ -43,7 +43,7 @@
 // right after n_rows, matching the reflection-kernel precedent.
 
 #include "scattering_internal.cuh"
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 using namespace rayd::torch::scattering_internal;
 
@@ -680,7 +680,7 @@ ScatteringChainRealizationEvalResult scattering_chain_realization_eval(
 // op-2's caller jones scalar, so its reverse/forward derivative rides the same
 // per-bounce reflect_frame / slab_fresnel machinery as
 // field_transport_reflection.cu and the em::stack_rt layer dual of
-// rayd/torch/field_transport_ad.cuh.  Both companions recompute the forward
+// rayd/field_transport/torch_ad.cuh.  Both companions recompute the forward
 // intermediates in primal expression order (ADR-004); this TU compiles
 // --fmad=false in lockstep with the forward.
 //
@@ -697,7 +697,7 @@ ScatteringChainRealizationEvalResult scattering_chain_realization_eval(
 // tangent, no gradient), consistent with the frozen section 4.2/4.3 tangent
 // and grad lists; see the owner's plan-10a section-4 gap note in the forward TU.
 
-#include <rayd/torch/scattering/scattering.h>
+#include <rayd/scattering/torch.h>
 
 namespace {
 

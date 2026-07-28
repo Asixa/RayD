@@ -1,9 +1,9 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/multipath/diffraction_accumulation.h>
-#include <rayd/multipath/diffraction_accumulation_params.h>
-#include <rayd/shared/multipath/diffraction_accumulation_device.cuh>
+#include <rayd/diffraction/drjit/accumulation.h>
+#include <src/diffraction/accumulation_params_jit.h>
+#include <rayd/shared/diffraction/accumulation_optix_device.cuh>
 
 namespace rayd {
 

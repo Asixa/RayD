@@ -4,8 +4,7 @@
 #include <cuda_runtime.h>
 
 #include <rayd/shared/contracts.h>
-#include <rayd/shared/optix/scene_edge_contracts.h>
-#include <rayd/torch/penetration/segment_penetration_params.h>
+#include <src/penetration/segment_penetration_params.h>
 
 namespace rayd::torch_backend {
 

@@ -1,6 +1,6 @@
-#include <rayd/trace/triangle_bvh_gpu.h>
+#include <rayd/trace/drjit/triangle_bvh_gpu.h>
 
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 #include <rayd/shared/bvh/build.h>
 #include <rayd/shared/bvh/topology.h>
 #include <rayd/shared/bvh/triangle_query.h>

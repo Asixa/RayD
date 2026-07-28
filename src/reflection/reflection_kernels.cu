@@ -1,6 +1,6 @@
-#include <rayd/torch/scene/geometry_kernels.h>
-#include <rayd/torch/reflection/kernels.h>
-#include <rayd/torch/math.cuh>
+#include <src/scene/geometry_kernels.h>
+#include <src/reflection/kernels.h>
+#include <src/runtime/math.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -941,8 +941,8 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
 
 // ---- merged from src/reflection/dedup_part.cu ----
 
-#include <rayd/torch/reflection/dedup.h>
-#include <rayd/shared/multipath/reflection_dedup.h>
+#include <src/reflection/dedup.h>
+#include <rayd/shared/reflection/dedup.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -952,7 +952,7 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
 #include <cstdint>
 #include <string>
 
-#include <rayd/torch/native_compat.h>
+#include <src/runtime/native_compat.h>
 
 
 namespace rayd::torch_backend {
@@ -1359,7 +1359,7 @@ int reflection_dedup_gpu(
 
 // ---- merged from src/reflection/epc_field_part.cu ----
 
-#include <rayd/torch/reflection/epc_field.h>
+#include <src/reflection/epc_field.h>
 #include <rayd/shared/contracts.h>
 
 #include <c10/cuda/CUDAGuard.h>
@@ -1368,9 +1368,9 @@ int reflection_dedup_gpu(
 #include <algorithm>
 #include <string>
 
-#include <rayd/torch/reflection/complex.cuh>
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/native_compat.h>
+#include <src/reflection/complex.cuh>
+#include <src/runtime/math.cuh>
+#include <src/runtime/native_compat.h>
 
 
 
@@ -1519,7 +1519,7 @@ __global__ void reflection_epc_forward_setup_kernel(ReflEpcForwardSetupParams pa
         (P).out_field_z_im[(RAY)] = (FIELD).z.i;                                   \
     }
 
-#include <rayd/shared/multipath/reflection_epc_field_device.cuh>
+#include <rayd/shared/reflection/epc_field_device.cuh>
 
 void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
@@ -1600,9 +1600,9 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index
 // casts are frozen discovery decisions: invalid rows contribute nothing and
 // no ray is traced, so no OptiX is involved.
 
-#include <rayd/torch/reflection/kernels.h>
-#include <rayd/torch/math.cuh>
-#include <rayd/shared/optix/reflection_epc_params.h>
+#include <src/reflection/kernels.h>
+#include <src/runtime/math.cuh>
+#include <rayd/shared/reflection/epc_params.h>
 #include <rayd/shared/reflection/epc_chain.h>
 
 #include <ATen/cuda/CUDAContext.h>
@@ -2217,9 +2217,9 @@ at::Tensor scene_face_normals_jvp_cuda(
 
 // ---- merged from src/reflection/accum_reduce_part.cu ----
 
-#include <rayd/torch/reflection/accum_reduce.h>
-#include <rayd/torch/runtime/optix_context.h>
-#include <rayd/torch/reflection/accum_params.h>
+#include <src/reflection/accum_reduce.h>
+#include <src/runtime/optix_context.h>
+#include <src/reflection/accum_params.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>

@@ -1,6 +1,6 @@
 # RayD Concept-Axis Layout and Backend Thinning Plan
 
-Status: **proposed — no implementation work starts without approval.**
+Status: **executed — ADR-0039 and ADR-0040 govern the final layout.**
 
 Date: 2026-07-28
 
@@ -586,18 +586,18 @@ documented breaking migration; no accidental compatibility shell is added.
 The stable aggregate boundary and the leaf source headers are treated
 differently:
 
-- `rayd/torch/integration.h` keeps its exact spelling, identity, and API
-  version;
+- `rayd/integration/torch.h` keeps identity `rayd.torch.integration` and uses
+  API version 7 for this source-path break;
 - the current `rayd/torch/rf/*` and `rayd/shared/rf/*` leaf paths are removed,
   because retaining them would preserve the umbrella this plan is eliminating;
-- transmission headers move under `rayd/{shared,torch}/transmission/`;
-- scattering headers move under `rayd/{shared,torch}/scattering/`;
+- transmission headers move under `rayd/shared/transmission/` and `rayd/transmission/torch.h`;
+- scattering headers move under `rayd/shared/scattering/` and `rayd/scattering/torch.h`;
 - UTD and wedge-field headers move under the existing diffraction owner;
 - genuinely cross-concept field transport uses the explicit flat names
   `rayd/shared/field_transport.cuh` and
-  `rayd/torch/field_transport_ad.cuh`, not another category directory;
-- existing installed Dr.Jit include paths remain unchanged unless a separate
-  C++ API ADR approves a hard break.
+  `rayd/field_transport/torch_ad.cuh`, not another category directory;
+- ADR-0040 approves the installed Dr.Jit shared/multipath include hard break; a
+  forwarding header or compatibility include root is forbidden.
 
 ADR-0002 and ADR-0026 make several current `rf/` leaf headers public
 source-level contracts for Channel. Their path and ownership-namespace clauses
@@ -683,17 +683,17 @@ cmake/
 downstream pin must change atomically. The bundle remains passive, relocatable,
 fully manifested, and compiled in the consumer's graph.
 
-### P4 — Preserve ADR-0028 stable integration identity
+### P4 — Preserve ADR-0028 identity through the ADR-0040 path break
 
 Moving the source file does not authorize a new include identity. The bundle
 must still expose:
 
 ```cpp
-#include <rayd/torch/integration.h>
+#include <rayd/integration/torch.h>
 ```
 
 with exact identity `rayd.torch.integration` and current
-`kIntegrationApiVersion = 6`, unless an independent API change is approved.
+`kIntegrationApiVersion = 7`, as approved by ADR-0040; no forwarding include is provided.
 
 ### P5 — Freeze all path-indexed governance before movement
 

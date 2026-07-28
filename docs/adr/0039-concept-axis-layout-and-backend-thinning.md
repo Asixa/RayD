@@ -24,11 +24,11 @@ The generic `rf/` source umbrella and ownership namespace are retired in the sam
 - passive complex, medium, Fresnel, layer-stack, and transmission sequence code is owned by `rayd/{shared,torch}/transmission` and `rayd::shared::transmission`;
 - resident-table, ensemble, patch, and chain scattering code is owned by `rayd/{shared,torch}/scattering` and the corresponding scattering namespaces;
 - UTD and wedge-field code is owned by diffraction, with backend-neutral UTD code under `rayd/shared/diffraction` and `rayd::shared::diffraction`;
-- genuinely cross-concept field transport uses flat `rayd/shared/field_transport.cuh` and `rayd/torch/field_transport_ad.cuh` owners.
+- genuinely cross-concept field transport uses `rayd/shared/field_transport.cuh` and `rayd/field_transport/torch_ad.cuh` owners.
 
 No forwarding `rf/` headers, namespace aliases, copied helpers, runtime owner selection, or compatibility shims are added. Channel must update its direct includes, qualified names, RayD pin, and source-manifest digest atomically before the renamed source ABI is active downstream.
 
-The passive Torch source resource remains exactly `rayd/torch/_source`, but its internal canonical source tree is `torch/CMakeLists.txt`, `include/`, `src/`, and `cmake/`, plus its metadata and license. It remains passive, relocatable, fully manifested, and compiled in the consumer graph. The durable include `rayd/torch/integration.h`, identity `rayd.torch.integration`, and `kIntegrationApiVersion = 6` do not change.
+The passive Torch source resource remains exactly `rayd/torch/_source`, but its internal canonical source tree is `torch/CMakeLists.txt`, `include/`, `src/`, and `cmake/`, plus its metadata and license. It remains passive, relocatable, fully manifested, and compiled in the consumer graph. ADR-0040 subsequently moves the durable include to `rayd/integration/torch.h` and advances `kIntegrationApiVersion` to `7`, while preserving identity `rayd.torch.integration`.
 
 CUDA translation-unit consolidation may map several historical logical units to one physical source only when owner, compiler, numeric profile, registration lifetime, ABI, and activation boundary match. `contracts/compile_policy.json` retains all 80 logical TU roles under stable concept names and preserves D1-D10 semantics while recording the final physical source for each role; every logical entry mapped to one physical compile must agree with that compile's profile, target, kind, architecture, and option. No CUDA numeric flag changes are authorized.
 

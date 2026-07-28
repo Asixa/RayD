@@ -1,4 +1,4 @@
-"""The process-per-GPU recipes under `examples/distributed`.
+"""The process-per-GPU recipes under `examples/torch/distributed`.
 
 The examples are the documented multi-GPU route for the Dr.Jit backend and the
 cluster-scale route for both backends, so they are covered the way a user runs
@@ -33,7 +33,9 @@ from pathlib import Path
 import torch
 
 
-_EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "distributed"
+_EXAMPLES = (
+    Path(__file__).resolve().parents[2] / "examples" / "torch" / "distributed"
+)
 _INTERSECT_EXAMPLE = _EXAMPLES / "ddp_intersect_train.py"
 _ACCUM_EXAMPLE = _EXAMPLES / "ddp_accum_grids.py"
 

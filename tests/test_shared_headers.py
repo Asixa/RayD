@@ -13,13 +13,13 @@ class SharedHeaderTests(unittest.TestCase):
         self.assertFalse((ROOT / "include" / "rayd" / "shared" / "utd").exists())
 
     def test_backends_use_canonical_include(self):
-        multipath = ROOT / "include" / "rayd" / "shared" / "multipath"
-        shared_algo = (multipath / "diffraction_accumulation_algo.h").read_text(
+        diffraction = ROOT / "include" / "rayd" / "shared" / "diffraction"
+        shared_algo = (diffraction / "accumulation_algo.h").read_text(
             encoding="utf-8"
         )
         self.assertIn("<rayd/shared/diffraction/utd_math.h>", shared_algo)
         self.assertNotIn("<utd/", shared_algo)
-        shared_device = (multipath / "diffraction_accumulation_device.cuh").read_text(
+        shared_device = (diffraction / "accumulation_optix_device.cuh").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("<utd/", shared_device)
@@ -31,7 +31,7 @@ class SharedHeaderTests(unittest.TestCase):
         for source in sources:
             text = source.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/shared/multipath/diffraction_accumulation_device.cuh>",
+                "<rayd/shared/diffraction/accumulation_optix_device.cuh>",
                 text,
             )
             self.assertNotIn("<utd/", text)

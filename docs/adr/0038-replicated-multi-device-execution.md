@@ -1,6 +1,6 @@
 # ADR-0038: Replicated multi-device and chunked execution
 
-- Status: Accepted
+- Status: Accepted; Python source-owner paths superseded by ADR-0040
 - Date: 2026-07-27
 - Decision ID: `replicated-multi-device-execution`
 - Scope: how RayD uses more than one GPU -- scene replication and batch

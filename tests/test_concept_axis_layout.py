@@ -74,6 +74,115 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         self.assertEqual(rf_directories, [])
         self.assertEqual(rf_namespaces, [])
 
+    def test_drjit_public_headers_are_concept_and_backend_qualified(self):
+        include_root = ROOT / "include" / "rayd"
+        self.assertEqual(
+            [path.name for path in include_root.iterdir() if path.is_file()],
+            [],
+            "include/rayd may contain concept directories only",
+        )
+        expected = {
+            "core/drjit.h",
+            "core/drjit/types.h",
+            "core/drjit/utils.h",
+            "diagnostics/drjit/native_launch_audit.h",
+            "rt/drjit/optix.h",
+            "ray/drjit.h",
+            "math/drjit/transform.h",
+            "scene/drjit.h",
+            "scene/drjit/mesh.h",
+            "scene/drjit/scene_optix.h",
+            "edge/drjit.h",
+            "edge/drjit/edge_bvh.h",
+            "edge/drjit/edge_bvh_config.h",
+            "edge/drjit/edge_optix_params.h",
+            "edge/drjit/scene_edge.h",
+            "edge/drjit/scene_edge_optix.h",
+            "surfel/drjit.h",
+            "surfel/drjit/surfel_optix.h",
+            "surfel/drjit/surfel_trace_params.h",
+            "trace/drjit/trace_backend.h",
+            "trace/drjit/cuda_trace_backend.h",
+            "trace/drjit/optix_trace_backend.h",
+            "trace/drjit/triangle_bvh_gpu.h",
+        }
+        missing = sorted(path for path in expected if not (include_root / path).is_file())
+        self.assertEqual(missing, [])
+    def test_torch_backend_private_headers_are_concept_owned(self):
+        expected = {
+            "src/bindings/tensor_contract.h",
+            "src/camera/camera.h",
+            "src/camera/camera_kernels.cuh",
+            "src/diffraction/accum_ad.h",
+            "src/diffraction/accum_params.h",
+            "src/diffraction/accum_reduce.h",
+            "src/diffraction/common.h",
+            "src/diffraction/paths_init.h",
+            "src/diffraction/paths_params.h",
+            "src/diffraction/pipeline.h",
+            "src/edge/bvh.h",
+            "src/edge/kernels.h",
+            "src/edge/optix_params.h",
+            "src/penetration/segment_penetration_kernels.h",
+            "src/penetration/segment_penetration_params.h",
+            "src/reflection/accum_params.h",
+            "src/reflection/accum_reduce.h",
+            "src/reflection/complex.cuh",
+            "src/reflection/dedup.h",
+            "src/reflection/epc_field.h",
+            "src/reflection/epc_params.h",
+            "src/reflection/kernels.h",
+            "src/reflection/pipeline.h",
+            "src/reflection/trace_params.h",
+            "src/runtime/diagnostics.h",
+            "src/runtime/math.cuh",
+            "src/runtime/native_compat.h",
+            "src/runtime/optix_context.h",
+            "src/runtime/optix_pipeline.h",
+            "src/scene/cache.h",
+            "src/scene/cache_kernels.h",
+            "src/scene/geometry_kernels.h",
+            "src/scene/multipath_cuda.h",
+            "src/scene/optix_intersect_params.h",
+            "src/scene/triangle_bvh.h",
+            "src/sdf/device_math.cuh",
+            "src/sdf/kernels.h",
+            "src/visibility/axial_edge_visibility_params.h",
+            "src/visibility/visibility.h",
+            "src/visibility/visibility_params.h",
+        }
+        actual = set()
+        for path in (ROOT / "src").rglob("*"):
+            if path.suffix not in {".h", ".cuh"}:
+                continue
+            if "namespace rayd::torch_backend" in path.read_text(encoding="utf-8"):
+                actual.add(path.relative_to(ROOT).as_posix())
+        self.assertEqual(actual, expected)
+        self.assertFalse((ROOT / "include/rayd/torch").exists())
+    def test_torch_generated_ptx_headers_are_concept_owned(self):
+        cmake = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
+        expected = {
+            "rayd/scene/intersection_torch_ptx.h",
+            "rayd/edge/point_ray_torch_ptx.h",
+            "rayd/edge/topk_torch_ptx.h",
+            "rayd/reflection/trace_torch_ptx.h",
+            "rayd/reflection/epc_torch_ptx.h",
+            "rayd/reflection/accumulation_torch_ptx.h",
+            "rayd/visibility/segment_torch_ptx.h",
+            "rayd/visibility/axial_edge_torch_ptx.h",
+            "rayd/diffraction/paths_torch_ptx.h",
+            "rayd/diffraction/accumulation_torch_ptx.h",
+            "rayd/penetration/segment_torch_ptx.h",
+        }
+        actual = set(re.findall(r"generated/(rayd/[^\"]+_torch_ptx\.h)", cmake))
+        self.assertEqual(actual, expected)
+        self.assertNotIn("generated/rayd/torch", cmake)
+        self.assertEqual(cmake.count('-I "${RAYD_ROOT_DIR}"'), 11)
+        for path in (ROOT / "src").rglob("*"):
+            if not path.is_file() or path.suffix not in PRODUCTION_SUFFIXES:
+                continue
+            source = path.read_text(encoding="utf-8")
+            self.assertNotRegex(source, r"#include\s*<rayd/torch/[^>]*ptx\.h>")
     def test_shared_physical_sources_have_one_root_owner(self):
         expected = {
             "src/bvh/build_shared.cu",
@@ -103,6 +212,19 @@ class ConceptAxisLayoutTests(unittest.TestCase):
             with self.subTest(unit=f"{entry['backend']}/{entry['unit']}"):
                 self.assertTrue((ROOT / entry["source"]).is_file(), entry["source"])
 
+    def test_public_python_frontends_share_one_namespace_source_root(self):
+        namespace = ROOT / "python" / "rayd"
+        self.assertFalse((namespace / "__init__.py").exists())
+        self.assertFalse((ROOT / "drjit" / "python").exists())
+        self.assertFalse((ROOT / "torch" / "python").exists())
+        self.assertEqual(
+            {path.name for path in (namespace / "drjit").iterdir() if path.is_file()},
+            {"__init__.py", "__init__.pyi", "_C.pyi", "path_exchange.py", "py.typed"},
+        )
+        self.assertEqual(
+            {path.name for path in (namespace / "torch").iterdir() if path.is_file()},
+            {"__init__.py", "path_exchange.py", "py.typed"},
+        )
     def test_private_python_implementation_ownership_is_disjoint(self):
         implementation = ROOT / "python" / "rayd" / "_impl"
         self.assertFalse((implementation / "__init__.py").exists())

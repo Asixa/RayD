@@ -1,4 +1,4 @@
-#include <rayd/torch/camera/camera_kernels.cuh>
+#include <src/camera/camera_kernels.cuh>
 
 #include <torch/csrc/stable/accelerator.h>
 #include <torch/csrc/stable/c/shim.h>

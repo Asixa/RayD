@@ -281,8 +281,8 @@ rayd_cuda_object(
     POSIX_NO_EXTENDED_LAMBDA
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/edge/edge_bvh.h"
-        "${RAYD_INCLUDE_DIR}/edge/edge_bvh_config.h"
+        "${RAYD_INCLUDE_DIR}/edge/drjit/edge_bvh.h"
+        "${RAYD_INCLUDE_DIR}/edge/drjit/edge_bvh_config.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_build.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/bvh_types.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
@@ -334,8 +334,8 @@ rayd_cuda_object(
     SOURCE "${RAYD_SOURCE_DIR}/scene/triangle_bvh_jit.cu"
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/trace/triangle_bvh_gpu.h"
-        "${RAYD_INCLUDE_DIR}/native_launch_audit.h"
+        "${RAYD_INCLUDE_DIR}/trace/drjit/triangle_bvh_gpu.h"
+        "${RAYD_INCLUDE_DIR}/diagnostics/drjit/native_launch_audit.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/build.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/topology.h"
@@ -349,11 +349,11 @@ rayd_cuda_object(
     EXTRA_FLAGS --use_fast_math
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/trace/cuda_multipath_gpu.h"
-        "${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+        "${RAYD_SOURCE_DIR}/scene/cuda_multipath_gpu_jit.h"
+        "${RAYD_INCLUDE_DIR}/diagnostics/drjit/native_launch_audit.h"
+        "${RAYD_SOURCE_DIR}/reflection/accumulation_params_jit.h"
+        "${RAYD_SOURCE_DIR}/diffraction/paths_params_jit.h"
+        "${RAYD_SOURCE_DIR}/diffraction/accumulation_params_jit.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/cuda_bvh_traverser.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query_device.cuh"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/bvh/triangle_query.h"
@@ -363,46 +363,46 @@ rayd_cuda_object(
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/trace_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/visibility/segment_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/accumulation_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/utd_math.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/trace_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/visibility/segment_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_params.h"
 )
 rayd_cuda_object(
     NAME reflection_kernels_jit
     SOURCE "${RAYD_SOURCE_DIR}/reflection/reflection_kernels_jit.cu"
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_dedup.h"
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_epc_field.h"
-        "${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_dedup.h"
+        "${RAYD_SOURCE_DIR}/reflection/dedup_jit.h"
+        "${RAYD_SOURCE_DIR}/reflection/epc_field_jit.h"
+        "${RAYD_INCLUDE_DIR}/diagnostics/drjit/native_launch_audit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/dedup.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/field_math.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_field_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_field_device.cuh"
 )
 rayd_cuda_object(
     NAME dedup_shared
     SOURCE "${RAYD_SOURCE_DIR}/reflection/dedup_shared.cu"
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_dedup.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/dedup.h"
 )
 rayd_cuda_object(
     NAME diffraction_ad_jit
     SOURCE "${RAYD_SOURCE_DIR}/diffraction/diffraction_ad_jit.cu"
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_ad.h"
-        "${RAYD_INCLUDE_DIR}/native_launch_audit.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_ad_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_ad_vjp_device.cuh"
+        "${RAYD_SOURCE_DIR}/diffraction/accumulation_ad_jit.h"
+        "${RAYD_INCLUDE_DIR}/diagnostics/drjit/native_launch_audit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/accumulation_ad_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/accumulation_ad_vjp_device.cuh"
 )
 
 # OptiX device programs. Wheels consume the committed *_ptx.h headers; the
@@ -419,14 +419,15 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_REFLECTION_TRACE_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_trace_params.h"
+        "${RAYD_SOURCE_DIR}/reflection/trace_params_jit.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_trace_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_trace_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/optix_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/optix_primitive_id.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/optix_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/trace_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/trace_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/trace_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
@@ -439,11 +440,12 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_REFLECTION_EPC_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_epc_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/reflection_epc_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_epc_algo.h"
+        "${RAYD_SOURCE_DIR}/reflection/epc_params_jit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/optix_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/optix_primitive_id.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
@@ -459,12 +461,13 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/reflection_accumulation_params.h"
+        "${RAYD_SOURCE_DIR}/reflection/accumulation_params_jit.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/field_math.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/reflection_accumulation_algo.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/optix_traverser.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/accumulation_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/optix_traverser.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/reflection/optix_hit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/optix_primitive_id.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
@@ -478,21 +481,21 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation_params.h"
+        "${RAYD_INCLUDE_DIR}/diffraction/drjit/accumulation.h"
+        "${RAYD_SOURCE_DIR}/diffraction/accumulation_params_jit.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/utd_types.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/utd_math.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_accumulation_algo.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/accumulation_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/accumulation_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
-        "${RAYD_INCLUDE_DIR}/rayd.h"
-        "${RAYD_INCLUDE_DIR}/types.h"
-        "${RAYD_INCLUDE_DIR}/utils.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit/types.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit/utils.h"
 )
 rayd_embed_ptx(
     NAME diffraction_paths
@@ -501,11 +504,11 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_DIFFRACTION_PATHS_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_paths.h"
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_paths_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_contracts.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/diffraction_paths_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/diffraction_paths_algo.h"
+        "${RAYD_INCLUDE_DIR}/diffraction/drjit/paths.h"
+        "${RAYD_SOURCE_DIR}/diffraction/paths_params_jit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/paths_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/paths_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/utd_math.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/diffraction/utd_types.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
@@ -513,10 +516,10 @@ rayd_embed_ptx(
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
-        "${RAYD_INCLUDE_DIR}/rayd.h"
-        "${RAYD_INCLUDE_DIR}/types.h"
-        "${RAYD_INCLUDE_DIR}/utils.h"
-        "${RAYD_INCLUDE_DIR}/multipath/diffraction_accumulation.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit/types.h"
+        "${RAYD_INCLUDE_DIR}/core/drjit/utils.h"
+        "${RAYD_INCLUDE_DIR}/diffraction/drjit/accumulation.h"
 )
 rayd_embed_ptx(
     NAME segment_visibility
@@ -525,11 +528,11 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/multipath/segment_visibility_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/device_hit.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_params.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/segment_visibility_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/multipath/segment_visibility_algo.h"
+        "${RAYD_SOURCE_DIR}/visibility/segment_params_jit.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/visibility/segment_params.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/optix_primitive_id.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/visibility/segment_optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/visibility/segment_algo.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
@@ -543,7 +546,7 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_SURFEL_TRACE_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/surfel/surfel_trace_params.h"
+        "${RAYD_INCLUDE_DIR}/surfel/drjit/surfel_trace_params.h"
 )
 rayd_embed_ptx(
     NAME edge_optix
@@ -552,12 +555,12 @@ rayd_embed_ptx(
     OPTION RAYD_REGENERATE_EDGE_OPTIX_PTX
     OUT_SOURCES RAYD_CORE_SOURCE_FILES
     DEPENDS
-        "${RAYD_INCLUDE_DIR}/edge/edge_optix_params.h"
+        "${RAYD_INCLUDE_DIR}/edge/drjit/edge_optix_params.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_contracts.h"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/scene_edge_device.cuh"
-        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/optix/pipeline_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/optix_contracts.h"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/edge/optix_device.cuh"
+        "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/optix_pipeline_contracts.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/contracts.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
         "${RAYD_SHARED_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
@@ -589,6 +592,7 @@ target_include_directories(rayd_core
     $<BUILD_INTERFACE:${RAYD_INCLUDE_ROOT}>
     $<BUILD_INTERFACE:${RAYD_SHARED_INCLUDE_DIR}>
     PRIVATE
+    ${RAYD_ROOT}
     ${RAYD_SOURCE_DIR}/scene
     ${RAYD_SOURCE_DIR}/runtime
     ${RAYD_GENERATED_PTX_DIR}
@@ -646,14 +650,69 @@ install(TARGETS rayd_core
     LIBRARY DESTINATION rayd/drjit/lib
     RUNTIME DESTINATION rayd/drjit/bin
 )
-install(DIRECTORY ${RAYD_INCLUDE_ROOT}/rayd
-    DESTINATION rayd/drjit/include
-    FILES_MATCHING
-        PATTERN "*.h"
-        PATTERN "*.cuh"
-        PATTERN "shared" EXCLUDE
-        PATTERN "torch" EXCLUDE
-)
+# Backend ownership is explicit: concept-first Torch headers now live beside
+# Dr.Jit headers, so directory-name exclusion can no longer define a wheel API.
+install(FILES
+    ${RAYD_INCLUDE_DIR}/core/drjit.h
+    DESTINATION rayd/drjit/include/rayd/core)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/core/drjit/types.h
+    ${RAYD_INCLUDE_DIR}/core/drjit/utils.h
+    DESTINATION rayd/drjit/include/rayd/core/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/diagnostics/drjit/native_launch_audit.h
+    DESTINATION rayd/drjit/include/rayd/diagnostics/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/rt/drjit/optix.h
+    DESTINATION rayd/drjit/include/rayd/rt/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/ray/drjit.h
+    DESTINATION rayd/drjit/include/rayd/ray)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/math/drjit/transform.h
+    DESTINATION rayd/drjit/include/rayd/math/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/edge/drjit.h
+    DESTINATION rayd/drjit/include/rayd/edge)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/edge/drjit/edge_bvh.h
+    ${RAYD_INCLUDE_DIR}/edge/drjit/edge_bvh_config.h
+    ${RAYD_INCLUDE_DIR}/edge/drjit/edge_optix_params.h
+    ${RAYD_INCLUDE_DIR}/edge/drjit/scene_edge.h
+    ${RAYD_INCLUDE_DIR}/edge/drjit/scene_edge_optix.h
+    DESTINATION rayd/drjit/include/rayd/edge/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/scene/drjit.h
+    DESTINATION rayd/drjit/include/rayd/scene)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/scene/drjit/mesh.h
+    ${RAYD_INCLUDE_DIR}/scene/drjit/scene_optix.h
+    DESTINATION rayd/drjit/include/rayd/scene/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/surfel/drjit.h
+    DESTINATION rayd/drjit/include/rayd/surfel)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/surfel/drjit/surfel_optix.h
+    ${RAYD_INCLUDE_DIR}/surfel/drjit/surfel_trace_params.h
+    DESTINATION rayd/drjit/include/rayd/surfel/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/trace/drjit/cuda_trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/drjit/optix_trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/drjit/trace_backend.h
+    ${RAYD_INCLUDE_DIR}/trace/drjit/triangle_bvh_gpu.h
+    DESTINATION rayd/drjit/include/rayd/trace/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/diffraction/drjit/accumulation.h
+    ${RAYD_INCLUDE_DIR}/diffraction/drjit/paths.h
+    DESTINATION rayd/drjit/include/rayd/diffraction/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/reflection/drjit/accumulation.h
+    ${RAYD_INCLUDE_DIR}/reflection/drjit/epc.h
+    ${RAYD_INCLUDE_DIR}/reflection/drjit/trace.h
+    DESTINATION rayd/drjit/include/rayd/reflection/drjit)
+install(FILES
+    ${RAYD_INCLUDE_DIR}/visibility/drjit/segment.h
+    DESTINATION rayd/drjit/include/rayd/visibility/drjit)
 install(DIRECTORY ${RAYD_SHARED_INCLUDE_DIR}/rayd/shared
     DESTINATION rayd/drjit/include/rayd
     FILES_MATCHING

@@ -38,9 +38,9 @@ RayD 仍然只负责可微几何、边查询与 multipath primitives，不扩展
 
 - `shared/contracts/operations.json` 已定义跨 Dr.Jit/Torch 的操作、结果与 AD 契约；
 - **[已核查]** `backends/drjit/src/edge/scene_edge.cpp`（2271 行，**grep 验证零 OptiX 引用**）+ `src/edge/edge_bvh.cu`（905）+ `shared/src/edge/bvh_build.cu`（617）/ `bvh_query.cu`（511）/ `edge_distance.cu`（156）构成约 4400 行**已可用、可微、支持 refit 的纯 CUDA GPU BVH**。这是整个移植最强的资产：它已经证明了 non-OptiX 模式在 RayD 中可行。
-- **[已核查]** 该后端**运行时可选**：`Scene(edge_bvh_backend=...)`，枚举 `DrJit`/`Optix`(默认)/`OptixDrJit` 定义在 `backends/drjit/include/rayd/scene/scene.h:45-50`，解析在 `src/scene/scene.cpp:66-82`，Python 入口 `src/rayd.cpp:1760` → `rd.Scene(edge_bvh_backend="drjit")`。是构造参数，**不是环境变量**。
+- **[已核查]** 该后端**运行时可选**：`Scene(edge_bvh_backend=...)`，枚举 `DrJit`/`Optix`(默认)/`OptixDrJit` 定义在 `include/rayd/scene/drjit.h:45-50`，解析在 `src/scene/scene.cpp:66-82`，Python 入口 `src/rayd.cpp:1760` → `rd.Scene(edge_bvh_backend="drjit")`。是构造参数，**不是环境变量**。
 - **[已核查]** `shared/include/rayd/shared/math/vec3.h:5-9` 已是 host/device 双兼容：`__CUDACC__` 下为 `__host__ __device__ __forceinline__`，否则为普通 `inline`，且只依赖 `<cmath>`。**中立向量类型今天就能在 CPU 上编译**，宏模式已经存在——这是算法层去 CUDA 化的现成起点（见 §6）。
-- **[已核查]** Dr.Jit 后端**不需要 OptiX SDK**：`backends/drjit/include/rayd/optix.h` 手写声明 host API；PTX 已签入仓库（`.target sm_70`），仅在 `RAYD_REGENERATE_*_PTX`（默认 `OFF`，`CMakeLists.txt:14-21`）时才需要 SDK 重新生成。§14 中「CUDA-only build 不需要 OptiX SDK」这条硬性要求，**对 drjit 后端已经成立**。
+- **[已核查]** Dr.Jit 后端**不需要 OptiX SDK**：`include/rayd/rt/drjit/optix.h` 手写声明 host API；PTX 已签入仓库（`.target sm_70`），仅在 `RAYD_REGENERATE_*_PTX`（默认 `OFF`，`CMakeLists.txt:14-21`）时才需要 SDK 重新生成。§14 中「CUDA-only build 不需要 OptiX SDK」这条硬性要求，**对 drjit 后端已经成立**。
 - `Scene::intersect()` 已采用 detached broad phase 加 AD geometry re-gather/recompute 的 fixed-winner 设计；scene-global primitive、mesh-local primitive 和 edge ID 已有明确映射。
 
 ### 2.2 OptiX 耦合的真实形状：结构上深，语义上浅

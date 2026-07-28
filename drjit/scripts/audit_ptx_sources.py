@@ -141,38 +141,39 @@ ADOPTION = {
     # last commit that touched the module's committed PTX header. Each entry is
     # positive evidence that the header may already be stale; an empty list means
     # only that git history shows no such drift, not that the header is current.
-    # Reproduce with --git-drift.
+    # Paths below use their current canonical spelling; short commits retain the
+    # original pre-migration evidence. Reproduce current drift with --git-drift.
     "sources_committed_after_header": {
         "diffraction_accumulation": [
-            "backends/drjit/include/rayd/multipath/diffraction_accumulation_params.h @2634aa1",
-            "shared/include/rayd/shared/multipath/diffraction_accumulation_algo.h @2634aa1",
-            "shared/include/rayd/shared/utd/utd_math.h @346416f",
-            "shared/include/rayd/shared/utd/utd_types.h @346416f",
+            "src/diffraction/accumulation_params_jit.h @2634aa1",
+            "include/rayd/shared/diffraction/accumulation_algo.h @2634aa1",
+            "include/rayd/shared/diffraction/utd_math.h @346416f",
+            "include/rayd/shared/diffraction/utd_types.h @346416f",
         ],
         "diffraction_paths": [
-            "backends/drjit/include/rayd/multipath/diffraction_paths_params.h @2634aa1",
-            "shared/include/rayd/shared/multipath/diffraction_paths_algo.h @cf51e4c",
-            "shared/include/rayd/shared/utd/utd_math.h @346416f",
-            "shared/include/rayd/shared/utd/utd_types.h @346416f",
+            "src/diffraction/paths_params_jit.h @2634aa1",
+            "include/rayd/shared/diffraction/paths_algo.h @cf51e4c",
+            "include/rayd/shared/diffraction/utd_math.h @346416f",
+            "include/rayd/shared/diffraction/utd_types.h @346416f",
         ],
         "edge_optix": [
-            "shared/include/rayd/shared/edge/edge_distance_math.h @3cf3fb1",
-            "shared/include/rayd/shared/math/vec3.h @a139d93",
-            "shared/include/rayd/shared/rt/numeric_policy.h @3cf3fb1",
-            "shared/include/rayd/shared/rt/qualifiers.h @a139d93",
+            "include/rayd/shared/edge/edge_distance_math.h @3cf3fb1",
+            "include/rayd/shared/math/vec3.h @a139d93",
+            "include/rayd/shared/rt/numeric_policy.h @3cf3fb1",
+            "include/rayd/shared/rt/qualifiers.h @a139d93",
         ],
         "reflection_accumulation": [
-            "backends/drjit/include/rayd/multipath/reflection_accumulation_params.h @2634aa1",
-            "shared/include/rayd/shared/multipath/reflection_accumulation_algo.h @2634aa1",
+            "src/reflection/accumulation_params_jit.h @2634aa1",
+            "include/rayd/shared/reflection/accumulation_algo.h @2634aa1",
         ],
         "reflection_epc": [
-            "shared/include/rayd/shared/multipath/reflection_epc_algo.h @2634aa1",
+            "include/rayd/shared/reflection/epc_algo.h @2634aa1",
         ],
         "reflection_trace": [
-            "shared/include/rayd/shared/multipath/reflection_trace_algo.h @2634aa1",
+            "include/rayd/shared/reflection/trace_algo.h @2634aa1",
         ],
         "segment_visibility": [
-            "shared/include/rayd/shared/multipath/segment_visibility_algo.h @2634aa1",
+            "include/rayd/shared/visibility/segment_algo.h @2634aa1",
         ],
         "surfel_trace": [],
     },

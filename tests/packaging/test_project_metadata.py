@@ -38,6 +38,15 @@ class DistributionMetadataTests(unittest.TestCase):
     def test_meta_distribution_owns_no_python_package(self):
         self.assertEqual(self.meta["tool"]["setuptools"]["packages"], [])
 
+    def test_backend_wheels_map_only_their_public_namespace_portion(self):
+        self.assertEqual(
+            self.drjit["tool"]["scikit-build"]["wheel"]["packages"],
+            {"rayd/drjit": "../python/rayd/drjit"},
+        )
+        self.assertEqual(
+            self.torch["tool"]["scikit-build"]["wheel"]["packages"],
+            {"rayd/torch": "../python/rayd/torch"},
+        )
     def test_release_publishes_meta_after_backend_distributions(self):
         workflow = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
         self.assertIn("publish-drjit:", workflow)

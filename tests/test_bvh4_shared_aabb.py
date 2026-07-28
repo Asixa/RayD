@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_HEADER = ROOT / "include/rayd/shared/edge/edge_aabb.h"
 SHARED_SOURCE = ROOT / "src/edge/edge_shared.cu"
-TORCH_HEADER = ROOT / "include/rayd/torch/edge/bvh.h"
+TORCH_HEADER = ROOT / "src/edge/bvh.h"
 TORCH_SOURCE = ROOT / "src/edge/edge_bvh.cu"
 TORCH_CMAKE = ROOT / "torch/CMakeLists.txt"
 

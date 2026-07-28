@@ -62,8 +62,8 @@ PROFILE_BY_FLAGS = {
 }
 
 INCLUDE_DIRS = {
-    "drjit": (ROOT / "include", DRJIT),
-    "torch": (ROOT / "include", TORCH),
+    "drjit": (ROOT, ROOT / "include", DRJIT),
+    "torch": (ROOT, ROOT / "include", TORCH),
 }
 
 

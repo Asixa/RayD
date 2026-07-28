@@ -88,15 +88,15 @@ The native operators support Torch reverse-mode VJP and forward-mode JVP for the
 ## Native Source Integration
 
 Native downstream projects built in the same CMake/LibTorch graph use the
-versioned typed C++ surface in `rayd/torch/integration.h`; they do not load a
+versioned typed C++ surface in `rayd/integration/torch.h`; they do not load a
 second RayD Python extension or use a dynamic symbol registry. Solver-neutral
 transmission and scattering device math is exposed through the corresponding
 `rayd/shared/{transmission,scattering}/` concept headers. Torch-specific
-cross-concept field AD helpers live at `rayd/torch/field_transport_ad.cuh`.
+cross-concept field AD helpers live at `rayd/field_transport/torch_ad.cuh`.
 
 The `rayd-torch` wheel also carries a relocatable source bundle at
 `rayd/torch/_source`. `rayd-source.json` records the distribution version,
-source commit and repository, integration ABI identity, and the SHA-256 of a
+source commit and repository, integration ABI identity, the complete nine-header public API set and its aggregate SHA-256, and the SHA-256 of a
 complete per-file manifest. The bundle contains the canonical include, source,
 and build inputs needed for a same-graph native build. Downstreams locate this
 passive
@@ -155,8 +155,8 @@ implementation remains dormant until Channel pins it, switches a complete
 family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
-The stable source-level boundary is named `rayd/torch/integration.h`, its exact
-identity is `rayd.torch.integration`, and its numeric API version is `6`.
+The stable source-level boundary is named `rayd/integration/torch.h`, its exact
+identity is `rayd.torch.integration`, and its numeric API version is `7`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See
 [`docs/adr/0028-stable-typed-integration-naming.md`](../docs/adr/0028-stable-typed-integration-naming.md).
@@ -235,7 +235,7 @@ intersect, nearest edge, reflection trace, diffraction paths, and direct
 diffraction accumulation. Far-from-surface nearest-edge queries use a tiled
 exact fallback scan instead of the scene-diagonal OptiX tier. Release-size and
 Nsight-counter-backed runs remain the broader performance gate. See
-`docs/torch_gap_analysis.md` and `docs/torch_performance.md`.
+[`torch_gap_analysis.md`](../docs/torch/torch_gap_analysis.md) and
 
 ## Dependencies
 

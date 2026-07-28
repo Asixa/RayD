@@ -1,4 +1,4 @@
-#include <rayd/torch/edge/bvh.h>
+#include <src/edge/bvh.h>
 #include <rayd/shared/edge/edge_aabb.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_reduce.cuh>

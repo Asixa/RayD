@@ -1,11 +1,11 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/torch/math.cuh>
-#include <rayd/torch/edge/optix_params.h>
+#include <src/runtime/math.cuh>
+#include <src/edge/optix_params.h>
 #include <rayd/shared/contracts.h>
 #include <rayd/shared/edge/edge_distance_math.h>
-#include <rayd/shared/optix/scene_edge_device.cuh>
+#include <rayd/shared/edge/optix_device.cuh>
 
 namespace rayd::torch_backend {
 

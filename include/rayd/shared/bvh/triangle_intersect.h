@@ -9,7 +9,7 @@
 // primitive-only: no Dr.Jit, Torch, OptiX, or CUDA runtime dependency.
 //
 // The returned (u, v) match the Moller-Trumbore convention used by
-// include/rayd/utils.h ray_intersect_triangle: a triangle given
+// include/rayd/core/drjit/utils.h ray_intersect_triangle: a triangle given
 // as (p0, e1, e2) with vertices A = p0, B = p0 + e1, C = p0 + e2 has hit point
 // P = p0 + u*e1 + v*e2 = (1 - u - v)*A + u*B + v*C. So u is the barycentric
 // weight of B and v the weight of C, and t is measured along the (unnormalized)

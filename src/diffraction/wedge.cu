@@ -1,12 +1,12 @@
-#include <rayd/torch/diffraction/wedge.h>
+#include <rayd/diffraction/torch.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/complex.h>
 #include <rayd/shared/field_transport.cuh>
-#include <rayd/torch/bindings/tensor_contract.h>
-#include <rayd/torch/field_transport_ad.cuh>
+#include <src/bindings/tensor_contract.h>
+#include <rayd/field_transport/torch_ad.cuh>
 
 #include <array>
 #include <cmath>

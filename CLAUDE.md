@@ -20,9 +20,9 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 
 ## Architecture
 
-- `include/rayd/`, `src/**/*_jit.*`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
-- `include/rayd/torch/`, unsuffixed files under `src/`: Torch backend, dispatcher, and autograd bindings
-- `include/rayd/shared/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
+- `include/rayd/<concept>/drjit.h` and `include/rayd/<concept>/drjit/`, `src/**/*_jit.*`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
+- `include/rayd/<concept>/torch.h`, unsuffixed files under `src/<concept>/`: public Torch typed APIs plus private dispatcher and autograd implementations
+- `include/rayd/shared/<concept>/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
 - `contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
@@ -33,9 +33,9 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 - `scene.visible(...)`: batched segment visibility queries
 - `scene.trace_refl_epc(...)` / `scene.trace_refl_epc_field(...)`: equivalent-path correction primitives for reflection paths
 - Dr.Jit variants under `src/{reflection,diffraction,visibility}/`: multipath result types, OptiX launch wrappers, and CUDA/OptiX kernels
-- `drjit/python/rayd/drjit/`, `torch/python/rayd/torch/`, plus their manifest-owned files under `python/rayd/_impl/`: the two backend Python packages; `rayd` itself is a PEP 420 namespace with no default backend
+- `python/rayd/drjit/`, `python/rayd/torch/`, and their manifest-owned files under `python/rayd/_impl/`: the two backend Python packages; `rayd` itself is a PEP 420 namespace with no default backend
 
-Public names follow `drjit/API_NAMING_STANDARD.md`; `drjit/API_RENAME.md` records the 2026-05-21 rename.
+Public names follow `docs/drjit/api_naming_standard.md`; `docs/drjit/api_rename.md` records the 2026-05-21 rename.
 
 ## Generic RF Scattering Ownership
 
@@ -47,7 +47,7 @@ their builders, lifecycle, seeds, topology, estimator, RNG/MIS, accumulation,
 metadata, and public results.
 
 - Declarations have one owner in
-  `include/rayd/torch/scattering/scattering.h`; shared table device math
+  `include/rayd/scattering/torch.h`; shared table device math
   has one owner in `include/rayd/shared/scattering/scattering_table.cuh`.
 - Move every family complete. Do not split primal from backward/JVP, copy a
   Channel implementation/header, include Channel private headers, or add a
@@ -85,8 +85,8 @@ remain higher-priority developer inputs and retain Git commit/remote/dirty
 validation.
 
 The same-graph Torch C++ boundary has one durable name:
-`rayd/torch/integration.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 6`. Do not add an `integration_v2` forwarding
+`rayd/integration/torch.h`, with exact identity `rayd.torch.integration` and
+numeric `kIntegrationApiVersion = 7`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
@@ -135,7 +135,7 @@ dispatcher, host count read, partial result, or fallback. See
 - If a native multipath call fails with `OptiX error in optixPipelineCreate(multipath)`, treat it first as a multipath OptiX pipeline configuration issue, not as an input/API issue.
 - The verified 2026-05-26 fix keeps scene/edge OptiX production flags separate from multipath flags: multipath uses production module optimization plus `RAYD_MULTIPATH_OPTIX_EXCEPTION_FLAGS=11`.
 - Trace-call count and instruction count are useful diagnostics, but they are not proof of root cause; do not split reflection tracing or add fallback launches unless tests prove the pipeline shape itself is the failing variable.
-- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `backends.drjit.tests.drjit.test_optix_pipeline_cold_create` for public API cold-create coverage.
+- Always verify in a fresh subprocess with the actually loaded conda `.pyd`, and run `tests.native.test_optix_pipeline_cold_create_jit` for public API cold-create coverage.
 - See `docs/optix_pipeline_create_failures.md` for the root-cause writeup and regression checklist.
 
 ## Committed PTX Source Identity

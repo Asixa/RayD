@@ -56,7 +56,7 @@ _RAY_STEP = 0.001953125
 
 _BARRIER_TIMEOUT = 120.0
 
-# `rayd.torch` is imported from the thin `torch/python` frontend; the cold-create
+# `rayd.torch` is imported from the thin root `python` frontend; the cold-create
 # subprocess needs the same directory on its `PYTHONPATH`.
 _PACKAGE_ROOT = Path(rt.__file__).resolve().parents[2]
 

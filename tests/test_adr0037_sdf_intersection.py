@@ -30,9 +30,7 @@ COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
 SPHERE_TRACE_PATH = (
     ROOT / "include" / "rayd" / "shared" / "sdf" / "sphere_trace.h"
 )
-DEVICE_MATH_PATH = (
-    ROOT / "include" / "rayd" / "torch" / "sdf" / "device_math.cuh"
-)
+DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "device_math.cuh"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 CAPABILITY_MODULES = {
     "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
@@ -107,7 +105,8 @@ class Adr0037RecordTests(AdrTestCase):
     def test_header_block_matches_the_repository_adr_shape(self) -> None:
         head = self.adr.splitlines()[:6]
         self.assertEqual(head[0], "# ADR-0037: Differentiable SDF ray intersection")
-        self.assertEqual(head[2], "- Status: Accepted")
+        self.assertRegex(head[2], r"^- Status: Accepted(?:; .+)?$")
+        self.assertIn("ADR-0040", head[2])
         self.assertEqual(head[3], "- Date: 2026-07-26")
         self.assertEqual(head[4], "- Decision ID: `differentiable-sdf-intersection`")
         self.assertTrue(head[5].startswith("- Scope:"))

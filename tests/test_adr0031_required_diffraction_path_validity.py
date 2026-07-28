@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TORCH_INCLUDE = ROOT / "include" / "rayd" / "torch"
+RAYD_INCLUDE = ROOT / "include" / "rayd"
 TORCH_SOURCE = ROOT / "src"
 TORCH_PYTHON = ROOT / "python" / "rayd" / "_impl"
 
@@ -22,18 +22,19 @@ def struct_body(text: str, name: str) -> str:
 
 class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
     def test_required_path_export_validity_survives_api6(self):
-        integration = read(TORCH_INCLUDE / "integration.h")
-        self.assertIn("kIntegrationApiVersion = 6", integration)
-        config = struct_body(integration, "DiffractionPathConfig")
+        integration = read(RAYD_INCLUDE / "integration" / "torch.h")
+        self.assertIn("kIntegrationApiVersion = 7", integration)
+        diffraction = read(RAYD_INCLUDE / "diffraction" / "torch.h")
+        config = struct_body(diffraction, "DiffractionPathConfig")
         self.assertEqual(config.count("at::Tensor active;"), 1)
         self.assertNotIn("std::optional<at::Tensor> active", config)
         self.assertIn(
             "std::optional<at::Tensor> active;",
-            struct_body(integration, "DiffractionAccumulationConfig"),
+            struct_body(diffraction, "DiffractionAccumulationConfig"),
         )
         self.assertIn(
             "std::optional<at::Tensor> active;",
-            struct_body(integration, "CoherentDiffractionConfig"),
+            struct_body(diffraction, "CoherentDiffractionConfig"),
         )
 
     def test_dispatch_and_public_python_require_active(self):
@@ -81,8 +82,8 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
             TORCH_SOURCE / "diffraction" / "paths_optix.cu"
         )
         shared = read(
-            ROOT / "include" / "rayd" / "shared" / "multipath"
-            / "diffraction_paths_algo.h"
+            ROOT / "include" / "rayd" / "shared" / "diffraction"
+            / "paths_algo.h"
         )
         for source in (optix, shared):
             self.assertIn("return params.active_mask[state_idx] != 0u;", source)

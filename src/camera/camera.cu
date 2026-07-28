@@ -1,5 +1,5 @@
-#include <rayd/torch/camera/camera.h>
-#include <rayd/torch/camera/camera_kernels.cuh>
+#include <src/camera/camera.h>
+#include <src/camera/camera_kernels.cuh>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

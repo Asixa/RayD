@@ -117,11 +117,11 @@ After changing a `.cu` OptiX kernel, regenerate and commit the matching embedded
 Run RayD tests:
 
 ```powershell
-python -m unittest backends.drjit.tests.drjit.test_reflection_epc -v
-python -m unittest backends.drjit.tests.drjit.test_optix_pipeline_cold_create -v
-python -m unittest backends.drjit.tests.drjit.test_geometry.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
-python -m unittest backends.drjit.tests.test_project_metadata -v
-python -m unittest backends.drjit.tests.drjit.test_diffraction_accumulation -v
+python -m unittest tests.reflection.test_epc_jit -v
+python -m unittest tests.native.test_optix_pipeline_cold_create_jit -v
+python -m unittest tests.scene.test_geometry_jit.GeometryCoreTests.test_trace_reflections_cold_pipeline_survives_materialized_ad_inputs -v
+python -m unittest tests.governance.test_drjit_project_metadata -v
+python -m unittest tests.diffraction.test_accumulation_jit -v
 ```
 
 Run channel endpoint repros. These paths are **not in this repository**; run them from

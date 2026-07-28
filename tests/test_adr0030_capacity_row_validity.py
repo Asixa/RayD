@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TORCH_INCLUDE = ROOT / "include" / "rayd" / "torch"
+RAYD_INCLUDE = ROOT / "include" / "rayd"
 RF_SOURCE = ROOT / "src"
 
 
@@ -27,20 +27,20 @@ def kernel_body(text: str, name: str) -> str:
 
 class Adr0030CapacityRowValidityTests(unittest.TestCase):
     def test_api_version_and_stable_identity(self):
-        integration = read(TORCH_INCLUDE / "integration.h")
-        self.assertIn("kIntegrationApiVersion = 6", integration)
+        integration = read(RAYD_INCLUDE / "integration" / "torch.h")
+        self.assertIn("kIntegrationApiVersion = 7", integration)
         self.assertIn('"rayd.torch.integration"', integration)
-        self.assertFalse((TORCH_INCLUDE / "integration_v2.h").exists())
+        self.assertFalse((RAYD_INCLUDE / "integration" / "torch_v2.h").exists())
 
     def test_top_level_primal_requests_require_cuda_row_validity(self):
         contracts = {
-            TORCH_INCLUDE / "diffraction" / "wedge.h": {
+            RAYD_INCLUDE / "diffraction" / "torch.h": {
                 "DiffractionWedgeRequest": "at::Tensor valid;",
             },
-            TORCH_INCLUDE / "transmission" / "transmission.h": {
+            RAYD_INCLUDE / "transmission" / "torch.h": {
                 "TransmissionSequenceRequest": "at::Tensor path_valid;",
             },
-            TORCH_INCLUDE / "scattering" / "scattering.h": {
+            RAYD_INCLUDE / "scattering" / "torch.h": {
                 "ScatteringTableEvalRequest": "at::Tensor valid;",
                 "ScatteringTableSampleRequest": "at::Tensor valid;",
                 "ScatteringTablePdfRequest": "at::Tensor valid;",
@@ -59,7 +59,7 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
                     self.assertNotIn("std::optional<at::Tensor> valid", body)
                     self.assertNotIn("std::optional<at::Tensor> path_valid", body)
 
-        scattering = read(TORCH_INCLUDE / "scattering" / "scattering.h")
+        scattering = read(RAYD_INCLUDE / "scattering" / "torch.h")
         for name in (
             "ScatteringTableEvalBackwardRequest",
             "ScatteringTableEvalJvpRequest",

@@ -1,8 +1,8 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/multipath/reflection_accumulation_params.h>
-#include <rayd/shared/multipath/reflection_accumulation_device.cuh>
+#include <src/reflection/accumulation_params_jit.h>
+#include <rayd/shared/reflection/accumulation_optix_device.cuh>
 
 namespace rayd {
 

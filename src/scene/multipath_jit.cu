@@ -1,29 +1,29 @@
-#include <rayd/trace/cuda_multipath_gpu.h>
+#include <src/scene/cuda_multipath_gpu_jit.h>
 
 #include <stdexcept>
 #include <string>
 
 #include <cuda_runtime.h>
 
-#include <rayd/native_launch_audit.h>
+#include <rayd/diagnostics/drjit/native_launch_audit.h>
 
 #include <rayd/shared/bvh/cuda_bvh_traverser.h>
 #include <rayd/shared/bvh/topology.h>
 #include <rayd/shared/bvh/triangle_query.h>
 #include <rayd/shared/field_math.h>
 #include <rayd/shared/math/vec3.h>
-#include <rayd/multipath/diffraction_accumulation_params.h>
-#include <rayd/multipath/diffraction_paths_params.h>
-#include <rayd/shared/multipath/diffraction_accumulation_algo.h>
-#include <rayd/shared/multipath/diffraction_paths_algo.h>
-#include <rayd/shared/multipath/reflection_accumulation_algo.h>
-#include <rayd/shared/multipath/reflection_epc_algo.h>
-#include <rayd/shared/multipath/reflection_trace_algo.h>
-#include <rayd/shared/multipath/segment_visibility_algo.h>
+#include <src/diffraction/accumulation_params_jit.h>
+#include <src/diffraction/paths_params_jit.h>
+#include <rayd/shared/diffraction/accumulation_algo.h>
+#include <rayd/shared/diffraction/paths_algo.h>
+#include <rayd/shared/reflection/accumulation_algo.h>
+#include <rayd/shared/reflection/epc_algo.h>
+#include <rayd/shared/reflection/trace_algo.h>
+#include <rayd/shared/visibility/segment_algo.h>
 #include <rayd/shared/rt/traverser.h>
 
 // CUDA fused multipath executor (P4 Stage D). Each launcher runs the migrated,
-// traverser-templated multipath algorithm body (shared/multipath/*_algo.h) with
+// traverser-templated multipath algorithm body (concept-owned shared/*/*_algo.h) with
 // Traverser = shared::bvh::CudaBvhTraverser over the scene-level triangle BVH,
 // one thread per lane (the lane index is the former optixGetLaunchIndex). This is
 // the pure-CUDA counterpart of the OptiX pipeline launches in scene_multipath.cpp.
@@ -187,7 +187,7 @@ __device__ __forceinline__ bvh::CudaBvhTraverser make_traverser(
 // ---------------------------------------------------------------------------
 
 /// Layout policy for the CUDA reflection-trace path. Bit-for-bit the DrJit
-/// reflection-trace layout (shared/optix/reflection_trace_device.cuh's
+/// reflection-trace layout (shared/reflection/trace_optix_device.cuh's
 /// DrJitReflectionTracePolicy); duplicated here so the object-compiled CUDA unit
 /// needs no OptiX-including device shim, keeping the OptiX path byte-unchanged.
 struct CudaReflectionTracePolicy {
