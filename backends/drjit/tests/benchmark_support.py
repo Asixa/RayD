@@ -583,7 +583,12 @@ class RayDBackend:
 
             its = scene.intersect(rays)
             loss = dr.sum(its.t)
-            dr.backward(loss)
+            traversal_flags = (
+                dr.ADFlag.Default
+                if dynamic_update
+                else dr.ADFlag.ClearInterior
+            )
+            dr.backward(loss, flags=traversal_flags)
             dr.eval(dr.grad(verts))
 
         return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
@@ -814,7 +819,12 @@ class MitsubaBackend:
                 params.update()
             its = scene.ray_intersect(rays)
             loss = dr.sum(its.t)
-            dr.backward(loss)
+            traversal_flags = (
+                dr.ADFlag.Default
+                if dynamic_update
+                else dr.ADFlag.ClearInterior
+            )
+            dr.backward(loss, flags=traversal_flags)
             dr.eval(dr.grad(verts))
 
         return _summarize_timings(_measure(run, repeats, warmup), len(ray_data["ox"]))
@@ -1105,6 +1115,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
 
 

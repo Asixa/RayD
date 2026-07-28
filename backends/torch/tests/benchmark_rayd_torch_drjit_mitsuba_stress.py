@@ -369,11 +369,13 @@ def _rayd_scene(
     mesh_data: dict[str, list[float] | list[int]],
     *,
     dynamic: bool,
+    edges_enabled: bool,
 ) -> tuple[Any, int, float]:
     mesh = rayd.Mesh(
         cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
         cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
     )
+    mesh.edges_enabled = edges_enabled
     scene = rayd.Scene()
     mesh_id = scene.add_mesh(mesh, dynamic=dynamic)
     _, build_ms = _time_build(scene.build, dr.sync_thread)
@@ -390,10 +392,18 @@ def _rayd_forward_performance(
     updated_ray_data: dict[str, list[float]],
     *,
     dynamic: bool,
+    edges_enabled: bool,
     repeats: int,
     warmup: int,
 ) -> dict[str, Any]:
-    scene, mesh_id, build_ms = _rayd_scene(rayd, cuda, dr, mesh_data, dynamic=dynamic)
+    scene, mesh_id, build_ms = _rayd_scene(
+        rayd,
+        cuda,
+        dr,
+        mesh_data,
+        dynamic=dynamic,
+        edges_enabled=edges_enabled,
+    )
     rays = _rayd_ray(rayd, cuda, ray_data)
     updated_rays = _rayd_ray(rayd, cuda, updated_ray_data)
     base_positions = cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
@@ -447,6 +457,8 @@ def _rayd_backward_performance(
     updated_ray_data: dict[str, list[float]],
     *,
     dynamic: bool,
+    edges_enabled: bool,
+    materialize_full: bool,
     repeats: int,
     warmup: int,
 ) -> dict[str, Any]:
@@ -455,6 +467,7 @@ def _rayd_backward_performance(
         cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
         cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
     )
+    mesh.edges_enabled = edges_enabled
     base_positions = ad.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"])
     updated_positions = ad.Array3f(updated_mesh_data["x"], updated_mesh_data["y"], updated_mesh_data["z"])
     dr.enable_grad(base_positions)
@@ -491,20 +504,41 @@ def _rayd_backward_performance(
                 scene.sync()
             flags = rayd.RayFlags.All if mode == "vjp_full" else flags_none
             its = scene.intersect(current_rays, flags=flags)
+            if materialize_full and mode == "vjp_full":
+                dr.eval(its.t, its.p, its.n, its.uv, its.barycentric, its.prim_id)
             dr.set_grad(its.t, current_weights)
             dr.enqueue(dr.ADMode.Backward, its.t)
-            dr.traverse(dr.ADMode.Backward)
-            dr.eval(dr.grad(current_positions))
+            # A static scene owns one reusable geometry graph. Default Dr.Jit
+            # traversal destroys its edges during warmup, which would make the
+            # timed iterations benchmark an empty/zero-gradient backward.
+            traversal_flags = (
+                dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
+            )
+            dr.traverse(dr.ADMode.Backward, flags=traversal_flags)
+            gradient = dr.grad(current_positions)
+            dr.eval(gradient)
+            return gradient
 
         return run
 
     query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    performance: dict[str, dict[str, float]] = {}
+    for mode in ("vjp_full", "vjp_reduced"):
+        run = make_run(mode)
+        performance[mode] = _summarize(
+            _measure(run, dr.sync_thread, repeats, warmup),
+            query_count,
+        )
+        gradient = run()
+        dr.sync_thread()
+        if not dr.any(dr.abs(gradient) > 0, axis=None):
+            raise RuntimeError(
+                f"RayD Dr.Jit {mode} produced an all-zero vertex gradient after timing."
+            )
+
     return {
         "build_ms": build_ms,
-        "performance": {
-            mode: _summarize(_measure(make_run(mode), dr.sync_thread, repeats, warmup), query_count)
-            for mode in ("vjp_full", "vjp_reduced")
-        },
+        "performance": performance,
     }
 
 
@@ -528,6 +562,7 @@ def _rayd_torch_loss_backward_performance(
     updated_ray_data: dict[str, list[float]],
     *,
     dynamic: bool,
+    edges_enabled: bool,
     materialize_full: bool,
     repeats: int,
     warmup: int,
@@ -546,6 +581,7 @@ def _rayd_torch_loss_backward_performance(
         cuda.Array3f(mesh_data["x"], mesh_data["y"], mesh_data["z"]),
         cuda.Array3i(mesh_data["i0"], mesh_data["i1"], mesh_data["i2"]),
     )
+    mesh.edges_enabled = edges_enabled
     scene = rayd.Scene()
     mesh_id = scene.add_mesh(mesh, dynamic=True)
     _, build_ms = _time_build(scene.build, dr.sync_thread)
@@ -738,15 +774,29 @@ def _mitsuba_backward_performance(
         its = scene.ray_intersect(current_rays)
         dr.set_grad(its.t, current_weights)
         dr.enqueue(dr.ADMode.Backward, its.t)
-        dr.traverse(dr.ADMode.Backward)
-        dr.eval(dr.grad(current_positions))
+        traversal_flags = (
+            dr.ADFlag.Default if dynamic else dr.ADFlag.ClearInterior
+        )
+        dr.traverse(dr.ADMode.Backward, flags=traversal_flags)
+        gradient = dr.grad(current_positions)
+        dr.eval(gradient)
+        return gradient
 
     query_count = len(updated_ray_data["ox"] if dynamic else ray_data["ox"])
+    performance = _summarize(
+        _measure(run, dr.sync_thread, repeats, warmup),
+        query_count,
+    )
+    gradient = run()
+    dr.sync_thread()
+    if not dr.any(dr.abs(gradient) > 0, axis=None):
+        raise RuntimeError(
+            "Mitsuba vjp_full produced an all-zero vertex gradient after timing."
+        )
+
     return {
         "build_ms": build_ms,
-        "performance": {
-            "vjp_full": _summarize(_measure(run, dr.sync_thread, repeats, warmup), query_count),
-        },
+        "performance": {"vjp_full": performance},
     }
 
 
@@ -958,6 +1008,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 ray_data,
                 updated_ray_data,
                 dynamic=False,
+                edges_enabled=args.edges,
                 repeats=args.repeats,
                 warmup=args.warmup,
             ),
@@ -970,6 +1021,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 ray_data,
                 updated_ray_data,
                 dynamic=True,
+                edges_enabled=args.edges,
                 repeats=args.repeats,
                 warmup=args.warmup,
             ),
@@ -984,6 +1036,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 ray_data,
                 updated_ray_data,
                 dynamic=False,
+                edges_enabled=args.edges,
+                materialize_full=args.materialize_full_vjp,
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
@@ -996,6 +1050,8 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                 ray_data,
                 updated_ray_data,
                 dynamic=True,
+                edges_enabled=args.edges,
+                materialize_full=args.materialize_full_vjp,
                 repeats=args.repeats,
                 warmup=args.warmup,
             )
@@ -1009,6 +1065,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                     ray_data,
                     updated_ray_data,
                     dynamic=False,
+                    edges_enabled=args.edges,
                     materialize_full=args.materialize_full_vjp,
                     repeats=args.repeats,
                     warmup=args.warmup,
@@ -1022,6 +1079,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
                     ray_data,
                     updated_ray_data,
                     dynamic=True,
+                    edges_enabled=args.edges,
                     materialize_full=args.materialize_full_vjp,
                     repeats=args.repeats,
                     warmup=args.warmup,
@@ -1119,7 +1177,7 @@ def _run_scenario(args: argparse.Namespace, scenario: Scenario) -> dict[str, Any
             "repeats": args.repeats,
             "warmup": args.warmup,
             "dynamic_x_offset": args.dynamic_x_offset,
-            "edges_enabled_for_C": args.edges,
+            "edges_enabled_for_rayd": args.edges,
             "forward_modes": {
                 "full": "RayD Torch/RayD RayFlags.All materialized fields; Mitsuba ray_intersect fields.",
                 "reduced": "RayD Torch/RayD RayFlags.None t-only; Mitsuba ray_intersect RayFlags.Minimal t-only.",
@@ -1151,7 +1209,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--dynamic-x-offset", type=float, default=2.0)
-    parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
+    parser.add_argument("--edges", action="store_true", help="Enable edge caches in both RayD backends.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")

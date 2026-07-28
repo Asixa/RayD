@@ -209,6 +209,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 ray_data,
                 updated_ray_data,
                 dynamic=False,
+                edges_enabled=args.edges,
                 repeats=repeats,
                 warmup=args.warmup,
             ),
@@ -221,6 +222,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 ray_data,
                 updated_ray_data,
                 dynamic=True,
+                edges_enabled=args.edges,
                 repeats=repeats,
                 warmup=args.warmup,
             ),
@@ -235,6 +237,8 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 ray_data,
                 updated_ray_data,
                 dynamic=False,
+                edges_enabled=args.edges,
+                materialize_full=args.materialize_full_vjp,
                 repeats=repeats,
                 warmup=args.warmup,
             )
@@ -247,6 +251,8 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 ray_data,
                 updated_ray_data,
                 dynamic=True,
+                edges_enabled=args.edges,
+                materialize_full=args.materialize_full_vjp,
                 repeats=repeats,
                 warmup=args.warmup,
             )
@@ -341,7 +347,7 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
             "warmup": args.warmup,
             "execute_total_rays": args.execute_total_rays,
             "dynamic_x_offset": args.dynamic_x_offset,
-            "edges_enabled_for_C": args.edges,
+            "edges_enabled_for_rayd": args.edges,
         },
         "backends": backends,
         "speedups": _speedups(backends),
@@ -548,7 +554,7 @@ def main() -> None:
         default=["torch", "rayd", "mitsuba"],
         choices=["torch", "rayd", "mitsuba"],
     )
-    parser.add_argument("--edges", action="store_true", help="Enable RayD Torch edge cache during scene build.")
+    parser.add_argument("--edges", action="store_true", help="Enable edge caches in both RayD backends.")
     parser.add_argument("--rayd-source", choices=("package", "local"), default="package")
     parser.add_argument("--rayd-root", type=Path, default=RAYDI_ROOT)
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
