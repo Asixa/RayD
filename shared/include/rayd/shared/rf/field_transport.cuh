@@ -156,7 +156,7 @@ __device__ __forceinline__ LegacySlabComplex legacy_exp_neg_2i(
     return {amplitude * cosine, -amplitude * sine};
 }
 
-__device__ __forceinline__ void legacy_sionna_slab_fresnel(
+__device__ __forceinline__ void legacy_slab_fresnel(
     float cos_theta,
     float eps_r,
     float sigma_e,
