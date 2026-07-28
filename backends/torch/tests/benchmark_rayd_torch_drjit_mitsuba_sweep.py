@@ -170,6 +170,8 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 updated_ray_data,
                 dynamic=False,
                 edges_enabled=args.edges,
+                loss_backward=False,
+                materialize_full=args.materialize_full_vjp,
                 repeats=repeats,
                 warmup=args.warmup,
             )
@@ -180,6 +182,8 @@ def _run_case(args: argparse.Namespace, mesh_resolution: int, requested_total_ra
                 updated_ray_data,
                 dynamic=True,
                 edges_enabled=args.edges,
+                loss_backward=False,
+                materialize_full=args.materialize_full_vjp,
                 repeats=repeats,
                 warmup=args.warmup,
             )
@@ -550,6 +554,11 @@ def main() -> None:
     parser.add_argument("--mitsuba-variant", default="cuda_ad_rgb")
     parser.add_argument("--mitsuba-preliminary", action="store_true")
     parser.add_argument("--include-backward", action="store_true")
+    parser.add_argument(
+        "--materialize-full-vjp",
+        action="store_true",
+        help="Materialize full intersection fields before full-output VJP timing.",
+    )
     parser.add_argument("--require-mitsuba", action="store_true")
     parser.add_argument("--dynamic-x-offset", type=float, default=2.0)
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -592,6 +601,7 @@ def main() -> None:
             "mitsuba_variant": args.mitsuba_variant if "mitsuba" in args.backends else None,
             "mitsuba_preliminary": args.mitsuba_preliminary,
             "include_backward": args.include_backward,
+            "materialize_full_vjp": args.materialize_full_vjp,
         },
         "cases": cases,
     }
