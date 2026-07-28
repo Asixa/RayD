@@ -349,46 +349,41 @@ std::vector<float> SceneEdgeOptix::compute_search_radii(const SecondaryEdgeInfoA
 
     const Vector3f p0 = detach<false>(edge_info.start);
     const Vector3f e1 = detach<false>(edge_info.edge);
-    drjit::eval(p0, e1);
+    const Vector3f p1 = p0 + e1;
+    const size_t reduction_size = static_cast<size_t>(edge_count);
+    const Float min_x_reduced =
+        block_reduce(ReduceOp::Min, minimum(p0.x(), p1.x()), reduction_size);
+    const Float min_y_reduced =
+        block_reduce(ReduceOp::Min, minimum(p0.y(), p1.y()), reduction_size);
+    const Float min_z_reduced =
+        block_reduce(ReduceOp::Min, minimum(p0.z(), p1.z()), reduction_size);
+    const Float max_x_reduced =
+        block_reduce(ReduceOp::Max, maximum(p0.x(), p1.x()), reduction_size);
+    const Float max_y_reduced =
+        block_reduce(ReduceOp::Max, maximum(p0.y(), p1.y()), reduction_size);
+    const Float max_z_reduced =
+        block_reduce(ReduceOp::Max, maximum(p0.z(), p1.z()), reduction_size);
+    const Float max_edge_length_sq_reduced =
+        block_reduce(ReduceOp::Max, squared_norm(e1), reduction_size);
+    drjit::eval(min_x_reduced,
+                min_y_reduced,
+                min_z_reduced,
+                max_x_reduced,
+                max_y_reduced,
+                max_z_reduced,
+                max_edge_length_sq_reduced);
 
-    std::vector<float> p0_x(static_cast<size_t>(edge_count));
-    std::vector<float> p0_y(static_cast<size_t>(edge_count));
-    std::vector<float> p0_z(static_cast<size_t>(edge_count));
-    std::vector<float> e1_x(static_cast<size_t>(edge_count));
-    std::vector<float> e1_y(static_cast<size_t>(edge_count));
-    std::vector<float> e1_z(static_cast<size_t>(edge_count));
-    drjit::store(p0_x.data(), p0.x());
-    drjit::store(p0_y.data(), p0.y());
-    drjit::store(p0_z.data(), p0.z());
-    drjit::store(e1_x.data(), e1.x());
-    drjit::store(e1_y.data(), e1.y());
-    drjit::store(e1_z.data(), e1.z());
-
-    float min_x = std::numeric_limits<float>::infinity();
-    float min_y = std::numeric_limits<float>::infinity();
-    float min_z = std::numeric_limits<float>::infinity();
-    float max_x = -std::numeric_limits<float>::infinity();
-    float max_y = -std::numeric_limits<float>::infinity();
-    float max_z = -std::numeric_limits<float>::infinity();
-    float max_edge_length = 0.0f;
-    for (int index = 0; index < edge_count; ++index) {
-        const float x0 = p0_x[static_cast<size_t>(index)];
-        const float y0 = p0_y[static_cast<size_t>(index)];
-        const float z0 = p0_z[static_cast<size_t>(index)];
-        const float ex = e1_x[static_cast<size_t>(index)];
-        const float ey = e1_y[static_cast<size_t>(index)];
-        const float ez = e1_z[static_cast<size_t>(index)];
-        const float x1 = x0 + ex;
-        const float y1 = y0 + ey;
-        const float z1 = z0 + ez;
-        min_x = std::min(min_x, std::min(x0, x1));
-        min_y = std::min(min_y, std::min(y0, y1));
-        min_z = std::min(min_z, std::min(z0, z1));
-        max_x = std::max(max_x, std::max(x0, x1));
-        max_y = std::max(max_y, std::max(y0, y1));
-        max_z = std::max(max_z, std::max(z0, z1));
-        max_edge_length = std::max(max_edge_length, std::sqrt(ex * ex + ey * ey + ez * ez));
-    }
+    // Only seven scalar statistics cross the device/host boundary. The former
+    // implementation downloaded all six edge SoA arrays and scanned O(E)
+    // values on the CPU during every refit.
+    const float min_x = slice(min_x_reduced);
+    const float min_y = slice(min_y_reduced);
+    const float min_z = slice(min_z_reduced);
+    const float max_x = slice(max_x_reduced);
+    const float max_y = slice(max_y_reduced);
+    const float max_z = slice(max_z_reduced);
+    const float max_edge_length =
+        std::sqrt(std::max(slice(max_edge_length_sq_reduced), 0.0f));
 
     const float dx = std::max(max_x - min_x, 0.0f);
     const float dy = std::max(max_y - min_y, 0.0f);

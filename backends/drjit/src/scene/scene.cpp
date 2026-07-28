@@ -685,6 +685,8 @@ void Scene::build() {
             scatter(global_geometry_.vertices, mesh.vertex_positions_world(), vertex_scatter_indices);
         }
     }
+    differentiable_geometry_active_ =
+        grad_enabled(triangle_info_, global_geometry_.vertices, edge_info_);
     global_geometry_.face_normal = triangle_info_.face_normal;
 
     int dynamic_mesh_count = 0;
@@ -751,6 +753,8 @@ void Scene::update_mesh_vertices(int mesh_id, const Vector3fAD &positions) {
             "Scene::update_mesh_vertices(): vertex count must remain unchanged.");
 
     record.mesh->set_vertex_positions(positions);
+    differentiable_geometry_active_ =
+        differentiable_geometry_active_ || grad_enabled(positions);
     record.vertices_dirty = true;
     pending_updates_ = true;
 }
@@ -763,6 +767,8 @@ void Scene::set_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool set_l
     require(record.dynamic, "Scene::set_mesh_transform(): target mesh is not dynamic.");
 
     record.mesh->set_transform(matrix, set_left);
+    differentiable_geometry_active_ =
+        differentiable_geometry_active_ || grad_enabled(matrix);
     record.transform_dirty = true;
     pending_updates_ = true;
 }
@@ -775,6 +781,8 @@ void Scene::append_mesh_transform(int mesh_id, const Matrix4fAD &matrix, bool ap
     require(record.dynamic, "Scene::append_mesh_transform(): target mesh is not dynamic.");
 
     record.mesh->append_transform(matrix, append_left);
+    differentiable_geometry_active_ =
+        differentiable_geometry_active_ || grad_enabled(matrix);
     record.transform_dirty = true;
     pending_updates_ = true;
 }
@@ -828,18 +836,6 @@ void Scene::sync() {
         last_sync_profile_.mesh_update_ms += std::chrono::duration<double, std::milli>(
             Clock::now() - mesh_update_start).count();
 
-        const auto scatter_start = Clock::now();
-        scatter_mesh_data(record, false);
-        const int mesh_vertex_count = record.mesh->vertex_count();
-        if (mesh_vertex_count > 0) {
-            const IntAD vertex_scatter_indices = arange<IntAD>(mesh_vertex_count) + record.vertex_offset;
-            scatter(global_geometry_.vertices,
-                    record.mesh->vertex_positions_world(),
-                    vertex_scatter_indices);
-        }
-        last_sync_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
-            Clock::now() - scatter_start).count();
-
         const int mesh_edge_count =
             record.mesh->edges_enabled() ? static_cast<int>(slices(record.mesh->edge_indices())) : 0;
         if (mesh_edge_count > 0 && !record.edge_dirty) {
@@ -862,18 +858,76 @@ void Scene::sync() {
         record.transform_dirty = false;
     }
     if (!updates.empty()) {
+        const auto scatter_start = Clock::now();
+
+        if (differentiable_geometry_active_) {
+            // A Dr.Jit scatter output depends on its prior target. Reusing the
+            // scene-global AD targets here would retain the complete graph of
+            // every preceding dynamic update. Rebuild the aggregate targets
+            // from the current per-mesh caches instead. Static topology and UV
+            // fields remain unchanged.
+            const int face_count = static_cast<int>(slices(triangle_info_.face_area));
+            const int vertex_count = global_geometry_.vertex_count();
+            const Vector3iAD face_indices = triangle_info_.face_indices;
+            const Vector3i face_indices_detached = triangle_info_detached_.face_indices;
+
+            triangle_info_ = empty<TriangleInfoAD>(face_count);
+            triangle_info_.face_indices = face_indices;
+            triangle_info_detached_ = empty<TriangleInfo>(face_count);
+            triangle_info_detached_.face_indices = face_indices_detached;
+            global_geometry_.vertices =
+                vertex_count > 0 ? empty<Vector3fAD>(vertex_count) : Vector3fAD();
+
+            for (const SceneMeshRecord &record : mesh_records_) {
+                scatter_mesh_data(record, false);
+                const int mesh_vertex_count = record.mesh->vertex_count();
+                if (mesh_vertex_count > 0) {
+                    const IntAD vertex_scatter_indices =
+                        arange<IntAD>(mesh_vertex_count) + record.vertex_offset;
+                    scatter(global_geometry_.vertices,
+                            record.mesh->vertex_positions_world(),
+                            vertex_scatter_indices);
+                }
+            }
+        } else {
+            for (const OptixSceneMeshUpdate &update : updates) {
+                const SceneMeshRecord &record =
+                    mesh_records_[static_cast<size_t>(update.mesh_id)];
+                scatter_mesh_data(record, false);
+                const int mesh_vertex_count = record.mesh->vertex_count();
+                if (mesh_vertex_count > 0) {
+                    const IntAD vertex_scatter_indices =
+                        arange<IntAD>(mesh_vertex_count) + record.vertex_offset;
+                    scatter(global_geometry_.vertices,
+                            record.mesh->vertex_positions_world(),
+                            vertex_scatter_indices);
+                }
+            }
+        }
+
+        last_sync_profile_.triangle_scatter_ms += std::chrono::duration<double, std::milli>(
+            Clock::now() - scatter_start).count();
         global_geometry_.face_normal = triangle_info_.face_normal;
     }
 
     if (edge_bvh_dirty_) {
         const auto edge_scatter_start = Clock::now();
-        for (SceneMeshRecord &record : mesh_records_) {
-            if (!record.edge_dirty) {
-                continue;
+        if (differentiable_geometry_active_ && !updates.empty()) {
+            edge_info_ =
+                edge_count_ > 0 ? empty<SecondaryEdgeInfoAD>(edge_count_) : SecondaryEdgeInfoAD();
+            for (SceneMeshRecord &record : mesh_records_) {
+                scatter_mesh_edge_data(record, false);
+                record.edge_dirty = false;
             }
+        } else {
+            for (SceneMeshRecord &record : mesh_records_) {
+                if (!record.edge_dirty) {
+                    continue;
+                }
 
-            scatter_mesh_edge_data(record, false);
-            record.edge_dirty = false;
+                scatter_mesh_edge_data(record, false);
+                record.edge_dirty = false;
+            }
         }
         last_sync_profile_.edge_scatter_ms = std::chrono::duration<double, std::milli>(
             Clock::now() - edge_scatter_start).count();

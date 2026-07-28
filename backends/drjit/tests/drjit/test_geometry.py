@@ -3489,6 +3489,304 @@ class GeometryCoreTests(unittest.TestCase):
         self.assertTrue(data["valid"])
         self.assertGreater(data["grad_z_sum"], 0.0)
 
+    def test_dynamic_ad_updates_keep_scene_graph_bounded(self):
+        data = run_json_case(
+            """
+            import json
+            import re
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            def live_count(text):
+                return sum(
+                    1
+                    for line in text.splitlines()
+                    if re.match(r"\\s*\\d+\\s+", line)
+                )
+
+            mesh = pj.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0],
+                             [0.0, 0.0, 1.0],
+                             [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            mesh.edges_enabled = False
+            scene = pj.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.build()
+            version_before = int(scene.version)
+
+            vertices_a = ad.Array3f([0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0],
+                                    [0.25, 0.25, 0.25])
+            vertices_b = ad.Array3f([0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0],
+                                    [0.5, 0.5, 0.5])
+            dr.enable_grad(vertices_a)
+            dr.enable_grad(vertices_b)
+            ray = pj.RayAD(
+                ad.Array3f([0.25], [0.25], [-1.0]),
+                ad.Array3f([0.0], [0.0], [1.0]),
+            )
+            flags_none = getattr(pj.RayFlags, "None")
+
+            samples = []
+            warm_counts = None
+            final_counts = None
+            for iteration in range(16):
+                current = vertices_b if iteration % 2 else vertices_a
+                other = vertices_a if iteration % 2 else vertices_b
+                dr.set_grad(vertices_a, 0)
+                dr.set_grad(vertices_b, 0)
+                scene.update_mesh_vertices(mesh_id, current)
+                scene.sync()
+                its = scene.intersect(ray, flags=flags_none)
+                dr.backward(its.t)
+                dr.eval(dr.grad(current), dr.grad(other))
+                dr.sync_thread()
+                samples.append({
+                    "t": float(its.t[0]),
+                    "current_grad_z_sum": float(
+                        dr.grad(current)[2][0]
+                        + dr.grad(current)[2][1]
+                        + dr.grad(current)[2][2]
+                    ),
+                    "other_grad_z_sum": float(
+                        dr.grad(other)[2][0]
+                        + dr.grad(other)[2][1]
+                        + dr.grad(other)[2][2]
+                    ),
+                })
+                counts = {
+                    "ad": live_count(dr.whos_ad(True)),
+                    "jit": live_count(dr.whos(True)),
+                }
+                if iteration == 7:
+                    warm_counts = counts
+                if iteration == 15:
+                    final_counts = counts
+
+            profile = scene.last_sync_profile
+            updated_meshes = int(profile.updated_meshes)
+            updated_vertex_meshes = int(profile.updated_vertex_meshes)
+            updated_transform_meshes = int(profile.updated_transform_meshes)
+            updated_edge_meshes = int(profile.updated_edge_meshes)
+            version_after_updates = int(scene.version)
+            scene.sync()
+            noop_profile = scene.last_sync_profile
+
+            print(json.dumps({
+                "samples": samples,
+                "warm_counts": warm_counts,
+                "final_counts": final_counts,
+                "version_before": version_before,
+                "version_after_updates": version_after_updates,
+                "pending": bool(scene.has_pending_updates()),
+                "updated_meshes": updated_meshes,
+                "updated_vertex_meshes": updated_vertex_meshes,
+                "updated_transform_meshes": updated_transform_meshes,
+                "updated_edge_meshes": updated_edge_meshes,
+                "noop_updated_meshes": int(noop_profile.updated_meshes),
+                "noop_total_ms": float(noop_profile.total_ms),
+            }))
+            """,
+            timeout=180,
+        )
+
+        for iteration, sample in enumerate(data["samples"]):
+            expected_t = 1.5 if iteration % 2 else 1.25
+            self.assertAlmostEqual(sample["t"], expected_t, places=5)
+            self.assertAlmostEqual(sample["current_grad_z_sum"], 1.0, places=5)
+            self.assertAlmostEqual(sample["other_grad_z_sum"], 0.0, places=6)
+
+        self.assertLessEqual(
+            data["final_counts"]["ad"],
+            data["warm_counts"]["ad"] + 64,
+        )
+        self.assertLessEqual(
+            data["final_counts"]["jit"],
+            data["warm_counts"]["jit"] + 64,
+        )
+        self.assertEqual(
+            data["version_after_updates"],
+            data["version_before"] + 16,
+        )
+        self.assertFalse(data["pending"])
+        self.assertEqual(data["updated_meshes"], 1)
+        self.assertEqual(data["updated_vertex_meshes"], 1)
+        self.assertEqual(data["updated_transform_meshes"], 0)
+        self.assertEqual(data["updated_edge_meshes"], 0)
+        self.assertEqual(data["noop_updated_meshes"], 0)
+        self.assertEqual(data["noop_total_ms"], 0.0)
+
+    def test_dynamic_ad_rebuild_preserves_other_mesh_gradients(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            static_vertices = ad.Array3f([0.0, 1.0, 0.0],
+                                         [0.0, 0.0, 1.0],
+                                         [0.25, 0.25, 0.25])
+            dynamic_vertices = ad.Array3f([2.0, 3.0, 2.0],
+                                          [0.0, 0.0, 1.0],
+                                          [0.5, 0.5, 0.5])
+            dr.enable_grad(static_vertices)
+            dr.enable_grad(dynamic_vertices)
+
+            faces = cuda.Array3i([0], [1], [2])
+            static_mesh = pj.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0],
+                             [0.0, 0.0, 1.0],
+                             [0.0, 0.0, 0.0]),
+                faces,
+            )
+            static_mesh.edges_enabled = False
+            static_mesh.vertex_positions = static_vertices
+            dynamic_mesh = pj.Mesh(
+                cuda.Array3f([2.0, 3.0, 2.0],
+                             [0.0, 0.0, 1.0],
+                             [0.0, 0.0, 0.0]),
+                faces,
+            )
+            dynamic_mesh.edges_enabled = False
+
+            scene = pj.Scene()
+            scene.add_mesh(static_mesh, dynamic=False)
+            dynamic_id = scene.add_mesh(dynamic_mesh, dynamic=True)
+            scene.build()
+            scene.update_mesh_vertices(dynamic_id, dynamic_vertices)
+            scene.sync()
+
+            rays = pj.RayAD(
+                ad.Array3f([0.25, 2.25],
+                           [0.25, 0.25],
+                           [-1.0, -1.0]),
+                ad.Array3f([0.0, 0.0],
+                           [0.0, 0.0],
+                           [1.0, 1.0]),
+            )
+            its = scene.intersect(rays, flags=getattr(pj.RayFlags, "None"))
+            loss = dr.sum(its.t)
+            dr.backward(loss)
+            dr.eval(dr.grad(static_vertices), dr.grad(dynamic_vertices))
+            dr.sync_thread()
+
+            print(json.dumps({
+                "t": [float(its.t[0]), float(its.t[1])],
+                "shape_id": [int(its.shape_id[0]), int(its.shape_id[1])],
+                "static_grad_z_sum": float(
+                    dr.grad(static_vertices)[2][0]
+                    + dr.grad(static_vertices)[2][1]
+                    + dr.grad(static_vertices)[2][2]
+                ),
+                "dynamic_grad_z_sum": float(
+                    dr.grad(dynamic_vertices)[2][0]
+                    + dr.grad(dynamic_vertices)[2][1]
+                    + dr.grad(dynamic_vertices)[2][2]
+                ),
+            }))
+            """
+        )
+
+        self.assertEqual(data["shape_id"], [0, 1])
+        self.assertAlmostEqual(data["t"][0], 1.25, places=5)
+        self.assertAlmostEqual(data["t"][1], 1.5, places=5)
+        self.assertAlmostEqual(data["static_grad_z_sum"], 1.0, places=5)
+        self.assertAlmostEqual(data["dynamic_grad_z_sum"], 1.0, places=5)
+
+    def test_dynamic_ad_update_keeps_prior_intersection_graph_valid(self):
+        data = run_json_case(
+            """
+            import json
+            import rayd.drjit as pj
+            import drjit as dr
+            import drjit.cuda as cuda
+            import drjit.cuda.ad as ad
+
+            vertices_a = ad.Array3f([0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0],
+                                    [0.25, 0.25, 0.25])
+            vertices_b = ad.Array3f([0.0, 1.0, 0.0],
+                                    [0.0, 0.0, 1.0],
+                                    [0.5, 0.5, 0.5])
+            dr.enable_grad(vertices_a)
+            dr.enable_grad(vertices_b)
+            mesh = pj.Mesh(
+                cuda.Array3f([0.0, 1.0, 0.0],
+                             [0.0, 0.0, 1.0],
+                             [0.0, 0.0, 0.0]),
+                cuda.Array3i([0], [1], [2]),
+            )
+            mesh.edges_enabled = False
+            scene = pj.Scene()
+            mesh_id = scene.add_mesh(mesh, dynamic=True)
+            scene.build()
+            ray = pj.RayAD(
+                ad.Array3f([0.25], [0.25], [-1.0]),
+                ad.Array3f([0.0], [0.0], [1.0]),
+            )
+            flags_none = getattr(pj.RayFlags, "None")
+
+            scene.update_mesh_vertices(mesh_id, vertices_a)
+            scene.sync()
+            old_hit = scene.intersect(ray, flags=flags_none)
+            dr.eval(old_hit.t)
+
+            scene.update_mesh_vertices(mesh_id, vertices_b)
+            scene.sync()
+            new_hit = scene.intersect(ray, flags=flags_none)
+            dr.eval(new_hit.t)
+
+            dr.backward(old_hit.t)
+            old_grad_a = float(
+                dr.grad(vertices_a)[2][0]
+                + dr.grad(vertices_a)[2][1]
+                + dr.grad(vertices_a)[2][2]
+            )
+            old_grad_b = float(
+                dr.grad(vertices_b)[2][0]
+                + dr.grad(vertices_b)[2][1]
+                + dr.grad(vertices_b)[2][2]
+            )
+
+            dr.set_grad(vertices_a, 0)
+            dr.set_grad(vertices_b, 0)
+            dr.backward(new_hit.t)
+            new_grad_a = float(
+                dr.grad(vertices_a)[2][0]
+                + dr.grad(vertices_a)[2][1]
+                + dr.grad(vertices_a)[2][2]
+            )
+            new_grad_b = float(
+                dr.grad(vertices_b)[2][0]
+                + dr.grad(vertices_b)[2][1]
+                + dr.grad(vertices_b)[2][2]
+            )
+
+            print(json.dumps({
+                "old_t": float(old_hit.t[0]),
+                "new_t": float(new_hit.t[0]),
+                "old_grad_a": old_grad_a,
+                "old_grad_b": old_grad_b,
+                "new_grad_a": new_grad_a,
+                "new_grad_b": new_grad_b,
+            }))
+            """
+        )
+
+        self.assertAlmostEqual(data["old_t"], 1.25, places=5)
+        self.assertAlmostEqual(data["new_t"], 1.5, places=5)
+        self.assertAlmostEqual(data["old_grad_a"], 1.0, places=5)
+        self.assertAlmostEqual(data["old_grad_b"], 0.0, places=6)
+        self.assertAlmostEqual(data["new_grad_a"], 0.0, places=6)
+        self.assertAlmostEqual(data["new_grad_b"], 1.0, places=5)
+
     def test_gradient_benchmark_repeats_without_rebuilding_optix_state(self):
         data = run_json_case(
             """
@@ -3555,6 +3853,3 @@ class GeometryCoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

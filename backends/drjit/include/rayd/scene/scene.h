@@ -398,6 +398,10 @@ private:
 
     bool is_ready_ = false;
     bool pending_updates_ = false;
+    // Sticky once differentiable geometry enters the scene. Incremental
+    // in-place scatters otherwise chain every scene-global AD buffer to its
+    // predecessor and retain all prior update graphs.
+    bool differentiable_geometry_active_ = false;
     bool mask_dirty_ = false;
     uint64_t scene_version_ = 0;
     uint64_t edge_version_ = 0;
@@ -442,4 +446,3 @@ private:
 };
 
 } // namespace rayd
-

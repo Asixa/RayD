@@ -104,6 +104,7 @@ Mesh::Mesh(const Mesh &other)
       use_face_normals_(other.use_face_normals_),
       has_uv_(other.has_uv_),
       edges_enabled_(other.edges_enabled_),
+      transform_identity_(other.transform_identity_),
       object_to_world_(other.object_to_world_),
       left_transform_(other.left_transform_),
       right_transform_(other.right_transform_),
@@ -161,6 +162,7 @@ void Mesh::set_transform(const Matrix4fAD &matrix, bool set_left) {
     } else {
         right_transform_ = matrix;
     }
+    transform_identity_ = false;
     world_positions_dirty_ = true;
     secondary_edge_info_dirty_ = true;
     is_ready_ = false;
@@ -172,6 +174,7 @@ void Mesh::append_transform(const Matrix4fAD &matrix, bool append_left) {
     } else {
         right_transform_ *= matrix;
     }
+    transform_identity_ = false;
     world_positions_dirty_ = true;
     secondary_edge_info_dirty_ = true;
     is_ready_ = false;
@@ -346,8 +349,11 @@ void Mesh::update_runtime_data(bool vertices_dirty, bool transform_dirty) {
 
     if (vertices_dirty) {
         update_optix_vertex_buffer();
+        // The packed vertex buffer and the following OptiX update are issued
+        // on the same Dr.Jit CUDA stream. Evaluation establishes that
+        // stream-local dependency; a host-side sync here serialized geometry
+        // derivation before every dynamic GAS refit.
         drjit::eval(optix_vertex_buffer_);
-        drjit::sync_thread();
     }
 }
 
@@ -357,8 +363,12 @@ void Mesh::update_world_triangle_info() {
     require(triangle_info_ != nullptr,
             "Mesh::update_world_triangle_info(): world-space triangle cache must be allocated first.");
 
-    const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
-    *triangle_info_ = transform_triangle_info(*triangle_info_object_, to_world_matrix);
+    if (transform_identity_) {
+        *triangle_info_ = *triangle_info_object_;
+    } else {
+        const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
+        *triangle_info_ = transform_triangle_info(*triangle_info_object_, to_world_matrix);
+    }
 }
 
 void Mesh::update_secondary_edge_info() {
@@ -397,8 +407,12 @@ void Mesh::ensure_world_positions_ready() const {
         return;
     }
 
-    const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
-    vertex_positions_world_ = transform_pos(to_world_matrix, vertex_positions_object_);
+    if (transform_identity_) {
+        vertex_positions_world_ = vertex_positions_object_;
+    } else {
+        const Matrix4fAD to_world_matrix = left_transform_ * object_to_world_ * right_transform_;
+        vertex_positions_world_ = transform_pos(to_world_matrix, vertex_positions_object_);
+    }
     world_positions_dirty_ = false;
 }
 

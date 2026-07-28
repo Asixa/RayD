@@ -67,6 +67,7 @@ public:
     const Matrix4fAD &to_world() const { return object_to_world_; }
     void set_to_world(const Matrix4fAD &matrix) {
         object_to_world_ = matrix;
+        transform_identity_ = false;
         world_positions_dirty_ = true;
         secondary_edge_info_dirty_ = true;
         is_ready_ = false;
@@ -75,6 +76,7 @@ public:
     const Matrix4fAD &to_world_left() const { return left_transform_; }
     void set_to_world_left(const Matrix4fAD &matrix) {
         left_transform_ = matrix;
+        transform_identity_ = false;
         world_positions_dirty_ = true;
         secondary_edge_info_dirty_ = true;
         is_ready_ = false;
@@ -83,6 +85,7 @@ public:
     const Matrix4fAD &to_world_right() const { return right_transform_; }
     void set_to_world_right(const Matrix4fAD &matrix) {
         right_transform_ = matrix;
+        transform_identity_ = false;
         world_positions_dirty_ = true;
         secondary_edge_info_dirty_ = true;
         is_ready_ = false;
@@ -153,6 +156,10 @@ private:
     bool use_face_normals_ = false;
     bool has_uv_ = false;
     bool edges_enabled_ = true;
+    // True only while no transform setter/composition API has ever been used.
+    // This structural flag, rather than a numerical identity comparison,
+    // preserves gradients through caller-provided identity-valued matrices.
+    bool transform_identity_ = true;
 
     Matrix4fAD object_to_world_ = drjit::identity<Matrix4fAD>();
     Matrix4fAD left_transform_ = drjit::identity<Matrix4fAD>();
