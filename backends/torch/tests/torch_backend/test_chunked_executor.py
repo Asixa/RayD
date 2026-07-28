@@ -145,9 +145,11 @@ class ChunkSizeCalibrationTests(unittest.TestCase):
         self.assertEqual((plan.chunk_rays, plan.source), (1000, "budget"))
         self.assertEqual(plan.budget_bytes, 142 * 1000)
 
-    def test_a_budget_below_one_row_still_makes_progress(self):
-        plan = calibrate_chunk_size("trace_reflections", 64, row_bytes=142, budget_bytes=1)
-        self.assertEqual((plan.chunk_rays, plan.source), (1, "budget"))
+    def test_a_budget_below_one_resident_row_fails_loudly(self):
+        with self.assertRaisesRegex(RuntimeError, "at least 142 bytes"):
+            calibrate_chunk_size(
+                "trace_reflections", 64, row_bytes=142, budget_bytes=1
+            )
 
     def test_without_a_request_or_a_budget_a_chunk_is_the_whole_shard(self):
         plan = calibrate_chunk_size("visible", 33, row_bytes=1)
@@ -312,9 +314,11 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
 
     def test_a_tiny_tape_budget_picks_a_small_chunk_and_still_completes(self):
         """The synthetic memory case: the budget, not the batch, sizes the launch."""
-        # 2 bounces at the plan's 50 B/ray/bounce tape estimate plus the chain's
-        # own 21 B/ray/bounce output is 142 B/ray, so this budget buys 4 rays.
-        scene = self._scene(tape_memory_budget_bytes=142 * 4)
+        # Two bounces cost 142 B/ray for tape+output, plus 28 B/ray for the
+        # sharded Ray/active input. The complete 42 B/row return is reserved
+        # first, then three resident chunks of four rows fit.
+        budget = _BATCH * 42 + 3 * 170 * 4
+        scene = self._scene(tape_memory_budget_bytes=budget)
         chain = scene.trace_reflections(
             self.inputs["ray"], max_bounces=2, active=self.inputs["active"]
         )
@@ -336,7 +340,9 @@ class ChunkedSingleDeviceTests(unittest.TestCase):
         cheap = _build_scene(
             self.device,
             devices=[0],
-            options=rt.MultiDeviceOptions(warm_up=False, tape_memory_budget_bytes=142 * 4),
+            options=rt.MultiDeviceOptions(
+                warm_up=False, tape_memory_budget_bytes=budget
+            ),
         )
         cheap.visible(self.inputs["origins"], self.inputs["end"])
         self.assertEqual(cheap._multi.last_chunk_plan.chunk_rays, _BATCH)

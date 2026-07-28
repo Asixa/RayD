@@ -449,6 +449,9 @@ class Adr0038PythonDefaultTests(AdrTestCase):
             dataclass_defaults(MULTI_PATH, "MultiDeviceOptions"),
             {
                 "weights": None,
+                "operation_weights": None,
+                "require_peer_access": True,
+                "require_homogeneous_devices": True,
                 "warm_up": True,
                 "chunk_rays": None,
                 "offload": None,
@@ -456,11 +459,15 @@ class Adr0038PythonDefaultTests(AdrTestCase):
                 "pipeline": True,
                 "pipeline_chunks_per_device": 4,
                 "min_rays_per_device": 262144,
+                "min_lanes_per_device": 262144,
             },
         )
         body = self.decision["8. Multi-GPU is invisible at the top-level API (D8)"]
         for pinned in (
             "`weights=None` (equal split)",
+            "`operation_weights=None`",
+            "`require_peer_access=True`",
+            "`require_homogeneous_devices=True`",
             "`warm_up=True`",
             "`chunk_rays=None`",
             "`offload=None`",
@@ -468,6 +475,7 @@ class Adr0038PythonDefaultTests(AdrTestCase):
             "`pipeline=True`",
             "`pipeline_chunks_per_device=4`",
             "`min_rays_per_device=262144`",
+            "`min_lanes_per_device=262144`",
         ):
             with self.subTest(default=pinned):
                 self.assertPhrase(pinned, body)
@@ -481,13 +489,19 @@ class Adr0038PythonDefaultTests(AdrTestCase):
             py_constant(self.multi, "_PIPELINE_CHUNKS_PER_DEVICE"),
             defaults["pipeline_chunks_per_device"],
         )
+        self.assertEqual(
+            py_constant(self.multi, "_MIN_LANES_PER_DEVICE"),
+            defaults["min_lanes_per_device"],
+        )
 
-    def test_the_row_floor_arithmetic_in_the_record_is_the_shipped_floor(self) -> None:
+    def test_the_work_floor_in_the_record_is_the_shipped_policy(self) -> None:
         body = self.decision["10. Small-batch fallback and calibration semantics"]
-        floor = py_constant(self.multi, "_MIN_RAYS_PER_DEVICE")
-        self.assertPhrase(f"({floor * 2:,} on two devices at the", body)
-        self.assertPhrase("`min_rays_per_device * len(devices)`", body)
-        self.assertPhrase("bitwise the single-device result", body)
+        self.assertPhrase("weighted remote shard", body)
+        self.assertPhrase("copied input plus", body)
+        self.assertPhrase("returned output bytes per row", body)
+        self.assertPhrase("`min_rays_per_device`", body)
+        self.assertPhrase("`min_lanes_per_device`", body)
+        self.assertPhrase("runs on the master replica", body)
 
     def test_the_calibration_ladder_and_tolerance_are_the_shipped_ones(self) -> None:
         body = self.decision["10. Small-batch fallback and calibration semantics"]

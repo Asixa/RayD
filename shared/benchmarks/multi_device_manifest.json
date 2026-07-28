@@ -1,0 +1,15 @@
+{
+  "benchmark": "rayd_multi_device",
+  "records": [
+    {
+      "path": "shared/benchmarks/baselines/multi_device_2xa6000_20260727.json",
+      "provenance_kind": "historical_documentation_import",
+      "sha256": "d325f4b443823b467a85c6bdb8738bc8845d3660c891aec554c0e3ffff71863f"
+    }
+  ],
+  "schema": {
+    "path": "shared/benchmarks/multi_device_result.schema.json",
+    "sha256": "8ef5d535827a92f15834a58baf296c6e91f37a5e7a7dd8d034f678987cfe056e"
+  },
+  "schema_version": 1
+}

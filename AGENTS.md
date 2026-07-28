@@ -185,7 +185,19 @@ class in `shared/contracts/operations.json`.
   kernel-visible change is the diffraction-accumulation lane window.
 - `per_ray` results are concatenated and are bitwise the single-device results;
   `grid_reduce` partials are summed on the master, so a merged grid matches the
-  single launch only up to float32 summation order.
+  single launch only up to float32 summation order. The bitwise claim assumes
+  the default homogeneous-device guard; explicit heterogeneous opt-in carries
+  no cross-device bitwise guarantee.
+- Bidirectional master/replica P2P and homogeneous model/capability are
+  required by default. Host-staged copies and heterogeneous devices are
+  explicit opt-ins with reduced performance/numerical guarantees.
+- Small-work fallback is based on each actual weighted remote shard and its
+  transfer width, with a separate lane floor for accumulation. Calibration and
+  configured weights are operation-local.
+- `tape_memory_budget_bytes` accounts for complete returned output, copied
+  inputs, frozen tape, concurrent chunks, and accumulation's fixed replicated
+  inputs/grids. Budgeted multi-chunk AD must stream and backpropagate per chunk
+  or fail loudly; it is never described as O(1).
 - The lane window is `lane_offset` (default `0`) plus `lane_count` (default
   `-1`): local lane `l` runs global lane `lane_offset + l`. `lane_offset = 0`
   with the default `lane_count` is bitwise the pre-ADR launch, a non-zero offset

@@ -8,34 +8,27 @@
 # which have no CUDA device at all. Those jobs are untouched by this file, and
 # nothing here changes what they run.
 #
-# INERT UNTIL A RUNNER EXISTS. No self-hosted runner is registered for this
-# repository today, so:
-#   * the only trigger is `workflow_dispatch` -- nothing here runs on a push,
-#     on a pull request, or on a schedule;
-#   * a dispatch made before a matching runner is registered only queues and
-#     then expires. Do not dispatch it as a smoke test of the YAML.
+# EXTERNAL RUNNER REQUIRED. GitHub-hosted runners do not satisfy the labels
+# below. A labelled PR, scheduled run, or manual dispatch only queues while no
+# matching self-hosted runner is online; a queued job is not evidence.
 #
 # To activate: register a runner carrying *all* of the labels in `runs-on`
 # below (`self-hosted`, `linux`, `x64`, `cuda`, `multi-gpu`) on a host with at
-# least two CUDA devices, then dispatch. To have it run on labelled pull
-# requests as well, add the trigger the other workflows use, but with its own
-# label, so that `run-ci` cannot queue work on a runner that may be offline:
+# least two CUDA devices. PRs opt in with `run-multi-gpu-ci`; the weekly run
+# detects runner/image/performance drift; manual dispatch remains available.
 #
-#     on:
-#       pull_request:
-#         types: [labeled]
-#     jobs:
-#       multi-gpu:
-#         if: github.event_name == 'workflow_dispatch'
-#             || github.event.label.name == 'run-multi-gpu-ci'
-#
-# Until then the same acceptance set is run by hand. The commands below are
+# While the runner is unavailable the same acceptance set is run by hand. The commands below are
 # the ones in section 8 of `docs/dev/multi_gpu_operations.md`, which is what
 # the Phase 2-3 verifications used on the 2x RTX A6000 host.
 
 name: Multi-GPU Acceptance
 
 on:
+  pull_request:
+    types: [labeled]
+  schedule:
+    # Weekly, outside the verification host's normal working hours.
+    - cron: "17 9 * * 1"
   workflow_dispatch:
     inputs:
       python:
@@ -47,9 +40,9 @@ on:
         default: python
       run_benchmark:
         description: >-
-          Also run backends/torch/tests/benchmark_multi_device.py. It is a
-          measurement, not a gate: it prints speedups and calibrated weights
-          and never fails the job on a number.
+          Also run backends/torch/tests/benchmark_multi_device.py and retain
+          its schema-versioned JSON artifact. Benchmark execution errors fail
+          the job; speedup values remain measurements rather than thresholds.
         required: false
         default: false
         type: boolean
@@ -64,6 +57,11 @@ permissions:
 jobs:
   multi-gpu:
     name: Multi-GPU acceptance / 2x CUDA (self-hosted)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'run-multi-gpu-ci')
     # All five labels are required. A one-GPU runner must not pick this up:
     # every multi-device test skips itself below two devices, so such a job
     # would report green while having verified nothing.
@@ -130,6 +128,8 @@ jobs:
             test_multi_device_stress \
             test_multi_device_scene \
             test_chunked_executor \
+            test_multi_device_policy \
+            test_multi_device_resilience \
             test_lane_offset
           do
             echo "::group::$module"
@@ -156,14 +156,32 @@ jobs:
         run: |
           "$PYTHON" -m unittest \
             tests.test_adr0038_multi_device \
+            tests.test_multi_device_benchmark_evidence \
             tests.test_shared_operation_contract \
             tests.test_public_api_manifest \
             tests.test_ptx_source_digest \
             tests.test_compile_flag_policy_contract -v
 
-      - name: Multi-device benchmark (measurement, not a gate)
-        if: ${{ inputs.run_benchmark }}
+      - name: Multi-device benchmark (schema-versioned measurement)
+        if: >-
+          github.event_name == 'schedule' ||
+          github.event_name == 'pull_request' ||
+          inputs.run_benchmark
         shell: bash
-        continue-on-error: true
         run: |
-          "$PYTHON" -m backends.torch.tests.benchmark_multi_device
+          mkdir -p artifacts/multi_gpu
+          "$PYTHON" -m backends.torch.tests.benchmark_multi_device \
+            --json artifacts/multi_gpu/benchmark.json
+
+      - name: Upload multi-device benchmark JSON
+        if: >-
+          always() &&
+          (github.event_name == 'schedule' ||
+           github.event_name == 'pull_request' ||
+           inputs.run_benchmark)
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-gpu-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/multi_gpu/benchmark.json
+          if-no-files-found: error
+          retention-days: 30

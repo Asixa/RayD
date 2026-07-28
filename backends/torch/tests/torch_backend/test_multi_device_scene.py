@@ -358,18 +358,26 @@ class SingleDeviceStaysOnThePreExistingPathTests(
     def test_options_defaults_are_the_documented_ones(self):
         options = rt.MultiDeviceOptions()
         self.assertIsNone(options.weights)
+        self.assertIsNone(options.operation_weights)
+        self.assertTrue(options.require_peer_access)
+        self.assertTrue(options.require_homogeneous_devices)
         self.assertTrue(options.warm_up)
         # Phase 2d: pipelined dispatch is the default, four chunks per shard,
         # and a batch under 256Ki rows per device stays on the master.
         self.assertTrue(options.pipeline)
         self.assertEqual(options.pipeline_chunks_per_device, 4)
         self.assertEqual(options.min_rays_per_device, 262144)
+        self.assertEqual(options.min_lanes_per_device, 262144)
 
     def test_the_throughput_knobs_are_validated(self):
         for options in (
             rt.MultiDeviceOptions(pipeline=1),
             rt.MultiDeviceOptions(pipeline_chunks_per_device=1.5),
             rt.MultiDeviceOptions(min_rays_per_device=True),
+            rt.MultiDeviceOptions(min_lanes_per_device=True),
+            rt.MultiDeviceOptions(require_peer_access=1),
+            rt.MultiDeviceOptions(require_homogeneous_devices=1),
+            rt.MultiDeviceOptions(operation_weights=[]),
         ):
             with self.assertRaises(TypeError):
                 rt.Scene(devices=[0], options=options)
@@ -377,6 +385,7 @@ class SingleDeviceStaysOnThePreExistingPathTests(
             rt.MultiDeviceOptions(pipeline_chunks_per_device=1),
             rt.MultiDeviceOptions(pipeline_chunks_per_device=0),
             rt.MultiDeviceOptions(min_rays_per_device=0),
+            rt.MultiDeviceOptions(min_lanes_per_device=0),
         ):
             with self.assertRaises(ValueError):
                 rt.Scene(devices=[0], options=options)
@@ -1040,16 +1049,18 @@ class SmallBatchFallbackTests(MultiDeviceResultMixin, unittest.TestCase):
         # literally the single-device call, on the caller's own tensors.
         self.assert_same_results(self.reference, results, "below the floor")
 
-    def test_the_floor_is_per_device_and_the_batch_above_it_shards(self):
+    def test_the_floor_is_applied_to_the_actual_remote_shard(self):
         scene = _build_scene(
             self.device,
             devices=[0, 1],
             options=rt.MultiDeviceOptions(warm_up=False, min_rays_per_device=17),
         )
         layer = scene._multi
-        self.assertEqual(layer._dispatch_mode(33), "master")
-        self.assertEqual(layer._dispatch_mode(34), "pipelined")
-        self.assertEqual(layer._dispatch_mode(0), "master")
+        self.assertEqual(layer._dispatch_mode("intersect_full", 32, 100), "master")
+        self.assertEqual(
+            layer._dispatch_mode("intersect_full", 33, 100), "pipelined"
+        )
+        self.assertEqual(layer._dispatch_mode("intersect_full", 0, 100), "master")
 
     def test_an_explicit_chunking_contract_outranks_the_floor(self):
         """`chunk_rays` is a memory bound; it is honoured at every batch size."""
@@ -1089,6 +1100,7 @@ class CalibrationTests(unittest.TestCase):
     def test_the_throughput_stage_measures_every_device_and_sets_the_weights(self):
         scene = self._scene()
         record = scene.calibrate_devices(rays=4096, repeats=2, warm_up=1, refine=False)
+        self.assertEqual(record.operation, "intersect_full")
         self.assertEqual(record.devices, (0, 1))
         self.assertEqual(len(record.seconds), 2)
         self.assertTrue(all(value > 0.0 for value in record.seconds))
@@ -1103,6 +1115,8 @@ class CalibrationTests(unittest.TestCase):
                 places=6,
             )
         self.assertEqual(scene.device_weights, record.weights)
+        self.assertEqual(scene.device_weights_for("intersect_full"), record.weights)
+        self.assertEqual(scene.device_weights_for("nearest_edge"), (1.0, 1.0))
         self.assertEqual(scene._multi.last_calibration, record)
         self.assertIn("Mrow/s", record.describe())
 
@@ -1139,13 +1153,28 @@ class CalibrationTests(unittest.TestCase):
             points = self.inputs["points"].to(device)
             target.nearest_edge(points)
 
-        record = scene.calibrate_devices(probe=probe, repeats=1, warm_up=0)
+        record = scene.calibrate_devices(
+            operation="nearest_edge",
+            probe=probe,
+            repeats=1,
+            warm_up=0,
+        )
         self.assertGreater(len(seen), 0)
         self.assertEqual({name for name, _index in seen}, {"Scene", "_ReplicatedScene"})
         self.assertEqual(
             {index for name, index in seen if name == "_ReplicatedScene"}, {0}
         )
         self.assertEqual(record.rows, 1 << 20)
+
+    def test_a_named_nondefault_operation_requires_its_own_probe(self):
+        scene = self._scene()
+        with self.assertRaisesRegex(ValueError, "custom probe"):
+            scene.calibrate_devices(
+                operation="visible",
+                rays=4096,
+                repeats=1,
+                warm_up=0,
+            )
 
     def test_calibration_only_chooses_weights_and_leaves_results_alone(self):
         if torch.cuda.get_device_name(0) != torch.cuda.get_device_name(1):
@@ -1339,6 +1368,9 @@ class MultiDeviceAccumulationTests(AccumulationMixin, unittest.TestCase):
         torch.cuda.set_device(self._entry_device)
 
     def _scene(self, weights=None, **options) -> rt.Scene:
+        # Keep these numerical/merge tests about multi-device lane sharding;
+        # the small-window master fallback has its own policy coverage.
+        options.setdefault("min_lanes_per_device", 1)
         return _accum_scene(
             self.device,
             devices=[0, 1],

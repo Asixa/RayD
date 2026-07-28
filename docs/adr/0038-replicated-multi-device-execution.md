@@ -99,10 +99,12 @@ record governs.
 Everything cross-device or cross-chunk happens in the orchestration layer, with
 its own stated float32 order:
 
-- A `per_ray` operation's shards and chunks are **concatenated**, never summed.
+- On the default homogeneous topology, a `per_ray` operation's shards and
+  chunks are **concatenated**, never summed.
   Row `i` of the gathered result is bitwise the row a single-device call
   produces, on every field, at any weighting and any chunk count, because it is
-  the same kernel on the same rows.
+  the same kernel on the same rows. Explicit heterogeneous opt-in carries no
+  cross-device bitwise guarantee.
 - A `grid_reduce` operation's per-(device, chunk) partial grids are summed:
   chunks accumulate into their device's running partial in ascending lane order
   on that device, and the per-device partials are then moved to the master and
@@ -235,13 +237,27 @@ bounce -- so chunked execution is a first-class component rather than a fallback
 - A chunking knob is a **memory contract** and is honoured at every batch size.
   It outranks the small-batch floor of section 10, which is only a throughput
   heuristic.
-- `grid_reduce` chunks accumulate in place into a per-device partial, so their
-  memory cost is O(1) in the sample count. `per_ray` chunks are concatenated on
-  the master, or handed to `offload(chunk_start_row, chunk_result)` with the
-  chunk's fields already on the master, in which case the operation returns
-  `None`. Chunks arrive in issue order -- ascending rows per device, interleaved
-  across devices -- so a hook must use `chunk_start_row` rather than assume a
-  front-to-back walk.
+- `tape_memory_budget_bytes` is a per-device peak-increment contract. The
+  estimator accounts for the executor's maximum of three resident chunks and,
+  when results are concatenated, first reserves the complete returned output.
+  Per-row copied inputs, outputs and frozen tape are all charged; accumulation
+  also reserves replicated state/material inputs and its fixed-size grid
+  partials. CUDA allocator granularity, the already-resident scene/caller
+  tensors, and allocations made by a user `offload` hook are outside that
+  estimate.
+  A request whose fixed output already exceeds the budget fails and points the
+  caller to `offload`; it does not launch with a knowingly false bound.
+- Inference `grid_reduce` chunks reuse one fixed-size partial grid, so their
+  value-buffer memory is O(1) in the sample count. That statement does **not**
+  apply to autograd: ordinary additions retain every chunk's frozen native tape
+  until backward, so an AD grid request that would need several chunks under a
+  budget fails loudly. Likewise, a chunked `per_ray` call that would retain a
+  multi-chunk graph must use `offload` and perform backward per chunk.
+  `per_ray` inference chunks are concatenated on the master, or handed to
+  `offload(chunk_start_row, chunk_result)` with the chunk's fields already on
+  the master, in which case the operation returns `None`. Chunks arrive in
+  issue order -- ascending rows per device, interleaved across devices -- so a
+  hook must use `chunk_start_row` rather than assume a front-to-back walk.
 - Ordering is expressed with events on private streams, never with a device or
   host synchronization: chunk `k`'s gather runs while chunk `k+1` computes. The
   executor enters by making each device's compute stream wait on an event
@@ -271,14 +287,19 @@ surface this record adds is exactly:
 - `Scene(devices=[...], options=...)`;
 - `rayd.torch.MultiDeviceOptions`, an additive frozen dataclass whose every
   field is defaulted;
-- `Scene.calibrate_devices(...)` and the `Scene.device_weights` property;
+- `Scene.calibrate_devices(...)`, the latest/base `Scene.device_weights`
+  property, and `Scene.device_weights_for(operation)` for the effective
+  operation-local split;
 - `lane_offset` / `lane_count` on the two accumulation entry points (section 5).
 
 `MultiDeviceOptions` defaults are `weights=None` (equal split),
-`warm_up=True`, `chunk_rays=None`, `offload=None`,
+`operation_weights=None`, `require_peer_access=True`,
+`require_homogeneous_devices=True`, `warm_up=True`,
+`chunk_rays=None`, `offload=None`,
 `tape_memory_budget_bytes=None`, `pipeline=True`,
-`pipeline_chunks_per_device=4` and `min_rays_per_device=262144`. The two
-throughput numbers are measured, not guessed (section 10).
+`pipeline_chunks_per_device=4`, `min_rays_per_device=262144` and
+`min_lanes_per_device=262144`. The throughput numbers are measured, not
+guessed (section 10).
 
 Process-per-GPU and distributed execution need no API change at all: each rank
 builds a rank-local single-device scene.
@@ -318,14 +339,23 @@ is a measurement of unchanged code and the residual is the machine.
 Two mechanisms keep the layer from being slower than not having it, and they
 carry **different strengths**. The difference is part of the contract.
 
-**The row floor is a guarantee.** A multi-device `per_ray` batch with fewer than
-`min_rays_per_device * len(devices)` rows (524,288 on two devices at the
-default) does not shard: it runs on the master replica, with the caller's own
-tensors, through the same code a single-device `Scene` runs, so the result is
-bitwise the single-device result and the layer costs one Python comparison. The
-floor is measured -- the pipelined dispatch spends roughly 3 ms of host time
-before any device work -- and it is verified at the 524,287 / 524,288 boundary.
-An explicit chunking knob outranks it (section 7).
+**The work floor is a guarantee.** The layer computes the target operation's
+weighted remote shard, then compares that actual shard with a transfer-aware
+floor derived from `min_rays_per_device` and the operation's copied input plus
+returned output bytes per row. A highly skewed split therefore cannot launch
+a token remote shard merely because the total batch is large. `grid_reduce`
+applies the analogous
+`min_lanes_per_device` floor to the actual remote lane windows. Below either
+floor the operation runs on the master replica, through the same code a
+single-device `Scene` runs. An explicit chunking knob outranks the per-ray
+throughput floor (section 7).
+
+`operation_weights` may override the base `weights` for named operations.
+Exact keys such as `trace_reflections:4` win over family keys. Calibration
+updates only the operation it measured; a custom probe therefore requires an
+explicit `operation=...`, and the built-in probe cannot be relabelled as a
+different operation. It cannot silently change the split used by unrelated
+query or accumulation families.
 
 **Calibration is a measurement, not a guarantee.** `calibrate_devices()` runs a
 throughput stage (the same probe on every replica with resident inputs, so the
@@ -403,6 +433,12 @@ inside one round) and reduced with a minimum over rounds; the machine was
 shared, so every number carries roughly +/-5%. The full tables, the twenty-run
 spread, and the crossover derivation are in
 [`multi_gpu_operations.md`](../dev/multi_gpu_operations.md) section 5.
+The machine-readable run-of-record transcription is
+[`shared/benchmarks/baselines/multi_device_2xa6000_20260727.json`](../../shared/benchmarks/baselines/multi_device_2xa6000_20260727.json),
+pinned with its schema by
+[`shared/benchmarks/multi_device_manifest.json`](../../shared/benchmarks/multi_device_manifest.json).
+Its provenance says `historical_documentation_import`: it is a structured copy
+of the measurements already recorded here, not a newly executed run.
 
 | Configuration | Operation | 1 GPU | 2 GPUs | speedup |
 | --- | --- | ---: | ---: | ---: |
@@ -548,6 +584,8 @@ each needs its own decision when it is picked up.
 6. A heterogeneous-device calibration claim. The verification machine's two
    devices are identical, so the calibrated weights answer 1.00/1.00 on
    compute-bound probes and nothing here is evidence about unequal GPUs.
+   `require_homogeneous_devices=False` permits such an experiment explicitly,
+   but neither bitwise parity nor calibration quality is claimed for it.
 
 ## Stop conditions
 

@@ -157,9 +157,18 @@ class Scene:
         if self._multi is not None:
             # One ordinary single-device Scene per device; the master replica's
             # native scene answers this object's scene-level metadata.
-            self._multi.build(self._meshes)
-            self._native_scene = self._multi.master_native_scene()
-            self._native_handle = int(self._native_scene.handle())
+            try:
+                self._multi.build(self._meshes)
+                self._native_scene = self._multi.master_native_scene()
+                self._native_handle = int(self._native_scene.handle())
+            except BaseException:
+                # Do not leave stale master metadata looking usable when only
+                # part of a replica rebuild completed.
+                self._native_scene = None
+                self._native_handle = 0
+                self._ready = False
+                self._pending_updates = True
+                raise
             self._ready = True
             self._pending_updates = False
             return
@@ -194,6 +203,8 @@ class Scene:
         self._pending_updates = False
 
     def _require_native_scene(self):
+        if self._multi is not None:
+            self._multi.require_healthy()
         if not self._ready or self._native_scene is None:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._native_scene
@@ -201,6 +212,7 @@ class Scene:
     def calibrate_devices(
         self,
         *,
+        operation: str | None = None,
         rays: int = 1 << 20,
         max_bounces: int = 0,
         probe: Callable[[Any, torch.device], object] | None = None,
@@ -227,11 +239,13 @@ class Scene:
         produced, so a caller can log exactly what it is running.
 
         The default probe is `rays` rays drawn from a fixed seed inside this
-        scene's bounding box, put through `intersect` -- or through
+        scene's bounding box, put through full `intersect` -- or through
         `trace_reflections` when `max_bounces` is set. It is an op *shape*, not
-        a workload: pass `probe(scene, device)` to time the call that actually
-        matters. Calibration only chooses weights; at fixed weights, execution
-        stays as reproducible as it was.
+        a workload: pass both `operation="..."` and `probe(scene, device)` to
+        time another call. The chosen split is stored only for that exact
+        operation; use `device_weights_for()` to inspect it. Calibration only
+        chooses weights, and is a noisy measurement rather than a performance
+        guarantee.
         """
         if self._multi is None or len(self._multi.devices) < 2:
             raise RuntimeError(
@@ -240,6 +254,7 @@ class Scene:
                 "to measure on one device."
             )
         return self._multi.calibrate(
+            operation=operation,
             rows=int(rays),
             max_bounces=int(max_bounces),
             probe=probe,
@@ -250,14 +265,24 @@ class Scene:
 
     @property
     def device_weights(self) -> tuple[float, ...] | None:
-        """The shard split in `devices` order, or `None` when nothing orchestrates.
+        """The latest calibrated/base split, or `None` when nothing orchestrates.
 
         A one-device scene that engaged the chunked executor answers `(1.0,)`:
         it has a (degenerate) split, it just has no way to change it.
+        Prefer `device_weights_for(operation)` when operation-local weights or
+        more than one calibration are in use.
         """
         if self._multi is None:
             return None
         return self._multi.weights
+
+    def device_weights_for(self, operation: str) -> tuple[float, ...] | None:
+        """Effective split for one operation, including operation-local calibration."""
+        if self._multi is None:
+            return None
+        if not isinstance(operation, str) or not operation:
+            raise TypeError("Scene.device_weights_for() expects a non-empty operation name.")
+        return self._multi.weights_for(operation)
 
     def _mesh_vertex_tensors(self) -> tuple[torch.Tensor, ...]:
         return tuple(mesh.vertices for mesh, _dynamic in self._meshes)
@@ -293,7 +318,9 @@ class Scene:
         return _LazyIntersection(load_t, load_full)  # type: ignore[return-value]
 
     def is_ready(self) -> bool:
-        return self._ready
+        return self._ready and (
+            self._multi is None or not self._multi.is_poisoned
+        )
 
     @property
     def trace_backend(self) -> str:
@@ -654,20 +681,36 @@ class Scene:
             raise RuntimeError(
                 "Scene.update_mesh_vertices(): target mesh is not dynamic."
             )
-        mesh.vertices = positions.contiguous()
+        updated_vertices = positions.contiguous()
         if self._multi is not None:
             # Broadcast: every replica takes its own copy of the new positions,
             # including the master, whose native scene this object reads.
-            self._multi.update_mesh_vertices(int(mesh_id), mesh.vertices)
+            try:
+                self._multi.update_mesh_vertices(int(mesh_id), updated_vertices)
+            except BaseException:
+                self._ready = False
+                self._pending_updates = True
+                raise
+            # Commit the public mesh only after every replica accepted the
+            # broadcast.  A failed broadcast is recovered by build(), and that
+            # rebuild must use the last caller-visible committed geometry.
+            mesh.vertices = updated_vertices
             self._pending_updates = True
             return
+        mesh.vertices = updated_vertices
         with torch._C._DisableFuncTorch():
             scene.update_vertices(int(mesh_id), _native_scene_tensor(mesh.vertices))
         self._pending_updates = True
 
     def sync(self) -> None:
         if self._multi is not None:
-            self._multi.sync()
+            self._require_native_scene()
+            try:
+                self._multi.sync()
+            except BaseException:
+                self._ready = False
+                self._pending_updates = True
+                raise
             self._pending_updates = False
             return
         scene = self._require_native_scene()
@@ -676,7 +719,10 @@ class Scene:
         self._pending_updates = False
 
     def has_pending_updates(self) -> bool:
-        return bool(self._pending_updates)
+        return bool(
+            self._pending_updates
+            or (self._multi is not None and self._multi.is_poisoned)
+        )
 
     def nearest_edges(
         self,
@@ -706,7 +752,12 @@ class Scene:
     def set_edge_mask(self, mask: torch.Tensor) -> None:
         scene = self._require_native_scene()
         if self._multi is not None:
-            self._multi.set_edge_mask(mask)
+            try:
+                self._multi.set_edge_mask(mask)
+            except BaseException:
+                self._ready = False
+                self._pending_updates = True
+                raise
             return
         scene.set_edge_mask(mask)
 

@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://witwin.dev/rayd/schemas/multi-device-benchmark-v1.json",
+  "title": "RayD replicated multi-device benchmark record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "benchmark",
+    "provenance",
+    "parameters",
+    "machine",
+    "configs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "benchmark": {
+      "const": "rayd_multi_device"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "generated_at"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "live_measurement",
+            "historical_documentation_import"
+          ]
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "measured_at": {
+          "type": "string"
+        },
+        "source_documents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "statement": {
+          "type": "string"
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected_configs",
+        "warmup",
+        "repeat",
+        "calibration_rays",
+        "calibration_repeats",
+        "accum_only"
+      ],
+      "properties": {
+        "selected_configs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "calibration_rays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calibration_repeats": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "accum_only": {
+          "type": "boolean"
+        }
+      }
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_count",
+        "devices",
+        "torch",
+        "cuda",
+        "peer_access"
+      ],
+      "properties": {
+        "device_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "index",
+              "name"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "name": {
+                "type": "string"
+              },
+              "total_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "compute_capability": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "torch": {
+          "type": "string"
+        },
+        "cuda": {
+          "type": "string"
+        },
+        "peer_access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "pairs"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "measured",
+                "partially_recorded",
+                "not_applicable"
+              ]
+            },
+            "all_pairs_accessible": {
+              "type": "boolean"
+            },
+            "pairs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source",
+                  "destination",
+                  "can_access"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "destination": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "can_access": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "d2d_gbps": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "configs": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/config"
+      }
+    }
+  },
+  "$defs": {
+    "peak_memory": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "master_device_index",
+            "streamed_bytes",
+            "concatenated_bytes",
+            "per_device_streamed_bytes"
+          ],
+          "properties": {
+            "status": {
+              "const": "measured"
+            },
+            "master_device_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "streamed_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "concatenated_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "per_device_streamed_bytes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "device_index",
+                  "bytes"
+                ],
+                "properties": {
+                  "device_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "bytes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ],
+          "properties": {
+            "status": {
+              "const": "not_recorded"
+            }
+          }
+        }
+      ]
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "single_ms",
+        "batch"
+      ],
+      "properties": {
+        "single_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "multi_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "speedup": {
+          "type": "number",
+          "minimum": 0
+        },
+        "batch": {
+          "type": "string"
+        },
+        "dispatch": {
+          "type": "string"
+        },
+        "chunk_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "bitwise_agreement": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "relative_grid_deviation": {
+          "type": "number",
+          "minimum": 0
+        },
+        "peak_memory": {
+          "$ref": "#/$defs/peak_memory"
+        }
+      },
+      "additionalProperties": true
+    },
+    "config": {
+      "type": "object",
+      "required": [
+        "note",
+        "accum_dfr_direct"
+      ],
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "intersect": {
+          "$ref": "#/$defs/operation"
+        },
+        "trace_reflections": {
+          "$ref": "#/$defs/operation"
+        },
+        "intersect_calibrated": {
+          "$ref": "#/$defs/operation"
+        },
+        "trace_reflections_calibrated": {
+          "$ref": "#/$defs/operation"
+        },
+        "accum_dfr_direct": {
+          "$ref": "#/$defs/operation"
+        },
+        "intersect_offload": {
+          "$ref": "#/$defs/operation"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

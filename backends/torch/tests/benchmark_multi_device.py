@@ -62,10 +62,12 @@ attributes the executor already exposes (`_multi.last_dispatch` and
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import torch
@@ -613,10 +615,18 @@ def measure_offload(config: Config, devices, single, ray, args) -> dict:
     def concatenated():
         return single.intersect(ray, flags=rt.RayFlags.All).t
 
-    torch.cuda.reset_peak_memory_stats(devices[0])
+    for device in devices:
+        torch.cuda.reset_peak_memory_stats(device)
     streamed()
     sync(devices)
-    streamed_peak = torch.cuda.max_memory_allocated(devices[0])
+    streamed_peaks = [
+        {
+            "device_index": int(device.index),
+            "bytes": int(torch.cuda.max_memory_allocated(device)),
+        }
+        for device in devices
+    ]
+    streamed_peak = streamed_peaks[0]["bytes"]
     torch.cuda.reset_peak_memory_stats(devices[0])
     concatenated()
     sync(devices)
@@ -635,6 +645,13 @@ def measure_offload(config: Config, devices, single, ray, args) -> dict:
     record["chunks_offloaded"] = consumed["chunks"]
     record["master_peak_bytes_streamed"] = streamed_peak
     record["master_peak_bytes_concatenated"] = concatenated_peak
+    record["peak_memory"] = {
+        "status": "measured",
+        "master_device_index": int(devices[0].index),
+        "streamed_bytes": int(streamed_peak),
+        "concatenated_bytes": int(concatenated_peak),
+        "per_device_streamed_bytes": streamed_peaks,
+    }
     del scene, vertices, faces
     torch.cuda.empty_cache()
     return record
@@ -841,7 +858,12 @@ def main() -> None:
         help="probe size for calibrate_devices(); 0 means the batch size itself",
     )
     parser.add_argument("--calibration-repeats", type=int, default=3)
-    parser.add_argument("--json", default=None, help="write the full record here")
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="write the schema-versioned benchmark record here",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -855,21 +877,41 @@ def main() -> None:
     torch.cuda.set_device(devices[0])
 
     machine = {
+        "device_count": len(devices),
         "devices": [
             {
                 "index": device.index,
                 "name": torch.cuda.get_device_name(device),
                 "total_bytes": torch.cuda.get_device_properties(device).total_memory,
+                "compute_capability": [
+                    int(torch.cuda.get_device_properties(device).major),
+                    int(torch.cuda.get_device_properties(device).minor),
+                ],
             }
             for device in devices
         ],
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
     }
+    peer_pairs = [
+        {
+            "source": int(source.index),
+            "destination": int(destination.index),
+            "can_access": bool(
+                torch.cuda.can_device_access_peer(source, destination)
+            ),
+        }
+        for source in devices
+        for destination in devices
+        if source != destination
+    ]
+    machine["peer_access"] = {
+        "status": "measured" if len(devices) > 1 else "not_applicable",
+        "all_pairs_accessible": bool(peer_pairs)
+        and all(pair["can_access"] for pair in peer_pairs),
+        "pairs": peer_pairs,
+    }
     if len(devices) > 1:
-        machine["peer_access"] = bool(
-            torch.cuda.can_device_access_peer(devices[0], devices[1])
-        )
         machine["d2d_gbps"] = device_to_device_gbps(devices[0], devices[1])
     else:
         print(
@@ -878,7 +920,26 @@ def main() -> None:
         )
 
     selected = list(CONFIGS.values()) if args.config == "all" else [CONFIGS[args.config]]
-    results = {"machine": machine, "configs": {}}
+    results = {
+        "schema_version": 1,
+        "benchmark": "rayd_multi_device",
+        "provenance": {
+            "kind": "live_measurement",
+            "generated_at": datetime.datetime.now(datetime.timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        },
+        "parameters": {
+            "selected_configs": [config.name for config in selected],
+            "warmup": args.warmup,
+            "repeat": args.repeat,
+            "calibration_rays": args.calibration_rays,
+            "calibration_repeats": args.calibration_repeats,
+            "accum_only": args.accum_only,
+        },
+        "machine": machine,
+        "configs": {},
+    }
     for config in selected:
         overrides = {}
         if args.rays is not None:
@@ -905,8 +966,11 @@ def main() -> None:
     print()
     print(markdown(results))
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as handle:
-            json.dump(results, handle, indent=2, sort_keys=True)
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(
+            json.dumps(results, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

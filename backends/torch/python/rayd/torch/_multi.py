@@ -107,15 +107,15 @@ allocator already tracks through `record_stream`.
 Chunked execution (Phase 2b)
 ----------------------------
 
-`MultiDeviceOptions.chunk_rays`, `.tape_memory_budget_bytes` and `.offload`
-ask the same executor for a chunk size that fits a memory budget instead of one
-that overlaps well, and are honoured at every batch size -- a memory bound is a
-contract, and the small-batch floor does not apply to it. Ordering is the
-pipelined one described above: chunk `k`'s gather runs on that pair's copy
-stream while chunk `k+1`'s compute already runs on the compute stream, tied by
-events, never by a device or host synchronization. The master's stream is made
-to wait on a chunk's gather event before anything reads it, which is the only
-ordering a caller can observe.
+`MultiDeviceOptions.chunk_rays` sets an explicit launch size;
+`.tape_memory_budget_bytes` asks the same executor for the largest chunk whose
+estimated incremental peak fits a hard budget; `.offload` streams each retired
+result. These controls are honoured at every batch size, and the small-batch
+floor does not override them. Ordering is the pipelined one described above:
+chunk `k`'s gather runs on that pair's copy stream while chunk `k+1`'s compute
+already runs on the compute stream, tied by events, never by a device or host
+synchronization. The master's stream is made to wait on a chunk's gather event
+before anything reads it, which is the only ordering a caller can observe.
 
 Chunking is engaged for a one-device scene too (`Scene(devices=[d],
 options=MultiDeviceOptions(chunk_rays=...))`): at extreme N the binding
@@ -196,10 +196,11 @@ backward per (device, chunk) launch against that launch's own tape.
 
 from __future__ import annotations
 
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 import torch
 
@@ -230,10 +231,22 @@ _PHASE_2C = "docs/dev/multi_gpu_plan.md Phase 2c"
 class MultiDeviceOptions:
     """Tuning knobs for `Scene(devices=[...])`; every field is optional.
 
-    `weights` is the static shard split of decision D1: one non-negative
+    `weights` is the fallback shard split of decision D1: one non-negative
     weight per device, in `devices` order, defaulting to an equal split. It is
     a ratio, not a count, so `[9.0, 1.0]` and `[0.9, 0.1]` mean the same thing,
     and a zero weight is legal and simply leaves that device idle.
+    `operation_weights` optionally replaces that fallback for one operation
+    family (for example `intersect`) or exact shape (for example
+    `trace_reflections:4`). Exact keys win over family keys.
+
+    `require_peer_access=True` rejects a topology without bidirectional CUDA
+    peer access between the master and every replica. Set it to `False` only
+    to explicitly accept PyTorch's host-staged cross-device copies and the
+    resulting loss of the overlap assumptions used by this executor.
+    `require_homogeneous_devices=True` likewise keeps the bitwise per-ray
+    contract inside the identical-model/capability topology for which it was
+    verified. Set it to `False` to permit a mixed set, with no cross-device
+    bitwise claim.
 
     `warm_up` pre-links each device's OptiX pipelines through
     `rayd.torch._warmup` while the scene is being built, so the first real
@@ -241,32 +254,44 @@ class MultiDeviceOptions:
 
     `chunk_rays`, `tape_memory_budget_bytes` and `offload` are the chunked
     executor of D7. `chunk_rays` is the number of batch rows per launch and
-    wins over everything else; leaving it `None` and setting
-    `tape_memory_budget_bytes` instead asks `calibrate_chunk_size()` for the
-    largest chunk whose tape and outputs fit that budget. `offload` is called
-    once per chunk as `offload(chunk_start_row, chunk_result)` with the chunk's
-    fields already on the master device; setting it means per-ray results are
-    streamed instead of concatenated and the operation returns `None`. Any of
-    the three engages the chunked path, including on a one-device scene.
+    wins over automatic sizing. `tape_memory_budget_bytes` is the hard
+    incremental peak estimate: it reserves the returned output, per-row input,
+    output and tape storage, and every concurrently resident chunk. `offload`
+    is called once per chunk as `offload(chunk_start_row, chunk_result)` with
+    the chunk's fields already on the master device; setting it means per-ray
+    results are streamed instead of concatenated and the operation returns
+    `None`. Differentiable multi-chunk execution needs per-chunk backward in
+    this hook for a memory budget to be meaningful. Any of the three engages
+    the chunked path, including on a one-device scene.
 
-    `pipeline`, `pipeline_chunks_per_device` and `min_rays_per_device` are the
-    throughput half of the executor (Phase 2d), and only ever apply to a scene
-    with more than one device. `pipeline` (on by default) runs every `per_ray`
-    operation through the double-buffered executor so scatter, compute and
-    gather overlap; `pipeline=False` keeps the Phase 2a one-launch-per-shard
-    path, which is the reference the pipelined results are compared against.
+    `pipeline`, `pipeline_chunks_per_device`, `min_rays_per_device` and
+    `min_lanes_per_device` are the throughput half of the executor (Phase 2d),
+    and only ever apply to a scene with more than one device. `pipeline` (on
+    by default) runs every `per_ray` operation through the double-buffered
+    executor so scatter, compute and gather overlap; `pipeline=False` keeps the
+    Phase 2a one-launch-per-shard path, which is the reference the pipelined
+    results are compared against.
     `pipeline_chunks_per_device` is how many chunks the *widest* remote shard
     is cut into: more chunks hide more of the pipeline's first scatter and last
     gather, fewer chunks pay less per-launch host cost. The master's shard is
     always one launch, because it has no copy to overlap.
-    `min_rays_per_device` is the small-batch floor: a batch with fewer than
-    `min_rays_per_device * len(devices)` rows runs entirely on the master
-    replica, bitwise as a single-device `Scene` would run it, because a shard
-    that small cannot pay for its own copies. An explicit chunking knob is a
-    memory contract and is honoured whatever the batch size.
+    `min_rays_per_device` is the baseline floor for each actual remote shard;
+    wider transfers raise it proportionally. `min_lanes_per_device` is the
+    corresponding floor for each remote accumulation window. If any active
+    remote shard is smaller, the complete call runs on the master replica.
+    Explicit chunk sizing or a memory budget is honoured whatever the batch
+    size.
     """
 
     weights: Sequence[float] | None = None
+    # Optional operation-local splits. Exact keys (for example
+    # ``trace_reflections:4``) win over their family key
+    # (``trace_reflections``), and both win over ``weights``.
+    operation_weights: Mapping[str, Sequence[float]] | None = None
+    # Cross-device tensor copies without CUDA peer access are host staged and
+    # invalidate the overlap assumptions this executor is built around.
+    require_peer_access: bool = True
+    require_homogeneous_devices: bool = True
     warm_up: bool = True
     chunk_rays: int | None = None
     # `Any`, not `object`: the second argument is the chunk's own result record
@@ -277,6 +302,7 @@ class MultiDeviceOptions:
     pipeline: bool = True
     pipeline_chunks_per_device: int = 4
     min_rays_per_device: int = 262144
+    min_lanes_per_device: int = 262144
 
 
 @dataclass
@@ -303,6 +329,8 @@ class ChunkPlan:
     source: str
     row_bytes: int
     budget_bytes: int | None = None
+    resident_chunks: int = 1
+    fixed_output_bytes: int = 0
     chunk_count: int = 0
     measured_row_bytes: float | None = None
 
@@ -385,6 +413,12 @@ _REFL_EPC_FIELD_ROW_BYTES = 13
 # no-AD staging pair (4 + 16 bytes) plus that same byte, whichever is larger.
 _DFR_ACCUM_LANE_BYTES = 21
 
+# The shipped small-batch floor was measured for a full intersection row:
+# 24 input bytes plus 76 output bytes. Wider rows need proportionally more
+# remote work to amortize their copy; narrower rows still pay the same ~3 ms
+# host/launch floor and therefore never lower the minimum.
+_DISPATCH_BASELINE_TRANSFER_BYTES = 100
+
 # Grid accumulation aggregates within a warp before its atomic, so every lane
 # window this module cuts is a whole number of warps (see the module docstring).
 _LANE_ALIGNMENT = 32
@@ -394,6 +428,7 @@ _LANE_ALIGNMENT = 32
 # sweep they come from (2x RTX A6000, NV4 at 52.6 GB/s per direction).
 _PIPELINE_CHUNKS_PER_DEVICE = 4
 _MIN_RAYS_PER_DEVICE = 262144
+_MIN_LANES_PER_DEVICE = 262144
 
 # The probe `calibrate()` runs when the caller does not supply one: a batch big
 # enough to be dominated by the device rather than by the launch, small enough
@@ -420,6 +455,8 @@ def calibrate_chunk_size(
     row_bytes: int,
     chunk_rays: int | None = None,
     budget_bytes: int | None = None,
+    resident_chunks: int = 1,
+    fixed_output_bytes: int = 0,
 ) -> ChunkPlan:
     """Pick the largest chunk that fits the tape budget, and record why.
 
@@ -434,11 +471,30 @@ def calibrate_chunk_size(
     """
     rows = max(int(total_rows), 0)
     cost = max(int(row_bytes), 1)
+    resident = _positive_int(resident_chunks, "resident_chunks")
+    fixed = max(int(fixed_output_bytes), 0)
     if chunk_rays is not None:
         size = int(chunk_rays)
         source = "requested"
+        if budget_bytes is not None:
+            effective = min(size, rows) if rows else size
+            required = fixed + effective * cost * resident
+            if required > int(budget_bytes):
+                raise RuntimeError(
+                    f"{operation}: chunk_rays={size} requires an estimated "
+                    f"{required} bytes with {resident} resident chunk(s), exceeding "
+                    f"tape_memory_budget_bytes={int(budget_bytes)}."
+                )
     elif budget_bytes is not None:
-        size = max(int(budget_bytes) // cost, 1)
+        available = int(budget_bytes) - fixed
+        if available < cost * resident:
+            raise RuntimeError(
+                f"{operation}: tape_memory_budget_bytes={int(budget_bytes)} cannot "
+                f"hold the fixed {fixed}-byte returned output plus one row across "
+                f"{resident} resident chunk(s); at least {fixed + cost * resident} "
+                "bytes are required."
+            )
+        size = max(available // (cost * resident), 1)
         source = "budget"
     else:
         size = max(rows, 1)
@@ -452,6 +508,8 @@ def calibrate_chunk_size(
         source=source,
         row_bytes=cost,
         budget_bytes=None if budget_bytes is None else int(budget_bytes),
+        resident_chunks=resident,
+        fixed_output_bytes=fixed,
     )
 
 
@@ -554,6 +612,25 @@ def _states_to(states: DfrStates, device: torch.device) -> DfrStates:
     )
 
 
+def _states_require_grad(states: DfrStates) -> bool:
+    return any(
+        value is not None and value.requires_grad
+        for value in (
+            states.edge_pos,
+            states.edge_dir,
+            states.edge_t_min,
+            states.edge_t_max,
+            states.n0,
+            states.n1,
+            states.exterior_angle,
+            states.src,
+            states.src_power,
+            states.wi,
+            states.d0,
+        )
+    )
+
+
 def _material_to(material: DfrMaterial, device: torch.device) -> DfrMaterial:
     if material.eta_r.device == device:
         return material
@@ -566,12 +643,32 @@ def _material_to(material: DfrMaterial, device: torch.device) -> DfrMaterial:
     )
 
 
+def _material_requires_grad(material: DfrMaterial) -> bool:
+    return any(
+        value.requires_grad
+        for value in (material.eta_r, material.sigma, material.mu_r, material.gain)
+    )
+
+
 def _add_accum(left: DfrAccum, right: DfrAccum) -> DfrAccum:
     """Sum two partial accumulation results field by field, on their device."""
     return DfrAccum(
         left.grid_cell_count,
         *(getattr(left, name) + getattr(right, name) for name in _DFR_ACCUM_FIELDS),
     )
+
+
+def _accum_requires_grad(result: DfrAccum) -> bool:
+    return any(getattr(result, name).requires_grad for name in _DFR_ACCUM_FIELDS)
+
+
+def _add_accum_in_place(left: DfrAccum, right: DfrAccum) -> DfrAccum:
+    """Inference-only partial merge without allocating another full grid."""
+    if _accum_requires_grad(left) or _accum_requires_grad(right):
+        raise RuntimeError("in-place diffraction accumulation cannot carry autograd.")
+    for name in _DFR_ACCUM_FIELDS:
+        getattr(left, name).add_(getattr(right, name))
+    return left
 
 
 def _accum_to(result: DfrAccum, device: torch.device) -> DfrAccum:
@@ -583,6 +680,41 @@ def _accum_to(result: DfrAccum, device: torch.device) -> DfrAccum:
             getattr(result, name).to(device, non_blocking=True)
             for name in _DFR_ACCUM_FIELDS
         ),
+    )
+
+
+def _tensor_bytes(value: torch.Tensor | None) -> int:
+    if value is None:
+        return 0
+    return int(value.numel()) * int(value.element_size())
+
+
+def _states_bytes(states: DfrStates) -> int:
+    return sum(
+        _tensor_bytes(getattr(states, name))
+        for name in (
+            "edge_index",
+            "edge_pos",
+            "edge_dir",
+            "edge_t_min",
+            "edge_t_max",
+            "n0",
+            "n1",
+            "prim0",
+            "prim1",
+            "exterior_angle",
+            "src",
+            "src_power",
+            "wi",
+            "d0",
+        )
+    )
+
+
+def _material_bytes(material: DfrMaterial) -> int:
+    return sum(
+        _tensor_bytes(getattr(material, name))
+        for name in ("eta_r", "sigma", "mu_r", "gain", "valid")
     )
 
 
@@ -604,7 +736,9 @@ def _device_index(value: object, position: int) -> int:
             f"Scene(devices=...) only accepts CUDA devices, got {device!r} "
             f"at position {position}."
         )
-    return 0 if device.index is None else device.index
+    # Bare ``"cuda"`` follows PyTorch's current-device semantics. Treating it
+    # as cuda:0 silently selects the wrong master after ``set_device()``.
+    return torch.cuda.current_device() if device.index is None else device.index
 
 
 def _normalize_devices(devices: Sequence[object]) -> list[int]:
@@ -636,25 +770,113 @@ def _normalize_devices(devices: Sequence[object]) -> list[int]:
     return indices
 
 
-def _normalize_weights(
-    options: MultiDeviceOptions, devices: Sequence[int]
+def _normalize_weight_values(
+    values: Sequence[float], devices: Sequence[int], name: str
 ) -> tuple[float, ...]:
-    if options.weights is None:
-        return (1.0,) * len(devices)
-    weights = tuple(float(value) for value in options.weights)
+    weights = tuple(float(value) for value in values)
     if len(weights) != len(devices):
         raise ValueError(
-            f"MultiDeviceOptions.weights has {len(weights)} entries but "
+            f"MultiDeviceOptions.{name} has {len(weights)} entries but "
             f"{len(devices)} devices were given."
         )
     for weight in weights:
         if not (weight >= 0.0) or weight == float("inf"):
             raise ValueError(
-                f"MultiDeviceOptions.weights must be finite and non-negative, got {weights}."
+                f"MultiDeviceOptions.{name} must be finite and non-negative, got {weights}."
             )
     if sum(weights) <= 0.0:
-        raise ValueError("MultiDeviceOptions.weights must not sum to zero.")
+        raise ValueError(f"MultiDeviceOptions.{name} must not sum to zero.")
     return weights
+
+
+def _normalize_weights(
+    options: MultiDeviceOptions, devices: Sequence[int]
+) -> tuple[float, ...]:
+    if options.weights is None:
+        return (1.0,) * len(devices)
+    return _normalize_weight_values(options.weights, devices, "weights")
+
+
+def _normalize_operation_weights(
+    options: MultiDeviceOptions, devices: Sequence[int]
+) -> dict[str, tuple[float, ...]]:
+    values = options.operation_weights
+    if values is None:
+        return {}
+    if not isinstance(values, Mapping):
+        raise TypeError(
+            "MultiDeviceOptions.operation_weights must be a mapping from operation "
+            f"name to a device-weight sequence, got {type(values).__name__}."
+        )
+    normalized: dict[str, tuple[float, ...]] = {}
+    for operation, weights in values.items():
+        if not isinstance(operation, str) or not operation.strip():
+            raise TypeError(
+                "MultiDeviceOptions.operation_weights keys must be non-empty strings."
+            )
+        normalized[operation] = _normalize_weight_values(
+            weights, devices, f"operation_weights[{operation!r}]"
+        )
+    return normalized
+
+
+def _require_peer_access(options: MultiDeviceOptions, devices: Sequence[int]) -> None:
+    if not isinstance(options.require_peer_access, bool):
+        raise TypeError(
+            "MultiDeviceOptions.require_peer_access must be a bool, got "
+            f"{type(options.require_peer_access).__name__}."
+        )
+    if not options.require_peer_access or len(devices) < 2:
+        return
+    master = devices[0]
+    missing = [
+        index
+        for index in devices[1:]
+        if not torch.cuda.can_device_access_peer(master, index)
+        or not torch.cuda.can_device_access_peer(index, master)
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Scene(devices=...) requires bidirectional CUDA peer access between "
+            f"master cuda:{master} and every replica, but it is unavailable for "
+            f"{missing}. Choose a peer-connected device set or explicitly pass "
+            "MultiDeviceOptions(require_peer_access=False) to accept host-staged "
+            "copies and their potentially severe performance cost."
+        )
+
+
+def _require_homogeneous_devices(
+    options: MultiDeviceOptions, devices: Sequence[int]
+) -> None:
+    if not isinstance(options.require_homogeneous_devices, bool):
+        raise TypeError(
+            "MultiDeviceOptions.require_homogeneous_devices must be a bool, got "
+            f"{type(options.require_homogeneous_devices).__name__}."
+        )
+    if not options.require_homogeneous_devices or len(devices) < 2:
+        return
+    identities = []
+    for index in devices:
+        properties = torch.cuda.get_device_properties(index)
+        identities.append(
+            (
+                str(properties.name),
+                int(properties.major),
+                int(properties.minor),
+            )
+        )
+    if len(set(identities)) != 1:
+        details = ", ".join(
+            f"cuda:{index}={name} (sm_{major}{minor})"
+            for index, (name, major, minor) in zip(devices, identities)
+        )
+        raise RuntimeError(
+            "Scene(devices=...) requires identical GPU model and compute "
+            f"capability for its bitwise per-ray contract, got {details}. "
+            "Choose a homogeneous device set or explicitly pass "
+            "MultiDeviceOptions(require_homogeneous_devices=False) to accept "
+            "heterogeneous execution without cross-device bitwise guarantees."
+        )
 
 
 def _positive_int(value: object, name: str) -> int:
@@ -702,6 +924,7 @@ def _validate_pipeline(options: MultiDeviceOptions) -> None:
             "pipeline=False for the one-launch-per-shard path."
         )
     _positive_int(options.min_rays_per_device, "min_rays_per_device")
+    _positive_int(options.min_lanes_per_device, "min_lanes_per_device")
 
 
 def plan(
@@ -730,12 +953,21 @@ def plan(
             f"{type(resolved).__name__}."
         )
     weights = _normalize_weights(resolved, indices)
+    operation_weights = _normalize_operation_weights(resolved, indices)
     chunking = _validate_chunking(resolved)
     _validate_pipeline(resolved)
+    _require_peer_access(resolved, indices)
+    _require_homogeneous_devices(resolved, indices)
     if len(indices) == 1 and not chunking:
         return None
     return _ReplicatedScene(
-        indices, resolved, weights, trace_backend, edge_bvh_backend, chunking
+        indices,
+        resolved,
+        weights,
+        operation_weights,
+        trace_backend,
+        edge_bvh_backend,
+        chunking,
     )
 
 
@@ -761,9 +993,13 @@ class _ReplicatedScene:
         "devices",
         "options",
         "weights",
+        "_base_weights",
+        "_operation_weights",
+        "_calibration_override",
         "chunked",
         "pipelined",
         "min_rays_per_device",
+        "min_lanes_per_device",
         "last_chunk_plan",
         "last_dispatch",
         "last_calibration",
@@ -772,6 +1008,7 @@ class _ReplicatedScene:
         "_replicas",
         "_streams",
         "_active_stream",
+        "_poisoned",
     )
 
     def __init__(
@@ -779,6 +1016,7 @@ class _ReplicatedScene:
         devices: Sequence[int],
         options: MultiDeviceOptions,
         weights: Sequence[float],
+        operation_weights: Mapping[str, Sequence[float]],
         trace_backend: str,
         edge_bvh_backend: str,
         chunked: bool = False,
@@ -786,11 +1024,18 @@ class _ReplicatedScene:
         self.devices = tuple(torch.device("cuda", index) for index in devices)
         self.options = options
         self.weights = tuple(weights)
+        self._base_weights = tuple(weights)
+        self._operation_weights = {
+            str(operation): tuple(values)
+            for operation, values in operation_weights.items()
+        }
+        self._calibration_override: tuple[float, ...] | None = None
         self.chunked = bool(chunked)
         # Pipelining is a sharding story: a one-device scene has no scatter and
         # no gather to overlap, so it stays on whatever the chunking knobs said.
         self.pipelined = bool(options.pipeline) and len(self.devices) > 1
         self.min_rays_per_device = int(options.min_rays_per_device)
+        self.min_lanes_per_device = int(options.min_lanes_per_device)
         self.last_chunk_plan: ChunkPlan | None = None
         # Which of the four dispatch paths the last `per_ray` operation took;
         # a debug surface for tests and for anyone wondering why a batch was
@@ -802,6 +1047,11 @@ class _ReplicatedScene:
         self._replicas: tuple = ()
         self._streams: dict[int, "_PipeStreams"] = {}
         self._active_stream = None
+        # A broadcast mutation is not transactional: if one replica raises,
+        # replicas before it may already have changed.  Never let callers use
+        # that possibly divergent set.  Only a complete rebuild clears this
+        # marker.
+        self._poisoned: str | None = None
 
     # -- replica lifecycle -------------------------------------------------
 
@@ -813,7 +1063,27 @@ class _ReplicatedScene:
         """Drop the replicas; the next `build()` rebuilds them from scratch."""
         self._replicas = ()
 
+    @property
+    def is_poisoned(self) -> bool:
+        return self._poisoned is not None
+
+    def require_healthy(self) -> None:
+        """Reject use of a replica set whose last broadcast was incomplete."""
+        if self._poisoned is not None:
+            raise RuntimeError(
+                "RayD multi-device scene is unusable because replica state may "
+                f"have diverged during {self._poisoned}. Call Scene.build() to "
+                "rebuild every replica before querying or mutating it."
+            )
+
+    def _poison(self, operation: str, error: BaseException) -> None:
+        self._poisoned = (
+            f"{operation}: {type(error).__name__}"
+            + (f": {error}" if str(error) else "")
+        )
+
     def _require_replicas(self) -> tuple:
+        self.require_healthy()
         if not self._replicas:
             raise RuntimeError("Scene is not ready. Call build() before querying.")
         return self._replicas
@@ -834,63 +1104,79 @@ class _ReplicatedScene:
         from .mesh import Mesh
         from .scene import Scene
 
+        # A rebuild is the sole recovery transaction.  Keep the old poison
+        # visible until all replicas have built and passed the lockstep check.
         self.discard()
         master = self.master_device
-        for position, (mesh, _dynamic) in enumerate(meshes):
-            for name in (
-                "vertices",
-                "faces",
-                "uv",
-                "face_uv",
-                "to_world_left",
-                "to_world_right",
-            ):
-                value = getattr(mesh, name)
-                if value.device != master:
-                    raise ValueError(
-                        f"Scene(devices=...) requires every mesh tensor on the master "
-                        f"device {master}, but mesh {position} has {name} on "
-                        f"{value.device}. Replicas are built from the master tensors."
-                    )
+        try:
+            for position, (mesh, _dynamic) in enumerate(meshes):
+                for name in (
+                    "vertices",
+                    "faces",
+                    "uv",
+                    "face_uv",
+                    "to_world_left",
+                    "to_world_right",
+                ):
+                    value = getattr(mesh, name)
+                    if value.device != master:
+                        raise ValueError(
+                            f"Scene(devices=...) requires every mesh tensor on the master "
+                            f"device {master}, but mesh {position} has {name} on "
+                            f"{value.device}. Replicas are built from the master tensors."
+                        )
 
-        if self.options.warm_up:
-            from ._warmup import warm_up_devices
+            if self.options.warm_up:
+                from ._warmup import warm_up_devices
 
-            warm_up_devices([device.index for device in self.devices])
+                warm_up_devices([device.index for device in self.devices])
 
-        replicas = []
-        for device in self.devices:
-            replica = Scene(
-                trace_backend=self._trace_backend,
-                edge_bvh_backend=self._edge_bvh_backend,
-            )
-            for mesh, dynamic in meshes:
-                replica.add_mesh(
-                    Mesh(
-                        # `.to()` on the master device is the identity, so the
-                        # master replica shares the caller's tensors and runs
-                        # exactly what a single-device Scene would run. On the
-                        # other devices this is a recorded autograd copy, which
-                        # is what reduces every replica's vertex gradient back
-                        # onto the master leaf (D4).
-                        vertices=mesh.vertices.to(device),
-                        faces=mesh.faces.to(device),
-                        uv=mesh.uv.to(device),
-                        face_uv=mesh.face_uv.to(device),
-                        use_face_normals=mesh.use_face_normals,
-                        edges_enabled=mesh.edges_enabled,
-                        to_world_left=mesh.to_world_left.to(device),
-                        to_world_right=mesh.to_world_right.to(device),
-                    ),
-                    dynamic,
+            replicas = []
+            for device in self.devices:
+                replica = Scene(
+                    trace_backend=self._trace_backend,
+                    edge_bvh_backend=self._edge_bvh_backend,
                 )
-            # Building an acceleration structure is the one step that still
-            # wants its own device current.
-            with torch.cuda.device(device):
-                replica.build()
-            replicas.append(replica)
-        self._replicas = tuple(replicas)
-        self._require_version_lockstep()
+                for mesh, dynamic in meshes:
+                    replica.add_mesh(
+                        Mesh(
+                            # `.to()` on the master device is the identity, so the
+                            # master replica shares the caller's tensors and runs
+                            # exactly what a single-device Scene would run. On the
+                            # other devices this is a recorded autograd copy, which
+                            # is what reduces every replica's vertex gradient back
+                            # onto the master leaf (D4).
+                            vertices=mesh.vertices.to(device),
+                            faces=mesh.faces.to(device),
+                            uv=mesh.uv.to(device),
+                            face_uv=mesh.face_uv.to(device),
+                            use_face_normals=mesh.use_face_normals,
+                            edges_enabled=mesh.edges_enabled,
+                            to_world_left=mesh.to_world_left.to(device),
+                            to_world_right=mesh.to_world_right.to(device),
+                        ),
+                        dynamic,
+                    )
+                # Building an acceleration structure is the one step that still
+                # wants its own device current.
+                with torch.cuda.device(device):
+                    replica.build()
+                replicas.append(replica)
+            self._replicas = tuple(replicas)
+            # Temporarily permit the internal lockstep check to see the newly
+            # built replicas.  A failed check poisons the build again below.
+            old_poison = self._poisoned
+            self._poisoned = None
+            try:
+                self._require_version_lockstep()
+            except BaseException:
+                self._poisoned = old_poison
+                raise
+        except BaseException as error:
+            self._replicas = ()
+            self._poison("build", error)
+            raise
+        self._poisoned = None
 
     def _require_version_lockstep(self) -> None:
         """Every replica must agree on the scene version after any mutation."""
@@ -904,23 +1190,40 @@ class _ReplicatedScene:
     # -- broadcast mutation ------------------------------------------------
 
     def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
-        for replica, device in zip(self._require_replicas(), self.devices):
-            with torch.cuda.device(device):
-                replica.update_mesh_vertices(mesh_id, positions.to(device))
-        self._require_version_lockstep()
+        replicas = self._require_replicas()
+        try:
+            for replica, device in zip(replicas, self.devices):
+                with torch.cuda.device(device):
+                    replica.update_mesh_vertices(mesh_id, positions.to(device))
+            self._require_version_lockstep()
+        except BaseException as error:
+            self._poison("update_mesh_vertices", error)
+            raise
 
     def sync(self) -> None:
-        for replica, device in zip(self._require_replicas(), self.devices):
-            with torch.cuda.device(device):
-                replica.sync()
-        self._require_version_lockstep()
+        replicas = self._require_replicas()
+        try:
+            for replica, device in zip(replicas, self.devices):
+                with torch.cuda.device(device):
+                    replica.sync()
+            self._require_version_lockstep()
+        except BaseException as error:
+            self._poison("sync", error)
+            raise
 
     def set_edge_mask(self, mask: torch.Tensor) -> None:
-        for replica, device in zip(self._require_replicas(), self.devices):
-            replica.set_edge_mask(mask.to(device))
-        self._require_version_lockstep()
+        replicas = self._require_replicas()
+        try:
+            for replica, device in zip(replicas, self.devices):
+                with torch.cuda.device(device):
+                    replica.set_edge_mask(mask.to(device))
+            self._require_version_lockstep()
+        except BaseException as error:
+            self._poison("set_edge_mask", error)
+            raise
 
     def unsupported(self, operation: str) -> None:
+        self.require_healthy()
         raise NotImplementedError(
             f"Scene.{operation}() has no multi-device semantics yet; it is neither "
             f"a per_ray operation nor a lane-windowed grid_reduce one, so sharding "
@@ -930,7 +1233,26 @@ class _ReplicatedScene:
 
     # -- sharding ----------------------------------------------------------
 
-    def _shards(self, total: int) -> list[tuple]:
+    def _weights_for(self, operation: str | None) -> tuple[float, ...]:
+        """Resolve an exact/family operation split without contaminating peers."""
+        if self._calibration_override is not None:
+            return self._calibration_override
+        if operation is None:
+            return self._base_weights
+        exact = self._operation_weights.get(operation)
+        if exact is not None:
+            return exact
+        family = operation.split(":", 1)[0]
+        if family.startswith("intersect_"):
+            family = "intersect"
+        return self._operation_weights.get(family, self._base_weights)
+
+    def weights_for(self, operation: str) -> tuple[float, ...]:
+        """Public-Scene debug accessor for one operation's effective split."""
+        self.require_healthy()
+        return self._weights_for(operation)
+
+    def _shards(self, total: int, operation: str | None = None) -> list[tuple]:
         """Contiguous weighted `[start, stop)` slices, one per device.
 
         Zero-length shards are dropped rather than launched: several native
@@ -939,7 +1261,8 @@ class _ReplicatedScene:
         the callers, which fall back to the master replica so that an empty
         query behaves exactly as it does on one device.
         """
-        weights = self.weights
+        self.require_healthy()
+        weights = self._weights_for(operation)
         total_weight = sum(weights)
         shards = []
         start = 0
@@ -955,7 +1278,9 @@ class _ReplicatedScene:
             start = stop
         return shards
 
-    def _lane_shards(self, begin: int, count: int) -> list[tuple]:
+    def _lane_shards(
+        self, begin: int, count: int, operation: str | None = None
+    ) -> list[tuple]:
         """Weighted, warp-aligned `(replica, device, lane_begin, lane_count)` windows.
 
         The windows are contiguous, disjoint, and cover `[begin, begin + count)`
@@ -968,7 +1293,8 @@ class _ReplicatedScene:
         a device weighted to zero, for instance -- stays there instead of being
         rounded back inside it.
         """
-        weights = self.weights
+        self.require_healthy()
+        weights = self._weights_for(operation)
         total_weight = sum(weights)
         shards = []
         start = 0
@@ -1068,7 +1394,7 @@ class _ReplicatedScene:
 
     # -- dispatch ----------------------------------------------------------
 
-    def _run_shards(self, total: int, shard, call) -> list | None:
+    def _run_shards(self, operation: str, total: int, shard, call) -> list | None:
         """One launch per shard: scatter every shard's inputs, then enqueue.
 
         Scattering first and launching second is what lets the devices overlap
@@ -1077,7 +1403,7 @@ class _ReplicatedScene:
         answer from the master replica so that an empty query behaves exactly
         as it does on one device.
         """
-        shards = self._shards(total)
+        shards = self._shards(total, operation)
         if not shards:
             return None
         inputs = [
@@ -1239,6 +1565,7 @@ class _ReplicatedScene:
         call,
         extract,
         assemble,
+        result_row_bytes: int | None = None,
         chunk_rows: int | None = None,
         master_chunk_rows: int | None = None,
     ):
@@ -1255,12 +1582,26 @@ class _ReplicatedScene:
         chunking knobs -- which are a memory contract -- are not consulted.
         """
         if chunk_rows is None:
+            budget = self.options.tape_memory_budget_bytes
+            output_cost = max(
+                int(row_bytes if result_row_bytes is None else result_row_bytes), 0
+            )
+            fixed_output = (
+                total * output_cost
+                if budget is not None and self.options.offload is None
+                else 0
+            )
             plan = calibrate_chunk_size(
                 operation,
                 total,
                 row_bytes=row_bytes,
                 chunk_rays=self.options.chunk_rays,
-                budget_bytes=self.options.tape_memory_budget_bytes,
+                budget_bytes=budget,
+                # The executor retires only after appending depth + 1. For one
+                # device that is three live result/tape records; with several
+                # devices no individual device exceeds the same factor.
+                resident_chunks=3,
+                fixed_output_bytes=fixed_output,
             )
         else:
             plan = ChunkPlan(
@@ -1269,6 +1610,7 @@ class _ReplicatedScene:
                 chunk_rays=max(int(chunk_rows), 1),
                 source="pipeline",
                 row_bytes=max(int(row_bytes), 1),
+                resident_chunks=3,
             )
         self.last_chunk_plan = plan
         offload = self.options.offload
@@ -1276,7 +1618,7 @@ class _ReplicatedScene:
             int(master_chunk_rows), 1
         )
         queues = []
-        for replica, device, start, stop in self._shards(total):
+        for replica, device, start, stop in self._shards(total, operation):
             rows = master_rows if device == self.master_device else plan.chunk_rays
             queues.append(
                 (
@@ -1335,64 +1677,111 @@ class _ReplicatedScene:
         started: set = set()
         sink: list | None = None
         first = True
-        for replica, device, (chunk_start, chunk_stop) in order:
-            streams = self._pipe_streams(device)
-            if device.index not in started:
-                for stream in streams:
-                    if stream is not None:
-                        stream.wait_event(entry[master.index])
-                if device.index != master.index:
-                    streams.compute.wait_event(entry[device.index])
-                started.add(device.index)
-            arguments, copied = self._scatter_chunk(
-                streams, device, shard, chunk_start, chunk_stop
-            )
-            if copied is not None:
-                streams.compute.wait_event(copied)
-            with torch.cuda.device(device), torch.cuda.stream(streams.compute):
-                self._active_stream = streams.compute
-                try:
-                    columns = list(extract(call(replica, arguments)))
-                finally:
-                    self._active_stream = None
-            del arguments
-            if first:
-                # The first chunk is what says how wide a row is, so the whole
-                # output can be allocated once -- and whether it may be, which
-                # only autograd and the streaming hook can veto.
-                first = False
-                if offload is None:
-                    sink = self._master_buffers(
-                        total, chunk_stop - chunk_start, columns
-                    )
-            moved, gathered = self._gather_chunk(
-                streams, device, columns, sink, (chunk_start, chunk_stop)
-            )
-            pipeline.append((chunk_start, chunk_stop, moved, gathered))
-            del columns, moved
-            if len(pipeline) > depth:
-                self._retire(
-                    pipeline.popleft(), plan, master_stream, assemble, collected, sink
+        try:
+            for replica, device, (chunk_start, chunk_stop) in order:
+                streams = self._pipe_streams(device)
+                if device.index not in started:
+                    for stream in streams:
+                        if stream is not None:
+                            stream.wait_event(entry[master.index])
+                    if device.index != master.index:
+                        streams.compute.wait_event(entry[device.index])
+                    # From this point onward the private compute stream may
+                    # have work waiting on it, even if scatter/call/extract or
+                    # gather raises on the host.
+                    started.add(device.index)
+                arguments, copied = self._scatter_chunk(
+                    streams, device, shard, chunk_start, chunk_stop
                 )
-        while pipeline:
-            self._retire(
-                pipeline.popleft(), plan, master_stream, assemble, collected, sink
+                if copied is not None:
+                    streams.compute.wait_event(copied)
+                with torch.cuda.device(device), torch.cuda.stream(streams.compute):
+                    self._active_stream = streams.compute
+                    try:
+                        columns = list(extract(call(replica, arguments)))
+                    finally:
+                        self._active_stream = None
+                del arguments
+                if first:
+                    # The first chunk is what says how wide a row is, so the whole
+                    # output can be allocated once -- and whether it may be, which
+                    # only autograd and the streaming hook can veto.
+                    first = False
+                    if (
+                        plan.budget_bytes is not None
+                        and offload is None
+                        and plan.chunk_count > 1
+                        and any(column.requires_grad for column in columns)
+                    ):
+                        raise RuntimeError(
+                            f"{operation}: tape_memory_budget_bytes cannot bound a "
+                            "multi-chunk differentiable result because autograd must "
+                            "retain every chunk's frozen tape. Set offload=... and "
+                            "run backward inside the hook, or use one unchunked launch."
+                        )
+                    if offload is None:
+                        sink = self._master_buffers(
+                            total, chunk_stop - chunk_start, columns
+                        )
+                moved, gathered = self._gather_chunk(
+                    streams, device, columns, sink, (chunk_start, chunk_stop)
+                )
+                pipeline.append((chunk_start, chunk_stop, moved, gathered))
+                del columns, moved
+                if len(pipeline) > depth:
+                    self._retire(
+                        pipeline.popleft(),
+                        plan,
+                        master_stream,
+                        assemble,
+                        collected,
+                        sink,
+                    )
+            while pipeline:
+                self._retire(
+                    pipeline.popleft(),
+                    plan,
+                    master_stream,
+                    assemble,
+                    collected,
+                    sink,
+                )
+            if offload is not None:
+                return None
+            if sink is not None:
+                return assemble(total, sink)
+            collected.sort(key=lambda piece: piece[0])
+            width = len(collected[0][1])
+            return assemble(
+                total,
+                [
+                    self._concat([piece[1][index] for piece in collected])
+                    for index in range(width)
+                ],
             )
-        self._exit(started)
-
-        if offload is not None:
-            return None
-        if sink is not None:
-            return assemble(total, sink)
-        collected.sort(key=lambda piece: piece[0])
-        width = len(collected[0][1])
-        return assemble(
-            total,
-            [
-                self._concat([piece[1][index] for piece in collected])
-                for index in range(width)
-            ],
-        )
+        finally:
+            # `call`, `extract`, gather, assembly, and the user's offload hook
+            # are all allowed to raise.  A finally edge is mandatory: without
+            # it, an already submitted traversal can race the caller's next
+            # mutation on the device current stream.
+            self._active_stream = None
+            primary_error = sys.exc_info()[1]
+            try:
+                self._exit(started)
+            except BaseException as exit_error:
+                # Losing the join edge means the replica set is unsafe for a
+                # following mutation. Preserve the operation's original
+                # exception when there is one, but permanently fail this set
+                # closed until a complete rebuild.
+                self._poison("stream handoff", exit_error)
+                if primary_error is None:
+                    raise
+                if hasattr(primary_error, "add_note"):
+                    primary_error.add_note(
+                        "RayD also failed to join a private CUDA stream: "
+                        f"{type(exit_error).__name__}: {exit_error}. The scene "
+                        "was poisoned and must be rebuilt."
+                    )
 
     def _exit(self, started: set) -> None:
         """Hand each device back to the stream the caller will use next.
@@ -1441,7 +1830,31 @@ class _ReplicatedScene:
 
     # -- dispatch policy ---------------------------------------------------
 
-    def _dispatch_mode(self, total: int) -> str:
+    def _remote_shards_viable(
+        self, operation: str, total: int, transfer_row_bytes: int
+    ) -> bool:
+        """Every active remote must have enough work to amortize its copies."""
+        if len(self.devices) < 2 or total <= 0:
+            return False
+        scale = max(int(transfer_row_bytes), _DISPATCH_BASELINE_TRANSFER_BYTES)
+        floor = (
+            self.min_rays_per_device * scale
+            + _DISPATCH_BASELINE_TRANSFER_BYTES
+            - 1
+        ) // _DISPATCH_BASELINE_TRANSFER_BYTES
+        remote = [
+            stop - start
+            for _replica, device, start, stop in self._shards(total, operation)
+            if device != self.master_device
+        ]
+        return bool(remote) and all(rows >= floor for rows in remote)
+
+    def _dispatch_mode(
+        self,
+        operation: str | int,
+        total: int | None = None,
+        transfer_row_bytes: int = _DISPATCH_BASELINE_TRANSFER_BYTES,
+    ) -> str:
         """Which of the four paths a `per_ray` batch of `total` rows takes.
 
         `chunked` -- the caller set a chunking knob, which is a memory
@@ -1455,15 +1868,20 @@ class _ReplicatedScene:
         `sharded` -- `pipeline=False`: one launch per shard, which is the
         Phase 2a path the pipelined results are checked against.
         """
+        if total is None:
+            total = int(operation)
+            operation = ""
         if self.chunked:
             return "chunked"
-        if len(self.devices) > 1 and total < self.min_rays_per_device * len(self.devices):
+        if not self._remote_shards_viable(operation, total, transfer_row_bytes):
             return "master"
         if not self.pipelined:
             return "sharded"
         return "pipelined"
 
-    def _master_takes_everything(self, total: int) -> bool:
+    def _master_takes_everything(
+        self, operation: str | int, total: int | None = None
+    ) -> bool:
         """Do the weights leave the master with the whole batch?
 
         `weights=[1, 0]` -- which is what a calibration answers with when an
@@ -1474,9 +1892,15 @@ class _ReplicatedScene:
         non-empty batch, since `int(total * carried / sum) < total` whenever
         anything is left over.
         """
-        return total > 0 and not any(weight > 0.0 for weight in self.weights[1:])
+        if total is None:
+            total = int(operation)
+            operation = ""
+        weights = self._weights_for(str(operation))
+        return total > 0 and not any(weight > 0.0 for weight in weights[1:])
 
-    def _pipeline_rows(self, total: int) -> tuple[int, int]:
+    def _pipeline_rows(
+        self, operation: str | int, total: int | None = None
+    ) -> tuple[int, int]:
         """The auto chunk sizes: `(remote_rows, master_rows)`.
 
         Sizing from the widest shard rather than the narrowest bounds the total
@@ -1493,11 +1917,14 @@ class _ReplicatedScene:
         operation's output -- and pays a launch per chunk for it, which at
         these sizes is the more expensive half.
         """
+        if total is None:
+            total = int(operation)
+            operation = ""
         chunks = max(int(self.options.pipeline_chunks_per_device), 2)
         master = self.master_device
         widest = 0
         master_rows = 0
-        for _replica, device, start, stop in self._shards(total):
+        for _replica, device, start, stop in self._shards(total, str(operation)):
             widest = max(widest, stop - start)
             if device == master:
                 master_rows = stop - start
@@ -1515,6 +1942,8 @@ class _ReplicatedScene:
         extract,
         assemble,
         master,
+        transfer_row_bytes: int | None = None,
+        result_row_bytes: int | None = None,
     ):
         """Route one `per_ray` operation, then run it.
 
@@ -1523,12 +1952,26 @@ class _ReplicatedScene:
         batch's answer, both of which are bitwise a single-device result
         because they *are* a single-device call.
         """
-        mode = self._dispatch_mode(total)
+        self.require_healthy()
+        transfer_cost = max(
+            int(row_bytes if transfer_row_bytes is None else transfer_row_bytes), 1
+        )
+        output_cost = max(
+            int(row_bytes if result_row_bytes is None else result_row_bytes), 0
+        )
+        # `row_bytes` includes the native output and any frozen tape.
+        # `transfer_cost` includes copied inputs plus returned output. Add only
+        # its non-output part so the hard budget covers remote scatter without
+        # counting the output twice.
+        memory_cost = max(int(row_bytes), 1) + max(
+            transfer_cost - output_cost, 0
+        )
+        mode = self._dispatch_mode(operation, total, transfer_cost)
         self.last_dispatch = mode
         if mode == "master":
             return master()
         if mode == "sharded":
-            results = self._run_shards(total, shard, call)
+            results = self._run_shards(operation, total, shard, call)
             if results is None:
                 self.last_dispatch = "master"
                 return master()
@@ -1538,23 +1981,31 @@ class _ReplicatedScene:
             )
         if mode == "chunked":
             return self._run_chunked(
-                operation, total, row_bytes, shard, call, extract, assemble
+                operation,
+                total,
+                memory_cost,
+                shard,
+                call,
+                extract,
+                assemble,
+                result_row_bytes=output_cost,
             )
-        if self._master_takes_everything(total):
+        if self._master_takes_everything(operation, total):
             # A split that leaves the other devices empty is a single-device
             # call, and running it as one is bitwise what the master alone
             # would produce -- without the pipeline's copy into a fresh output.
             self.last_dispatch = "master"
             return master()
-        remote_rows, master_rows = self._pipeline_rows(total)
+        remote_rows, master_rows = self._pipeline_rows(operation, total)
         return self._run_chunked(
             operation,
             total,
-            row_bytes,
+            memory_cost,
             shard,
             call,
             extract,
             assemble,
+            result_row_bytes=output_cost,
             chunk_rows=remote_rows,
             master_chunk_rows=master_rows,
         )
@@ -1564,6 +2015,7 @@ class _ReplicatedScene:
     def calibrate(
         self,
         *,
+        operation: str | None = None,
         rows: int = _CALIBRATION_ROWS,
         max_bounces: int = 0,
         probe: Callable[[object, torch.device], object] | None = None,
@@ -1580,8 +2032,9 @@ class _ReplicatedScene:
         device, with its inputs already resident there -- so what is timed is
         the device, not the interconnect -- and makes the weights inversely
         proportional to the times. On a matched pair that lands within noise of
-        the equal split; on a mixed pair it is the difference between the two
-        devices.
+        the equal split; on an explicitly enabled mixed pair it reflects the
+        difference between the two devices, without making a calibration
+        quality or cross-device bitwise guarantee.
 
         The *refinement* stage then times the real multi-device dispatch of the
         same probe while scaling everything but the master down through
@@ -1589,9 +2042,11 @@ class _ReplicatedScene:
         knows about the interconnect: an operation whose per-row transfer costs
         more than its per-row compute (a cheap query with a wide result, say)
         is faster with a *small* remote shard, and at the far end a share of
-        zero is the single-device path, which is why calibration can never
-        leave a scene slower than the master alone on the probe it was given.
-        Pass `refine=False` for the throughput stage on its own.
+        zero is the single-device path. The largest rung within the refinement
+        tolerance is selected, so calibration avoids a split it measured as
+        materially slower; it is still a noisy measurement, not a run-time
+        performance guarantee. Pass `refine=False` for the throughput stage on
+        its own.
 
         The default probe is the scene's own geometry: `rows` rays drawn from a
         fixed seed inside the master mesh's bounding box, run through
@@ -1607,11 +2062,38 @@ class _ReplicatedScene:
         Timing is interleaved device by device (and candidate by candidate) and
         reduced with a minimum, so a neighbouring tenant's spike inflates a
         sample rather than the split. The measurement is written to
-        `last_calibration` and the weights it chose are readable there and on
-        `weights`; nothing else about execution changes, so a run at the
-        resulting weights is as reproducible as any other run at fixed weights.
+        `last_calibration` and the weights it chose are readable there and via
+        `Scene.device_weights_for(operation)`. The legacy `device_weights`
+        property reports the most recently calibrated split. Calibration
+        changes only its named operation, so unrelated families keep their
+        prior split.
         """
         replicas = self._require_replicas()
+        default_operation = (
+            f"trace_reflections:{int(max_bounces)}"
+            if int(max_bounces) > 0
+            else "intersect_full"
+        )
+        if probe is not None and operation is None:
+            raise ValueError(
+                "Scene.calibrate_devices(operation=...) is required with a custom "
+                "probe so its weights are applied only to the operation the probe "
+                "measures."
+            )
+        if (
+            probe is None
+            and operation is not None
+            and str(operation) != default_operation
+        ):
+            raise ValueError(
+                f"The built-in calibration probe measures {default_operation!r}, "
+                f"not {str(operation)!r}. Pass a custom probe for that operation."
+            )
+        target_operation = (
+            str(operation) if operation is not None else default_operation
+        )
+        if not target_operation:
+            raise ValueError("calibrate(operation=...) must be a non-empty string.")
         rows = _positive_int(int(rows), "calibrate(rows=...)")
         repeats = _positive_int(int(repeats), "calibrate(repeats=...)")
         if warm_up < 0:
@@ -1646,9 +2128,13 @@ class _ReplicatedScene:
                 weights, probe, repeats, int(warm_up)
             )
             weights = candidates[_pick_candidate(candidate_seconds)]
+        # Calibration is operation-local. Keep `weights` as the most recently
+        # calibrated split for the legacy debug/property surface, but never let
+        # it change another operation's fallback.
+        self._operation_weights[target_operation] = tuple(weights)
         self.weights = weights
         self.last_calibration = DeviceCalibration(
-            operation="trace_reflections" if int(max_bounces) > 0 else "intersect",
+            operation=target_operation,
             rows=rows,
             devices=tuple(device.index for device in self.devices),
             seconds=seconds,
@@ -1681,6 +2167,7 @@ class _ReplicatedScene:
         samples: list[list[float]] = [[] for _ in candidates]
         saved_weights = self.weights
         saved_floor = self.min_rays_per_device
+        saved_override = self._calibration_override
         # The probe is deliberately small; the small-batch floor would answer
         # every candidate with the same master-only run and measure nothing.
         self.min_rays_per_device = 1
@@ -1688,6 +2175,7 @@ class _ReplicatedScene:
             for round_index in range(warm_up + repeats):
                 for index, weights in enumerate(candidates):
                     self.weights = weights
+                    self._calibration_override = tuple(weights)
                     for device in self.devices:
                         torch.cuda.synchronize(device)
                     start = time.perf_counter()
@@ -1700,6 +2188,7 @@ class _ReplicatedScene:
         finally:
             self.min_rays_per_device = saved_floor
             self.weights = saved_weights
+            self._calibration_override = saved_override
         return tuple(candidates), tuple(min(values) for values in samples)
 
     def _default_probe(self, rows: int, max_bounces: int):
@@ -1732,7 +2221,7 @@ class _ReplicatedScene:
             if max_bounces > 0:
                 replica.trace_reflections(ray, max_bounces, None).valid
             else:
-                replica.intersect(ray, None, 0).t
+                replica.intersect(ray).t
 
         return probe
 
@@ -1759,7 +2248,7 @@ class _ReplicatedScene:
             # whose remaining fields are the scene's empty tensors; rebuilding
             # it on the master keeps both the type and that laziness.
             return self._dispatch(
-                "intersect",
+                "intersect_reduced",
                 total,
                 _INTERSECT_REDUCED_ROW_BYTES,
                 shard,
@@ -1769,9 +2258,10 @@ class _ReplicatedScene:
                     self.master_native_scene(), columns[0]
                 ),
                 master,
+                transfer_row_bytes=28,
             )
         return self._dispatch(
-            "intersect",
+            "intersect_full",
             total,
             _INTERSECT_FULL_ROW_BYTES,
             shard,
@@ -1779,6 +2269,7 @@ class _ReplicatedScene:
             _intersection_fields,
             lambda rows, columns: Intersection(*columns),
             master,
+            transfer_row_bytes=100,
         )
 
     def nearest_edge(self, point):
@@ -1800,6 +2291,7 @@ class _ReplicatedScene:
                 _field_reader(_NEAREST_RAY_EDGE_FIELDS),
                 lambda rows, columns: NearestRayEdge(*columns),
                 lambda: self.master().nearest_edge(point),
+                transfer_row_bytes=76,
             )
 
         total = int(point.shape[0])
@@ -1819,6 +2311,7 @@ class _ReplicatedScene:
             _field_reader(_NEAREST_POINT_EDGE_FIELDS),
             lambda rows, columns: NearestPointEdge(*columns),
             lambda: self.master().nearest_edge(point),
+            transfer_row_bytes=44,
         )
 
     def nearest_edges(self, point: torch.Tensor, k: int, active):
@@ -1835,7 +2328,7 @@ class _ReplicatedScene:
             return replica.nearest_edges(*arguments)
 
         return self._dispatch(
-            "nearest_edges",
+            f"nearest_edges:{int(k)}",
             total,
             _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(k), 1),
             shard,
@@ -1843,6 +2336,7 @@ class _ReplicatedScene:
             _field_reader(_NEAREST_EDGES_TOPK_FIELDS),
             lambda rows, columns: NearestEdgesTopK(rows, int(k), *columns),
             lambda: self.master().nearest_edges(point, k, active),
+            transfer_row_bytes=13 + _NEAREST_EDGES_ROW_BYTES_PER_K * max(int(k), 1),
         )
 
     def visible(self, start_points: torch.Tensor, end_points: torch.Tensor, active):
@@ -1867,6 +2361,7 @@ class _ReplicatedScene:
             lambda result: (result,),
             lambda rows, columns: columns[0],
             lambda: self.master().visible(start_points, end_points, active),
+            transfer_row_bytes=26,
         )
 
     def visible_pair(self, start_points, end_a, end_b, ignore_prim_ids, active):
@@ -1897,6 +2392,7 @@ class _ReplicatedScene:
             lambda: self.master().visible_pair(
                 start_points, end_a, end_b, ignore_prim_ids, active
             ),
+            transfer_row_bytes=47,
         )
 
     def visible_edge(
@@ -1942,6 +2438,7 @@ class _ReplicatedScene:
                 sample_fractions,
                 active,
             ),
+            transfer_row_bytes=46,
         )
 
     def visible_chain(self, points, chain_length, ignore_prim_per_segment, active):
@@ -1977,10 +2474,12 @@ class _ReplicatedScene:
             lambda: self.master().visible_chain(
                 points, chain_length, ignore_prim_per_segment, active
             ),
+            transfer_row_bytes=(segments + 1) * 12 + 5 + segments * 4 + 9,
         )
 
     def trace_reflections(self, ray: Ray, max_bounces: int, active):
         total = int(ray.o.shape[0])
+        operation = f"trace_reflections:{int(max_bounces)}"
         row_bytes = max_bounces * (
             _REFLECTION_TAPE_BYTES_PER_RAY_BOUNCE
             + _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
@@ -1996,7 +2495,9 @@ class _ReplicatedScene:
         def call(replica, arguments):
             return replica.trace_reflections(*arguments)
 
-        mode = self._dispatch_mode(total)
+        transfer_row_bytes = 28 + max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
+        memory_row_bytes = row_bytes + 28
+        mode = self._dispatch_mode(operation, total, transfer_row_bytes)
         self.last_dispatch = mode
         if mode == "master":
             return self.master().trace_reflections(ray, max_bounces, active)
@@ -2007,19 +2508,21 @@ class _ReplicatedScene:
             # to bound, so a chunked chain is materialized in full, one chunk
             # at a time.
             return self._run_chunked(
-                "trace_reflections",
+                operation,
                 total,
-                row_bytes,
+                memory_row_bytes,
                 shard,
                 call,
                 _reflection_fields,
                 lambda rows, columns: ReflectionChain(*columns),
+                result_row_bytes=max_bounces
+                * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE,
             )
         if mode == "pipelined":
-            if self._master_takes_everything(total):
+            if self._master_takes_everything(operation, total):
                 self.last_dispatch = "master"
                 return self.master().trace_reflections(ray, max_bounces, active)
-            remote_rows, master_rows = self._pipeline_rows(total)
+            remote_rows, master_rows = self._pipeline_rows(operation, total)
 
             def load(full: bool):
                 # `ReflectionChain` is lazy on one device -- the reduced trace
@@ -2028,13 +2531,18 @@ class _ReplicatedScene:
                 # pays for it on any device. Upgrading a reduced chain re-runs
                 # the trace, which is what the single-device loader does too.
                 columns = self._run_chunked(
-                    "trace_reflections",
+                    operation,
                     total,
-                    row_bytes,
+                    memory_row_bytes,
                     shard,
                     call,
                     _reflection_fields if full else _reduced_reflection_fields,
                     lambda rows, values: values,
+                    result_row_bytes=(
+                        max_bounces * _REFLECTION_OUTPUT_BYTES_PER_RAY_BOUNCE
+                        if full
+                        else max_bounces * 9
+                    ),
                     chunk_rows=remote_rows,
                     master_chunk_rows=master_rows,
                 )
@@ -2043,7 +2551,7 @@ class _ReplicatedScene:
                 return columns[0], columns[1], None, columns[2]
 
             return ReflectionChain(loader=load)
-        results = self._run_shards(total, shard, call)
+        results = self._run_shards(operation, total, shard, call)
         if results is None:
             self.last_dispatch = "master"
             return self.master().trace_reflections(ray, max_bounces, active)
@@ -2078,7 +2586,7 @@ class _ReplicatedScene:
             return replica.trace_refl_epc_field(*arguments)
 
         return self._dispatch(
-            "trace_refl_epc_field",
+            f"trace_refl_epc_field:{int(max_bounces)}",
             total,
             _REFL_EPC_FIELD_ROW_BYTES + 4 * max_bounces,
             shard,
@@ -2088,6 +2596,7 @@ class _ReplicatedScene:
             lambda: self.master().trace_refl_epc_field(
                 source, receiver, max_bounces, active
             ),
+            transfer_row_bytes=38 + 4 * max_bounces,
         )
 
     # -- grid_reduce operations --------------------------------------------
@@ -2100,6 +2609,10 @@ class _ReplicatedScene:
         lane_count: int,
         scatter,
         call,
+        *,
+        requires_grad: bool = False,
+        grid_cell_count: int = 0,
+        fixed_input_bytes: int = 0,
     ) -> DfrAccum:
         """One launch per (device, chunk) lane window, merged on the master.
 
@@ -2110,22 +2623,66 @@ class _ReplicatedScene:
         moved and summed in device order, which is the merge order the module
         docstring pins down.
         """
+        self.require_healthy()
         begin, count = _resolve_lane_window(lane_offset, lane_count, total_samples)
+        candidate_shards = self._lane_shards(begin, count, operation)
+        remote_counts = [
+            shard_count
+            for _replica, device, _begin, shard_count in candidate_shards
+            if device != self.master_device
+        ]
+        force_master = (
+            not remote_counts
+            or any(rows < self.min_lanes_per_device for rows in remote_counts)
+        )
+        budget = self.options.tape_memory_budget_bytes
+        # Seven float grids plus seven int32 counters. Keep three full payloads
+        # in the estimate: the running partial, the next native result, and the
+        # master-side merge/copy.
+        grid_bytes = max(int(grid_cell_count), 0) * 7 * 4 + 7 * 4
+        replicated_input_bytes = (
+            max(int(fixed_input_bytes), 0)
+            if len(self.devices) > 1 and not force_master
+            else 0
+        )
         plan = calibrate_chunk_size(
             operation,
             count,
             row_bytes=_DFR_ACCUM_LANE_BYTES,
             chunk_rays=self.options.chunk_rays,
-            budget_bytes=self.options.tape_memory_budget_bytes,
+            budget_bytes=budget,
+            resident_chunks=1,
+            fixed_output_bytes=(
+                3 * grid_bytes + replicated_input_bytes
+                if budget is not None
+                else 0
+            ),
         )
         plan.chunk_rays = _lane_chunk_size(plan.chunk_rays, count)
         self.last_chunk_plan = plan
-        shards = self._lane_shards(begin, count)
+        explicit_lane_chunking = (
+            self.options.chunk_rays is not None or budget is not None
+        )
+        if count == 0:
+            self.last_dispatch = "master"
+            plan.chunk_count = 1
+            return call(self.master(), scatter(self.master_device), begin, count)
+        if force_master and not explicit_lane_chunking:
+            self.last_dispatch = "master"
+            plan.chunk_count = 1
+            return call(self.master(), scatter(self.master_device), begin, count)
+        shards = (
+            [(self.master(), self.master_device, begin, count)]
+            if force_master
+            else candidate_shards
+        )
         if not shards:
             # An empty window is one empty launch on the master, which is what
             # the single-device path does with the very same arguments.
+            self.last_dispatch = "master"
             plan.chunk_count = 1
             return call(self.master(), scatter(self.master_device), begin, count)
+        self.last_dispatch = "lane-chunked" if explicit_lane_chunking else "lane-sharded"
 
         # Scatter every shard's inputs before launching anything, so the devices
         # overlap for the same reason the `per_ray` path's devices do.
@@ -2141,6 +2698,13 @@ class _ReplicatedScene:
                 ]
             )
         plan.chunk_count = sum(len(chunks) for chunks in queues)
+        if budget is not None and requires_grad and plan.chunk_count > 1:
+            raise RuntimeError(
+                f"{operation}: tape_memory_budget_bytes cannot bound a multi-chunk "
+                "differentiable grid result because autograd must retain every "
+                "chunk's frozen tape. Split lane windows in the caller and run "
+                "backward per window, or use one unchunked launch."
+            )
 
         # Round-robin over the devices so every device has a chunk in flight
         # before any device gets its second one. Each device still folds its own
@@ -2153,17 +2717,32 @@ class _ReplicatedScene:
                     continue
                 chunk_begin, chunk_count = chunks[step]
                 result = call(replicas[index], inputs[index], chunk_begin, chunk_count)
-                partials[index] = (
-                    result
-                    if partials[index] is None
-                    else _add_accum(partials[index], result)
-                )
+                if partials[index] is None:
+                    partials[index] = result
+                elif (
+                    requires_grad
+                    or _accum_requires_grad(partials[index])
+                    or _accum_requires_grad(result)
+                ):
+                    partials[index] = _add_accum(partials[index], result)
+                else:
+                    partials[index] = _add_accum_in_place(
+                        partials[index], result
+                    )
 
         master = self.master_device
         merged = None
         for partial in partials:
             hosted = _accum_to(partial, master)
-            merged = hosted if merged is None else _add_accum(merged, hosted)
+            merged = (
+                hosted
+                if merged is None
+                else (
+                    _add_accum(merged, hosted)
+                    if requires_grad
+                    else _add_accum_in_place(merged, hosted)
+                )
+            )
         return merged
 
     def accum_dfr_direct(
@@ -2211,6 +2790,12 @@ class _ReplicatedScene:
             lane_count,
             scatter,
             call,
+            requires_grad=_states_require_grad(states)
+            or _material_requires_grad(material),
+            grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
+            fixed_input_bytes=_states_bytes(states)
+            + _material_bytes(material)
+            + _tensor_bytes(active),
         )
 
     def accum_dfr(
@@ -2266,6 +2851,15 @@ class _ReplicatedScene:
             lane_count,
             scatter,
             call,
+            requires_grad=_states_require_grad(initial_states)
+            or _states_require_grad(recursive_states)
+            or _material_requires_grad(material),
+            grid_cell_count=int(grid.resolution0) * int(grid.resolution1),
+            fixed_input_bytes=_states_bytes(initial_states)
+            + _states_bytes(recursive_states)
+            + _material_bytes(material)
+            + _tensor_bytes(active)
+            + _tensor_bytes(recursive_active),
         )
 
 

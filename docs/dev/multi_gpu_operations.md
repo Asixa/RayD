@@ -274,15 +274,37 @@ move. This section is the measured version of that sentence, and the benchmark
 that produced it is
 [`backends/torch/tests/benchmark_multi_device.py`](../../backends/torch/tests/benchmark_multi_device.py):
 
+By default construction also requires bidirectional CUDA peer access between
+the master and every replica. This is fail-safe: silently routing the pipeline
+through staged host copies invalidates the crossover measurements below.
+Set `MultiDeviceOptions(require_peer_access=False)` only when accepting that
+unmeasured topology explicitly; for most such machines, master-only weights or
+one process per GPU are the safer operating modes.
+
+The default also requires the same GPU model and compute capability on every
+replica, matching the topology behind the bitwise `per_ray` evidence. Set
+`require_homogeneous_devices=False` only to run a mixed set explicitly; that
+mode has no cross-device bitwise or heterogeneous-calibration guarantee.
+
 ```bash
 python -m backends.torch.tests.benchmark_multi_device            # both configurations
 python -m backends.torch.tests.benchmark_multi_device --config light
 python -m backends.torch.tests.benchmark_multi_device --devices 0   # single-GPU baseline
+python -m backends.torch.tests.benchmark_multi_device \
+    --json artifacts/multi_gpu/benchmark.json
 ```
 
 It runs on one GPU as well as on two: with a single device visible it prints
 the single-device column and nothing else, which is the baseline the scaling
 numbers below are ratios of.
+
+The JSON form has a versioned contract at
+[`shared/benchmarks/multi_device_result.schema.json`](../../shared/benchmarks/multi_device_result.schema.json).
+It records the visible device count, every directed peer-access result, every
+device's streamed peak allocation and the master's streamed-versus-concatenated
+peak comparison. The committed
+[`multi_device_manifest.json`](../../shared/benchmarks/multi_device_manifest.json)
+pins the schema and evidence file by SHA-256.
 
 ### 5.1 Measured, 2026-07-27
 
@@ -304,7 +326,16 @@ and reduced with a minimum over 7 rounds after 2 warm-up rounds.
 > that move.
 
 The table below is one run of the twenty (2026-07-27), printed verbatim by the
-benchmark:
+benchmark. Its machine-readable counterpart is
+[`multi_device_2xa6000_20260727.json`](../../shared/benchmarks/baselines/multi_device_2xa6000_20260727.json).
+That file is explicitly marked `historical_documentation_import`: it was
+transcribed from this already published run of record, not newly executed
+during its commit. Because this historical table did not contain allocation
+measurements, its peak-memory status is `not_recorded`; new benchmark JSON
+reports measured byte counts. The historical benchmark checked peer access
+only from device 0 to device 1, so the transcription marks peer evidence
+`partially_recorded` and does not invent the reverse direction; new records
+capture every directed pair.
 
 | Configuration | Operation | Batch | 1 GPU | 2 GPUs | speedup | dispatch | chunks | weights |
 | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |
@@ -506,20 +537,26 @@ above by hand.
   error, because `None` is a keyword; the member is reachable as
   `rt.RayFlags["None"]`. Verified: `flags=0` reports a 4-byte measured row.)
 
-- **Either way, the work has to be big enough to amortize 1-2 ms of
-  orchestration.** For `per_ray` that is a hard floor the layer enforces (5.4);
-  for accumulation there is no floor, and a small launch simply loses.
+- **Either way, the remote shard has to be big enough to amortize 1-2 ms of
+  orchestration.** The layer applies an operation- and transfer-width-aware
+  floor to the actual remote `per_ray` shard (5.4), and an analogous
+  `min_lanes_per_device` floor to accumulation windows.
 
-### 5.4 The small-batch fallback
+### 5.4 The small-work fallback
 
-A multi-device `per_ray` batch with fewer than `min_rays_per_device *
-len(devices)` rows (default 262,144 per device, so 524,288 rows on two) does
-not shard at all. It runs on the master replica, with the caller's own tensors,
-through the same code a single-device `Scene` runs -- so the result is bitwise
-the single-device result and the layer costs one Python comparison. The floor
-is measured, not guessed: the pipelined dispatch spends ~3 ms of host time
-before any device work, so a batch whose single-device time is below that
-cannot win however the copies are arranged.
+Before launching, a multi-device `per_ray` operation computes its weighted
+remote shard and compares that shard -- not the total batch -- with a dynamic
+floor based on `min_rays_per_device` and the operation's copied input plus
+returned output bytes per row. This catches both small total batches and
+highly skewed weights that would otherwise send only a token launch to a
+remote GPU. `grid_reduce` applies
+`min_lanes_per_device` to its actual remote lane windows. Below either floor
+the operation runs on the master replica, with the caller's own tensors,
+through the same code a single-device `Scene` runs.
+
+Use `operation_weights` when different operation families have different
+compute/transfer ratios. Calibration records its result under the operation it
+measured and leaves every other operation's split unchanged.
 
 Two consequences worth knowing:
 
@@ -572,9 +609,9 @@ Two consequences worth knowing:
   few percent of the master-only rung, do not ship the ladder's answer --
   construct the scene with `MultiDeviceOptions(weights=[1.0, 0.0])` (or run a
   single-device `Scene`, which is cheaper still). The floor in the first half
-  of this section, unlike calibration, *is* a guarantee: below
-  `min_rays_per_device * len(devices)` rows the batch is bitwise the
-  single-device call, whatever the weights say.
+  of this section, unlike calibration, *is* a guarantee: when any actual
+  weighted remote shard is below its transfer-aware floor, the whole operation
+  is the single-device call.
 
 ### 5.5 Using `calibrate_devices()`
 
@@ -586,6 +623,7 @@ scene.build()
 record = scene.calibrate_devices(rays=4_194_304, max_bounces=4)
 print(record.describe())
 print(scene.device_weights)
+print(scene.device_weights_for("trace_reflections:4"))
 ```
 
 It measures in two stages. The *throughput* stage runs the same probe on every
@@ -622,12 +660,16 @@ Practical rules, all learned the hard way on this machine:
   ~1.56 ms (0.84x and 0.71x of the ~1.11 ms one-GPU time in the same rounds). Where the two rungs are within a few percent,
   pin the weights (5.4) rather than re-deriving them.
 - **Pass your own probe when the default shape is not your workload.**
-  `calibrate_devices(probe=...)` is handed `(scene_like, device)` and should
+  `calibrate_devices(operation="nearest_edge", probe=...)` is handed
+  `(scene_like, device)` and should
   build its inputs on the device it is given and call the operation
-  positionally; the default probe is `intersect` (or `trace_reflections` with
-  `max_bounces`) over rays drawn in the scene's bounding box, which is an op
-  *shape*, not your workload.
-- Calibration only chooses weights. At fixed weights, execution is as
+  positionally; the default probe is full `intersect` (or
+  `trace_reflections` with `max_bounces`) over rays drawn in the scene's
+  bounding box, which is an op *shape*, not your workload. A custom probe must
+  name its operation, and the built-in probe cannot be stored under a
+  different name.
+- Calibration only chooses weights for the exact operation it measured. At
+  fixed operation-local weights, execution is as
   reproducible as it ever was: same devices, same weights, same chunking, same
   inputs give the same results run to run.
 - **Read `record.describe()` and check the margin, not just the answer.** It
@@ -691,6 +733,20 @@ and backpropagate inside the hook rather than holding the whole batch's graph.
 That is ordinary gradient accumulation and is exact for RayD geometry
 gradients, which land in `grad_vertices` by summation; only float32 summation
 order differs from the unchunked backward.
+
+`tape_memory_budget_bytes` bounds estimated incremental peak memory per device,
+not merely one launch. Up to three chunks can be resident in the pipeline, and
+their copied inputs, outputs and tape are charged to the budget. Without
+`offload`, the complete returned `per_ray` result is reserved first; if it
+does not fit, the call fails before pretending that a smaller launch solves
+the problem. Accumulation also reserves its replicated state/material payload
+and fixed grid partials. CUDA allocator granularity, already-resident
+scene/caller tensors, and allocations performed by the user's hook are not
+part of this incremental estimate.
+Multi-chunk AD results likewise require `offload` plus per-chunk backward.
+Inference accumulation reuses a fixed grid buffer, but AD accumulation retains
+one frozen tape per chunk and therefore fails when a budget would require
+several chunks.
 
 ## 6. Distributed: one rank per GPU, one node or many
 
@@ -865,6 +921,7 @@ compile-flag policy from drifting apart.
 ```bash
 python -m unittest \
     tests.test_adr0038_multi_device \
+    tests.test_multi_device_benchmark_evidence \
     tests.test_shared_operation_contract \
     tests.test_public_api_manifest \
     tests.test_ptx_source_digest \
@@ -878,12 +935,18 @@ python -m unittest discover -s backends/torch/tests/torch_backend \
     -t backends/torch/tests
 ```
 
-**5. The benchmark**, which is a measurement rather than a gate (§5):
+**5. The benchmark**, whose numerical speedups are measurements rather than
+fixed pass/fail thresholds (§5):
 
 ```bash
-python -m backends.torch.tests.benchmark_multi_device
+python -m backends.torch.tests.benchmark_multi_device \
+    --json artifacts/multi_gpu/benchmark.json
 python -m backends.torch.tests.benchmark_multi_device --devices 0   # baseline
 ```
+
+The command itself is a gate: setup, CUDA, correctness, schema production or
+file-write failures must fail CI. Only the measured speedup values are not
+thresholded.
 
 The Dr.Jit backend has no in-process multi-device route to test; its multi-GPU
 coverage is the process-per-GPU recipe of §3 plus the device-binding assertions
@@ -895,11 +958,19 @@ skip silently instead of running).
 ### The same set in CI
 
 [`.github/workflows/multi_gpu.yml`](../../.github/workflows/multi_gpu.yml)
-declares steps 1-3 (and optionally 5) as a job pinned to a self-hosted runner
-labelled `self-hosted, linux, x64, cuda, multi-gpu`. **It is inert**: no such
-runner is registered for this repository, its only trigger is
-`workflow_dispatch`, and it will not run until a runner with those labels
-exists. The hosted jobs in `ci.yml`, `stable-abi-ci.yml` and `pypi.yml` have no
-CUDA device at all, so they build and check packaging only and are untouched by
-that workflow. Until a runner exists, the list above is the acceptance set, run
-by hand.
+declares steps 1-3 and 5 as a job pinned to an **external self-hosted runner**
+labelled `self-hosted, linux, x64, cuda, multi-gpu`. It is triggered weekly,
+manually, or when a pull request receives `run-multi-gpu-ci`. The benchmark is
+mandatory on scheduled and labelled-PR runs, has no `continue-on-error`, and
+uploads its schema-versioned JSON for 30 days.
+
+Those triggers do not provide hardware. The runner administrator must keep a
+Linux x64 host online with at least two CUDA devices, a CUDA-compatible Torch,
+OptiX headers, build prerequisites, sufficient disk space and permission to
+install/build the editable Torch backend. The workflow asserts that Torch sees
+at least two devices, so a mislabelled one-GPU host fails instead of passing by
+skips. If no matching runner is registered or online, jobs remain queued and
+provide no acceptance or performance evidence. GitHub-hosted jobs in `ci.yml`,
+`stable-abi-ci.yml` and `pypi.yml` have no CUDA devices and cannot substitute
+for this route. Until the external runner is operational, the list above
+remains the hand-run acceptance set.

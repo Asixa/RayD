@@ -137,12 +137,18 @@ per-shard, merge layer ORs bits and applies inertness per shard.
 **D7 — Chunked execution is a first-class component.** At extreme N the
 binding constraint is tape/output memory, not scene memory (reflection tape
 ≈ 40–50 B/ray/bounce ⇒ 10⁹ rays × 3 bounces ≈ 150 GB). The orchestration
-layer therefore executes every large batch as a stream of chunks per device:
-`grid_reduce` outputs accumulate in place (O(1) memory in N); `per_ray`
-outputs either concatenate on the master device or stream through a
-caller-supplied offload hook; forward+backward run per chunk with gradient
-accumulation. Chunk size is calibrated (as large as tape memory allows) to
-amortize per-launch overhead.
+layer therefore executes every large batch as a stream of chunks per device.
+The budget is a per-device peak-increment bound and includes copied inputs,
+outputs and tape for as many as three resident pipeline chunks plus any
+complete returned output; accumulation also reserves replicated
+state/material payloads and its fixed grid partials. Inference
+`grid_reduce` reuses a fixed-size value buffer, but its autograd graph is not
+O(1): each chunk retains a frozen native tape until backward. A budgeted
+multi-chunk AD grid therefore fails loudly. `per_ray` outputs either concatenate
+on the master device when the complete result fits, or stream through a
+caller-supplied offload hook; bounded forward+backward uses the hook to run
+backward per chunk. Chunk size is calibrated as large as the complete peak
+model allows, to amortize per-launch overhead.
 
 **D8 — Multi-GPU is invisible at the top-level API.** No parallel public
 surface: `Scene` gains one optional `devices=` argument (default: today's
@@ -283,11 +289,12 @@ pre-existing code path unchanged (D9).
   vertices are `master.to(dev_k)` (autograd-recorded); `update_mesh_vertices`
   / `sync()` / `set_edge_mask` broadcast to all replicas; version counters
   verified in lockstep, divergence fails loudly.
-- `Sharder`: static weighted split; weights from a one-time `calibrate()`
-  micro-benchmark; no dynamic rebalancing.
+- `Sharder`: static operation-local weighted splits from configuration or an
+  explicit `calibrate_devices()` micro-benchmark; no dynamic rebalancing.
 - `per_ray` wrappers: non-blocking scatter, launch on each device's current
-  stream, event-ordered gather to master, concatenate. P2P enabled when
-  `torch.cuda.can_device_access_peer` allows.
+  stream, event-ordered gather to master, concatenate. Bidirectional P2P and
+  homogeneous model/capability are required by default; host staging and
+  heterogeneous execution are explicit opt-ins with reduced guarantees.
 
 Acceptance:
 
@@ -529,9 +536,9 @@ As landed, two of those items read differently from the proposal:
   dropped every stub it had). There is no `rayd.torch.multi`: the public
   surface is
   `Scene(devices=..., options=...)`, `MultiDeviceOptions`,
-  `Scene.calibrate_devices()`, `Scene.device_weights` and the two lane-window
-  parameters, and ADR-0038's stop conditions forbid adding a public name under
-  that path.
+  `Scene.calibrate_devices()`, `Scene.device_weights`,
+  `Scene.device_weights_for(operation)` and the two lane-window parameters,
+  and ADR-0038's stop conditions forbid adding a public name under that path.
 - Item 4 was not needed: no `.cu` reachable from a committed PTX module
   changed, so `ptx_sources.json` is untouched and its digest test stayed green
   throughout rather than being repaired afterwards.
