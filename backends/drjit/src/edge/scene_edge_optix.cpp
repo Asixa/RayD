@@ -20,6 +20,14 @@ namespace rayd {
 
 namespace {
 
+/// Capture the calling thread's Dr.Jit CUDA binding for the edge BVH entry
+/// points, which take their device and stream explicitly rather than reading
+/// whatever happens to be current. `jit_cuda_device_raw()` (not
+/// `jit_cuda_device()`) is the raw ordinal `cudaSetDevice` expects.
+EdgeBvhCudaContext current_edge_bvh_context() {
+    return { jit_cuda_device_raw(), reinterpret_cast<cudaStream_t>(jit_cuda_stream()) };
+}
+
 /// Which edge query to launch; selects the matching raygen program and SBT record.
 enum class EdgeOptixLaunchKind {
     Point,
@@ -465,7 +473,8 @@ void SceneEdgeOptix::build_gases(bool update) {
         ensure_device_buffer(gas.aabb_buffer,
                              gas.aabb_buffer_size,
                              sizeof(float) * 6u * static_cast<size_t>(primitive_count_));
-        compute_edge_optix_aabbs_gpu(primitive_count_,
+        compute_edge_optix_aabbs_gpu(current_edge_bvh_context(),
+                                     primitive_count_,
                                      edge_p0_.x().data(),
                                      edge_p0_.y().data(),
                                      edge_p0_.z().data(),

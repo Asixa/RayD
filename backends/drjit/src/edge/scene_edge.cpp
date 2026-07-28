@@ -26,6 +26,14 @@ constexpr int EdgeBVHPackedChildrenStride = 2;
 constexpr size_t EdgeBVHDirtyRefitMinPrimitives = 65536;
 using TraversalStack = Int;
 
+/// Capture the calling thread's Dr.Jit CUDA binding for the edge BVH entry
+/// points, which take their device and stream explicitly rather than reading
+/// whatever happens to be current. `jit_cuda_device_raw()` (not
+/// `jit_cuda_device()`) is the raw ordinal `cudaSetDevice` expects.
+EdgeBvhCudaContext current_edge_bvh_context() {
+    return { jit_cuda_device_raw(), reinterpret_cast<cudaStream_t>(jit_cuda_stream()) };
+}
+
 /// Per-query running top-k during BVH traversal, kept as 16 unrolled (distance, primitive)
 /// slots so Dr.Jit can hold the candidate heap in registers rather than indexed memory.
 struct TopKTraversalState {
@@ -855,13 +863,15 @@ void SceneEdge::build_bvh(const SecondaryEdgeInfoAD &edge_info,
     std::vector<ScalarVector3f> node_bbox_min;
     std::vector<ScalarVector3f> node_bbox_max;
 
-    // The native builder uses independent non-blocking CUDA streams. Finish the
-    // Dr.Jit input producers before exposing their pointers. Its outputs use
-    // uninitialized storage because the native build fully writes every element.
+    // The native builder uses independent non-blocking CUDA streams, joined to
+    // the Dr.Jit stream inside the call. Evaluate the input producers before
+    // exposing their pointers. Its outputs use uninitialized storage because the
+    // native build fully writes every element.
     drjit::eval(edge_p0_, edge_e1_);
     drjit::sync_thread();
 
     build_edge_bvh_gpu(
+        current_edge_bvh_context(),
         primitive_count_,
         edge_p0_[0].data(),
         edge_p0_[1].data(),
@@ -1283,7 +1293,8 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_ch
             continue;
         }
 
-        mark_edge_bvh_dirty_ancestors_gpu(node_count_,
+        mark_edge_bvh_dirty_ancestors_gpu(current_edge_bvh_context(),
+                                          node_count_,
                                           leaf_count,
                                           leaf_nodes.data(),
                                           node_parent_.data(),
@@ -1303,6 +1314,7 @@ void SceneEdge::refit_internal_nodes_dirty(const std::vector<Int> &dirty_leaf_ch
         }
 
         compact_and_refit_edge_bvh_level_gpu(
+            current_edge_bvh_context(),
             level_count,
             level.data(),
             dirty_node_marks_.data(),

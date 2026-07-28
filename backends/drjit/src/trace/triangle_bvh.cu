@@ -51,6 +51,13 @@ struct BoundsUnion {
     }
 };
 
+/// The CUDA device that is current on this thread right now.
+int current_cuda_device() {
+    int device = -1;
+    check_cuda_call(cudaGetDevice(&device), "triangle_bvh(): failed to query the current CUDA device");
+    return device;
+}
+
 template <typename T>
 class CudaBuffer {
 public:
@@ -70,20 +77,41 @@ public:
             ptr_ = nullptr;
         }
         count_ = count;
+        device_ = -1;
         if (count_ == 0) {
             return;
         }
+        // Device memory is only valid on the device it was allocated on. Record
+        // that device here and re-check it in get(), so scratch allocated under
+        // one current device can never be handed to a launch issued under
+        // another.
+        const int device = current_cuda_device();
         const cudaError_t error = cudaMalloc(reinterpret_cast<void **>(&ptr_), sizeof(T) * count_);
         require_local(error == cudaSuccess,
                       std::string("CudaBuffer::allocate(): ") + cudaGetErrorString(error));
+        device_ = device;
     }
 
-    T *get() { return ptr_; }
-    const T *get() const { return ptr_; }
+    T *get() { require_owning_device(); return ptr_; }
+    const T *get() const { require_owning_device(); return ptr_; }
+    int device() const { return device_; }
 
 private:
+    /// Refuse to hand out the pointer unless the allocating device is current.
+    void require_owning_device() const {
+        if (ptr_ == nullptr) {
+            return;
+        }
+        const int device = current_cuda_device();
+        require_local(device == device_,
+                      "CudaBuffer::get(): buffer was allocated on CUDA device " +
+                          std::to_string(device_) + " but device " + std::to_string(device) +
+                          " is current.");
+    }
+
     T *ptr_ = nullptr;
     size_t count_ = 0;
+    int device_ = -1;
 };
 
 class CudaStreamHandle {

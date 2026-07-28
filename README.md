@@ -362,6 +362,15 @@ Dr.Jit examples are kept as runnable applications under
 - [`cornell_box.py`](backends/drjit/examples/renderer/cornell_box.py):
   a compact renderer built from RayD primitives
 
+Process-per-GPU examples, runnable under `torchrun` with one rank per GPU, are
+under
+[`backends/torch/examples/distributed`](backends/torch/examples/distributed):
+
+- [`ddp_intersect_train.py`](backends/torch/examples/distributed/ddp_intersect_train.py):
+  rank-sharded differentiable `intersect` with an all-reduced vertex gradient
+- [`ddp_accum_grids.py`](backends/torch/examples/distributed/ddp_accum_grids.py):
+  rank-sharded Monte-Carlo accumulation merged by all-reduce
+
 The Torch test and benchmark suite also serves as executable usage coverage:
 
 - [`test_intersect_grad.py`](backends/torch/tests/torch_backend/test_intersect_grad.py):
@@ -418,7 +427,10 @@ operational contract, the per-device OptiX warm-up cost, the per-process
 `OPTIX_CACHE_PATH` requirement for process-parallel launches, and the
 GIL/native-lock ordering rule that concurrent in-process driving depends on
 are documented in
-[`docs/dev/multi_gpu_operations.md`](docs/dev/multi_gpu_operations.md).
+[`docs/dev/multi_gpu_operations.md`](docs/dev/multi_gpu_operations.md). The
+process-per-GPU recipes -- the only Dr.Jit multi-GPU route and the multi-node
+route for both backends -- are runnable under
+[`backends/torch/examples/distributed`](backends/torch/examples/distributed).
 
 Whether a second GPU is worth engaging is a property of the workload: sharded
 rays travel twice, so multi-GPU pays off for compute-heavy per-ray work and

@@ -684,7 +684,109 @@ That is ordinary gradient accumulation and is exact for RayD geometry
 gradients, which land in `grad_vertices` by summation; only float32 summation
 order differs from the unchunked backward.
 
-## 6. Checklist
+## 6. Distributed: one rank per GPU, one node or many
+
+Section 3 gives the per-process rules; this section is the worked recipe built
+on them. Two runnable examples live in
+[`backends/torch/examples/distributed`](../../backends/torch/examples/distributed):
+
+- [`ddp_intersect_train.py`](../../backends/torch/examples/distributed/ddp_intersect_train.py)
+  — one rank per GPU, a rank-local `Scene` built from the same mesh, a global
+  ray batch sharded by rank, a differentiable `intersect` loss, and one
+  `all_reduce(SUM)` of `vertices.grad` per step. The optimizer then applies the
+  same update to the same replicated parameter on every rank; the script
+  asserts zero cross-rank drift every `--check-every` steps and prints a hash
+  of the final parameter.
+- [`ddp_accum_grids.py`](../../backends/torch/examples/distributed/ddp_accum_grids.py)
+  — rank-sharded Monte-Carlo accumulation. Each rank calls `accum_dfr_direct`
+  with the *same* `direct_samples` and its own `lane_offset` / `lane_count`
+  window, so the ranks' windows partition one global lane space (§ D5 of
+  [`multi_gpu_plan.md`](multi_gpu_plan.md)); `all_reduce(SUM)` on the grids
+  reproduces the single launch's grid up to summation order.
+- [`README.md`](../../backends/torch/examples/distributed/README.md) — the
+  launcher commands, the `OPTIX_CACHE_PATH` requirement, the Dr.Jit variant,
+  and the failure-behavior notes.
+
+Both are exercised by
+[`backends/torch/tests/torch_backend/test_distributed_recipe.py`](../../backends/torch/tests/torch_backend/test_distributed_recipe.py),
+which launches them under `torchrun --nproc_per_node=2` in a subprocess and
+checks that the ranks' final parameters are bitwise equal and that the merged
+grid matches a single-process, single-device launch of the full sample count.
+
+### Which route for which problem
+
+| | `Scene(devices=[...])` (§5) | process per GPU (this section) |
+|---|---|---|
+| Backends | Torch only | Torch **and** Dr.Jit |
+| Scope | one node | one node or a cluster |
+| What crosses the link | sharded rows, both ways | grids and gradients only |
+| Who writes the split | RayD | you |
+
+The in-process layer is the better answer whenever it applies, because it
+shards work RayD understands. The process-per-GPU recipe is what you use when
+the layer does not apply — the Dr.Jit backend, or more GPUs than one node has —
+and it scales further, because the only thing on the wire is scene-sized.
+
+### Multi-node invocation
+
+Nothing in the scripts changes across nodes; only the rendezvous does. On every
+node:
+
+```bash
+torchrun \
+    --nnodes=4 \
+    --nproc_per_node=8 \
+    --rdzv_id=rayd-ddp \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$HEAD_NODE_ADDR:29500 \
+    ddp_intersect_train.py
+```
+
+`RANK` becomes global and `LOCAL_RANK` stays node-local, which is what the
+examples already consume: the CUDA device comes from `LOCAL_RANK`, the ray shard
+and lane window from `RANK` / `WORLD_SIZE`.
+
+**Honest scope of what has been run.** The verification machine for this
+repository is a single node with two RTX A6000s. The single-node,
+two-rank form is executed by the test above on every run. The multi-node form
+is **documented but not executed here** — there is no second node to run it on.
+What can be said without a cluster is structural and is worth stating plainly:
+the examples contain no node-count-dependent code path, they read only `RANK`,
+`LOCAL_RANK` and `WORLD_SIZE`, and per-step traffic is one `[V, 3]` gradient (or
+a fixed set of grids), independent of the ray or sample count. The claim that
+needs a cluster to confirm is a throughput claim, and none is made here.
+
+### NCCL environment notes
+
+Generic, and deliberately not tuned for a fabric this repository cannot see:
+
+- `NCCL_DEBUG=INFO` prints the topology, the transport NCCL picked per pair, and
+  the ring/tree it built. It is the first thing to set when a run is slower than
+  the interconnect should allow or when initialization hangs. `NCCL_DEBUG=WARN`
+  is a reasonable thing to leave on in production.
+- `NCCL_SOCKET_IFNAME` selects the interface used for bootstrap and for
+  ethernet transport. Set it when a node has several NICs (or docker/virtual
+  interfaces) and NCCL picks one that cannot reach the peers, which shows up as
+  a rendezvous that connects but a first collective that never completes.
+- `NCCL_IB_DISABLE=1` forces the ethernet path. Use it to *diagnose* an
+  InfiniBand configuration problem, not as a fix — it usually costs bandwidth.
+- `NCCL_IB_HCA` restricts which HCAs are used on nodes with more adapters than
+  the job should touch.
+- `NCCL_P2P_DISABLE=1` turns off intra-node peer-to-peer. Same role: a
+  diagnostic that separates "the fabric is wrong" from "the topology is wrong".
+- `TORCH_NCCL_ASYNC_ERROR_HANDLING=1` (set by both examples before the process
+  group is created) turns a NCCL failure into an exception instead of a stalled
+  stream. Pair it with an explicit `timeout=` on `init_process_group` so a rank
+  waiting on a dead peer fails rather than hangs.
+
+These interact with RayD in exactly one place: none of them. RayD launches no
+collectives and holds no communicator — the reductions are the caller's, on the
+caller's tensors. What RayD does contribute to a distributed run is the
+per-process OptiX cache requirement of §3, which is a filesystem concern rather
+than a network one and is easy to forget when a job scales from one node to
+many: `$ROOT/rank-$RANK` has to be per-rank *and* on local disk.
+
+## 7. Checklist
 
 - One `Scene` per device, every query tensor on that device.
 - No `torch.cuda.device(...)` wrapper needed; ambient device is irrelevant.
@@ -693,3 +795,7 @@ order differs from the unchunked backward.
   query per device).
 - Process-parallel: `CUDA_VISIBLE_DEVICES` per rank **and** a private
   `OPTIX_CACHE_PATH` per rank.
+- Distributed: shard the batch (or the Monte-Carlo lane space) by `RANK`,
+  reduce only grids and gradients, give the process group an explicit
+  `timeout=`, and `destroy_process_group()` in a `finally` so a dead peer fails
+  the run instead of hanging it (§6).

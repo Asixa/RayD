@@ -35,6 +35,46 @@ inline Bounds3 empty_bounds() {
     return { { inf, inf, inf }, { -inf, -inf, -inf } };
 }
 
+void check_cuda_call(cudaError_t error, const char *message);
+
+/// The CUDA device that is current on this thread right now.
+int current_cuda_device() {
+    int device = -1;
+    check_cuda_call(cudaGetDevice(&device), "edge_bvh: failed to query the current CUDA device");
+    return device;
+}
+
+/// Make \p device current for the lifetime of the guard, restoring the previous
+/// device afterwards.
+///
+/// Every edge-BVH entry point opens one of these from its caller-supplied
+/// context, so the scratch allocations, launches, and stream objects created
+/// inside a single call all belong to the same, explicitly named device instead
+/// of to whatever happened to be current when the call was made.
+class CudaDeviceGuard {
+public:
+    explicit CudaDeviceGuard(int device) : previous_device_(current_cuda_device()) {
+        if (previous_device_ != device) {
+            check_cuda_call(cudaSetDevice(device),
+                            "edge_bvh: failed to bind the requested CUDA device");
+            restore_ = true;
+        }
+    }
+
+    ~CudaDeviceGuard() {
+        if (restore_) {
+            cudaSetDevice(previous_device_);
+        }
+    }
+
+    CudaDeviceGuard(const CudaDeviceGuard &) = delete;
+    CudaDeviceGuard &operator=(const CudaDeviceGuard &) = delete;
+
+private:
+    int previous_device_ = 0;
+    bool restore_ = false;
+};
+
 template <typename T>
 class CudaBuffer {
 public:
@@ -54,9 +94,10 @@ public:
     CudaBuffer &operator=(const CudaBuffer &) = delete;
 
     CudaBuffer(CudaBuffer &&other) noexcept
-        : ptr_(other.ptr_), count_(other.count_) {
+        : ptr_(other.ptr_), count_(other.count_), device_(other.device_) {
         other.ptr_ = nullptr;
         other.count_ = 0;
+        other.device_ = -1;
     }
 
     CudaBuffer &operator=(CudaBuffer &&other) noexcept {
@@ -66,8 +107,10 @@ public:
             }
             ptr_ = other.ptr_;
             count_ = other.count_;
+            device_ = other.device_;
             other.ptr_ = nullptr;
             other.count_ = 0;
+            other.device_ = -1;
         }
         return *this;
     }
@@ -79,22 +122,45 @@ public:
         }
 
         count_ = count;
+        device_ = -1;
         if (count_ == 0) {
             return;
         }
 
+        // Record the device the allocation belongs to. Device memory is only
+        // valid on the device it was allocated on, so binding it here (under the
+        // entry point's CudaDeviceGuard) is what makes the get() check below a
+        // real guarantee rather than a guess.
+        const int device = current_cuda_device();
         const cudaError_t error = cudaMalloc(reinterpret_cast<void **>(&ptr_), sizeof(T) * count_);
         require_local(error == cudaSuccess,
                       std::string("CudaBuffer::allocate(): ") + cudaGetErrorString(error));
+        device_ = device;
     }
 
-    T *get() { return ptr_; }
-    const T *get() const { return ptr_; }
+    T *get() { require_owning_device(); return ptr_; }
+    const T *get() const { require_owning_device(); return ptr_; }
     size_t size() const { return count_; }
+    int device() const { return device_; }
 
 private:
+    /// Refuse to hand out the pointer unless the allocating device is current,
+    /// so it can never reach a launch or copy issued against another device.
+    void require_owning_device() const {
+        if (ptr_ == nullptr) {
+            return;
+        }
+
+        const int device = current_cuda_device();
+        require_local(device == device_,
+                      "CudaBuffer::get(): buffer was allocated on CUDA device " +
+                          std::to_string(device_) + " but device " + std::to_string(device) +
+                          " is current.");
+    }
+
     T *ptr_ = nullptr;
     size_t count_ = 0;
+    int device_ = -1;
 };
 
 struct BoundsUnion {
@@ -126,9 +192,16 @@ void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
 }
 
-void synchronize_cuda(const char *message) {
+/// Drain \p stream only.
+///
+/// Every launch in this file goes to a stream the entry point either owns or was
+/// handed, so a device-wide synchronize was both wider than needed (it also
+/// blocked on unrelated work from other threads sharing the device) and weaker
+/// than it looked (it says nothing about *which* device was drained). Scoping
+/// the wait to the stream that carries the work makes the dependency explicit.
+void synchronize_cuda(cudaStream_t stream, const char *message) {
     audit_cuda_stream_synchronize();
-    check_cuda_call(cudaDeviceSynchronize(), message);
+    check_cuda_call(cudaStreamSynchronize(stream), message);
 }
 
 class CudaStreamHandle {
@@ -295,6 +368,7 @@ HostTreeLevels build_host_tree_levels_from_topology(const std::vector<int> &left
 } // namespace
 
 void compute_edge_optix_aabbs_gpu(
+    const EdgeBvhCudaContext &context,
     int primitive_count,
     const float *edge_p0_x,
     const float *edge_p0_y,
@@ -315,8 +389,13 @@ void compute_edge_optix_aabbs_gpu(
     require_local(out_aabbs != nullptr, "compute_edge_optix_aabbs_gpu(): output pointer is null.");
 
     try {
+        const CudaDeviceGuard device_guard(context.device);
         constexpr int block_size = 256;
         const int block_count = (primitive_count + block_size - 1) / block_size;
+        // On the caller's stream: the edge SoA inputs were produced there, and
+        // the OptiX custom-primitive build that consumes out_aabbs is issued
+        // there too, so both dependencies are stream-ordered rather than resting
+        // on a device-wide drain.
         shared::edge::launch_edge_aabb(
             primitive_count,
             edge_p0_x,
@@ -327,19 +406,21 @@ void compute_edge_optix_aabbs_gpu(
             edge_e1_z,
             inflation,
             out_aabbs,
-            nullptr);
+            context.stream);
         audit_cuda_kernel_launch("compute_edge_optix_aabbs_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
                                  block_size, 1, 1,
                                  static_cast<uint64_t>(primitive_count));
         check_cuda_last_error("compute_edge_optix_aabbs_gpu(): failed to launch AABB kernel");
-        synchronize_cuda("compute_edge_optix_aabbs_gpu(): failed to finish AABB kernel");
+        synchronize_cuda(context.stream,
+                         "compute_edge_optix_aabbs_gpu(): failed to finish AABB kernel");
     } catch (const std::exception &e) {
         throw_runtime_error_local(std::string("compute_edge_optix_aabbs_gpu(): ") + e.what());
     }
 }
 
 void build_edge_bvh_gpu(
+    const EdgeBvhCudaContext &context,
     int primitive_count,
     const float *edge_p0_x,
     const float *edge_p0_y,
@@ -367,6 +448,9 @@ void build_edge_bvh_gpu(
     require_local(primitive_count > 0, "build_edge_lbvh_gpu(): primitive_count must be positive.");
 
     try {
+        // Bind the caller's device before anything is allocated: the scratch
+        // buffers, streams, and events below all belong to it.
+        const CudaDeviceGuard device_guard(context.device);
         const int node_count = std::max(2 * primitive_count - 1, 1);
         const int block_size = 256;
         const int primitive_blocks = (primitive_count + block_size - 1) / block_size;
@@ -394,9 +478,33 @@ void build_edge_bvh_gpu(
         CudaStreamHandle bounds_stream_handle;
         CudaStreamHandle sequence_stream_handle;
         CudaEventHandle sequence_ready_event;
+        CudaEventHandle caller_ready_event;
+        CudaEventHandle schedule_uploaded_event;
         const cudaStream_t bounds_stream = bounds_stream_handle.get();
         const cudaStream_t sequence_stream =
             overlap_build_streams ? sequence_stream_handle.get() : bounds_stream;
+
+        // The build runs on its own non-blocking streams, which are *not*
+        // implicitly ordered against the caller's stream. Join it once here so
+        // the edge SoA inputs the caller produced are visible to every kernel
+        // below without depending on the caller having drained its stream first.
+        audit_cuda_event_record();
+        check_cuda_call(cudaEventRecord(caller_ready_event.get(), context.stream),
+                        "build_edge_lbvh_gpu(): failed to record caller-ready event");
+        audit_cuda_stream_wait_event();
+        check_cuda_call(cudaStreamWaitEvent(bounds_stream, caller_ready_event.get(), 0),
+                        "build_edge_lbvh_gpu(): failed to join the caller stream");
+        if (overlap_build_streams) {
+            audit_cuda_stream_wait_event();
+            check_cuda_call(cudaStreamWaitEvent(sequence_stream, caller_ready_event.get(), 0),
+                            "build_edge_lbvh_gpu(): failed to join the caller stream");
+        }
+
+        // The treelet schedule and its device copy outlive the treelet block:
+        // the upload is asynchronous, so the host source and the device buffer
+        // must both stay alive until the final drain below.
+        FlatNodeLevels optimize_schedule;
+        CudaBuffer<int> optimize_nodes_device;
         std::vector<int> host_left_child;
         std::vector<int> host_right_child;
         std::vector<int> host_is_leaf;
@@ -700,15 +808,29 @@ void build_edge_bvh_gpu(
                         optimize_levels[static_cast<size_t>(height)].push_back(node_index);
                     }
                 }
-                const FlatNodeLevels optimize_schedule = flatten_node_levels(optimize_levels);
-                CudaBuffer<int> optimize_nodes_device(optimize_schedule.nodes.size());
+                optimize_schedule = flatten_node_levels(optimize_levels);
+                optimize_nodes_device.allocate(optimize_schedule.nodes.size());
                 if (!optimize_schedule.nodes.empty()) {
-                    audit_cuda_memcpy();
-                    check_cuda_call(cudaMemcpy(optimize_nodes_device.get(),
-                                               optimize_schedule.nodes.data(),
-                                               optimize_schedule.nodes.size() * sizeof(int),
-                                               cudaMemcpyHostToDevice),
+                    // Asynchronous on the build stream rather than blocking on
+                    // the default stream: bounds_stream is non-blocking, so a
+                    // default-stream copy is not ordered against the cost-init
+                    // kernels queued just above, and the blocking form serialized
+                    // the whole build on the host for no reason. The event makes
+                    // the schedule -> treelet-kernel dependency explicit.
+                    audit_cuda_memcpy_async();
+                    check_cuda_call(cudaMemcpyAsync(optimize_nodes_device.get(),
+                                                    optimize_schedule.nodes.data(),
+                                                    optimize_schedule.nodes.size() * sizeof(int),
+                                                    cudaMemcpyHostToDevice,
+                                                    bounds_stream),
                                     "build_edge_lbvh_gpu(): failed to upload treelet schedule");
+                    audit_cuda_event_record();
+                    check_cuda_call(cudaEventRecord(schedule_uploaded_event.get(), bounds_stream),
+                                    "build_edge_lbvh_gpu(): failed to record schedule-upload event");
+                    audit_cuda_stream_wait_event();
+                    check_cuda_call(
+                        cudaStreamWaitEvent(bounds_stream, schedule_uploaded_event.get(), 0),
+                        "build_edge_lbvh_gpu(): failed to order the treelet schedule upload");
                 }
 
                 for (int height = 1; height <= max_height; ++height) {
@@ -754,6 +876,7 @@ void build_edge_bvh_gpu(
 }
 
 void mark_edge_bvh_dirty_ancestors_gpu(
+    const EdgeBvhCudaContext &context,
     int node_count,
     int leaf_count,
     const int *leaf_nodes,
@@ -776,11 +899,14 @@ void mark_edge_bvh_dirty_ancestors_gpu(
             return;
         }
 
+        const CudaDeviceGuard device_guard(context.device);
+
         if (clear_marks) {
-            audit_cuda_memset_async();
-            check_cuda_call(
-                cudaMemset(out_dirty_marks, 0, sizeof(int) * static_cast<size_t>(node_count)),
-                "mark_edge_bvh_dirty_ancestors_gpu(): failed to clear dirty marks");
+            memset_int_async(out_dirty_marks,
+                             0,
+                             static_cast<size_t>(node_count),
+                             context.stream,
+                             "mark_edge_bvh_dirty_ancestors_gpu(): failed to clear dirty marks");
         }
 
         if (leaf_count == 0) {
@@ -789,12 +915,15 @@ void mark_edge_bvh_dirty_ancestors_gpu(
 
         constexpr int block_size = 256;
         const int block_count = (leaf_count + block_size - 1) / block_size;
+        // The clear above and this kernel are ordered by the caller's stream,
+        // which also carries the Dr.Jit buffers they touch; the default stream
+        // was ordered against neither.
         shared::edge::launch_mark_dirty_ancestors_async({
             leaf_nodes,
             node_parent,
             out_dirty_marks,
             leaf_count,
-            nullptr
+            context.stream
         });
         audit_cuda_kernel_launch("mark_dirty_ancestors_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
@@ -808,6 +937,7 @@ void mark_edge_bvh_dirty_ancestors_gpu(
 }
 
 void compact_and_refit_edge_bvh_level_gpu(
+    const EdgeBvhCudaContext &context,
     int level_count,
     const int *level_nodes,
     const int *dirty_marks,
@@ -853,19 +983,27 @@ void compact_and_refit_edge_bvh_level_gpu(
             return;
         }
 
-        audit_cuda_memset_async();
-        check_cuda_call(cudaMemset(scratch_selected_count, 0, sizeof(int)),
-                        "compact_and_refit_edge_bvh_level_gpu(): failed to clear selected count");
+        const CudaDeviceGuard device_guard(context.device);
+
+        memset_int_async(scratch_selected_count,
+                         0,
+                         1,
+                         context.stream,
+                         "compact_and_refit_edge_bvh_level_gpu(): failed to clear selected count");
 
         constexpr int block_size = 256;
         const int block_count = (level_count + block_size - 1) / block_size;
+        // Clear, compaction, and refit form a chain through
+        // scratch_selected_count/scratch_selected_nodes; keeping all three on the
+        // caller's stream is what orders them against each other and against the
+        // Dr.Jit work that produced the level and mark buffers.
         shared::edge::launch_compact_dirty_level_async({
             level_nodes,
             dirty_marks,
             scratch_selected_nodes,
             scratch_selected_count,
             level_count,
-            nullptr
+            context.stream
         });
         audit_cuda_kernel_launch("compact_dirty_level_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,
@@ -889,7 +1027,7 @@ void compact_and_refit_edge_bvh_level_gpu(
                 0
             },
             level_count,
-            nullptr
+            context.stream
         });
         audit_cuda_kernel_launch("refit_selected_internal_nodes_kernel",
                                  static_cast<uint32_t>(block_count), 1, 1,

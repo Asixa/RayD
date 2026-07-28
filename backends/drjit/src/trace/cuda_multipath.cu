@@ -37,16 +37,6 @@
 
 namespace rayd {
 
-// Diffraction accumulation is the one migrated pipeline whose algorithm body
-// reads its storage through a static Policy::params() accessor (every other
-// pipeline takes params by argument). The shared body cannot be changed without
-// disturbing the byte-identical OptiX path, so the CUDA arm keeps the same
-// contract by staging the marshaled params into this file-local __constant__
-// (cudaMemcpyToSymbolAsync on the launch stream) before each launch. This
-// mirrors the OptiX module's __constant__ params exactly, so the cloned policy
-// below is byte-for-byte the DrJit OptiX policy apart from where params() reads.
-__constant__ DfrAccumParams g_dfr_accum_params;
-
 namespace {
 
 namespace bvh = ::rayd::shared::bvh;
@@ -71,6 +61,13 @@ void check_cuda_call(cudaError_t error, const char *message) {
 
 void check_cuda_last_error(const char *message) { check_cuda_call(cudaGetLastError(), message); }
 
+/// The CUDA device that is current on this thread right now.
+int current_cuda_device() {
+    int device = -1;
+    check_cuda_call(cudaGetDevice(&device), "cuda_multipath: failed to query the current CUDA device");
+    return device;
+}
+
 template <typename T>
 class CudaBuffer {
 public:
@@ -89,17 +86,38 @@ public:
             cudaFree(ptr_);
             ptr_ = nullptr;
         }
+        device_ = -1;
         if (count == 0) {
             return;
         }
+        // Device memory is only valid on the device it was allocated on. Record
+        // that device here and re-check it in get(), so scratch allocated under
+        // one current device can never be handed to a launch issued under
+        // another.
+        const int device = current_cuda_device();
         check_cuda_call(cudaMalloc(reinterpret_cast<void **>(&ptr_), sizeof(T) * count),
                         "cuda_multipath: CudaBuffer allocation failed");
+        device_ = device;
     }
 
-    T *get() { return ptr_; }
+    T *get() {
+        if (ptr_ != nullptr) {
+            const int device = current_cuda_device();
+            if (device != device_) {
+                throw_runtime_error_local(
+                    "cuda_multipath: CudaBuffer was allocated on CUDA device " +
+                    std::to_string(device_) + " but device " + std::to_string(device) +
+                    " is current.");
+            }
+        }
+        return ptr_;
+    }
+
+    int device() const { return device_; }
 
 private:
     T *ptr_ = nullptr;
+    int device_ = -1;
 };
 
 class CudaStreamHandle {
@@ -479,16 +497,51 @@ __global__ void dfr_paths_target_export_kernel(DfrPathParams params, CudaMultipa
 // target, suffix-first visibility, suffix target, coherent, chain)
 // ---------------------------------------------------------------------------
 
+/// Per-block relay slot holding the address of the current launch's params.
+///
+/// Diffraction accumulation is the one migrated pipeline whose algorithm body
+/// reads its storage through a *static* Policy::params() accessor (every other
+/// pipeline takes params by argument). The shared body cannot be changed without
+/// disturbing the byte-identical OptiX path, so the accessor has to find the
+/// params without being handed them.
+///
+/// The params therefore travel as an ordinary `__grid_constant__` kernel
+/// parameter and each block publishes their address here once at entry. This
+/// replaced a file-scope `__constant__` rewritten per launch with
+/// `cudaMemcpyToSymbolAsync`: that symbol was one mutable object per device
+/// module, so two threads (or two streams) launching accumulation concurrently
+/// raced to overwrite each other's params, and the staging copy silently
+/// reordered against any launch not on the staging stream. A kernel parameter is
+/// per-launch by construction, so neither failure is expressible any more.
+///
+/// `__shared__` inside a `__device__` function is one allocation per block (not
+/// per inline expansion), and kernel parameters live in constant bank 0, so the
+/// payload loads still come from constant memory exactly as before -- only the
+/// eight-byte address indirection is new.
+__device__ __forceinline__ const DfrAccumParams *&dfr_accum_params_slot() {
+    __shared__ const DfrAccumParams *slot;
+    return slot;
+}
+
+/// Publish this launch's params to the block. Must be called by every thread of
+/// the block, before any early return, so the barrier is uniform.
+__device__ __forceinline__ void publish_dfr_accum_params(const DfrAccumParams &params) {
+    if (threadIdx.x == 0) {
+        dfr_accum_params_slot() = &params;
+    }
+    __syncthreads();
+}
+
 /// CUDA clone of the DrJit DiffractionAccumulationPolicy
 /// (backends/drjit/src/multipath/diffraction_accumulation.cu). Every method is
 /// byte-for-byte the DrJit OptiX policy; only params() differs (it reads the
-/// file-local g_dfr_accum_params __constant__ above instead of the OptiX module
-/// __constant__), so the backend extensions (state_count lane mapping,
-/// edge-length weighting, atomicAdd commit, return-false staging hooks) behave
-/// identically to the OptiX path.
+/// per-block relay slot above instead of the OptiX module __constant__), so the
+/// backend extensions (state_count lane mapping, edge-length weighting,
+/// atomicAdd commit, return-false staging hooks) behave identically to the
+/// OptiX path.
 struct CudaDiffractionAccumulationPolicy {
     static __forceinline__ __device__ const DfrAccumParams &params() {
-        return ::rayd::g_dfr_accum_params;
+        return *dfr_accum_params_slot();
     }
 
     static constexpr int kDirect =
@@ -677,8 +730,10 @@ enum class DfrAccumPhase : int {
 /// for parity so every OptiX raygen variant has a CUDA kernel.
 template <bool PrimaryOnly, bool IncludeCoherent, bool IncludeDirect, bool IncludeKeller,
           bool IncludeSuffix>
-__global__ void dfr_accum_order1_kernel(CudaMultipathBvh bvh, int *stack_nodes, int *overflow,
+__global__ void dfr_accum_order1_kernel(__grid_constant__ const DfrAccumParams params,
+                                        CudaMultipathBvh bvh, int *stack_nodes, int *overflow,
                                         int lane_count) {
+    publish_dfr_accum_params(params);
     const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
     if (lane >= static_cast<unsigned int>(lane_count)) {
         return;
@@ -691,8 +746,10 @@ __global__ void dfr_accum_order1_kernel(CudaMultipathBvh bvh, int *stack_nodes, 
 /// Single-body PrimaryOnly raygen kernels (source visibility / no-suffix target /
 /// suffix-first visibility / suffix target / coherent / chain), one dispatch
 /// switch. PrimaryOnly is always true on the single-scene CUDA path.
-__global__ void dfr_accum_phase_kernel(CudaMultipathBvh bvh, int phase, int *stack_nodes,
+__global__ void dfr_accum_phase_kernel(__grid_constant__ const DfrAccumParams params,
+                                       CudaMultipathBvh bvh, int phase, int *stack_nodes,
                                        int *overflow, int lane_count) {
+    publish_dfr_accum_params(params);
     const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
     if (lane >= static_cast<unsigned int>(lane_count)) {
         return;
@@ -873,21 +930,12 @@ void launch_dfr_paths_cuda(const DfrPathParams &params, const CudaMultipathBvh &
 
 namespace {
 
-/// Stage the marshaled params into the file-local __constant__ on \p stream, so
-/// the shared algorithm's static Policy::params() accessor reads them. Ordered
-/// before the kernel launches on the same stream; the host `params` stays valid
-/// until the launcher's stream sync (the caller holds it by value).
-void stage_dfr_accum_params(const DfrAccumParams &params, cudaStream_t stream) {
-    check_cuda_call(cudaMemcpyToSymbolAsync(g_dfr_accum_params, &params, sizeof(DfrAccumParams), 0,
-                                            cudaMemcpyHostToDevice, stream),
-                    "cuda_multipath: staging diffraction-accumulation params failed");
-}
-
-void launch_dfr_accum_phase(DfrAccumPhase phase, const char *audit_name, const CudaMultipathBvh &bvh,
-                            int *stack, int *ovf, int lane_count, cudaStream_t stream) {
+void launch_dfr_accum_phase(const DfrAccumParams &params, DfrAccumPhase phase,
+                            const char *audit_name, const CudaMultipathBvh &bvh, int *stack,
+                            int *ovf, int lane_count, cudaStream_t stream) {
     const int blocks = block_count(lane_count);
-    dfr_accum_phase_kernel<<<blocks, kBlockSize, 0, stream>>>(bvh, static_cast<int>(phase), stack,
-                                                              ovf, lane_count);
+    dfr_accum_phase_kernel<<<blocks, kBlockSize, 0, stream>>>(params, bvh, static_cast<int>(phase),
+                                                              stack, ovf, lane_count);
     audit_cuda_kernel_launch(audit_name, static_cast<uint32_t>(blocks), 1, 1, kBlockSize, 1, 1,
                              static_cast<uint64_t>(lane_count));
     check_cuda_last_error(audit_name);
@@ -907,24 +955,23 @@ void launch_dfr_accum_direct_cuda(const DfrAccumParams &params, const CudaMultip
         const cudaStream_t s = stream_handle.get();
         int *stack = scratch.stack.get();
         int *ovf = scratch.overflow.get();
-        stage_dfr_accum_params(params, s);
         // Single-scene staged order (mirrors the split_mode==0 OptiX path): the
         // source-visibility prepass writes temp_visibility, then the target
         // phases read (and the suffix-first phase overwrites) it, all serialized
         // on one stream.
-        launch_dfr_accum_phase(DfrAccumPhase::SourceVisibility,
+        launch_dfr_accum_phase(params, DfrAccumPhase::SourceVisibility,
                                "dfr_accum_source_visibility_cuda_kernel", bvh, stack, ovf,
                                lane_count, s);
         if (has_non_suffix_strategy) {
-            launch_dfr_accum_phase(DfrAccumPhase::NoSuffixTarget,
+            launch_dfr_accum_phase(params, DfrAccumPhase::NoSuffixTarget,
                                    "dfr_accum_no_suffix_target_cuda_kernel", bvh, stack, ovf,
                                    lane_count, s);
         }
         if (has_suffix_strategy) {
-            launch_dfr_accum_phase(DfrAccumPhase::SuffixFirstVisibility,
+            launch_dfr_accum_phase(params, DfrAccumPhase::SuffixFirstVisibility,
                                    "dfr_accum_suffix_first_visibility_cuda_kernel", bvh, stack, ovf,
                                    lane_count, s);
-            launch_dfr_accum_phase(DfrAccumPhase::SuffixTarget,
+            launch_dfr_accum_phase(params, DfrAccumPhase::SuffixTarget,
                                    "dfr_accum_suffix_target_cuda_kernel", bvh, stack, ovf,
                                    lane_count, s);
         }
@@ -945,9 +992,8 @@ void launch_dfr_accum_coherent_cuda(const DfrAccumParams &params, const CudaMult
         CudaStreamHandle stream_handle;
         ScratchBuffers scratch(lane_count);
         const cudaStream_t s = stream_handle.get();
-        stage_dfr_accum_params(params, s);
-        launch_dfr_accum_phase(DfrAccumPhase::Coherent, "dfr_accum_coherent_cuda_kernel", bvh,
-                               scratch.stack.get(), scratch.overflow.get(), lane_count, s);
+        launch_dfr_accum_phase(params, DfrAccumPhase::Coherent, "dfr_accum_coherent_cuda_kernel",
+                               bvh, scratch.stack.get(), scratch.overflow.get(), lane_count, s);
         audit_cuda_stream_synchronize();
         check_cuda_call(cudaStreamSynchronize(s),
                         "launch_dfr_accum_coherent_cuda(): stream sync failed");
@@ -965,8 +1011,7 @@ void launch_dfr_accum_chain_cuda(const DfrAccumParams &params, const CudaMultipa
         CudaStreamHandle stream_handle;
         ScratchBuffers scratch(lane_count);
         const cudaStream_t s = stream_handle.get();
-        stage_dfr_accum_params(params, s);
-        launch_dfr_accum_phase(DfrAccumPhase::Chain, "dfr_accum_chain_cuda_kernel", bvh,
+        launch_dfr_accum_phase(params, DfrAccumPhase::Chain, "dfr_accum_chain_cuda_kernel", bvh,
                                scratch.stack.get(), scratch.overflow.get(), lane_count, s);
         audit_cuda_stream_synchronize();
         check_cuda_call(cudaStreamSynchronize(s),
@@ -995,16 +1040,15 @@ void launch_dfr_accum_combined_cuda(const DfrAccumParams &params, const CudaMult
         const int blocks = block_count(lane_count);
         int *stack = scratch.stack.get();
         int *ovf = scratch.overflow.get();
-        stage_dfr_accum_params(params, s);
         if (has_non_suffix_strategy && has_suffix_strategy) {
             dfr_accum_order1_kernel<true, false, true, true, true>
-                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+                <<<blocks, kBlockSize, 0, s>>>(params, bvh, stack, ovf, lane_count);
         } else if (has_suffix_strategy) {
             dfr_accum_order1_kernel<true, false, false, false, true>
-                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+                <<<blocks, kBlockSize, 0, s>>>(params, bvh, stack, ovf, lane_count);
         } else {
             dfr_accum_order1_kernel<true, false, true, true, false>
-                <<<blocks, kBlockSize, 0, s>>>(bvh, stack, ovf, lane_count);
+                <<<blocks, kBlockSize, 0, s>>>(params, bvh, stack, ovf, lane_count);
         }
         audit_cuda_kernel_launch("dfr_accum_order1_cuda_kernel", static_cast<uint32_t>(blocks), 1, 1,
                                  kBlockSize, 1, 1, static_cast<uint64_t>(lane_count));
