@@ -1216,8 +1216,9 @@ __device__ __forceinline__ void adj_wall_frame(
 }
 
 // ---------------------------------------------------------------------------
-// Dual of the frozen legacy Sionna radiomap slab arithmetic
-// (transport::legacy_slab_fresnel, plan 07 AD-3). The .v computations
+// Dual of the frozen legacy radiomap slab arithmetic: the finite-thickness
+// single-slab Fresnel law of transport::legacy_slab_fresnel, kept bit-frozen
+// under plan 07 AD-3. The .v computations
 // replicate the Legacy* helpers verbatim (hypotf sqrt, 1e-30 denominator
 // floor, exp clamp at 80) so a dual replay reproduces the seeded FP32
 // radiomap fingerprints bit for bit; the .d computations follow the same
