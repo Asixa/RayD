@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntFlag
 import math
+from typing import TYPE_CHECKING
 import torch
 
 from . import _C
 from ._stable import core_ops
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 _CONTRACT_VALUES = {
@@ -116,7 +120,11 @@ class Intersection:
 class _LazyIntersection:
     __slots__ = ("_load_t", "_load_full", "_t", "_full")
 
-    def __init__(self, load_t, load_full) -> None:
+    def __init__(
+        self,
+        load_t: Callable[[], torch.Tensor],
+        load_full: Callable[[], Intersection],
+    ) -> None:
         self._load_t = load_t
         self._load_full = load_full
         self._t: torch.Tensor | None = None
@@ -298,7 +306,10 @@ class ReflectionChain:
         image_sources: torch.Tensor | None = None,
         prim_ids: torch.Tensor | None = None,
         *,
-        loader=None,
+        loader: (
+            Callable[[bool], tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]]
+            | None
+        ) = None,
     ) -> None:
         self._valid = valid
         self._t = t

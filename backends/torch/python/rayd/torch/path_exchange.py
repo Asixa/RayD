@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 import math
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 
 class PathInteractionKind(IntEnum):
@@ -73,6 +73,18 @@ class PathInteraction:
     position: Vec3 | None = None
     normal: Vec3 | None = None
 
+    if TYPE_CHECKING:
+        # `__post_init__` normalizes any three-component sequence, so the
+        # constructor accepts more than the normalized attribute type.
+        def __init__(
+            self,
+            kind: PathInteractionKind,
+            global_primitive_id: int = ...,
+            global_edge_id: int = ...,
+            position: Sequence[float] | None = ...,
+            normal: Sequence[float] | None = ...,
+        ) -> None: ...
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", PathInteractionKind(self.kind))
         object.__setattr__(self, "global_primitive_id", int(self.global_primitive_id))
@@ -98,6 +110,19 @@ class PathDerivative:
     field: Complex3 | None = None
     power: float | None = None
 
+    if TYPE_CHECKING:
+        # `__post_init__` normalizes any three-component sequence, so the
+        # constructor accepts more than the normalized attribute type.
+        def __init__(
+            self,
+            total_length: float | None = ...,
+            delay: float | None = ...,
+            aod: Sequence[float] | None = ...,
+            aoa: Sequence[float] | None = ...,
+            field: Sequence[complex] | None = ...,
+            power: float | None = ...,
+        ) -> None: ...
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "aod", _vec3(self.aod, "derivative aod"))
         object.__setattr__(self, "aoa", _vec3(self.aoa, "derivative aoa"))
@@ -115,6 +140,15 @@ class PathDerivative:
 class PathInteractionDerivative:
     position: Vec3 | None = None
     normal: Vec3 | None = None
+
+    if TYPE_CHECKING:
+        # `__post_init__` normalizes any three-component sequence, so the
+        # constructor accepts more than the normalized attribute type.
+        def __init__(
+            self,
+            position: Sequence[float] | None = ...,
+            normal: Sequence[float] | None = ...,
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", _vec3(self.position, "derivative position"))
@@ -140,6 +174,30 @@ class PathRecord:
     derivative_mode: PathDerivativeMode = PathDerivativeMode.NONE
     derivative: PathDerivative | None = None
     interaction_derivatives: tuple[PathInteractionDerivative, ...] = ()
+
+    if TYPE_CHECKING:
+        # `__post_init__` normalizes any three-component sequence, so the
+        # constructor accepts more than the normalized attribute type.
+        def __init__(
+            self,
+            valid: bool,
+            order: int,
+            source_index: int,
+            receiver_index: int,
+            provenance: PathProvenance,
+            interactions: tuple[PathInteraction, ...] = ...,
+            total_length: float | None = ...,
+            delay: float | None = ...,
+            aod: Sequence[float] | None = ...,
+            aoa: Sequence[float] | None = ...,
+            field: Sequence[complex] | None = ...,
+            power: float | None = ...,
+            fixed_winner: bool = ...,
+            differentiable_fields: PathDerivativeField = ...,
+            derivative_mode: PathDerivativeMode = ...,
+            derivative: PathDerivative | None = ...,
+            interaction_derivatives: tuple[PathInteractionDerivative, ...] = ...,
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "valid", bool(self.valid))

@@ -89,21 +89,43 @@ class WheelLayoutTests(unittest.TestCase):
         self.assertEqual(len(compat), 1, compat)
 
     def test_backend_wheels_include_complete_typing_metadata(self):
+        """Both wheels stay PEP 561 typed distributions.
+
+        The backend packages are typed inline, so a module's `.py` is its own
+        type surface and `py.typed` is what lets a downstream type checker read
+        it. Two stubs still ship, both from the Dr.Jit wheel:
+        `rayd/drjit/_C.pyi`, because the nanobind extension it describes has no
+        Python source to annotate, and `rayd/drjit/__init__.pyi`, which shields
+        a type checker from Dr.Jit 1.3.1's syntactically invalid own stub (see
+        `DRJIT_TOP_LEVEL_STUB` in tests/test_public_api_manifest.py).
+        """
         drjit = self.names(self.drjit_wheel)
         torch = self.names(self.torch_wheel)
         self.assertIn("rayd/drjit/py.typed", drjit)
+        self.assertIn("rayd/drjit/_C.pyi", drjit)
         self.assertIn("rayd/drjit/__init__.pyi", drjit)
-        self.assertIn("rayd/drjit/_capabilities.pyi", drjit)
         self.assertIn("rayd/torch/py.typed", torch)
+        for name in ("__init__.py", "_capabilities.py", "path_exchange.py"):
+            self.assertIn(f"rayd/drjit/{name}", drjit)
         for name in (
-            "__init__.pyi",
-            "_capabilities.pyi",
-            "camera.pyi",
-            "mesh.pyi",
-            "scene.pyi",
-            "types.pyi",
+            "__init__.py",
+            "_capabilities.py",
+            "autograd.py",
+            "camera.py",
+            "mesh.py",
+            "path_exchange.py",
+            "scene.py",
+            "sdf.py",
+            "types.py",
         ):
             self.assertIn(f"rayd/torch/{name}", torch)
+        # No other shipped stub may shadow an inline-annotated module: a stale
+        # stub silently wins over the annotations next to it.
+        self.assertEqual(
+            {name for name in drjit if name.endswith(".pyi")},
+            {"rayd/drjit/_C.pyi", "rayd/drjit/__init__.pyi"},
+        )
+        self.assertEqual({name for name in torch if name.endswith(".pyi")}, set())
 
     def test_meta_wheel_is_file_free_and_pins_both_backends(self):
         self.assertFalse(any(name.startswith("rayd/") for name in self.names(self.meta_wheel)))

@@ -52,7 +52,9 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         self.assertNotIn("active: torch.Tensor | None", trace_native)
 
         scene = read(TORCH / "python" / "rayd" / "torch" / "scene.py")
-        trace_scene = scene.split("def trace_dfr_paths", 1)[1].split("):", 1)[0]
+        trace_scene = scene.split("def trace_dfr_paths", 1)[1].split(") -> DfrPaths:", 1)[
+            0
+        ]
         self.assertIn("active: torch.Tensor,", trace_scene)
         self.assertNotIn("active: torch.Tensor | None", trace_scene)
 

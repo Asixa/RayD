@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, overload
+
 import torch
 
 from .autograd import _require_native_dispatcher
@@ -24,6 +26,29 @@ from .types import (
     _LazyIntersection,
     _ReducedIntersection,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only imports. `._multi` in particular must stay unimported at
+    # runtime for a single-device scene (D9), and the remaining names are the
+    # result records the public signatures below name.
+    from collections.abc import Callable, Iterable, Sequence
+    from typing import Any
+
+    from . import _multi
+    from .types import (
+        AxialEdgeVisibility,
+        DfrAccum,
+        DfrCoherentAccum,
+        DfrPaths,
+        NearestEdgesTopK,
+        NearestPointEdge,
+        NearestRayEdge,
+        ReflEpcField,
+        ReflectionChain,
+        SceneGlobalGeometry,
+        SegmentChainVisibility,
+        SegmentPairVisibility,
+    )
 
 
 def _native_scene_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -64,8 +89,8 @@ class Scene:
         trace_backend: str = "auto",
         edge_bvh_backend: str = "auto",
         *,
-        devices=None,
-        options=None,
+        devices: Sequence[int | str | torch.device] | None = None,
+        options: _multi.MultiDeviceOptions | None = None,
     ) -> None:
         trace_backends = {"auto": 0, "optix": 1, "cuda": 2}
         edge_backends = {"auto": 0, "optix": 1, "cuda": 2}
@@ -87,7 +112,12 @@ class Scene:
         # `rayd.torch._multi` is imported only when `devices=` is passed, and it
         # still returns `None` for a one-device scene that wants nothing from
         # the chunked executor, so the single-device path is untouched (D9).
-        self._multi = None
+        # Deliberately `Any` and not `_multi._ReplicatedScene | None`: the
+        # orchestrator's per-op methods answer `X | None`, because the `offload`
+        # hook streams chunks instead of returning them, so naming the real type
+        # here would only trade this one annotation for a `# type: ignore` on
+        # every `return self._multi.<op>(...)` below without adding precision.
+        self._multi: Any = None
         if devices is not None or options is not None:
             from ._multi import plan as _plan_multi_device
 
@@ -173,11 +203,11 @@ class Scene:
         *,
         rays: int = 1 << 20,
         max_bounces: int = 0,
-        probe=None,
+        probe: Callable[[Any, torch.device], object] | None = None,
         repeats: int = 3,
         warm_up: int = 1,
         refine: bool = True,
-    ):
+    ) -> _multi.DeviceCalibration:
         """Measure this scene's devices and set the shard split from what it sees.
 
         Only a scene built with more than one device has a split to set;
@@ -219,7 +249,7 @@ class Scene:
         )
 
     @property
-    def device_weights(self):
+    def device_weights(self) -> tuple[float, ...] | None:
         """The shard split in `devices` order, or `None` when nothing orchestrates.
 
         A one-device scene that engaged the chunked executor answers `(1.0,)`:
@@ -233,19 +263,22 @@ class Scene:
         return tuple(mesh.vertices for mesh, _dynamic in self._meshes)
 
     @staticmethod
-    def _forward_intersection(scene, ray: Ray, active, flags: int):
+    def _forward_intersection(scene, ray: Ray, active, flags: int) -> Intersection:
         if flags == 0:
             t = torch.ops.rayd_torch.intersect_forward_t(
                 scene, ray.o, ray.d, ray.tmax, active
             )
-            return _ReducedIntersection(scene, t)
+            # The lazy stand-ins answer the `Intersection` field surface without
+            # materializing the fields nobody asked for, so the public result
+            # type of an intersection query stays `Intersection`.
+            return _ReducedIntersection(scene, t)  # type: ignore[return-value]
         values = torch.ops.rayd_torch.intersect_forward_flags(
             scene, ray.o, ray.d, ray.tmax, active, flags
         )
         return Intersection(*values)
 
     @staticmethod
-    def _lazy_intersection(scene, vertices, ray: Ray, active, flags: int):
+    def _lazy_intersection(scene, vertices, ray: Ray, active, flags: int) -> Intersection:
         def load_t():
             return torch.ops.rayd_torch.intersect_ad_t(
                 scene, vertices, ray.o, ray.d, ray.tmax, active
@@ -257,7 +290,7 @@ class Scene:
             )
             return Intersection(*values)
 
-        return _LazyIntersection(load_t, load_full)
+        return _LazyIntersection(load_t, load_full)  # type: ignore[return-value]
 
     def is_ready(self) -> bool:
         return self._ready
@@ -280,7 +313,12 @@ class Scene:
         scene = self._require_native_scene()
         return int(scene.version())
 
-    def intersect(self, ray: Ray, active=None, flags: RayFlags = RayFlags.All):
+    def intersect(
+        self,
+        ray: Ray,
+        active: torch.Tensor | None = None,
+        flags: RayFlags = RayFlags.All,
+    ) -> Intersection:
         if self._multi is not None:
             return self._multi.intersect(ray, active, int(flags))
         scene = self._require_native_scene()
@@ -310,7 +348,7 @@ class Scene:
                     ray.d,
                     ray.tmax,
                 )
-                return _ReducedIntersection(scene, t)
+                return _ReducedIntersection(scene, t)  # type: ignore[return-value]
             if flags_value != 0:
                 return self._lazy_intersection(
                     scene, vertices, ray, active, flags_value
@@ -318,7 +356,7 @@ class Scene:
             t = torch.ops.rayd_torch.intersect_ad_t(
                 scene, vertices, ray.o, ray.d, ray.tmax, active
             )
-            return _ReducedIntersection(scene, t)
+            return _ReducedIntersection(scene, t)  # type: ignore[return-value]
         mesh_vertices = self._mesh_vertex_tensors()
         if not _has_reverse_or_forward_ad(*mesh_vertices, ray.o, ray.d, ray.tmax):
             return self._forward_intersection(scene, ray, active, flags_value)
@@ -332,7 +370,7 @@ class Scene:
                 t = torch.ops.rayd_torch.intersect_ad_t(
                     scene, vertices, ray.o, ray.d, ray.tmax, active
                 )
-                return _ReducedIntersection(scene, t)
+                return _ReducedIntersection(scene, t)  # type: ignore[return-value]
             return _intersect(
                 scene, vertices, ray.o, ray.d, ray.tmax, active, flags_value
             )
@@ -347,7 +385,13 @@ class Scene:
             mesh_vertices=mesh_vertices,
         )
 
-    def nearest_edge(self, point: torch.Tensor | Ray):
+    @overload
+    def nearest_edge(self, point: torch.Tensor) -> NearestPointEdge: ...
+
+    @overload
+    def nearest_edge(self, point: Ray) -> NearestRayEdge: ...
+
+    def nearest_edge(self, point: torch.Tensor | Ray) -> NearestPointEdge | NearestRayEdge:
         if self._multi is not None:
             return self._multi.nearest_edge(point)
         scene = self._require_native_scene()
@@ -365,13 +409,23 @@ class Scene:
             scene, mesh_vertices[0], point, mesh_vertices=mesh_vertices
         )
 
-    def visible(self, start: torch.Tensor, end: torch.Tensor, active=None):
+    def visible(
+        self,
+        start: torch.Tensor,
+        end: torch.Tensor,
+        active: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if self._multi is not None:
             return self._multi.visible(start, end, active)
         scene = self._require_native_scene()
         return _visible(scene, start, end, active)
 
-    def trace_reflections(self, ray: Ray, max_bounces: int, active=None):
+    def trace_reflections(
+        self,
+        ray: Ray,
+        max_bounces: int,
+        active: torch.Tensor | None = None,
+    ) -> ReflectionChain:
         if self._multi is not None:
             return self._multi.trace_reflections(ray, int(max_bounces), active)
         scene = self._require_native_scene()
@@ -392,8 +446,8 @@ class Scene:
         source: torch.Tensor,
         receiver: torch.Tensor,
         max_bounces: int,
-        active=None,
-    ):
+        active: torch.Tensor | None = None,
+    ) -> ReflEpcField:
         if self._multi is not None:
             return self._multi.trace_refl_epc_field(
                 source, receiver, int(max_bounces), active
@@ -424,7 +478,7 @@ class Scene:
         active: torch.Tensor,
         max_paths: int | None = None,
         wavelength: float = 1.0,
-    ):
+    ) -> DfrPaths:
         if self._multi is not None:
             self._multi.unsupported("trace_dfr_paths")
         scene = self._require_native_scene()
@@ -457,7 +511,7 @@ class Scene:
         seed: int = 0,
         lane_offset: int = 0,
         lane_count: int = -1,
-    ):
+    ) -> DfrAccum:
         scene = self._require_native_scene()
         if states is None:
             raise TypeError(
@@ -516,13 +570,13 @@ class Scene:
         max_order: int = 2,
         lane_offset: int = 0,
         lane_count: int = -1,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> DfrAccum:
         if initial_states is None and recursive_states is None:
             return self.accum_dfr_direct(
                 lane_offset=int(lane_offset),
                 lane_count=int(lane_count),
-                **kwargs,
+                **kwargs,  # type: ignore[arg-type]
             )
         scene = self._require_native_scene()
         if initial_states is None or recursive_states is None or grid is None:
@@ -576,7 +630,7 @@ class Scene:
         wavelength: float = 1.0,
         select_diffraction_point: bool = True,
         prefilter_visibility: bool = True,
-    ):
+    ) -> DfrCoherentAccum:
         if self._multi is not None:
             self._multi.unsupported("accum_dfr_coherent_direct")
         scene = self._require_native_scene()
@@ -593,7 +647,7 @@ class Scene:
             prefilter_visibility=bool(prefilter_visibility),
         )
 
-    def update_mesh_vertices(self, mesh_id: int, positions):
+    def update_mesh_vertices(self, mesh_id: int, positions: torch.Tensor) -> None:
         scene = self._require_native_scene()
         mesh, dynamic = self._meshes[mesh_id]
         if not dynamic:
@@ -629,7 +683,7 @@ class Scene:
         point: torch.Tensor,
         k: int,
         active: torch.Tensor | None = None,
-    ):
+    ) -> NearestEdgesTopK:
         if self._multi is not None:
             return self._multi.nearest_edges(point, int(k), active)
         from .autograd import nearest_edges as _nearest_edges
@@ -656,7 +710,7 @@ class Scene:
             return
         scene.set_edge_mask(mask)
 
-    def global_geometry(self):
+    def global_geometry(self) -> SceneGlobalGeometry:
         from .types import SceneGlobalGeometry
 
         scene = self._require_native_scene()
@@ -669,7 +723,7 @@ class Scene:
         end_b: torch.Tensor,
         ignore_prim_ids: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
-    ):
+    ) -> SegmentPairVisibility:
         if self._multi is not None:
             return self._multi.visible_pair(start, end_a, end_b, ignore_prim_ids, active)
         from .types import SegmentPairVisibility
@@ -687,9 +741,9 @@ class Scene:
         edge_direction: torch.Tensor,
         edge_t_min: torch.Tensor,
         edge_t_max: torch.Tensor,
-        sample_fractions=(0.0, 0.25, 0.5, 0.75, 1.0),
+        sample_fractions: Iterable[float] = (0.0, 0.25, 0.5, 0.75, 1.0),
         active: torch.Tensor | None = None,
-    ):
+    ) -> AxialEdgeVisibility:
         if self._multi is not None:
             return self._multi.visible_edge(
                 source,
@@ -721,7 +775,7 @@ class Scene:
         chain_length: torch.Tensor,
         ignore_prim_per_segment: torch.Tensor | None = None,
         active: torch.Tensor | None = None,
-    ):
+    ) -> SegmentChainVisibility:
         if self._multi is not None:
             return self._multi.visible_chain(
                 points, chain_length, ignore_prim_per_segment, active

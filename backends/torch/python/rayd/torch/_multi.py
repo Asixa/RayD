@@ -199,7 +199,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, NamedTuple, Sequence
+from typing import Any, Callable, NamedTuple, Sequence
 
 import torch
 
@@ -269,7 +269,10 @@ class MultiDeviceOptions:
     weights: Sequence[float] | None = None
     warm_up: bool = True
     chunk_rays: int | None = None
-    offload: Callable[[int, object], None] | None = None
+    # `Any`, not `object`: the second argument is the chunk's own result record
+    # (`Intersection`, `ReflectionChain`, ... -- whichever operation is running),
+    # so a hook written against a concrete record has to stay assignable here.
+    offload: Callable[[int, Any], None] | None = None
     tape_memory_budget_bytes: int | None = None
     pipeline: bool = True
     pipeline_chunks_per_device: int = 4

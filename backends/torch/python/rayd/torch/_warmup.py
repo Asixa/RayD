@@ -15,8 +15,8 @@ device work concurrently: the native layer tolerates concurrent host threads
 since the `destroy_scene` lock-order fix of 2026-07-27 (see
 `docs/dev/multi_gpu_operations.md`).
 
-This module is private. It is not exported from `rayd.torch`, carries no
-`.pyi`, and Phase 2 is its only intended caller (from `Scene(devices=...)`).
+This module is private. It is not exported from `rayd.torch`, and Phase 2 is
+its only intended caller (from `Scene(devices=...)`).
 Importing it does no CUDA work, so it stays importable on a CPU-only machine.
 """
 

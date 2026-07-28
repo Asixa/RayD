@@ -138,8 +138,8 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
   must be callable from `torch.ops.rayd_torch`.
 
 ### Phase 3b — Torch backend Python (autograd + types + entry + tests)
-- `backends/torch/python/rayd/torch/types.py` (+ `.pyi`): `SdfIntersection`.
-- `backends/torch/python/rayd/torch/sdf.py` (+ `.pyi`): `SdfGrid`,
+- `backends/torch/python/rayd/torch/types.py`: `SdfIntersection`.
+- `backends/torch/python/rayd/torch/sdf.py`: `SdfGrid`,
   `sdf_intersect` dispatch (no-grad fast path / reverse-mode / forward-mode dual
   path), input validation with actionable messages.
 - `backends/torch/python/rayd/torch/autograd.py`: `_SdfIntersectFunction`
@@ -164,7 +164,8 @@ oracle for the CUDA kernels; it must NOT ship in the product package.
   `backends/torch/python/rayd/torch/_capabilities.py`: same-change update incl.
   pinned `_SCHEMA_SHA256` (ADR-0036: only the three allowed lines differ).
 - `shared/contracts/compile_policy.json`: new TUs under `nvcc_default`.
-- Stubs: torch `.pyi` files complete; `tests/test_public_api_manifest.py` green.
+- Typing: the touched torch modules annotated inline (the Torch package ships no
+  `.pyi` at all); `tests/test_public_api_manifest.py` green.
 - `FEATURE_LIST.md` (repo root or backend-level, follow existing location).
 - Full relevant sweep green: root contract tests (`tests/`), torch backend tests
   touched by this work, ADR-0037 guard test.

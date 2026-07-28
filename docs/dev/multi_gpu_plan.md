@@ -524,8 +524,10 @@ Work items:
 
 As landed, two of those items read differently from the proposal:
 
-- Item 2's `.pyi` stubs are for the **private** module (`_multi.py` /
-  `_multi.pyi`). There is no `rayd.torch.multi`: the public surface is
+- Item 2's typing work is on the **private** module (`_multi.py`, annotated
+  inline; the `_multi.pyi` it briefly carried went when the Torch package
+  dropped every stub it had). There is no `rayd.torch.multi`: the public
+  surface is
   `Scene(devices=..., options=...)`, `MultiDeviceOptions`,
   `Scene.calibrate_devices()`, `Scene.device_weights` and the two lane-window
   parameters, and ADR-0038's stop conditions forbid adding a public name under

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch as _torch  # noqa: F401
 
 from . import _stable
@@ -54,23 +56,37 @@ from .types import (
     SegmentPairVisibility,
 )
 
-def __getattr__(name: str):
-    """Resolve `MultiDeviceOptions` without importing the multi-device layer.
+if TYPE_CHECKING:
+    # `MultiDeviceOptions` is re-exported here for type checkers only; at
+    # runtime `__getattr__` below binds it on first use so that a
+    # single-device program never imports `rayd.torch._multi` (D9).
+    from ._multi import MultiDeviceOptions as MultiDeviceOptions
 
-    `rayd.torch._multi` is the private orchestration module of the multi-GPU
-    plan's Phase 2, and a single-device program must never reach it (D9). It
-    holds the one public name that layer has, so that name is bound lazily
-    here: importing `rayd.torch` and running single-device ops leaves
-    `rayd.torch._multi` unimported, while `rayd.torch.MultiDeviceOptions`
-    (and `from rayd.torch import *`, which consults `__all__` through this
-    hook) imports it on first use.
-    """
-    if name == "MultiDeviceOptions":
-        from ._multi import MultiDeviceOptions as _MultiDeviceOptions
 
-        globals()["MultiDeviceOptions"] = _MultiDeviceOptions
-        return _MultiDeviceOptions
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# Hidden from type checkers on purpose. `TYPE_CHECKING` is false at runtime, so
+# the hook below is defined exactly as before; but a visible module-level
+# `__getattr__` would make every *unknown* attribute of `rayd.torch` resolve
+# instead of erroring, and the names above plus `__all__` are meant to be the
+# complete public surface a checker sees.
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str):
+        """Resolve `MultiDeviceOptions` without importing the multi-device layer.
+
+        `rayd.torch._multi` is the private orchestration module of the multi-GPU
+        plan's Phase 2, and a single-device program must never reach it (D9). It
+        holds the one public name that layer has, so that name is bound lazily
+        here: importing `rayd.torch` and running single-device ops leaves
+        `rayd.torch._multi` unimported, while `rayd.torch.MultiDeviceOptions`
+        (and `from rayd.torch import *`, which consults `__all__` through this
+        hook) imports it on first use.
+        """
+        if name == "MultiDeviceOptions":
+            from ._multi import MultiDeviceOptions as _MultiDeviceOptions
+
+            globals()["MultiDeviceOptions"] = _MultiDeviceOptions
+            return _MultiDeviceOptions
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

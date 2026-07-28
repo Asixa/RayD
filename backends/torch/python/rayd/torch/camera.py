@@ -79,7 +79,9 @@ class _CameraSampleToWorldFunction(torch.autograd.Function):
         ctx.depth = float(depth)
 
     @staticmethod
-    def backward(ctx, grad_world: torch.Tensor | None):
+    def backward(
+        ctx, grad_world: torch.Tensor | None
+    ) -> tuple[torch.Tensor | None, None, None, None]:
         if grad_world is None:
             return None, None, None, None
         grad_sample = camera_ops().camera_sample_to_world_backward(
@@ -106,7 +108,9 @@ class _CameraWorldToSampleFunction(torch.autograd.Function):
         ctx.tan_y = float(tan_y)
 
     @staticmethod
-    def backward(ctx, grad_sample: torch.Tensor | None):
+    def backward(
+        ctx, grad_sample: torch.Tensor | None
+    ) -> tuple[torch.Tensor | None, None, None]:
         if grad_sample is None:
             return None, None, None
         (point,) = ctx.saved_tensors
@@ -121,7 +125,9 @@ class _CameraWorldToSampleFunction(torch.autograd.Function):
 
 class _CameraSampleRayFunction(torch.autograd.Function):
     @staticmethod
-    def forward(sample: torch.Tensor, tan_x: float, tan_y: float):
+    def forward(
+        sample: torch.Tensor, tan_x: float, tan_y: float
+    ) -> tuple[torch.Tensor, ...]:
         return tuple(camera_ops().camera_sample_ray(sample, float(tan_x), float(tan_y)))
 
     @staticmethod
@@ -133,7 +139,11 @@ class _CameraSampleRayFunction(torch.autograd.Function):
         ctx.tan_y = float(tan_y)
 
     @staticmethod
-    def backward(ctx, grad_origin: torch.Tensor | None, grad_direction: torch.Tensor | None):
+    def backward(
+        ctx,
+        grad_origin: torch.Tensor | None,
+        grad_direction: torch.Tensor | None,
+    ) -> tuple[torch.Tensor | None, None, None]:
         if grad_direction is None:
             return None, None, None
         (sample,) = ctx.saved_tensors
