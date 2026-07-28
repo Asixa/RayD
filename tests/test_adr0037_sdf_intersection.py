@@ -120,8 +120,12 @@ class Adr0037RecordTests(AdrTestCase):
             "| `differentiable-sdf-intersection` | 2026-07-26 | Accepted |",
             index,
         )
-        self.assertIn("`0028`-`0037`", index)
-        self.assertNotIn("`0028`-`0036`", index)
+        # The sequence sentence must cover 0037; later ADRs extend the range
+        # (0038 did), so assert the endpoint is at least 0037 rather than
+        # pinning the exact string.
+        range_match = re.search(r"`0028`-`(\d{4})`", index)
+        self.assertIsNotNone(range_match)
+        self.assertGreaterEqual(int(range_match.group(1)), 37)
 
     def test_required_top_level_sections_are_present(self) -> None:
         self.assertLessEqual(
@@ -693,7 +697,10 @@ class Adr0037CapabilityModuleTests(AdrTestCase):
             with self.subTest(backend=backend):
                 self.assertIn(f'"{CAPABILITY}": ("core", "provisional"),', source)
 
-    def test_the_copies_diverge_on_exactly_the_four_enumerated_lines(self) -> None:
+    def test_this_records_line_is_one_of_the_enumerated_divergences(self) -> None:
+        # ADR-0038 added a fifth divergent line (`multi_device_replicated`), so
+        # the count belongs to ADR-0036 and to the ADR-0038 guard; what this
+        # record still owns is that `sdf_intersect` is one of them, in position.
         drjit = self.sources["drjit"].splitlines()
         torch = self.sources["torch"].splitlines()
         self.assertEqual(len(drjit), len(torch))
@@ -702,14 +709,16 @@ class Adr0037CapabilityModuleTests(AdrTestCase):
             for left, right in zip(drjit, torch)
             if left != right
         ]
-        self.assertEqual(divergent, ["_BACKEND = \"drjit\"", '"surfel"',
-                                     f'"{CAPABILITY}"', '"torch_compile"'])
+        self.assertEqual(
+            divergent[:4],
+            ["_BACKEND = \"drjit\"", '"surfel"', f'"{CAPABILITY}"', '"torch_compile"'],
+        )
 
     def test_adr0036_was_amended_rather_than_left_false(self) -> None:
         adr0036 = read(ADR0036_PATH)
-        self.assertPhrase("diverges on exactly four lines", adr0036)
         self.assertPhrase(f'`"{CAPABILITY}"` (`False` versus `True`, per ADR-0037)', adr0036)
         self.assertNoPhrase("diverges on exactly three lines", adr0036)
+        self.assertNoPhrase("diverges on exactly four lines", adr0036)
         self.assertNoPhrase("ADR-0037 adds a fourth divergent line", adr0036)
 
 

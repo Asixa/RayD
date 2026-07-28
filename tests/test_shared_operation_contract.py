@@ -148,6 +148,44 @@ class SharedOperationContractTests(unittest.TestCase):
             with self.subTest(operation=name):
                 self.assertEqual(operations[name]["integration"], integration)
 
+    def test_operation_shardability_classification(self):
+        # ADR-0038 classifies every operation once: how it shards at all, and
+        # what the Torch replicated layer does with it. `single_device` means
+        # the operation is outside the Scene surface that layer wraps, not that
+        # it is missing an entry.
+        expected = {
+            "intersect": ("per_ray", "sharded"),
+            "nearest_edge_point": ("per_ray", "sharded"),
+            "nearest_edge_ray": ("per_ray", "sharded"),
+            "nearest_edges_topk": ("per_ray", "sharded"),
+            "visibility": ("per_ray", "sharded"),
+            "visibility_pair": ("per_ray", "sharded"),
+            "visibility_edge": ("per_ray", "sharded"),
+            "visibility_chain": ("per_ray", "sharded"),
+            "reflection_trace": ("per_ray", "sharded"),
+            "reflection_accumulation": ("grid_reduce", "single_device"),
+            "diffraction_direct": ("grid_reduce", "sharded"),
+            "diffraction_chain": ("grid_reduce", "sharded"),
+            "sdf_intersect": ("per_ray", "single_device"),
+        }
+        declared = CONTRACT["shardability_classes"]
+        operations = CONTRACT["operations"]
+        self.assertEqual(set(expected), set(operations))
+        for name, (klass, disposition) in expected.items():
+            with self.subTest(operation=name):
+                shardability = operations[name]["shardability"]
+                self.assertEqual(shardability["class"], klass)
+                self.assertEqual(shardability["torch_multi_device"], disposition)
+                self.assertIn(klass, declared["classes"])
+                self.assertIn(disposition, declared["torch_multi_device"])
+
+    def test_shardability_lane_window_defaults_are_declared(self):
+        window = CONTRACT["shardability_classes"]["lane_window"]
+        self.assertEqual(window["parameters"], ["lane_offset", "lane_count"])
+        self.assertEqual(window["defaults"], {"lane_offset": 0, "lane_count": -1})
+        self.assertEqual(window["warp_alignment"], 32)
+        self.assertTrue(window["invariance"])
+
     def test_raw_hit_result_contract(self):
         raw_hit = CONTRACT["result_contracts"]["raw_hit"]
         self.assertEqual(

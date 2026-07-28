@@ -1,7 +1,8 @@
 """Private replicated multi-device orchestration for `Scene(devices=[...])`.
 
 This is Phases 2a, 2b, 2d and the grid-reduce half of 2c of
-`docs/dev/multi_gpu_plan.md`: decision D1 (one full
+`docs/dev/multi_gpu_plan.md`, and the layer it builds is governed by
+`docs/adr/0038-replicated-multi-device-execution.md`: decision D1 (one full
 scene replica per device, work sharded along the batch axis), D4 (replica
 vertices are `master.to(device_k)`, so torch autograd reduces every replica
 gradient back onto the master leaf), D7 (a large batch is executed as a stream
@@ -21,9 +22,12 @@ is the single-device grid up to float32 summation order. Everything else --
 `accum_dfr_coherent_direct`, which has no lane window to shard -- still raises
 `NotImplementedError`, because it needs the explicit per-shard contract of D6.
 
-Execution is deliberately single-threaded: two host threads issuing RayD Torch
-ops concurrently can deadlock in the current native layer (see the comment on
-`_warmup._DEVICE_WORK_LOCK`). Overlap comes from streams instead of threads.
+Execution is deliberately single-threaded on the host: every device is driven
+from the calling thread, and overlap comes from streams and events rather than
+from threads. Concurrent host threads are supported by the native layer since
+the `destroy_scene` lock-order fix of 2026-07-27
+(`docs/dev/multi_gpu_operations.md` section 2), but they would buy nothing
+here, because an op wrapper holds the GIL for the whole native call.
 
 Pipelined dispatch (Phase 2d)
 -----------------------------

@@ -38,15 +38,23 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_torch_adapter_uses_shared_api_on_current_stream(self) -> None:
+    def test_torch_adapter_uses_shared_api_on_the_buffers_device_stream(self) -> None:
+        # Since the multi-GPU Phase 0 hardening (f643336) the adapter derives
+        # its device and stream from the scene-owned buffers it operates on
+        # instead of the ambient current_torch_cuda_context().
         source = TORCH_SOURCE.read_text(encoding="utf-8")
         header = TORCH_HEADER.read_text(encoding="utf-8")
         cmake = TORCH_CMAKE.read_text(encoding="utf-8")
         self.assertIn("rayd/shared/edge/edge_aabb.h", source)
-        self.assertIn("current_torch_cuda_context()", source)
+        self.assertNotIn("current_torch_cuda_context()", source)
+        self.assertIn("c10::cuda::CUDAGuard guard(out_aabbs.device());", source)
+        self.assertIn(
+            "at::cuda::getCurrentCUDAStream(out_aabbs.get_device()).stream();",
+            source,
+        )
         self.assertRegex(
             source,
-            re.compile(r"launch_edge_aabb\([\s\S]+?torch_ctx\.stream\s*\);"),
+            re.compile(r"launch_edge_aabb\([\s\S]+?stream\s*\);"),
         )
         # F1 keeps a Torch-only raw-BVH encoding kernel in this adapter.  The
         # edge AABB implementation itself must remain exclusively shared.

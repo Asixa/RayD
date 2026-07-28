@@ -6,7 +6,7 @@
     "visibility_edge", "visibility_chain",
     "reflection_trace", "reflection_accumulation", "diffraction_direct",
     "diffraction_chain", "surfel", "sdf_intersect",
-    "reverse_ad", "forward_ad", "torch_compile"
+    "reverse_ad", "forward_ad", "torch_compile", "multi_device_replicated"
   ],
   "constants": {
     "invalid_signed_id": -1,
@@ -164,8 +164,33 @@
       "non_finite_policy": "t = inf on a miss is the only non-finite value any output or derivative may carry."
     }
   },
+  "shardability_classes": {
+    "record": "docs/adr/0038-replicated-multi-device-execution.md",
+    "classes": {
+      "per_ray": "Shards along the batch axis; the gathered multi-device result is bitwise the single-device result, at any weighting and any chunk count.",
+      "grid_reduce": "Shards along the Monte-Carlo lane axis; per-shard and per-chunk partial grids are summed on the master, so a merged grid equals the single-launch grid only up to float32 summation order.",
+      "batch_coupled": "The result depends on the whole launch rather than on each row; sharding needs an explicit per-shard contract, and until it has one a multi-device scene refuses loudly."
+    },
+    "torch_multi_device": {
+      "sharded": "The replicated layer wraps the operation and executes it across devices.",
+      "unsupported": "The operation raises NotImplementedError on a multi-device Scene instead of changing meaning.",
+      "single_device": "The operation is outside the Scene surface the replicated layer wraps, so a multi-device Scene never sees it; it neither shards nor refuses."
+    },
+    "merge_order": "Per-shard and per-chunk partials are summed on the master in devices order after each device accumulated its chunks in ascending lane order; integer counters merge exactly and float fields merge in float32, so a merged result matches the single launch only up to float32 summation order. No within-launch reduction is re-associated.",
+    "lane_window": {
+      "parameters": ["lane_offset", "lane_count"],
+      "defaults": {"lane_offset": 0, "lane_count": -1},
+      "semantics": "The Monte-Carlo lane space is direct_samples + keller_samples + suffix_samples lanes; local lane l of a launch runs global lane lane_offset + l, and lane_count < 0 means every remaining lane.",
+      "invariance": "lane_offset = 0 with the default lane_count is bitwise the unwindowed single launch.",
+      "partition": "Contiguous, disjoint windows covering the caller's window draw exactly the samples the single launch draws; the multiset of drawn samples is independent of the split.",
+      "warp_alignment": 32,
+      "warp_alignment_rule": "Grid accumulation aggregates a warp's contributions before its atomic, so merged-grid equality with a single launch is claimed only for warp-multiple windows.",
+      "trace_backend": "A non-zero lane_offset requires the OptiX trace backend and is rejected on the pure-CUDA one."
+    }
+  },
   "operations": {
     "intersect": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic"], "torch": ["eager_native"]},
       "inputs": ["ray", "active_mask", "ray_flags"],
       "result": "intersection",
@@ -177,6 +202,7 @@
       }
     },
     "nearest_edge_point": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["point", "active_mask"],
       "result": "nearest_edge_point",
@@ -184,6 +210,7 @@
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "nearest_edge_ray": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["ray", "active_mask"],
       "result": "nearest_edge_ray",
@@ -192,6 +219,7 @@
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "nearest_edges_topk": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["point", "k", "active_mask", "edge_mask"],
       "result": "nearest_edge_point[k]",
@@ -200,6 +228,7 @@
       "ad": "fixed-winner forward/VJP/JVP"
     },
     "visibility": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["start", "end", "active_mask"],
       "result": "bool",
@@ -207,6 +236,7 @@
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_pair": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["start", "end_a", "end_b", "active_mask"],
       "result": "bool_pair",
@@ -214,6 +244,7 @@
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_edge": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["source", "edge_position", "edge_direction", "edge_t_min", "edge_t_max", "sample_fractions", "active_mask"],
       "result": "bool",
@@ -221,6 +252,7 @@
       "ad": "discrete result; no geometry derivative"
     },
     "visibility_chain": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded"},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["points", "chain_length", "ignore_prim_per_segment", "active_mask"],
       "result": "chain_visibility_and_first_blocker",
@@ -228,6 +260,7 @@
       "ad": "discrete result; no geometry derivative"
     },
     "reflection_trace": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "sharded", "note": "Chain deduplication is a separate batch_coupled operation (the Torch reflection_dedup_forward op, the Dr.Jit ReflectionTraceOptions.deduplicate path) that the replicated layer does not wrap, so dedup keeps its single-launch meaning."},
       "integration": {"drjit": ["jit_symbolic", "eager_native"], "torch": ["eager_native"]},
       "inputs": ["source", "receiver", "max_depth", "active_mask"],
       "result": "reflection_chain",
@@ -235,24 +268,28 @@
       "ad": "fixed-path forward/VJP/JVP"
     },
     "reflection_accumulation": {
+      "shardability": {"class": "grid_reduce", "torch_multi_device": "single_device", "note": "Torch reaches it through the dispatcher op rather than through a Scene method, so a multi-device Scene never dispatches it."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["reflection_chain", "material", "frequency"],
       "result": "complex_field_and_power",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "diffraction_direct": {
+      "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "accum_dfr_direct shards through the lane window; trace_dfr_paths and accum_dfr_coherent_direct raise on a multi-device Scene."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["diffraction_states", "material", "grid", "frequency"],
       "result": "diffraction_accumulation",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "diffraction_chain": {
+      "shardability": {"class": "grid_reduce", "torch_multi_device": "sharded", "note": "accum_dfr shards through the lane window."},
       "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
       "inputs": ["diffraction_states", "material", "grid", "frequency", "max_depth"],
       "result": "diffraction_paths_or_accumulation",
       "ad": "fixed-path forward/VJP/JVP"
     },
     "sdf_intersect": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "single_device", "note": "ADR-0037 keeps the primitive standalone with no Scene membership, so the replicated layer never sees it."},
       "record": "docs/adr/0037-differentiable-sdf-intersection.md",
       "integration": {"drjit": [], "torch": ["eager_native"]},
       "inputs": [

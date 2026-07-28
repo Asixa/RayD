@@ -18,7 +18,8 @@
     "sdf_intersect",
     "reverse_ad",
     "forward_ad",
-    "torch_compile"
+    "torch_compile",
+    "multi_device_replicated"
   ],
   "stability_levels": ["stable", "provisional", "experimental", "deprecated"],
   "naming_conventions": {
@@ -44,7 +45,8 @@
     "sdf_intersect": {"category": "core", "stability": "provisional", "summary": "Torch-only sphere-traced intersection of a caller-owned dense SDF grid placed by an oriented box."},
     "reverse_ad": {"category": "core", "stability": "stable", "summary": "Fixed-winner reverse-mode derivatives."},
     "forward_ad": {"category": "core", "stability": "provisional", "summary": "Fixed-winner forward-mode derivatives where implemented."},
-    "torch_compile": {"category": "experimental", "stability": "provisional", "summary": "Torch dispatcher and torch.compile integration."}
+    "torch_compile": {"category": "experimental", "stability": "provisional", "summary": "Torch dispatcher and torch.compile integration."},
+    "multi_device_replicated": {"category": "core", "stability": "provisional", "summary": "Torch-only replicated multi-device execution: Scene(devices=[...]) shards a batch across full scene replicas and merges partials on the master."}
   },
   "aliases": {
     "edge_bvh_backend": {
@@ -90,7 +92,8 @@
         "sdf_intersect": false,
         "reverse_ad": true,
         "forward_ad": true,
-        "torch_compile": false
+        "torch_compile": false,
+        "multi_device_replicated": false
       },
       "typing": "complete"
     },
@@ -113,7 +116,8 @@
         "sdf_intersect": true,
         "reverse_ad": true,
         "forward_ad": true,
-        "torch_compile": true
+        "torch_compile": true,
+        "multi_device_replicated": true
       },
       "typing": "complete"
     }

@@ -3,12 +3,17 @@
 Date: 2026-07-27
 
 This note is the operational contract for running RayD on more than one GPU
-today. Sections 1-4 are Phase 1 of [`multi_gpu_plan.md`](multi_gpu_plan.md):
-per-device correctness plus the manual route, where the caller owns one `Scene`
-per device and every split, gather and reduction between them. Section 5 is the
-measured performance of the Phase 2 layer that does the same thing for you
-(`Scene(devices=[...])`) and of the configurations where it does not pay --
-read it before assuming a second GPU is worth engaging.
+today, and the decisions behind it are
+[`ADR-0038`](../adr/0038-replicated-multi-device-execution.md). Sections 1-4
+are Phase 1 of [`multi_gpu_plan.md`](multi_gpu_plan.md): per-device correctness
+plus the manual route, where the caller owns one `Scene` per device and every
+split, gather and reduction between them. Section 5 is the measured performance
+of the Phase 2 layer that does the same thing for you (`Scene(devices=[...])`)
+and of the configurations where it does not pay -- read it before assuming a
+second GPU is worth engaging. Section 6 is the Phase 3 process-per-GPU and
+distributed recipe, which is the only Dr.Jit route and the only multi-node one.
+Section 7 is the checklist, and section 8 is the acceptance set: the exact
+commands every multi-GPU verification in this repository has been run with.
 
 ## 1. The per-device contract
 
@@ -254,8 +259,11 @@ These are the limits of the caller-driven shape above. `Scene(devices=[...])`
   before doing so.
 - No cross-thread parallelism inside a single op: op wrappers hold the GIL for
   the native call, so per-device threads overlap on scene construction and on
-  their own stream waits, not on the op bodies themselves. Removing that needs
-  refcounted scene ownership and is a Phase 2 question, not a correctness one.
+  their own stream waits, not on the op bodies themselves. This still holds
+  after Phase 2 -- the in-process layer of section 5 drives every device from
+  one host thread and overlaps on streams, not on threads. Removing the GIL
+  serialization would need refcounted scene ownership, and it is a throughput
+  question, not a correctness one.
 
 ## 5. Multi-GPU performance
 
@@ -799,3 +807,99 @@ many: `$ROOT/rank-$RANK` has to be per-rank *and* on local disk.
   reduce only grids and gradients, give the process group an explicit
   `timeout=`, and `destroy_process_group()` in a `finally` so a dead peer fails
   the run instead of hanging it (§6).
+
+## 8. Running the multi-GPU acceptance set
+
+These are the commands every multi-GPU verification in this repository has been
+run with, on the two-device host of §5.1. Run them from the repository root
+with the backend importable (`PYTHONPATH=backends/torch/python`, or an editable
+install of `backends/torch`). Nothing below needs a network or a second node.
+
+**They must be run on a host with two visible CUDA devices.** Every
+multi-device module is guarded by
+`unittest.skipUnless(torch.cuda.device_count() >= 2, ...)`, so on one device
+the whole set passes without having verified anything. Check the device count
+first:
+
+```bash
+python -c "import torch; print(torch.cuda.device_count())"    # must print >= 2
+```
+
+**1. The multi-device modules, one fresh process each.** A fresh process per
+module is deliberate: a default `Scene()` must never even import
+`rayd.torch._multi`, which is an import-time property, and OptiX pipeline
+state is per process.
+
+```bash
+export PYTHONPATH=backends/torch/python
+for m in test_multi_device_smoke test_multi_device_stress test_multi_device_scene \
+         test_chunked_executor test_lane_offset; do
+    python -m unittest "backends.torch.tests.torch_backend.$m" -v || break
+done
+```
+
+`test_multi_device_smoke` is the Phase 0 ambient-device-independence suite,
+`test_multi_device_stress` the Phase 1 two-thread/two-device suite (whose
+`test_two_devices_overlap_instead_of_serializing` is a wall-clock ratio gate and
+is therefore the one test here that can fail on a busy host; re-run it alone
+before believing a single red result),
+`test_multi_device_scene` the replicated-`Scene` suite (sharding, broadcast
+mutation, autograd, the row floor, the loud refusals),
+`test_chunked_executor` the chunked and pipelined executor, and
+`test_lane_offset` the lane window of D5.
+
+**2. The distributed recipe.** Launches both examples of §6 under a real
+`torchrun --nproc_per_node=2` and checks rank-identical parameters and merged
+grids against a single-process reference. It gives each rank its own
+`OPTIX_CACHE_PATH` under a temporary root, so nothing has to be exported here;
+it skips itself if `torchrun` is not next to the interpreter or on `PATH`.
+
+```bash
+python -m unittest backends.torch.tests.torch_backend.test_distributed_recipe -v
+```
+
+**3. The governance suite.** No GPU needed; it is what keeps the ADR-0038
+record, the contracts, the capability copies, the committed PTX digests and the
+compile-flag policy from drifting apart.
+
+```bash
+python -m unittest \
+    tests.test_adr0038_multi_device \
+    tests.test_shared_operation_contract \
+    tests.test_public_api_manifest \
+    tests.test_ptx_source_digest \
+    tests.test_compile_flag_policy_contract -v
+```
+
+**4. The whole Torch backend suite**, which is what each phase reported:
+
+```bash
+python -m unittest discover -s backends/torch/tests/torch_backend \
+    -t backends/torch/tests
+```
+
+**5. The benchmark**, which is a measurement rather than a gate (§5):
+
+```bash
+python -m backends.torch.tests.benchmark_multi_device
+python -m backends.torch.tests.benchmark_multi_device --devices 0   # baseline
+```
+
+The Dr.Jit backend has no in-process multi-device route to test; its multi-GPU
+coverage is the process-per-GPU recipe of §3 plus the device-binding assertions
+of Phase 0 (`backends.drjit.tests.drjit.test_device_binding`, with an
+**absolute** `PYTHONPATH=<repo>/backends/drjit/python` — the test spawns
+subprocesses whose working directory differs, so a relative path makes them
+skip silently instead of running).
+
+### The same set in CI
+
+[`.github/workflows/multi_gpu.yml`](../../.github/workflows/multi_gpu.yml)
+declares steps 1-3 (and optionally 5) as a job pinned to a self-hosted runner
+labelled `self-hosted, linux, x64, cuda, multi-gpu`. **It is inert**: no such
+runner is registered for this repository, its only trigger is
+`workflow_dispatch`, and it will not run until a runner with those labels
+exists. The hosted jobs in `ci.yml`, `stable-abi-ci.yml` and `pypi.yml` have no
+CUDA device at all, so they build and check packaging only and are untouched by
+that workflow. Until a runner exists, the list above is the acceptance set, run
+by hand.

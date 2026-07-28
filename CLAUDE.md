@@ -169,6 +169,40 @@ ADR-level decision that needs its own accepted record with numerical and
 generated-code evidence. Editing the contract to match a flag change is not a
 fix; it is the drift the test exists to catch.
 
+## Replicated Multi-Device Execution
+
+ADR-0038 accepts scene replication plus batch sharding as RayD's multi-GPU
+regime. The Torch backend owns the in-process layer
+(`Scene(devices=[...])` with the optional `MultiDeviceOptions`, orchestrated by
+the private `backends/torch/python/rayd/torch/_multi.py`); the Dr.Jit backend is
+process-per-GPU only. The capability key is `multi_device_replicated`
+(`torch: true`, `drjit: false`), and every operation carries a `shardability`
+class in `shared/contracts/operations.json`.
+
+- Multi-device execution is a composition layer above unchanged kernels. No
+  launch shape, reduction order, atomic, or compile flag changes because a
+  scene has several devices; ADR-0026/0030/0032/0035 are untouched. The only
+  kernel-visible change is the diffraction-accumulation lane window.
+- `per_ray` results are concatenated and are bitwise the single-device results;
+  `grid_reduce` partials are summed on the master, so a merged grid matches the
+  single launch only up to float32 summation order.
+- The lane window is `lane_offset` (default `0`) plus `lane_count` (default
+  `-1`): local lane `l` runs global lane `lane_offset + l`. `lane_offset = 0`
+  with the default `lane_count` is bitwise the pre-ADR launch, a non-zero offset
+  requires the OptiX trace backend, and merged-grid equality is claimed only
+  for warp-multiple (32-lane) windows.
+- Replica vertices are `master.to(device_k)`, so torch autograd reduces every
+  replica gradient onto the master leaf. Never detach, zero, or approximate a
+  gradient to make a shard or chunk proceed.
+- A single-device `Scene` never imports the orchestration layer and stays
+  bitwise unchanged; the Phase 0 device guards are the only single-GPU-path
+  change. `trace_dfr_paths` and `accum_dfr_coherent_direct` raise on a
+  multi-device scene instead of changing meaning.
+
+See `docs/adr/0038-replicated-multi-device-execution.md` for the decisions and
+stop conditions, `docs/dev/multi_gpu_operations.md` for the operational
+contract and the measured 2x RTX A6000 results.
+
 ## Edge BVH Status
 
 Current edge-query acceleration design:

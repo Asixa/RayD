@@ -1,6 +1,13 @@
 # Multi-GPU Ray Tracing — Implementation Plan
 
-Status: draft proposal (Phase 4 produces the accepted ADR).
+Status: **executed and accepted** (2026-07-27). Phases 0–3 landed and the
+Phase 4 contract surface landed with them; the decisions this plan proposed are
+the accepted record
+[`ADR-0038 — Replicated multi-device and chunked execution`](../adr/0038-replicated-multi-device-execution.md).
+The plan stays as the phase-by-phase account; ADR-0038 is what governs the
+shipped layer. The acceptance boxes below are ticked against the recorded
+verifications, and what is still open is listed in the execution record and
+left unticked.
 
 Target workload (agreed 2026-07-27): **extremely large ray/sample batches
 against scenes that fit in a single GPU's memory.** This selects the
@@ -8,6 +15,82 @@ scene-replication + batch-sharding regime for single-node multi-GPU and makes
 the cluster tier embarrassingly parallel (per-node replicas, global ray
 sharding, all-reduce only for small outputs: accumulation grids and vertex
 gradients). Geometry partitioning + ray forwarding is deferred to Appendix A.
+
+## 0. Execution record
+
+Landed as five commits, all on 2026-07-27, all verified on this repository's
+Linux verification host: **2× NVIDIA RTX A6000** (48 GB each, peer access
+enabled, measured D2D copy bandwidth **49.1 GB/s** one direction), Torch
+`2.13.0+cu130`, conda env `maxwell`. The Windows/RTX 5080 machine that carries
+this repository's historical baselines was not used for any of it.
+
+| Commit | Phase | Landed | Verification recorded with it |
+| --- | --- | --- | --- |
+| `f643336` | 0 — device-correctness hardening | 2026-07-27 | Torch suite 198 OK (19 skipped); new 2-GPU smoke suite (10 tests); Dr.Jit device-binding test |
+| `cc5f0f9` | 1 — Torch multi-device correctness, docs, warm-up | 2026-07-27 | Torch suite 221 OK (19 skipped); governance green; no product C++ changed |
+| `c2c50ce` | 2a–2c — replicated `Scene`, chunked executor, lane window | 2026-07-27 | Torch suite 282 OK (19 skipped); single-GPU parity within the D9 gate against `cc5f0f9`; GIL×registry deadlock fixed, 40/40 cold-JIT threaded trials clean |
+| `869eb62` | 2d — pipelined dispatch, calibration, row floor | 2026-07-27 | Torch suite 306 OK; the measured table below; bitwise agreement 1.0 on every sharded `per_ray` row |
+| `2ee6e67` | 3 — distributed recipes, Dr.Jit pure-CUDA hardening | 2026-07-27 | Torch suite 310 OK; Dr.Jit on Linux: `test_geometry` 63/63, `test_device_binding` 4/4, edge-BVH modules 23/23; governance 46/46 |
+| Phase 4 (this closeout) | ADR, contracts, CI | 2026-07-27 | ADR-0038 accepted; contract/capability/PTX/compile-flag suites green (90 tests); Torch suite re-run 310 OK (19 skipped); the multi-device modules, the distributed recipe and the governance suite re-run per `multi_gpu_operations.md` §8 |
+
+Headline measured numbers, from
+[`multi_gpu_operations.md`](multi_gpu_operations.md) §5 (interleaved runs,
+minimum over 7 rounds, ±5% on a shared machine; medians over 20 consecutive
+runs in brackets):
+
+| Configuration | Operation | 1 GPU | 2 GPUs | speedup |
+| --- | --- | ---: | ---: | ---: |
+| compute (2.1M-triangle cloud, incoherent, 4.19M rays) | `intersect` | 19.09 ms | 11.83 ms | 1.61× [1.62×] |
+| compute (4 bounces, 4.19M rays) | `trace_reflections` | 53.33 ms | 28.38 ms | 1.88× [1.87×] |
+| compute (67.1M samples) | `accum_dfr_direct` | 34.76 ms | 18.83 ms | 1.85× [1.85×] |
+| light (192-vertex grid, 4.19M rays) | `intersect` | 1.27 ms | 4.63 ms | 0.27× |
+| light, after `calibrate_devices()` | `intersect` | 1.22 ms | 1.22 ms | 1.00× |
+
+Every sharded `per_ray` result in that table was bitwise the single-device
+result (agreement 1.0 on every row); merged accumulation grids matched the
+single-launch grids to 6.5e-08 (`light`) and 2.9e-07 (`compute`) relative
+deviation, which is the float32 merge order D3 allows. The chunked+offload row
+peaked at 2.10 GB on the master against 2.29 GB concatenated at 4.19M rows. The
+row floor is 262,144 rows per device (524,288 on two).
+
+**Still open.** Ticked boxes below are the ones the recorded verifications
+actually satisfy; these are not, and are left unticked where they appear:
+
+1. Dr.Jit 2-rank aggregate-throughput benchmark (Phase 3): never measured.
+2. Multi-node execution (Phase 3): documented and structurally argued, not
+   executed — this repository has one node.
+3. A Dr.Jit run on the Windows/RTX 5080 baseline machine after the Phase 3
+   pure-CUDA hardening. The Linux modules listed above are green; the known
+   pre-existing `test_diffraction_paths_parity` platform divergence is recorded
+   in ADR-0038's platform note and is not accepted by it.
+4. The D6 batch-coupled half of 2c: sharded `trace_dfr_paths` (both `SourceLane`
+   and `Compact`), cross-shard `deduplicate=true` semantics, ADR-0033
+   failure-bit merging, and `accum_dfr_coherent_direct` under sharding. The
+   layer refuses these loudly rather than guessing; they are the Deferred list
+   of ADR-0038.
+5. A heterogeneous-device calibration claim (2d): both devices here are
+   identical.
+6. The multi-GPU CI job actually running.
+   [`.github/workflows/multi_gpu.yml`](../../.github/workflows/multi_gpu.yml)
+   declares it — the multi-device modules fresh-process, the distributed recipe
+   and the governance suite — pinned to a `self-hosted, linux, x64, cuda,
+   multi-gpu` runner, and it is **inert**: no such runner is registered, and its
+   only trigger is `workflow_dispatch`. Every hosted job in this repository
+   (`ci.yml`, `stable-abi-ci.yml`, `pypi.yml`) builds and checks packaging
+   without a CUDA device, so "single-GPU CI" wherever it appears below means the
+   single-device subset of the suite run on a developer machine, not a hosted
+   job. Until a runner exists the acceptance set is run by hand:
+   [`multi_gpu_operations.md`](multi_gpu_operations.md) §8.
+7. A defect this closeout found rather than fixed: Phase 0 (`f643336`)
+   falsified `tests/test_bvh4_shared_aabb.py::SharedEdgeAabbSourceTests::`
+   `test_torch_adapter_uses_shared_api_on_current_stream`. That test asserts the
+   Torch edge-AABB adapter calls `current_torch_cuda_context()` and launches on
+   `torch_ctx.stream`, which is exactly the ambient-device coupling Phase 0
+   work item 4 removed in favour of a `c10::cuda::CUDAGuard` plus
+   `getCurrentCUDAStream(out_aabbs.get_device())`. The shipped code is what the
+   plan asked for and the test states the pre-Phase-0 shape; the BVH-4 contract
+   owner has to decide how it should read now. Nothing in this closeout touched
+   either side, so Phase 0's first acceptance box stays unticked.
 
 ## 1. Headline decisions
 
@@ -137,15 +220,25 @@ Work items:
 Acceptance:
 
 - [ ] Full existing test suite passes unchanged (no numerical drift; golden
-      tests bitwise).
-- [ ] New cross-device rejection tests for the families that lacked them
-      (table/ensemble/patch scattering, transmission, layer stack, wedge).
-- [ ] 2-GPU smoke suite (skipped when `torch.cuda.device_count() < 2`):
+      tests bitwise). **Open on one test.** The Torch suite passed at every
+      phase (198 → 310 OK) with no numerical drift and golden tests bitwise,
+      but work item 4 falsified
+      `tests/test_bvh4_shared_aabb.py::SharedEdgeAabbSourceTests::`
+      `test_torch_adapter_uses_shared_api_on_current_stream`, which asserts the
+      `current_torch_cuda_context()` shape the device-explicit rewrite replaced
+      (execution record item 7). It is a source-shape contract, not a numerical
+      one, and it is still red.
+- [x] New cross-device rejection tests for the families that lacked them
+      (table/ensemble/patch scattering, transmission, layer stack, wedge) —
+      `backends/torch/tests/cpp/scattering_test.cpp`, extended to all six
+      families in `f643336`.
+- [x] 2-GPU smoke suite (skipped when `torch.cuda.device_count() < 2`):
       same mesh built on dev0 and dev1, `intersect` results bitwise equal;
       every public op runs correctly on a non-zero device while device 0 is
-      current.
-- [ ] Dr.Jit: querying a scene after `set_device` to another device raises
-      instead of corrupting.
+      current — `test_multi_device_smoke.py`, 10 tests, green.
+- [x] Dr.Jit: querying a scene after `set_device` to another device raises
+      instead of corrupting — `backends.drjit.tests.drjit.test_device_binding`,
+      4/4 green on Linux.
 
 ### Phase 1 — Torch multi-device correctness (~1 week; manual orchestration works)
 
@@ -161,13 +254,21 @@ Work items:
 
 Acceptance:
 
-- [ ] Two scenes on two devices, driven concurrently from two host threads on
+- [x] Two scenes on two devices, driven concurrently from two host threads on
       non-default streams, produce per-device results bitwise equal to
-      single-device runs (stress test in `backends/torch/tests`).
-- [ ] Per-device OptiX cold-create passes (generalization of
-      `test_optix_pipeline_cold_create` to a non-zero device).
-- [ ] No cross-device serialization beyond context creation (verified by
-      overlapping-launch timing check, coarse threshold).
+      single-device runs (stress test in `backends/torch/tests`) —
+      `test_multi_device_stress.py::test_two_threads_on_two_devices_`
+      `reproduce_single_device_results`.
+- [x] Per-device OptiX cold-create passes (generalization of
+      `test_optix_pipeline_cold_create` to a non-zero device) —
+      `test_multi_device_stress.py::test_cold_create_on_a_non_zero_device_`
+      `in_a_fresh_process`.
+- [x] No cross-device serialization beyond context creation (verified by
+      overlapping-launch timing check, coarse threshold) —
+      `test_multi_device_stress.py::test_two_devices_overlap_instead_of_`
+      `serializing`. What does serialize process-wide (device-context creation,
+      the multipath launch-pipeline cache, and the GIL over an op body) is
+      written up in [`multi_gpu_operations.md`](multi_gpu_operations.md) §2.
 
 ### Phase 2 — `rayd.torch.multi` orchestration layer (~3–5 weeks; the feature)
 
@@ -368,15 +469,37 @@ Work items:
 
 Acceptance:
 
-- [ ] 2-rank single-node example produces grids/grads matching single-process
-      2-device execution within float tolerance, and runs in the multi-GPU CI
-      job.
+- [x] 2-rank single-node example produces grids/grads matching single-process
+      execution within float tolerance —
+      `test_distributed_recipe.py`, 4 tests, green: both examples run under a
+      real `torchrun --nproc_per_node=2`, the ranks' final parameters are
+      bitwise equal, and the all-reduced grid matches a single-process
+      single-device launch of the full sample count.
+- [ ] …and runs in the multi-GPU CI job. **Open** — the job is declared in
+      [`.github/workflows/multi_gpu.yml`](../../.github/workflows/multi_gpu.yml)
+      and is inert until a self-hosted 2-GPU runner exists (execution record
+      item 6). Run by hand meanwhile:
+      [`multi_gpu_operations.md`](multi_gpu_operations.md) §8.
 - [ ] Dr.Jit 2-rank example (each rank pinned via `CUDA_VISIBLE_DEVICES`)
-      runs the reflection benchmark with ≥1.8× aggregate throughput.
+      runs the reflection benchmark with ≥1.8× aggregate throughput. **Open** —
+      the recipe and its Dr.Jit variant are documented and the route works, but
+      no aggregate-throughput measurement was taken.
 - [ ] Multi-node invocation documented and exercised at least manually
       (recorded in the PR); no code path differs from single-node beyond the
-      rendezvous.
+      rendezvous. **Half done, honestly.** The invocation is documented
+      ([`multi_gpu_operations.md`](multi_gpu_operations.md) §6) and the "no
+      differing code path" half is checked by reading: the examples consume
+      only `RANK`, `LOCAL_RANK` and `WORLD_SIZE`, and per-step traffic is one
+      `[V, 3]` gradient or a fixed set of grids. It has **not** been executed —
+      this repository has a single node.
 - [ ] Hardening items each keep the Dr.Jit test suite bitwise-green.
+      **Partial.** Numerics were verified bitwise-unchanged and the committed
+      PTX closures were untouched (digest test green), with `test_geometry`
+      63/63, `test_device_binding` 4/4 and the edge-BVH modules 23/23 green on
+      the Linux verification host. Outstanding: a full Dr.Jit suite run on the
+      Windows/RTX 5080 baseline machine, where the pre-existing
+      `test_diffraction_paths_parity` platform divergence recorded in ADR-0038's
+      platform note also has to be re-checked.
 
 ### Phase 4 — ADR, contracts, CI (runs alongside Phases 2–3)
 
@@ -399,14 +522,47 @@ Work items:
    shared headers): regenerate PTX and refresh `ptx_sources.json` per the
    committed-PTX policy.
 
+As landed, two of those items read differently from the proposal:
+
+- Item 2's `.pyi` stubs are for the **private** module (`_multi.py` /
+  `_multi.pyi`). There is no `rayd.torch.multi`: the public surface is
+  `Scene(devices=..., options=...)`, `MultiDeviceOptions`,
+  `Scene.calibrate_devices()`, `Scene.device_weights` and the two lane-window
+  parameters, and ADR-0038's stop conditions forbid adding a public name under
+  that path.
+- Item 4 was not needed: no `.cu` reachable from a committed PTX module
+  changed, so `ptx_sources.json` is untouched and its digest test stayed green
+  throughout rather than being repaired afterwards.
+
 Acceptance:
 
-- [ ] ADR accepted; contract tests green in both directions (declaration ↔
-      build).
-- [ ] Capability visible from both backends' `_capabilities.py` with correct
-      values; manifest/typing tests pass.
-- [ ] Multi-GPU CI job green on the 2-device matrix; single-GPU CI unchanged.
-- [ ] PTX digest test green (regenerated if touched).
+- [x] ADR accepted; contract tests green in both directions (declaration ↔
+      build) —
+      [`ADR-0038`](../adr/0038-replicated-multi-device-execution.md) is
+      Accepted (2026-07-27), `tests/test_adr0038_multi_device.py` guards it
+      against the contracts, both capability copies, the `MultiDeviceOptions`
+      defaults, the lane-window defaults in Python and in the dispatcher
+      schema, and this plan; `tests/test_shared_operation_contract.py` carries
+      the hard-coded per-operation shardability table.
+- [x] Capability visible from both backends' `_capabilities.py` with correct
+      values; manifest/typing tests pass — `multi_device_replicated` is
+      `torch: true`, `drjit: false`, both copies repinned `_SCHEMA_SHA256`, and
+      `tests/test_public_api_manifest.py` is green.
+- [ ] Multi-GPU CI job green on the 2-device matrix. **Open** — the job exists
+      (`.github/workflows/multi_gpu.yml`) but is inert: no self-hosted
+      2-GPU runner is registered, and `workflow_dispatch` is its only trigger.
+      The set it declares — the multi-device modules fresh-process, the
+      distributed recipe, the governance suite — was run by hand on the
+      verification host instead
+      ([`multi_gpu_operations.md`](multi_gpu_operations.md) §8).
+- [x] Single-GPU CI unchanged — `ci.yml`, `stable-abi-ci.yml` and `pypi.yml`
+      are untouched by this work. None of them has a CUDA device, so they were
+      never running the GPU subset in the first place.
+- [x] PTX digest test green (regenerated if touched) —
+      `tests/test_ptx_source_digest.py` green with
+      `backends/drjit/ptx_sources.json` untouched: the lane window lives in the
+      Torch backend and the Dr.Jit Phase 3 hardening changed host and object
+      translation units only.
 
 ## 4. Risks / non-goals
 

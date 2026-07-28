@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 _SCHEMA_VERSION = 2
-_SCHEMA_SHA256 = "8996fadff4002023b672a585d3f861fc968319bd2a5b2dec82b437a19d2424aa"
+_SCHEMA_SHA256 = "53f11fa0c96fb895ff545d4935ae11df563670e4a707e737b5dc0b0c5bd631ae"
 _BACKEND = "drjit"
 _TYPING = "complete"
 
@@ -33,6 +33,7 @@ _CAPABILITIES = {
     "reverse_ad": True,
     "forward_ad": True,
     "torch_compile": False,
+    "multi_device_replicated": False,
 }
 
 _API_CLASSIFICATION = {
@@ -54,6 +55,7 @@ _API_CLASSIFICATION = {
     "reverse_ad": ("core", "stable"),
     "forward_ad": ("core", "provisional"),
     "torch_compile": ("experimental", "provisional"),
+    "multi_device_replicated": ("core", "provisional"),
 }
 
 _ALIASES = {

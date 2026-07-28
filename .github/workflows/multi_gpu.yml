@@ -1,0 +1,169 @@
+# Multi-GPU acceptance (ADR-0038)
+#
+# This workflow is the CI half of Phase 4 item 3 of
+# `docs/dev/multi_gpu_plan.md`. It runs the multi-device acceptance set that
+# the Phase 2-3 verifications ran by hand, and it is the only job in this
+# repository that needs a GPU: every other workflow (`ci.yml`,
+# `stable-abi-ci.yml`, `pypi.yml`) builds wheels on GitHub-hosted runners,
+# which have no CUDA device at all. Those jobs are untouched by this file, and
+# nothing here changes what they run.
+#
+# INERT UNTIL A RUNNER EXISTS. No self-hosted runner is registered for this
+# repository today, so:
+#   * the only trigger is `workflow_dispatch` -- nothing here runs on a push,
+#     on a pull request, or on a schedule;
+#   * a dispatch made before a matching runner is registered only queues and
+#     then expires. Do not dispatch it as a smoke test of the YAML.
+#
+# To activate: register a runner carrying *all* of the labels in `runs-on`
+# below (`self-hosted`, `linux`, `x64`, `cuda`, `multi-gpu`) on a host with at
+# least two CUDA devices, then dispatch. To have it run on labelled pull
+# requests as well, add the trigger the other workflows use, but with its own
+# label, so that `run-ci` cannot queue work on a runner that may be offline:
+#
+#     on:
+#       pull_request:
+#         types: [labeled]
+#     jobs:
+#       multi-gpu:
+#         if: github.event_name == 'workflow_dispatch'
+#             || github.event.label.name == 'run-multi-gpu-ci'
+#
+# Until then the same acceptance set is run by hand. The commands below are
+# the ones in section 8 of `docs/dev/multi_gpu_operations.md`, which is what
+# the Phase 2-3 verifications used on the 2x RTX A6000 host.
+
+name: Multi-GPU Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      python:
+        description: >-
+          Interpreter of the prepared environment on the runner (CUDA Torch
+          plus a built in-tree `rayd.torch` extension). An absolute path, e.g.
+          /home/ci/miniconda3/envs/maxwell/bin/python.
+        required: false
+        default: python
+      run_benchmark:
+        description: >-
+          Also run backends/torch/tests/benchmark_multi_device.py. It is a
+          measurement, not a gate: it prints speedups and calibrated weights
+          and never fails the job on a number.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: multi-gpu-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  multi-gpu:
+    name: Multi-GPU acceptance / 2x CUDA (self-hosted)
+    # All five labels are required. A one-GPU runner must not pick this up:
+    # every multi-device test skips itself below two devices, so such a job
+    # would report green while having verified nothing.
+    runs-on: [self-hosted, linux, x64, cuda, multi-gpu]
+    timeout-minutes: 120
+    env:
+      PYTHON: ${{ inputs.python || 'python' }}
+      # The extension is built in-tree on this route (see the "Build" step),
+      # so the backend package is imported from the working copy.
+      PYTHONPATH: ${{ github.workspace }}/backends/torch/python
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Report the runner's GPUs
+        shell: bash
+        run: nvidia-smi
+
+      - name: Require two visible CUDA devices
+        shell: bash
+        # Fail loudly rather than skip. `unittest.skipUnless(device_count()
+        # >= 2, ...)` guards every multi-device module, so on a single-device
+        # runner the acceptance set passes vacuously.
+        run: |
+          "$PYTHON" - <<'PY'
+          import torch
+
+          count = torch.cuda.device_count()
+          print(f"torch {torch.__version__}, {count} CUDA device(s)")
+          for index in range(count):
+              print(f"  cuda:{index} {torch.cuda.get_device_name(index)}")
+          assert count >= 2, f"this job needs two CUDA devices, found {count}"
+          PY
+
+      - name: Build the Torch backend in tree
+        shell: bash
+        # The runner is expected to carry CUDA, the OptiX headers and a CUDA
+        # Torch already; only RayD itself is built here, with the editable dev
+        # command `backends/torch/scripts/dev_build_native.ps1` documents. Set
+        # RAYD_CI_PREBUILT=1 on a runner that keeps a warm build tree instead
+        # of rebuilding from scratch on every dispatch.
+        run: |
+          if [ "${RAYD_CI_PREBUILT:-0}" = "1" ]; then
+            echo "RAYD_CI_PREBUILT=1: reusing the runner's existing build"
+          else
+            "$PYTHON" -m pip install --no-build-isolation -e backends/torch \
+              -Cbuild-dir=build/ci-multi-gpu
+          fi
+          # Prints the module that will actually be tested, so a stale or
+          # shadowed package (PYTHONPATH vs site-packages) is visible in the
+          # log rather than silently exercised.
+          "$PYTHON" -c "import rayd.torch as rt; print(rt.__file__)"
+
+      - name: Multi-device modules (one fresh process each)
+        shell: bash
+        # Fresh process per module on purpose: the layer's single-device
+        # invariant is partly an import-time property (a default `Scene()`
+        # must never import `rayd.torch._multi`), and OptiX pipeline state is
+        # per process, so modules must not share one.
+        run: |
+          status=0
+          for module in \
+            test_multi_device_smoke \
+            test_multi_device_stress \
+            test_multi_device_scene \
+            test_chunked_executor \
+            test_lane_offset
+          do
+            echo "::group::$module"
+            "$PYTHON" -m unittest "backends.torch.tests.torch_backend.$module" -v || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Distributed recipe (torchrun, 2 ranks)
+        shell: bash
+        # Launches both examples under `torchrun --nproc_per_node=2`. The test
+        # gives each rank its own OPTIX_CACHE_PATH under a temporary root, so
+        # nothing has to be set here; it skips itself if `torchrun` is missing.
+        run: |
+          "$PYTHON" -m unittest \
+            backends.torch.tests.torch_backend.test_distributed_recipe -v
+
+      - name: Governance suite
+        shell: bash
+        # The ADR-0038 guard plus the contract, manifest, committed-PTX and
+        # compile-flag records it must stay consistent with. These need no
+        # GPU; they run here so a multi-GPU change cannot land with its
+        # declarations drifted.
+        run: |
+          "$PYTHON" -m unittest \
+            tests.test_adr0038_multi_device \
+            tests.test_shared_operation_contract \
+            tests.test_public_api_manifest \
+            tests.test_ptx_source_digest \
+            tests.test_compile_flag_policy_contract -v
+
+      - name: Multi-device benchmark (measurement, not a gate)
+        if: ${{ inputs.run_benchmark }}
+        shell: bash
+        continue-on-error: true
+        run: |
+          "$PYTHON" -m backends.torch.tests.benchmark_multi_device

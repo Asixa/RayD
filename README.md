@@ -115,6 +115,7 @@ edges, visibility, and multipath query results.
 | Reverse-mode AD | Yes | Yes |
 | Forward-mode AD | Yes | Yes |
 | `torch.compile` integration | No | Yes |
+| Replicated multi-device execution | No | Yes |
 
 Use `backend_capabilities()` on either backend for the machine-readable
 capability manifest. Unsupported functionality does not silently cross into
@@ -421,7 +422,16 @@ the same device. Operations are independent of the ambient CUDA device: a scene
 built on `cuda:1` answers queries correctly while `cuda:0` is current, and the
 ambient device is unchanged on return.
 
-Multi-device execution has a manual route: one `Scene` per device, driven
+The Torch backend runs a batch across several GPUs transparently:
+`Scene(devices=[0, 1])` builds one full scene replica per device, shards the
+batch across them, and returns results and gradients on the first device.
+Sharded per-ray results are bitwise the single-device results; merged
+accumulation grids match the single launch up to float32 summation order. The
+regime, the merge semantics, the Monte-Carlo lane window and the invariance of
+single-device execution are decided in
+[`ADR-0038`](docs/adr/0038-replicated-multi-device-execution.md).
+
+Multi-device execution also has a manual route: one `Scene` per device, driven
 either from one process per GPU or from one host thread per device. The
 operational contract, the per-device OptiX warm-up cost, the per-process
 `OPTIX_CACHE_PATH` requirement for process-parallel launches, and the
