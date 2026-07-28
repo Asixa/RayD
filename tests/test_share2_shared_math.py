@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EDGE_HEADER = ROOT / "shared" / "include" / "rayd" / "shared" / "edge" / "edge_distance_math.h"
+EDGE_HEADER = ROOT / "include" / "rayd" / "shared" / "edge" / "edge_distance_math.h"
 REFLECTION_HEADER = (
-    ROOT / "shared" / "include" / "rayd" / "shared" / "reflection" / "reflection_geometry.h"
+    ROOT / "include" / "rayd" / "shared" / "reflection" / "reflection_geometry.h"
 )
 
 
@@ -40,18 +40,16 @@ class Share2SharedMathTests(unittest.TestCase):
 
     def test_edge_callers_use_shared_formulas(self):
         callers = {
-            "backends/drjit/src/edge/edge_optix.cu": (
+            "src/edge/edge_optix_jit.cu": (
                 "shared::edge::point_segment_distance",
                 "shared::edge::segment_segment_distance",
             ),
-            "backends/torch/src/torch_ext/edge/edge_optix.cu": (
+            "src/edge/edge_optix.cu": (
                 "shared::edge::point_segment_distance",
                 "shared::edge::segment_segment_distance",
             ),
-            "backends/torch/src/torch_ext/edge/edge_forward.cu": (
+            "src/edge/edge_queries.cu": (
                 "shared::edge::point_segment_distance",
-            ),
-            "backends/torch/src/torch_ext/edge/edge_backward.cu": (
                 "shared::edge::point_segment_jvp_fixed_winner",
                 "shared::edge::point_segment_vjp_fixed_winner",
                 "shared::edge::ray_segment_jvp_fixed_winner",
@@ -64,8 +62,8 @@ class Share2SharedMathTests(unittest.TestCase):
             for symbol in symbols:
                 self.assertIn(symbol, source)
         for relative in (
-            "backends/drjit/src/edge/edge_optix.cu",
-            "backends/torch/src/torch_ext/edge/edge_optix.cu",
+            "src/edge/edge_optix_jit.cu",
+            "src/edge/edge_optix.cu",
         ):
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("update_segment_best", source)
@@ -82,13 +80,13 @@ class Share2SharedMathTests(unittest.TestCase):
         # shared reflect primitives now live there, and the OptiX entry header
         # funnels through it.
         algo = (
-            ROOT / "shared/include/rayd/shared/multipath/reflection_trace_algo.h"
+            ROOT / "include/rayd/shared/multipath/reflection_trace_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", algo)
         for symbol in required:
             self.assertIn(symbol, algo)
         shared_device = (
-            ROOT / "shared/include/rayd/shared/optix/reflection_trace_device.cuh"
+            ROOT / "include/rayd/shared/optix/reflection_trace_device.cuh"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/multipath/reflection_trace_algo.h>", shared_device)
 
@@ -97,19 +95,19 @@ class Share2SharedMathTests(unittest.TestCase):
         # the host-compilable algorithm header, and the OptiX entry header funnels
         # through it.
         epc_algo = (
-            ROOT / "shared/include/rayd/shared/multipath/reflection_epc_algo.h"
+            ROOT / "include/rayd/shared/multipath/reflection_epc_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/reflection/reflection_geometry.h>", epc_algo)
         self.assertIn("reflection::intersect_segment_plane", epc_algo)
         self.assertIn("reflection::reflect_point_across_plane", epc_algo)
         epc_device = (
-            ROOT / "shared/include/rayd/shared/optix/reflection_epc_device.cuh"
+            ROOT / "include/rayd/shared/optix/reflection_epc_device.cuh"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/multipath/reflection_epc_algo.h>", epc_device)
 
         for relative in (
-            "backends/drjit/src/multipath/reflection_trace.cu",
-            "backends/torch/src/torch_ext/reflection/trace_optix.cu",
+            "src/reflection/trace_optix_jit.cu",
+            "src/reflection/trace_optix.cu",
         ):
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("<rayd/shared/optix/reflection_trace_device.cuh>", source)

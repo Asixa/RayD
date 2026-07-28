@@ -6,11 +6,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_HEADER = ROOT / "shared/include/rayd/shared/edge/edge_aabb.h"
-SHARED_SOURCE = ROOT / "shared/src/edge/edge_aabb.cu"
-TORCH_HEADER = ROOT / "backends/torch/include/rayd/torch/edge/bvh.h"
-TORCH_SOURCE = ROOT / "backends/torch/src/torch_ext/edge/bvh.cu"
-TORCH_CMAKE = ROOT / "backends/torch/CMakeLists.txt"
+SHARED_HEADER = ROOT / "include/rayd/shared/edge/edge_aabb.h"
+SHARED_SOURCE = ROOT / "src/edge/edge_shared.cu"
+TORCH_HEADER = ROOT / "include/rayd/torch/edge/bvh.h"
+TORCH_SOURCE = ROOT / "src/edge/edge_bvh.cu"
+TORCH_CMAKE = ROOT / "torch/CMakeLists.txt"
 
 
 class SharedEdgeAabbSourceTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class SharedEdgeAabbSourceTests(unittest.TestCase):
         self.assertEqual(global_kernels, ["encode_raw_bvh_kernel"])
         self.assertNotIn("compute_edge_aabbs_kernel", source)
         self.assertNotIn("compute_edge_optix_aabbs_gpu", header)
-        self.assertIn("shared/src/edge/edge_aabb.cu", cmake)
+        self.assertIn("src/edge/edge_shared.cu", cmake)
 
 
 if __name__ == "__main__":

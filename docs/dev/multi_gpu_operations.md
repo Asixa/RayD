@@ -40,7 +40,7 @@ commands every multi-GPU verification in this repository has been run with.
   concatenation or reduction of results is the caller's job in this phase.
 
 Coverage for these properties lives in
-[`backends/torch/tests/torch_backend/test_multi_device_smoke.py`](../../backends/torch/tests/torch_backend/test_multi_device_smoke.py)
+[`torch/tests/torch_backend/test_multi_device_smoke.py`](../../torch/tests/torch_backend/test_multi_device_smoke.py)
 (skipped when fewer than two CUDA devices are visible).
 
 ## 2. Driving several devices from one process
@@ -88,7 +88,7 @@ has to work around it any more.
 
 **Root cause.** The GIL is the outermost lock in this process: Torch drops it
 before entering a boxed op, and every RayD op wrapper in
-[`library.cpp`](../../backends/torch/src/torch_ext/library.cpp) re-acquires it
+[`library.cpp`](../../src/bindings/library.cpp) re-acquires it
 for the duration of the call, then takes RayD's own mutexes — first the scene
 registry, through `get_scene()`. `destroy_scene()` broke that order. It held
 the registry mutex across the whole `SceneCache` destructor, and a `SceneCache`
@@ -127,7 +127,7 @@ scripts, with a 120 s watchdog per trial:
 The regression guard is
 `ConcurrentHostThreadTests.test_building_and_dropping_scenes_concurrently_completes`
 in
-[`backends/torch/tests/torch_backend/test_warmup.py`](../../backends/torch/tests/torch_backend/test_warmup.py):
+[`tests/runtime/test_warmup.py`](../../tests/runtime/test_warmup.py):
 two host threads build, query and drop scenes at once, which is the shape that
 reproduced the deadlock. It needs only one CUDA device — the defect was a
 host-thread defect, not a multi-device one.
@@ -143,8 +143,7 @@ GPU job does — but not because of this issue.
 ### OptiX creation is serialized, launches are not
 
 RayD serializes OptiX resource creation with internal locks
-([`backends/torch/src/torch_ext/scene/optix_context.cpp`](../../backends/torch/src/torch_ext/scene/optix_context.cpp),
-[`backends/torch/src/torch_ext/common/optix_pipeline.cpp`](../../backends/torch/src/torch_ext/common/optix_pipeline.cpp)):
+([`src/runtime/optix.cpp`](../../src/runtime/optix.cpp)):
 
 - OptiX device-context creation is serialized process-wide and memoized per
   `(device index, CUDA context)`.
@@ -272,7 +271,7 @@ faster than one GPU is a property of the *workload*, not of the layer: a second
 device can only win when a row's compute costs more than its bytes cost to
 move. This section is the measured version of that sentence, and the benchmark
 that produced it is
-[`backends/torch/tests/benchmark_multi_device.py`](../../backends/torch/tests/benchmark_multi_device.py):
+[`torch/tests/benchmark_multi_device.py`](../../torch/tests/benchmark_multi_device.py):
 
 By default construction also requires bidirectional CUDA peer access between
 the master and every replica. This is fail-safe: silently routing the pipeline
@@ -299,11 +298,11 @@ the single-device column and nothing else, which is the baseline the scaling
 numbers below are ratios of.
 
 The JSON form has a versioned contract at
-[`shared/benchmarks/multi_device_result.schema.json`](../../shared/benchmarks/multi_device_result.schema.json).
+[`benchmarks/multi_device_result.schema.json`](../../benchmarks/multi_device_result.schema.json).
 It records the visible device count, every directed peer-access result, every
 device's streamed peak allocation and the master's streamed-versus-concatenated
 peak comparison. The committed
-[`multi_device_manifest.json`](../../shared/benchmarks/multi_device_manifest.json)
+[`multi_device_manifest.json`](../../benchmarks/multi_device_manifest.json)
 pins the schema and evidence file by SHA-256.
 
 ### 5.1 Measured, 2026-07-27
@@ -327,7 +326,7 @@ and reduced with a minimum over 7 rounds after 2 warm-up rounds.
 
 The table below is one run of the twenty (2026-07-27), printed verbatim by the
 benchmark. Its machine-readable counterpart is
-[`multi_device_2xa6000_20260727.json`](../../shared/benchmarks/baselines/multi_device_2xa6000_20260727.json).
+[`multi_device_2xa6000_20260727.json`](../../benchmarks/baselines/multi_device_2xa6000_20260727.json).
 That file is explicitly marked `historical_documentation_import`: it was
 transcribed from this already published run of record, not newly executed
 during its commit. Because this historical table did not contain allocation
@@ -752,27 +751,27 @@ several chunks.
 
 Section 3 gives the per-process rules; this section is the worked recipe built
 on them. Two runnable examples live in
-[`backends/torch/examples/distributed`](../../backends/torch/examples/distributed):
+[`torch/examples/distributed`](../../torch/examples/distributed):
 
-- [`ddp_intersect_train.py`](../../backends/torch/examples/distributed/ddp_intersect_train.py)
+- [`ddp_intersect_train.py`](../../torch/examples/distributed/ddp_intersect_train.py)
   — one rank per GPU, a rank-local `Scene` built from the same mesh, a global
   ray batch sharded by rank, a differentiable `intersect` loss, and one
   `all_reduce(SUM)` of `vertices.grad` per step. The optimizer then applies the
   same update to the same replicated parameter on every rank; the script
   asserts zero cross-rank drift every `--check-every` steps and prints a hash
   of the final parameter.
-- [`ddp_accum_grids.py`](../../backends/torch/examples/distributed/ddp_accum_grids.py)
+- [`ddp_accum_grids.py`](../../torch/examples/distributed/ddp_accum_grids.py)
   — rank-sharded Monte-Carlo accumulation. Each rank calls `accum_dfr_direct`
   with the *same* `direct_samples` and its own `lane_offset` / `lane_count`
   window, so the ranks' windows partition one global lane space (§ D5 of
   [`multi_gpu_plan.md`](multi_gpu_plan.md)); `all_reduce(SUM)` on the grids
   reproduces the single launch's grid up to summation order.
-- [`README.md`](../../backends/torch/examples/distributed/README.md) — the
+- [`README.md`](../../torch/examples/distributed/README.md) — the
   launcher commands, the `OPTIX_CACHE_PATH` requirement, the Dr.Jit variant,
   and the failure-behavior notes.
 
 Both are exercised by
-[`backends/torch/tests/torch_backend/test_distributed_recipe.py`](../../backends/torch/tests/torch_backend/test_distributed_recipe.py),
+[`torch/tests/torch_backend/test_distributed_recipe.py`](../../torch/tests/torch_backend/test_distributed_recipe.py),
 which launches them under `torchrun --nproc_per_node=2` in a subprocess and
 checks that the ranks' final parameters are bitwise equal and that the merged
 grid matches a single-process, single-device launch of the full sample count.
@@ -868,8 +867,8 @@ many: `$ROOT/rank-$RANK` has to be per-rank *and* on local disk.
 
 These are the commands every multi-GPU verification in this repository has been
 run with, on the two-device host of §5.1. Run them from the repository root
-with the backend importable (`PYTHONPATH=backends/torch/python`, or an editable
-install of `backends/torch`). Nothing below needs a network or a second node.
+with the backend importable (`PYTHONPATH=torch/python`, or an editable
+install of `torch`). Nothing below needs a network or a second node.
 
 **They must be run on a host with two visible CUDA devices.** Every
 multi-device module is guarded by
@@ -887,7 +886,7 @@ module is deliberate: a default `Scene()` must never even import
 state is per process.
 
 ```bash
-export PYTHONPATH=backends/torch/python
+export PYTHONPATH=torch/python
 for m in test_multi_device_smoke test_multi_device_stress test_multi_device_scene \
          test_chunked_executor test_lane_offset; do
     python -m unittest "backends.torch.tests.torch_backend.$m" -v || break
@@ -931,8 +930,8 @@ python -m unittest \
 **4. The whole Torch backend suite**, which is what each phase reported:
 
 ```bash
-python -m unittest discover -s backends/torch/tests/torch_backend \
-    -t backends/torch/tests
+python -m unittest discover -s torch/tests/torch_backend \
+    -t torch/tests
 ```
 
 **5. The benchmark**, whose numerical speedups are measurements rather than
@@ -951,7 +950,7 @@ thresholded.
 The Dr.Jit backend has no in-process multi-device route to test; its multi-GPU
 coverage is the process-per-GPU recipe of §3 plus the device-binding assertions
 of Phase 0 (`backends.drjit.tests.drjit.test_device_binding`, with an
-**absolute** `PYTHONPATH=<repo>/backends/drjit/python` — the test spawns
+**absolute** `PYTHONPATH=<repo>/drjit/python` — the test spawns
 subprocesses whose working directory differs, so a relative path makes them
 skip silently instead of running).
 

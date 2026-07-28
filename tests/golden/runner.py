@@ -29,7 +29,7 @@ BASELINE_DIR = Path(__file__).resolve().parent / "baselines"
 
 COMPARISON_POLICY = {
     "discrete": "exact bitwise equality (ints, bools-as-ints, strings)",
-    "continuous": "shared/contracts/operations.json tolerances "
+    "continuous": "contracts/operations.json tolerances "
     "(default_abs, default_rel)",
     "informative": "recorded but not compared (traversal-order or tie dependent)",
 }

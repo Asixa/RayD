@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE_HEADER = ROOT / "backends/torch/include/rayd/torch/scene/cache.h"
-CACHE_SOURCE = ROOT / "backends/torch/src/torch_ext/scene/scene_cache.cpp"
-TYPES_SOURCE = ROOT / "backends/torch/python/rayd/torch/types.py"
+CACHE_HEADER = ROOT / "include/rayd/torch/scene/cache.h"
+CACHE_SOURCE = ROOT / "src/scene/scene.cpp"
+TYPES_SOURCE = ROOT / "python/rayd/_impl/geometry.py"
 
 
 class TorchGlobalGeometryContractTests(unittest.TestCase):

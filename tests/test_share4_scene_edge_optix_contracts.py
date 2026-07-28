@@ -3,13 +3,13 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "shared/include/rayd/shared/optix/scene_edge_contracts.h"
-PIPELINE_CONTRACT = ROOT / "shared/include/rayd/shared/optix/pipeline_contracts.h"
-DEVICE = ROOT / "shared/include/rayd/shared/optix/scene_edge_device.cuh"
-DRJIT_EDGE = ROOT / "backends/drjit/src/edge/edge_optix.cu"
-TORCH_EDGE = ROOT / "backends/torch/src/torch_ext/edge/edge_optix.cu"
-TORCH_SCENE = ROOT / "backends/torch/src/torch_ext/scene/optix_intersect.cu"
-DRJIT_SCENE = ROOT / "backends/drjit/src/scene/scene_optix.cpp"
+CONTRACT = ROOT / "include/rayd/shared/optix/scene_edge_contracts.h"
+PIPELINE_CONTRACT = ROOT / "include/rayd/shared/optix/pipeline_contracts.h"
+DEVICE = ROOT / "include/rayd/shared/optix/scene_edge_device.cuh"
+DRJIT_EDGE = ROOT / "src/edge/edge_optix_jit.cu"
+TORCH_EDGE = ROOT / "src/edge/edge_optix.cu"
+TORCH_SCENE = ROOT / "src/scene/intersection_optix.cu"
+DRJIT_SCENE = ROOT / "src/scene/scene_jit.cpp"
 
 
 class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
@@ -54,12 +54,11 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
             self.assertIn(token, source)
 
         consumers = (
-            ROOT / "backends/drjit/src/edge/scene_edge_optix.cpp",
-            ROOT / "backends/drjit/src/multipath/pipelines.cpp",
-            ROOT / "backends/torch/src/torch_ext/scene/optix_context.cpp",
-            ROOT / "backends/torch/src/torch_ext/common/optix_pipeline.cpp",
-            ROOT / "backends/torch/src/torch_ext/reflection/pipeline.cpp",
-            ROOT / "backends/torch/src/torch_ext/diffraction/pipeline.cpp",
+            ROOT / "src/runtime/runtime_jit.cpp",
+            ROOT / "src/runtime/optix.cpp",
+            ROOT / "src/visibility/visibility.cpp",
+            ROOT / "src/reflection/reflection.cpp",
+            ROOT / "src/diffraction/diffraction.cpp",
         )
         combined = "\n".join(path.read_text(encoding="utf-8") for path in consumers)
         self.assertGreaterEqual(combined.count("shared::optix::"), 16)
@@ -79,10 +78,10 @@ class Share4SceneEdgeOptixContractsTests(unittest.TestCase):
             self.assertNotIn("set_topk_payload_slot", source)
 
     def test_backend_specific_edge_outer_params_remain_adapters(self):
-        drjit_params = (ROOT / "backends/drjit/include/rayd/edge/edge_optix_params.h").read_text(
+        drjit_params = (ROOT / "include/rayd/edge/edge_optix_params.h").read_text(
             encoding="utf-8"
         )
-        torch_params = (ROOT / "backends/torch/include/rayd/torch/edge/optix_params.h").read_text(
+        torch_params = (ROOT / "include/rayd/torch/edge/optix_params.h").read_text(
             encoding="utf-8"
         )
         self.assertIn("struct EdgeOptixQueryParams", drjit_params)

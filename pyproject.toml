@@ -19,5 +19,5 @@ dependencies = [
 packages = []
 
 [tool.rayd.workspace]
-members = ["backends/drjit", "backends/torch"]
+members = ["drjit", "torch"]
 distributions = ["rayd", "rayd-drjit", "rayd-torch"]

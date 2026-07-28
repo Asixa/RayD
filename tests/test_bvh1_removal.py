@@ -20,9 +20,9 @@ class BVH1RemovalTests(unittest.TestCase):
             "build_top_level_bvh_recursive",
         )
         active_paths = (
-            ROOT / "backends" / "drjit" / "include" / "rayd" / "edge" / "edge_bvh_config.h",
-            ROOT / "backends" / "drjit" / "src" / "edge" / "scene_edge.cpp",
-            ROOT / "backends" / "drjit" / "tests" / "benchmark_edge_bvh_stages.py",
+            ROOT / "include" / "rayd" / "edge" / "edge_bvh_config.h",
+            ROOT / "src" / "edge" / "edge_jit.cpp",
+            ROOT / "benchmarks" / "drjit" / "benchmark_edge_bvh_stages.py",
         )
 
         for path in active_paths:
@@ -33,7 +33,6 @@ class BVH1RemovalTests(unittest.TestCase):
     def test_historical_hlbvh_baseline_is_retained_as_a_rejected_strategy(self):
         path = (
             ROOT
-            / "shared"
             / "benchmarks"
             / "baselines"
             / "bvh0_strategy_stage_20260711.json"
@@ -54,7 +53,7 @@ class BVH1RemovalTests(unittest.TestCase):
         # P3 Stage A moved the primitive-agnostic build kernels into the shared
         # BVH core; the atomic publish-before-arrival invariant is pinned there.
         source = (
-            ROOT / "shared" / "src" / "bvh" / "build.cu"
+            ROOT / "src" / "bvh" / "build_shared.cu"
         ).read_text(encoding="utf-8")
         kernels = {
             "finalize_leaves_and_bounds_kernel": (

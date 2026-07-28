@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "shared" / "include" / "rayd" / "shared" / "contracts.h"
+CONTRACT = ROOT / "include" / "rayd" / "shared" / "contracts.h"
 
 
 class SharedContractsTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class SharedContractsTests(unittest.TestCase):
         self.assertIn("NearestRayEdgeField::Count) == 9u", self.header)
 
     def test_torch_python_flags_come_from_contract_mirror(self):
-        source_path = ROOT / "backends" / "torch" / "python" / "rayd" / "torch" / "types.py"
+        source_path = ROOT / "python" / "rayd" / "_impl" / "geometry.py"
         tree = ast.parse(source_path.read_text(encoding="utf-8"))
         assignments = {
             target.id: node.value
@@ -62,12 +62,12 @@ class SharedContractsTests(unittest.TestCase):
 
     def test_backends_consume_shared_values_without_merging_ray_tmin(self):
         sources = {
-            "drjit_rayd": ROOT / "backends" / "drjit" / "include" / "rayd" / "rayd.h",
-            "torch_forward": ROOT / "backends" / "torch" / "src" / "torch_ext" / "scene" / "geometry_forward.cu",
-            "torch_backward": ROOT / "backends" / "torch" / "src" / "torch_ext" / "scene" / "geometry_backward.cu",
-            "torch_intersect": ROOT / "backends" / "torch" / "src" / "torch_ext" / "scene" / "optix_intersect.cu",
-            "torch_edge": ROOT / "backends" / "torch" / "src" / "torch_ext" / "edge" / "edge_optix.cu",
-            "drjit_edge": ROOT / "backends" / "drjit" / "src" / "edge" / "edge_optix.cu",
+            "drjit_rayd": ROOT / "include" / "rayd" / "rayd.h",
+            "torch_forward": ROOT / "src" / "scene" / "intersection.cu",
+            "torch_backward": ROOT / "src" / "scene" / "intersection.cu",
+            "torch_intersect": ROOT / "src" / "scene" / "intersection_optix.cu",
+            "torch_edge": ROOT / "src" / "edge" / "edge_optix.cu",
+            "drjit_edge": ROOT / "src" / "edge" / "edge_optix_jit.cu",
         }
         text = {name: path.read_text(encoding="utf-8") for name, path in sources.items()}
         self.assertIn("shared::RayEpsilon", text["drjit_rayd"])

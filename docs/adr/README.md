@@ -10,20 +10,21 @@ why, so the sequence is not "tidied" by a later reader.
 | ADR | Title | Decision ID | Date | Status |
 | --- | --- | --- | --- | --- |
 | [0001](0001-surfel-remains-drjit-only.md) | Keep surfel support Dr.Jit-only | `F5-surfel-backend-scope` | 2026-07-11 | Accepted |
-| [0002](0002-shared-rf-transmission-ownership.md) | Shared RF primitives and transmission ownership | `shared-rf-transmission-ownership` | 2026-07-19 | Accepted |
-| [0025](0025-diffraction-family-ownership.md) | Diffraction operation-family ownership | `diffraction-operation-family-ownership` | 2026-07-19 | Accepted |
-| [0026](0026-generic-scattering-runtime-ownership.md) | Generic scattering runtime ownership | `generic-scattering-runtime-ownership` | 2026-07-19 | Accepted |
+| [0002](0002-shared-rf-transmission-ownership.md) | Shared RF primitives and transmission ownership | `shared-rf-transmission-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
+| [0025](0025-diffraction-family-ownership.md) | Diffraction operation-family ownership | `diffraction-operation-family-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
+| [0026](0026-generic-scattering-runtime-ownership.md) | Generic scattering runtime ownership | `generic-scattering-runtime-ownership` | 2026-07-19 | Accepted; source path and ownership-namespace clauses superseded by ADR-0039 |
 | [0028](0028-stable-typed-integration-naming.md) | Stable typed integration naming | `stable-typed-integration-naming` | 2026-07-20 | Accepted |
 | [0029](0029-typed-axial-edge-visibility.md) | Typed axial-edge visibility | `typed-axial-edge-visibility` | 2026-07-20 | Accepted |
 | [0030](0030-typed-capacity-row-validity.md) | Typed capacity-row validity | `typed-capacity-row-validity` | 2026-07-20 | Accepted |
 | [0031](0031-required-diffraction-path-validity.md) | Required diffraction path validity | `required-diffraction-path-validity` | 2026-07-20 | Accepted |
 | [0032](0032-source-lane-diffraction-path-layout.md) | Source-lane diffraction path layout | `source-lane-diffraction-path-layout` | 2026-07-20 | Accepted |
 | [0033](0033-batched-segment-penetration.md) | Batched segment-penetration geometry | `batched-segment-penetration` | 2026-07-21 | Accepted |
-| [0034](0034-validated-package-source-discovery.md) | Validated package source discovery | `validated-package-source-discovery` | 2026-07-22 | Accepted |
+| [0034](0034-validated-package-source-discovery.md) | Validated package source discovery | `validated-package-source-discovery` | 2026-07-22 | Accepted; internal source-bundle layout amended by ADR-0039 |
 | [0035](0035-cuda-compile-flag-policy.md) | Per-translation-unit CUDA numeric compile-flag policy | `cuda-numeric-compile-flag-policy` | 2026-07-24 | Accepted |
-| [0036](0036-backend-mirrored-python-modules.md) | Backend-mirrored Python modules | `backend-mirrored-python-modules` | 2026-07-25 | Accepted |
+| [0036](0036-backend-mirrored-python-modules.md) | Backend-mirrored Python modules | `backend-mirrored-python-modules` | 2026-07-25 | Superseded by ADR-0039 |
 | [0037](0037-differentiable-sdf-intersection.md) | Differentiable SDF ray intersection | `differentiable-sdf-intersection` | 2026-07-26 | Accepted |
 | [0038](0038-replicated-multi-device-execution.md) | Replicated multi-device and chunked execution | `replicated-multi-device-execution` | 2026-07-27 | Accepted |
+| [0039](0039-concept-axis-layout-and-backend-thinning.md) | Concept-axis source layout and thin backend frontends | `concept-axis-layout-and-backend-thinning` | 2026-07-28 | Accepted |
 
 Every row is copied from the target file's own five-line header block. Status,
 date, and decision ID are owned by the ADR, not by this index.

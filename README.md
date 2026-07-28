@@ -343,42 +343,42 @@ numerical owner until it pins this exact revision, atomically switches all
 chain callers, and deletes its four local chain translation units.
 
 Naming follows the public API standard in
-[`backends/drjit/API_NAMING_STANDARD.md`](backends/drjit/API_NAMING_STANDARD.md):
+[`drjit/API_NAMING_STANDARD.md`](drjit/API_NAMING_STANDARD.md):
 `Dfr` denotes diffraction, `Refl` denotes reflection, `Epc` denotes
 equivalent-path correction, and `AD` is reserved for automatic differentiation.
 
 ## Examples
 
 Dr.Jit examples are kept as runnable applications under
-[`backends/drjit/examples`](backends/drjit/examples):
+[`drjit/examples`](drjit/examples):
 
-- [`ray_mesh_intersection.py`](backends/drjit/examples/basics/ray_mesh_intersection.py):
+- [`ray_mesh_intersection.py`](drjit/examples/basics/ray_mesh_intersection.py):
   differentiable triangle intersection
-- [`nearest_edge_query.py`](backends/drjit/examples/basics/nearest_edge_query.py):
+- [`nearest_edge_query.py`](drjit/examples/basics/nearest_edge_query.py):
   scene-level nearest-edge queries
-- [`surfel_intersection.py`](backends/drjit/examples/basics/surfel_intersection.py):
+- [`surfel_intersection.py`](drjit/examples/basics/surfel_intersection.py):
   differentiable surfel hits
-- [`surfel_multiview_color_fit.py`](backends/drjit/examples/basics/surfel_multiview_color_fit.py):
+- [`surfel_multiview_color_fit.py`](drjit/examples/basics/surfel_multiview_color_fit.py):
   multiview surfel optimization
-- [`cornell_box.py`](backends/drjit/examples/renderer/cornell_box.py):
+- [`cornell_box.py`](drjit/examples/renderer/cornell_box.py):
   a compact renderer built from RayD primitives
 
 Process-per-GPU examples, runnable under `torchrun` with one rank per GPU, are
 under
-[`backends/torch/examples/distributed`](backends/torch/examples/distributed):
+[`torch/examples/distributed`](torch/examples/distributed):
 
-- [`ddp_intersect_train.py`](backends/torch/examples/distributed/ddp_intersect_train.py):
+- [`ddp_intersect_train.py`](torch/examples/distributed/ddp_intersect_train.py):
   rank-sharded differentiable `intersect` with an all-reduced vertex gradient
-- [`ddp_accum_grids.py`](backends/torch/examples/distributed/ddp_accum_grids.py):
+- [`ddp_accum_grids.py`](torch/examples/distributed/ddp_accum_grids.py):
   rank-sharded Monte-Carlo accumulation merged by all-reduce
 
 The Torch test and benchmark suite also serves as executable usage coverage:
 
-- [`test_intersect_grad.py`](backends/torch/tests/torch_backend/test_intersect_grad.py):
+- [`test_intersect_grad.py`](torch/tests/torch_backend/test_intersect_grad.py):
   reverse-mode geometry gradients
-- [`test_multipath.py`](backends/torch/tests/torch_backend/test_multipath.py):
+- [`test_multipath.py`](torch/tests/torch_backend/test_multipath.py):
   reflection, EPC, visibility, and diffraction APIs
-- [`benchmark_rayd_backends.py`](backends/torch/tests/benchmark_rayd_backends.py):
+- [`benchmark_rayd_backends.py`](torch/tests/benchmark_rayd_backends.py):
   same-process Torch/Dr.Jit comparison
 
 ## Performance
@@ -399,7 +399,7 @@ latency. Representative average latencies in milliseconds were:
 
 Forward mismatch counts were zero in that sweep, and the largest static
 gradient discrepancy was `9.54e-7`. Current backend-to-backend benchmarks live
-under [`backends/torch/tests`](backends/torch/tests) and should be rerun for the
+under [`torch/tests`](torch/tests) and should be rerun for the
 target GPU, CUDA toolkit, and workload before making deployment decisions.
 
 ## Device and Stream Selection
@@ -440,14 +440,14 @@ are documented in
 [`docs/dev/multi_gpu_operations.md`](docs/dev/multi_gpu_operations.md). The
 process-per-GPU recipes -- the only Dr.Jit multi-GPU route and the multi-node
 route for both backends -- are runnable under
-[`backends/torch/examples/distributed`](backends/torch/examples/distributed).
+[`torch/examples/distributed`](torch/examples/distributed).
 
 Whether a second GPU is worth engaging is a property of the workload: sharded
 rays travel twice, so multi-GPU pays off for compute-heavy per-ray work and
 large accumulations and loses for cheap queries with wide results. The measured
 scaling on 2x RTX A6000, the transfer-bound/compute-bound crossover arithmetic,
 and the benchmark that reproduces both
-([`backends/torch/tests/benchmark_multi_device.py`](backends/torch/tests/benchmark_multi_device.py))
+([`torch/tests/benchmark_multi_device.py`](torch/tests/benchmark_multi_device.py))
 are in the multi-GPU performance section of the same note.
 
 ## Building from Source
@@ -496,28 +496,28 @@ The multi-architecture CUDA matrix is reserved for release CI. Pass
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations
 are provided by
-[`backends/torch/include/rayd/torch/integration.h`](backends/torch/include/rayd/torch/integration.h).
+[`include/rayd/torch/integration.h`](include/rayd/torch/integration.h).
 This interface is intended for projects built in the same CMake/libtorch graph;
 it is not a stable binary ABI across unrelated libtorch builds.
 
 Shared RF device headers are public source-level contracts under
-`shared/include/rayd/shared/rf`. Transmission families are introduced as
+`include/rayd/shared/{transmission,scattering}`. Transmission families are introduced as
 dormant RayD candidates before a downstream pin and switch; dormancy does not
 create a second production owner or authorize runtime fallback dispatch.
 
 ## Repository Layout
 
-- [`backends/drjit`](backends/drjit): Dr.Jit Python bindings, C++/CUDA/OptiX
-  implementation, examples, and tests
-- [`backends/torch`](backends/torch): Torch Python API, dispatcher/autograd
-  bindings, C++/CUDA/OptiX implementation, and tests
-- [`shared/include`](shared/include): backend-neutral device contracts and UTD
-  math
-- [`shared/src`](shared/src): shared edge BVH, multipath, and scene-packing CUDA
-  cores
-- [`shared/contracts`](shared/contracts): machine-readable public API,
+- [`drjit`](drjit): thin Dr.Jit distribution/build frontend
+- [`torch`](torch): thin Torch distribution/build frontend
+- [`python/rayd/_impl`](python/rayd/_impl): private manifest-owned backend
+  implementations
+- [`include`](include): installed Dr.Jit, Torch integration, and shared numerical
+  headers organized by concept
+- [`src`](src): concept-major native implementation with adjacent unsuffixed
+  Torch, `*_jit.*` Dr.Jit, and `*_shared.*` backend-neutral variants
+- [`contracts`](contracts): machine-readable public API,
   operation, and path-exchange manifests
-- [`shared/benchmarks`](shared/benchmarks): benchmark schemas and recorded
+- [`benchmarks`](benchmarks): benchmark schemas and recorded
   baselines
 - [`scripts`](scripts): local build helpers (`build_local.cmd` / `.ps1`)
 - [`tests/packaging`](tests/packaging): distribution, namespace, and wheel-layout

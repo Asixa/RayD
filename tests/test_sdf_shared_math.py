@@ -2,7 +2,7 @@
 
 Two claims are checked. The first is structural, in the style of
 `tests/test_shared_headers.py` and `tests/test_share2_shared_math.py`: the two
-new headers under `shared/include/rayd/shared/sdf/` are backend-neutral, spell
+new headers under `include/rayd/shared/sdf/` are backend-neutral, spell
 only the shared host/device qualifier, and stay outside every committed-PTX
 include closure, which is what keeps `tests/test_ptx_source_digest.py` green by
 construction (ADR-0037 section 9).
@@ -27,12 +27,12 @@ from tests.test_rt_host_compile import _msvc_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "shared" / "include"
+SHARED_INCLUDE = ROOT / "include"
 SDF_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "sdf"
 GRID_HEADER = SDF_INCLUDE / "grid_sdf.cuh"
 TRACE_HEADER = SDF_INCLUDE / "sphere_trace.h"
 SMOKE_TU = ROOT / "tests" / "native" / "sdf_shared_math_smoke.cpp"
-PTX_SOURCES = ROOT / "backends" / "drjit" / "ptx_sources.json"
+PTX_SOURCES = ROOT / "drjit" / "ptx_sources.json"
 
 # A backend-neutral shared header may name no backend runtime, no OptiX, no CUDA
 # allocation or stream API, and no device-only qualifier outside the shared
@@ -161,7 +161,7 @@ class SdfHostSmokeTests(unittest.TestCase):
 
         # The headers are backend-neutral, so the artifacts land in the ignored
         # top-level build tree rather than inside either backend.
-        out_dir = ROOT / "build" / "sdf_host_compile"
+        out_dir = ROOT / "artifacts" / "sdf_host_compile"
         out_dir.mkdir(parents=True, exist_ok=True)
         executable = out_dir / "sdf_shared_math_smoke.exe"
         compile_cmd = [

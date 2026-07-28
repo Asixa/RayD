@@ -44,8 +44,8 @@ jobs:
         shell: bash
         run: |
           python -m unittest tests.packaging.test_project_metadata -v
-          (cd backends/drjit && python -m unittest tests.test_project_metadata -v)
-          (cd backends/torch && python -m unittest tests.test_project_metadata -v)
+          (cd drjit && python -m unittest tests.test_project_metadata -v)
+          (cd torch && python -m unittest tests.test_project_metadata -v)
 
   build-drjit-linux:
     name: rayd-drjit / manylinux_2_28 / py${{ matrix.python-version }}
@@ -148,13 +148,13 @@ jobs:
             --exclude libdrjit-extra.so
             --exclude libnanothread.so
             -w {dest_dir} {wheel} &&
-            python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
+            python /project/drjit/scripts/verify_cuda_binary_arches.py
             --stem _C {dest_dir}/*.whl &&
             $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
             chown -R --reference=/host${{ github.workspace }}
             $RAYD_SCCACHE_ROOT/rayd-sccache
         with:
-          package-dir: backends/drjit
+          package-dir: drjit
           output-dir: dist/drjit
       - uses: actions/upload-artifact@v4
         with:
@@ -282,15 +282,15 @@ jobs:
             --exclude libtorch_python.so
             --exclude libtorch_global_deps.so
             -w {dest_dir} {wheel} &&
-            python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
+            python /project/drjit/scripts/verify_cuda_binary_arches.py
             --stem _legacy_ops --stem _stable_ops {dest_dir}/*.whl &&
-            python /project/backends/torch/scripts/verify_stable_abi.py
-            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl &&
+            python /project/torch/scripts/verify_stable_abi.py
+            --source-root /project/src {dest_dir}/*.whl &&
             $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
             chown -R --reference=/host${{ github.workspace }}
             $RAYD_SCCACHE_ROOT/rayd-sccache
         with:
-          package-dir: backends/torch
+          package-dir: torch
           output-dir: dist/torch
       - uses: actions/upload-artifact@v4
         with:
@@ -396,13 +396,13 @@ jobs:
           python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
       - name: Build Dr.Jit wheel
         if: matrix.backend == 'drjit'
-        working-directory: backends/drjit
+        working-directory: drjit
         run: >-
           python -m build --wheel --no-isolation --outdir ../../dist/drjit
           -Cbuild-dir=artifacts/skbuild
       - name: Build Torch wheel
         if: matrix.backend == 'torch'
-        working-directory: backends/torch
+        working-directory: torch
         shell: pwsh
         run: |
           $startedAt = Get-Date
@@ -421,15 +421,15 @@ jobs:
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem dist/drjit/*.whl).FullName
-          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _C $wheel
+          python drjit/scripts/verify_cuda_binary_arches.py --stem _C $wheel
           python -m twine check $wheel
       - name: Verify Torch wheel
         if: matrix.backend == 'torch'
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem dist/torch/*.whl).FullName
-          python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops $wheel
-          python backends/torch/scripts/verify_stable_abi.py --source-root backends/torch/src/stable $wheel
+          python drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops $wheel
+          python torch/scripts/verify_stable_abi.py --source-root src $wheel
           python -m twine check $wheel
       - uses: actions/upload-artifact@v4
         with:

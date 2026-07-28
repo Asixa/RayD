@@ -117,7 +117,7 @@ jobs:
       - name: Configure Stable ABI target
         shell: bash
         run: |
-          cmake -S backends/torch -B artifacts/stable-abi -GNinja \
+          cmake -S torch -B artifacts/stable-abi -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
             -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
@@ -140,14 +140,14 @@ jobs:
       - name: Audit Stable ABI dependencies
         shell: bash
         run: |
-          python backends/torch/scripts/verify_stable_abi.py \
-            --source-root backends/torch/src/stable \
+          python torch/scripts/verify_stable_abi.py \
+            --source-root src \
             "$RAYD_STABLE_LIBRARY"
 
       - name: Verify CUDA fat binary architectures
         shell: bash
         run: |
-          python backends/drjit/scripts/verify_cuda_binary_arches.py \
+          python drjit/scripts/verify_cuda_binary_arches.py \
             --stem _stable_ops \
             --expected-sass 87,120 \
             --expected-ptx 120 \

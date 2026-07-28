@@ -18,17 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "adr" / "0038-replicated-multi-device-execution.md"
 OPERATIONS = ROOT / "docs" / "dev" / "multi_gpu_operations.md"
-BENCHMARK = ROOT / "backends" / "torch" / "tests" / "benchmark_multi_device.py"
+BENCHMARK = ROOT / "benchmarks" / "torch" / "benchmark_multi_device.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "multi_gpu.yml"
-SCHEMA = ROOT / "shared" / "benchmarks" / "multi_device_result.schema.json"
-MANIFEST = ROOT / "shared" / "benchmarks" / "multi_device_manifest.json"
-RECORD = (
-    ROOT
-    / "shared"
-    / "benchmarks"
-    / "baselines"
-    / "multi_device_2xa6000_20260727.json"
-)
+SCHEMA = ROOT / "benchmarks" / "multi_device_result.schema.json"
+MANIFEST = ROOT / "benchmarks" / "multi_device_manifest.json"
+RECORD = ROOT / "benchmarks" / "baselines" / "multi_device_2xa6000_20260727.json"
 
 
 def load(path: Path) -> dict:

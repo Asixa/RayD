@@ -1,11 +1,15 @@
 # ADR-0036: Backend-mirrored Python modules
 
-- Status: Accepted
+- Status: Superseded by ADR-0039
 - Date: 2026-07-25
 - Decision ID: `backend-mirrored-python-modules`
 - Scope: the pure-Python modules that exist in both `rayd.drjit` and
   `rayd.torch`
 
+> **Superseded by ADR-0039.** Canonical private implementations are now
+> co-located under the PEP 420 subtree `python/rayd/_impl/`. Disjoint explicit
+> wheel manifests give every installed file one owner, preserving independent
+> installation and uninstall behavior without mirrored source modules.
 ## Context
 
 `rayd` is a PEP 420 namespace with no package of its own; the only

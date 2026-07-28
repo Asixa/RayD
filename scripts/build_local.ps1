@@ -60,7 +60,7 @@ $env:CMAKE_BUILD_PARALLEL_LEVEL = "$Parallelism"
 $env:CMAKE_GENERATOR = "Ninja"
 
 function Build-Backend([string]$Name) {
-    $BackendRoot = Join-Path $RepoRoot "backends/$Name"
+    $BackendRoot = Join-Path $RepoRoot "$Name"
     $BuildDir = "build/local-$CudaArch"
     $BuildPath = Join-Path $BackendRoot $BuildDir
 

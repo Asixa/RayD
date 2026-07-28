@@ -5,7 +5,7 @@ wheel needs no OptiX SDK. Regeneration is opt-in and OFF by default, so an edit
 to a `.cu` file or to any header it reaches leaves the committed PTX describing
 older device code with nothing in the build to notice.
 
-`backends/drjit/ptx_sources.json` records, per module, the transitive
+`drjit/ptx_sources.json` records, per module, the transitive
 in-repository include closure of the `.cu` and a digest over its contents. This
 test recomputes that record from source and fails when it drifts. It needs no
 CUDA, no OptiX SDK, no GPU and no build, so it runs anywhere the repository is
@@ -26,12 +26,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND = ROOT / "backends" / "drjit"
+BACKEND = ROOT / "drjit"
 RECORD_PATH = BACKEND / "ptx_sources.json"
 SCRIPT_PATH = BACKEND / "scripts" / "audit_ptx_sources.py"
 CMAKELISTS = BACKEND / "CMakeLists.txt"
-RAYD_CUDA_CMAKE = BACKEND / "cmake" / "rayd_cuda.cmake"
-TORCH_CMAKELISTS = ROOT / "backends" / "torch" / "CMakeLists.txt"
+RAYD_CUDA_CMAKE = ROOT / "cmake" / "RayDOptix.cmake"
+TORCH_CMAKELISTS = ROOT / "torch" / "CMakeLists.txt"
 
 
 def _load_audit_script():
@@ -61,7 +61,7 @@ class PtxSourceDigestTest(unittest.TestCase):
         recorded_headers = sorted(
             module["header"] for module in RECORD["modules"].values())
         self.assertEqual(
-            _committed_ptx_headers(BACKEND / "include"), recorded_headers)
+            _committed_ptx_headers(ROOT / "generated" / "drjit" / "ptx"), recorded_headers)
 
         cmake = CMAKELISTS.read_text(encoding="utf-8")
         declared_options = set(
@@ -91,7 +91,7 @@ class PtxSourceDigestTest(unittest.TestCase):
                     f"(added={added}, removed={removed}). Regenerate the PTX with "
                     f"-D{recorded['option']}=ON, copy the build-tree header over "
                     f"{recorded['header']}, then run "
-                    f"'python backends/drjit/scripts/audit_ptx_sources.py --write'.")
+                    f"'python drjit/scripts/audit_ptx_sources.py --write'.")
                 self.assertEqual(
                     computed["external_includes"], recorded["external_includes"],
                     f"{name} gained or lost an out-of-repository include; its "
@@ -173,7 +173,7 @@ class PtxSourceDigestTest(unittest.TestCase):
         # The guard is Dr.Jit-scoped because only Dr.Jit commits PTX. Torch
         # regenerates every blob into the binary dir on each native build, so it
         # cannot go stale. Keep it that way.
-        self.assertEqual(_committed_ptx_headers(ROOT / "backends" / "torch"), [])
+        self.assertEqual(_committed_ptx_headers(ROOT / "torch"), [])
         torch_cmake = TORCH_CMAKELISTS.read_text(encoding="utf-8")
         headers = re.findall(
             r"^\s*set\(RAYD_TORCH_\w*PTX_HEADER\s+\"([^\"]+)\"\)",

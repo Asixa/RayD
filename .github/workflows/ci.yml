@@ -38,8 +38,8 @@ jobs:
         shell: bash
         run: |
           python -m unittest tests.packaging.test_project_metadata -v
-          (cd backends/drjit && python -m unittest tests.test_project_metadata tests.test_verify_cuda_binary_arches -v)
-          (cd backends/torch && python -m unittest tests.test_project_metadata -v)
+          (cd drjit && python -m unittest tests.test_project_metadata tests.test_verify_cuda_binary_arches -v)
+          (cd torch && python -m unittest tests.test_project_metadata -v)
 
   native-wheel:
     name: ${{ matrix.backend }} / ${{ matrix.os }} / py3.12 / quick CUDA
@@ -173,18 +173,18 @@ jobs:
             --exclude libdrjit-extra.so
             --exclude libnanothread.so
             -w {dest_dir} {wheel} &&
-            python /project/backends/drjit/scripts/verify_cuda_binary_arches.py
+            python /project/drjit/scripts/verify_cuda_binary_arches.py
             ${{ matrix.backend == 'drjit' && '--stem _C' || '--stem _legacy_ops --stem _stable_ops' }}
             --expected-sass 87,120 --expected-ptx 120 {dest_dir}/*.whl &&
             if [ "${{ matrix.backend }}" = "torch" ]; then
-            python /project/backends/torch/scripts/verify_stable_abi.py
-            --source-root /project/backends/torch/src/stable {dest_dir}/*.whl;
+            python /project/torch/scripts/verify_stable_abi.py
+            --source-root /project/src {dest_dir}/*.whl;
             fi &&
             $RAYD_SCCACHE_ROOT/sccache-bin/sccache --show-stats &&
             chown -R --reference=/host${{ github.workspace }}
             $RAYD_SCCACHE_ROOT/rayd-sccache
         with:
-          package-dir: backends/${{ matrix.backend }}
+          package-dir: ${{ matrix.backend }}
           output-dir: dist/${{ matrix.backend }}
 
       - name: Install CUDA Toolkit 12.8 on Windows
@@ -230,7 +230,7 @@ jobs:
         shell: pwsh
         run: |
           $output = Join-Path $env:GITHUB_WORKSPACE "dist/${{ matrix.backend }}"
-          python -m build "backends/${{ matrix.backend }}" --wheel --no-isolation --outdir $output -Cbuild-dir=artifacts/skbuild
+          python -m build "${{ matrix.backend }}" --wheel --no-isolation --outdir $output -Cbuild-dir=artifacts/skbuild
 
       - name: Verify quick CUDA architecture set
         if: runner.os == 'Windows'
@@ -238,10 +238,10 @@ jobs:
         run: |
           $wheel = (Get-ChildItem "dist/${{ matrix.backend }}/*.whl").FullName
           if ("${{ matrix.backend }}" -eq "drjit") {
-            python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _C --expected-sass 87,120 --expected-ptx 120 $wheel
+            python drjit/scripts/verify_cuda_binary_arches.py --stem _C --expected-sass 87,120 --expected-ptx 120 $wheel
           } else {
-            python backends/drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops --expected-sass 87,120 --expected-ptx 120 $wheel
-            python backends/torch/scripts/verify_stable_abi.py --source-root backends/torch/src/stable $wheel
+            python drjit/scripts/verify_cuda_binary_arches.py --stem _legacy_ops --stem _stable_ops --expected-sass 87,120 --expected-ptx 120 $wheel
+            python torch/scripts/verify_stable_abi.py --source-root src $wheel
           }
           python -m pip install twine
           python -m twine check $wheel

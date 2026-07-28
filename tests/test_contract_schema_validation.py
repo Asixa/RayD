@@ -6,7 +6,7 @@ from tests._schema_validate import SchemaValidationError, validate
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_DIR = ROOT / "shared" / "contracts"
+CONTRACT_DIR = ROOT / "contracts"
 
 
 def _load(name: str) -> dict:

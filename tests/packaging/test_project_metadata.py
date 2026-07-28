@@ -14,10 +14,10 @@ class DistributionMetadataTests(unittest.TestCase):
     def setUpClass(cls):
         cls.meta = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         cls.drjit = tomllib.loads(
-            (ROOT / "backends" / "drjit" / "pyproject.toml").read_text(encoding="utf-8")
+            (ROOT / "drjit" / "pyproject.toml").read_text(encoding="utf-8")
         )
         cls.torch = tomllib.loads(
-            (ROOT / "backends" / "torch" / "pyproject.toml").read_text(encoding="utf-8")
+            (ROOT / "torch" / "pyproject.toml").read_text(encoding="utf-8")
         )
 
     def test_all_distributions_share_one_version(self):

@@ -4,8 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE_DIR = ROOT / "shared" / "include" / "rayd" / "shared" / "edge"
-SOURCE_DIR = ROOT / "shared" / "src" / "edge"
+INCLUDE_DIR = ROOT / "include" / "rayd" / "shared" / "edge"
+SOURCE_DIR = ROOT / "src" / "edge"
 CONTRACT_HEADERS = (
     "bvh_types.h",
     "bvh_build.h",
@@ -14,8 +14,8 @@ CONTRACT_HEADERS = (
 )
 # P3 Stage A extracted the primitive-agnostic machinery into shared/bvh/. The
 # raw-pointer/caller-owned and enqueue-only contracts now also cover the core.
-BVH_CORE_INCLUDE_DIR = ROOT / "shared" / "include" / "rayd" / "shared" / "bvh"
-BVH_CORE_SOURCE_DIR = ROOT / "shared" / "src" / "bvh"
+BVH_CORE_INCLUDE_DIR = ROOT / "include" / "rayd" / "shared" / "bvh"
+BVH_CORE_SOURCE_DIR = ROOT / "src" / "bvh"
 BVH_CORE_HEADERS = (
     "topology.h",
     "build.h",
@@ -88,8 +88,8 @@ class BVH4SharedEdgeCoreTests(unittest.TestCase):
             "nanobind",
         )
         for path in (
-            SOURCE_DIR / "bvh_build.cu",
-            BVH_CORE_SOURCE_DIR / "build.cu",
+            SOURCE_DIR / "edge_shared.cu",
+            BVH_CORE_SOURCE_DIR / "build_shared.cu",
         ):
             source = path.read_text(encoding="utf-8")
             for token in forbidden:

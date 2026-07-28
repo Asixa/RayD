@@ -6,7 +6,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TORCH = ROOT / "backends" / "torch"
+TORCH_INCLUDE = ROOT / "include" / "rayd" / "torch"
+TORCH_SOURCE = ROOT / "src"
 
 
 def read(path: Path) -> str:
@@ -22,7 +23,7 @@ def struct_body(text: str, name: str) -> str:
 
 class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
     def test_api6_exposes_stable_layout_without_a_new_boundary(self):
-        integration = read(TORCH / "include" / "rayd" / "torch" / "integration.h")
+        integration = read(TORCH_INCLUDE / "integration.h")
         self.assertIn("kIntegrationApiVersion = 6", integration)
         self.assertIn('"rayd.torch.integration"', integration)
         self.assertIn("enum class DiffractionPathLayout", integration)
@@ -34,14 +35,14 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
             "DiffractionPathLayout layout = DiffractionPathLayout::Compact;", config
         )
         self.assertFalse(
-            (TORCH / "include" / "rayd" / "torch" / "integration_v2.h").exists()
+            (TORCH_INCLUDE / "integration_v2.h").exists()
         )
 
     def test_typed_impl_validates_and_threads_layout(self):
-        params = read(TORCH / "include" / "rayd" / "torch" / "diffraction" / "paths_params.h")
+        params = read(TORCH_INCLUDE / "diffraction" / "paths_params.h")
         self.assertIn("int output_layout;", struct_body(params, "DfrPathParams"))
 
-        ops = read(TORCH / "src" / "torch_ext" / "diffraction" / "ops.cpp")
+        ops = read(TORCH_SOURCE / "diffraction" / "diffraction.cpp")
         body = ops.split("DiffractionPathOutputs diffraction_paths_order1_forward_impl", 1)[1]
         body = body.split("py::tuple diffraction_path_outputs_to_tuple", 1)[0]
         self.assertIn("int output_layout", body)
@@ -57,7 +58,6 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
     def test_shared_exporter_uses_lane_only_for_source_lane(self):
         shared = read(
             ROOT
-            / "shared"
             / "include"
             / "rayd"
             / "shared"
@@ -74,12 +74,12 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
 
     def test_live_torch_raygen_uses_source_lane_reservation(self):
         params = read(
-            TORCH / "include" / "rayd" / "torch" / "diffraction" / "paths_params.h"
+            TORCH_INCLUDE / "diffraction" / "paths_params.h"
         )
         self.assertIn("kDiffractionPathLayoutCompact = 0", params)
         self.assertIn("kDiffractionPathLayoutSourceLane = 1", params)
 
-        optix = read(TORCH / "src" / "torch_ext" / "diffraction" / "paths_optix.cu")
+        optix = read(TORCH_SOURCE / "diffraction" / "paths_optix.cu")
         reserve = optix.split(
             "static __forceinline__ __device__ int reserve_path_slot", 1
         )[1].split("} // namespace", 1)[0]
@@ -90,7 +90,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertEqual(optix.count("reserve_path_slot(lane)"), 2)
 
     def test_direct_contract_covers_sparse_fixed_lane(self):
-        direct = read(TORCH / "tests" / "cpp" / "integration_test.cpp")
+        direct = read(ROOT / "tests" / "native" / "integration_test.cpp")
         self.assertIn("DiffractionPathLayout::SourceLane", direct)
         self.assertIn("source-lane export must preserve the pair/state lane index", direct)
         self.assertIn("compact and source-lane payloads must be bit-identical", direct)
@@ -101,7 +101,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
         self.assertEqual((ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes())
         link = "0032-source-lane-diffraction-path-layout.md"
         self.assertIn(link, read(ROOT / "AGENTS.md"))
-        self.assertIn(link, read(TORCH / "README.md"))
+        self.assertIn(link, read(ROOT / "torch" / "README.md"))
 
 
 if __name__ == "__main__":

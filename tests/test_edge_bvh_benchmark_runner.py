@@ -3,7 +3,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from backends.drjit.tests.benchmark_edge_bvh_matrix import (
+from benchmarks.drjit.benchmark_edge_bvh_matrix import (
     WORKER_PREFIX,
     _component_edge_counts,
     _mesh_components,
@@ -33,7 +33,7 @@ class EdgeBVHBenchmarkRunnerContractTests(unittest.TestCase):
             stderr="",
         )
         with patch(
-            "backends.drjit.tests.benchmark_edge_bvh_matrix.subprocess.run",
+            "benchmarks.drjit.benchmark_edge_bvh_matrix.subprocess.run",
             return_value=failed,
         ):
             with self.assertRaisesRegex(

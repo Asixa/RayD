@@ -1,7 +1,7 @@
 """Comparison policy for golden scene results.
 
 Discrete fields are compared for exact equality; continuous fields use the
-tolerances declared in ``shared/contracts/operations.json``; informative fields
+tolerances declared in ``contracts/operations.json``; informative fields
 are recorded in the baseline but never compared. These helpers run in the
 parent (host) process and need no GPU.
 """
@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OPERATIONS = ROOT / "shared" / "contracts" / "operations.json"
+OPERATIONS = ROOT / "contracts" / "operations.json"
 BASELINE_DIR = Path(__file__).resolve().parent / "baselines"
 
 

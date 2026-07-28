@@ -32,7 +32,7 @@ Dr.Jit consumers must also apply the 2026-05-21 class and method renames, which
 are breaking and independent of the namespace cut. In particular the AD/non-AD
 convention flipped (`Ray` is now non-AD, `RayAD` is the autodiff variant), and
 `trace_segment_visibility` / `trace_reflection_epc` became `visible` /
-`trace_refl_epc`. See [`backends/drjit/API_RENAME.md`](../backends/drjit/API_RENAME.md)
+`trace_refl_epc`. See [`drjit/API_RENAME.md`](../drjit/API_RENAME.md)
 for the complete old-to-new table.
 
 Land these downstream changes only after the pre-release wheels are available

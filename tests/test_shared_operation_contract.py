@@ -5,7 +5,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CONTRACT_PATH = ROOT / "shared" / "contracts" / "operations.json"
+CONTRACT_PATH = ROOT / "contracts" / "operations.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
@@ -51,7 +51,7 @@ class SharedOperationContractTests(unittest.TestCase):
         )
 
     def test_intersection_field_order_matches_torch_public_result(self):
-        source = (ROOT / "backends" / "torch" / "python" / "rayd" / "torch" / "types.py").read_text(
+        source = (ROOT / "python" / "rayd" / "_impl" / "geometry.py").read_text(
             encoding="utf-8"
         )
         block = source[source.index("class Intersection:") : source.index("    def is_valid", source.index("class Intersection:"))]

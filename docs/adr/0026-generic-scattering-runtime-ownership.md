@@ -1,10 +1,15 @@
 # ADR-0026: Generic scattering runtime ownership
 
-- Status: Accepted
+- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039
 - Date: 2026-07-19
 - Decision ID: `generic-scattering-runtime-ownership`
 - Scope: Channel Native direct-RayD integration, phases 9 and 10
 
+> **ADR-0039 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
+> `rf` ownership namespace below are historical. Canonical scattering owners
+> are `include/rayd/{shared,torch}/scattering/` and `src/scattering/`. The 17
+> operation contracts, compile profiles, fusion, stream, derivative, failure,
+> activation, rollback, and downstream atomic-switch clauses remain in force.
 ## Context
 
 Channel Native currently owns seventeen CUDA bindings that evaluate or sample

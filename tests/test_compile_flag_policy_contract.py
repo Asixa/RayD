@@ -1,9 +1,9 @@
 """Enforcement gate for the per-translation-unit CUDA numeric flag contract.
 
-`shared/include/rayd/shared/rt/numeric_policy.h` freezes the two backends'
+`include/rayd/shared/rt/numeric_policy.h` freezes the two backends'
 epsilon and sentinel divergences. It says nothing about the *compiler* numeric
 flags, and the two backends compile the same shared device-math headers under
-four different nvcc numeric profiles. `shared/contracts/compile_policy.json`
+four different nvcc numeric profiles. `contracts/compile_policy.json`
 declares that assignment; `docs/adr/0035-cuda-compile-flag-policy.md` records why
 each divergence is frozen. This test re-derives the assignment from both
 CMakeLists and fails when the declaration and the build disagree in either
@@ -36,12 +36,12 @@ from tests._schema_validate import validate
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DRJIT = ROOT / "backends" / "drjit"
-TORCH = ROOT / "backends" / "torch"
-CONTRACT_PATH = ROOT / "shared" / "contracts" / "compile_policy.json"
-SCHEMA_PATH = ROOT / "shared" / "contracts" / "compile_policy.schema.json"
+DRJIT = ROOT / "drjit"
+TORCH = ROOT / "torch"
+CONTRACT_PATH = ROOT / "contracts" / "compile_policy.json"
+SCHEMA_PATH = ROOT / "contracts" / "compile_policy.schema.json"
 ADR_PATH = ROOT / "docs" / "adr" / "0035-cuda-compile-flag-policy.md"
-NUMERIC_POLICY = ROOT / "shared" / "include" / "rayd" / "shared" / "rt" / "numeric_policy.h"
+NUMERIC_POLICY = ROOT / "include" / "rayd" / "shared" / "rt" / "numeric_policy.h"
 
 # Only flags that change device arithmetic. Anything else (-std, include dirs,
 # --extended-lambda, -Xcompiler, gencode) is out of scope by contract.
@@ -62,8 +62,8 @@ PROFILE_BY_FLAGS = {
 }
 
 INCLUDE_DIRS = {
-    "drjit": (DRJIT / "include", ROOT / "shared" / "include", DRJIT),
-    "torch": (TORCH / "include", ROOT / "shared" / "include", TORCH),
+    "drjit": (ROOT / "include", DRJIT),
+    "torch": (ROOT / "include", TORCH),
 }
 
 
@@ -159,7 +159,10 @@ def relative(path: Path) -> str:
 DRJIT_SINGLE = {"NAME", "SOURCE", "OUT_SOURCES", "HEADER", "OPTION"}
 DRJIT_MULTI = {"EXTRA_FLAGS", "DEPENDS"}
 DRJIT_FLAG = {"POSIX_NO_EXTENDED_LAMBDA"}
-DRJIT_PATH_VARS = {"RAYD_SOURCE_DIR": "src", "RAYD_INCLUDE_DIR": "include/rayd"}
+DRJIT_PATH_VARS = {
+    "RAYD_SOURCE_DIR": str(ROOT / "src"),
+    "RAYD_INCLUDE_DIR": str(ROOT / "include" / "rayd"),
+}
 
 
 def _split_win32_branch(body: str) -> dict[str, str]:
@@ -201,12 +204,16 @@ def drjit_helper_flags() -> dict[str, object]:
     Reported per platform branch, so the WIN32 and POSIX invocations of the same
     helper are compared against each other rather than merged.
     """
-    text = (DRJIT / "cmake" / "rayd_cuda.cmake").read_text(encoding="utf-8")
     result: dict[str, object] = {}
-    for name in ("rayd_cuda_object", "rayd_embed_ptx"):
+    helpers = {
+        "rayd_cuda_object": ROOT / "cmake" / "RayDCompilePolicy.cmake",
+        "rayd_embed_ptx": ROOT / "cmake" / "RayDOptix.cmake",
+    }
+    for name, helper_path in helpers.items():
+        text = helper_path.read_text(encoding="utf-8")
         match = re.search(
             rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
-        assert match, f"{name}() not found in cmake/rayd_cuda.cmake"
+        assert match, f"{name}() not found in {helper_path.relative_to(ROOT)}"
         branches = _split_win32_branch(strip_comments(match.group(1)))
         per_branch = {}
         per_branch_arch = {}
@@ -327,7 +334,11 @@ def torch_units() -> dict[tuple[str, str], dict]:
                 expanded.append(token)
         variable = re.match(r"^\$\{(\w+)\}$", items[items.index("OUTPUT") + 1])
         assert variable, "PTX custom command output is not a plain CMake variable"
-        source = resolve(command[command.index("--ptx") + 1], TORCH)
+        source = resolve(
+            command[command.index("--ptx") + 1],
+            TORCH,
+            {"RAYD_ROOT_DIR": ".."},
+        )
         arches = {ARCH_RE.match(t).group(1) for t in expanded if ARCH_RE.match(t)}
         assert len(arches) == 1, f"{variable.group(1)} declares arches {arches}"
         units[("torch", variable.group(1).lower())] = {
@@ -342,7 +353,7 @@ def torch_units() -> dict[tuple[str, str], dict]:
         }
 
     def add_object(raw: str, target: str) -> None:
-        source = resolve(raw, TORCH)
+        source = resolve(raw, TORCH, {"RAYD_ROOT_DIR": ".."})
         unit = relative(source)
         # One source compiled into two targets would carry two profiles under one
         # contract entry. Surface it instead of letting the last writer win.
@@ -417,7 +428,7 @@ def computed_header_exposure(units) -> dict[str, list[str]]:
     exposure: dict[str, set[str]] = {}
     for entry in units.values():
         for header in include_closure(ROOT / entry["source"], entry["backend"]):
-            if header.startswith("shared/include/"):
+            if header.startswith("include/rayd/shared/"):
                 exposure.setdefault(header, set()).add(entry["profile"])
     return {name: sorted(profiles) for name, profiles in sorted(exposure.items())}
 
@@ -428,27 +439,55 @@ DECLARED = {(entry["backend"], entry["unit"]): entry
             for entry in CONTRACT["translation_units"]}
 
 
+def derived_for(declared: dict) -> dict:
+    """Resolve a historical logical TU to its canonical physical compile."""
+    exact = DERIVED.get((declared["backend"], declared["unit"]))
+    if exact is not None and exact["source"] == declared["source"]:
+        return exact
+    matches = [
+        entry for entry in DERIVED.values()
+        if entry["backend"] == declared["backend"]
+        and entry["source"] == declared["source"]
+    ]
+    assert len(matches) == 1, (
+        f"{declared['backend']}/{declared['unit']} maps to "
+        f"{declared['source']!r}, which has {len(matches)} physical builds")
+    return matches[0]
+
+
 class CompileFlagPolicyContractTests(unittest.TestCase):
     def test_contract_matches_its_schema(self):
         validate(CONTRACT, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
 
     def test_declared_translation_units_match_the_build(self):
-        # Both directions. An undeclared unit is the blind spot this contract
-        # exists to close; a stale declaration is the same blind spot mirrored.
-        undeclared = sorted(f"{b}/{u}" for b, u in set(DERIVED) - set(DECLARED))
-        stale = sorted(f"{b}/{u}" for b, u in set(DECLARED) - set(DERIVED))
+        # ADR-0039 keeps all historical logical identities while allowing
+        # compatible identities to share one physical compile. Compare both
+        # directions at the physical-source layer, then separately pin the
+        # logical key count.
+        derived_sources = {
+            (entry["backend"], entry["source"]) for entry in DERIVED.values()}
+        declared_sources = {
+            (entry["backend"], entry["source"]) for entry in DECLARED.values()}
+        undeclared = sorted(f"{b}/{s}" for b, s in derived_sources - declared_sources)
+        stale = sorted(f"{b}/{s}" for b, s in declared_sources - derived_sources)
         self.assertEqual(
             (undeclared, stale), ([], []),
             f"compile_policy.json is out of sync with CMake. "
-            f"Undeclared in the contract: {undeclared}. "
-            f"Declared but not built: {stale}.")
+            f"Physical sources undeclared in the contract: {undeclared}. "
+            f"Declared physical sources not built: {stale}.")
         self.assertEqual(len(DECLARED), len(CONTRACT["translation_units"]),
                          "duplicate (backend, unit) key in the contract")
+        self.assertEqual(len(DECLARED), 80, "ADR-0039 preserves 80 logical TU roles")
+        self.assertFalse(
+            [unit for _, unit in DECLARED if "/" in unit],
+            "logical TU names must be stable concept roles, not physical paths",
+        )
 
     def test_declared_profile_and_arch_match_the_build(self):
-        for key in sorted(DERIVED):
-            derived, declared = DERIVED[key], DECLARED[key]
-            with self.subTest(unit="/".join(key)):
+        for key in sorted(DECLARED):
+            declared = DECLARED[key]
+            derived = derived_for(declared)
+            with self.subTest(unit="/".join(key), source=declared["source"]):
                 for field in ("source", "kind", "target", "profile",
                               "default_enabled"):
                     self.assertEqual(
@@ -471,12 +510,15 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         self.assertEqual(declared, PROFILE_BY_FLAGS)
 
     def test_helper_command_shapes_agree_across_platform_branches(self):
-        # cmake/rayd_cuda.cmake emits each nvcc invocation twice, once per
-        # platform. A numeric flag or PTX arch present in only one branch would
-        # make Linux and Windows compute different arithmetic from the same
-        # shared device-math headers, which no other test can see.
-        text = (DRJIT / "cmake" / "rayd_cuda.cmake").read_text(encoding="utf-8")
-        for name in ("rayd_cuda_object", "rayd_embed_ptx"):
+        # The root helpers emit each nvcc invocation twice, once per platform.
+        # A numeric flag or PTX arch present in only one branch would make Linux
+        # and Windows compute different arithmetic from the same shared headers.
+        helpers = {
+            "rayd_cuda_object": ROOT / "cmake" / "RayDCompilePolicy.cmake",
+            "rayd_embed_ptx": ROOT / "cmake" / "RayDOptix.cmake",
+        }
+        for name, helper_path in helpers.items():
+            text = helper_path.read_text(encoding="utf-8")
             match = re.search(
                 rf"function\({name}\)(.*?)^endfunction\(\)", text, re.DOTALL | re.MULTILINE)
             self.assertIsNotNone(match, name)
@@ -590,15 +632,19 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
             self.assertEqual(flag_shaped(tokens(remainder)), set())
         # And the helper file itself may only carry numeric flags inside the two
         # function bodies the contract models.
-        helper_remainder = strip_comments(
-            (DRJIT / "cmake" / "rayd_cuda.cmake").read_text(encoding="utf-8"))
-        for name in ("rayd_cuda_object", "rayd_embed_ptx"):
+        helper_sources = {
+            "rayd_cuda_object": ROOT / "cmake" / "RayDCompilePolicy.cmake",
+            "rayd_embed_ptx": ROOT / "cmake" / "RayDOptix.cmake",
+        }
+        for name, helper_path in helper_sources.items():
+            helper_remainder = strip_comments(helper_path.read_text(encoding="utf-8"))
             match = re.search(
                 rf"function\({name}\)(.*?)^endfunction\(\)",
                 helper_remainder, re.DOTALL | re.MULTILINE)
             self.assertIsNotNone(match, name)
             helper_remainder = helper_remainder.replace(match.group(1), "", 1)
-        self.assertEqual(flag_shaped(tokens(helper_remainder)), set())
+            self.assertEqual(
+                flag_shaped(tokens(helper_remainder)), set(), helper_path.name)
 
     def test_shared_header_exposure_is_recomputed_from_the_include_graph(self):
         computed = computed_header_exposure(DERIVED)
@@ -659,16 +705,20 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         self.assertEqual(len(regenerate), 8)
         self.assertEqual(set(regenerate.values()), {False})
         record = json.loads((DRJIT / "ptx_sources.json").read_text(encoding="utf-8"))
-        # Verification is attested per module (--mark-verified); the divergence
-        # holds while ANY module ships an unverified committed header.
-        self.assertIn(False, {m["regeneration_verified"]
-                              for m in record["modules"].values()})
+        # ADR-0039 Phase 3 is a hard gate: every relocated committed header was
+        # genuinely regenerated and byte-compared before the canonical closure
+        # record was written. D9 remains the build-time policy distinction:
+        # regeneration is opt-in and the verified committed headers ship by default.
+        self.assertEqual(
+            {m["regeneration_verified"] for m in record["modules"].values()},
+            {True},
+        )
 
         # D7: equal profile, unequal device code. The cited parity test is the
         # evidence, so it must still exist under that name.
-        parity = (DRJIT / "tests" / "drjit" / "test_cuda_multipath.py").read_text(
+        parity = (ROOT / "tests" / "parity" / "test_cuda_multipath.py").read_text(
             encoding="utf-8")
-        self.assertIn("def test_diffraction_paths_parity", parity)
+        self.assertIn("def test_diffraction_direct_and_unreachable_suffix_match_optix", parity)
 
     def test_adr_mandated_profiles_hold(self):
         by_source: dict[str, set[str]] = {}
@@ -699,7 +749,7 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         self.assertTrue(ADR_PATH.is_file())
         self.assertEqual(CONTRACT["record"], relative(ADR_PATH))
         adr = ADR_PATH.read_text(encoding="utf-8")
-        self.assertIn("shared/contracts/compile_policy.json", adr)
+        self.assertIn("contracts/compile_policy.json", adr)
         for divergence in CONTRACT["frozen_divergences"]:
             with self.subTest(divergence=divergence["id"]):
                 self.assertIn(divergence["id"], adr)
@@ -708,7 +758,7 @@ class CompileFlagPolicyContractTests(unittest.TestCase):
         # numeric_policy.h owns the constants and must point at this contract for
         # the flags, so a reader of either artifact finds the other.
         header = NUMERIC_POLICY.read_text(encoding="utf-8")
-        self.assertIn("shared/contracts/compile_policy.json", header)
+        self.assertIn("contracts/compile_policy.json", header)
 
 
 if __name__ == "__main__":

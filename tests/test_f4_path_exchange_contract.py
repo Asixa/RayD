@@ -6,13 +6,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = json.loads(
-    (ROOT / "shared" / "contracts" / "path_exchange.json").read_text(encoding="utf-8")
+    (ROOT / "contracts" / "path_exchange.json").read_text(encoding="utf-8")
 )
+IMPLEMENTATIONS = {
+    "drjit": ROOT / "python" / "rayd" / "_impl" / "path_exchange_jit.py",
+    "torch": ROOT / "python" / "rayd" / "_impl" / "path_exchange.py",
+}
 
 
 def load_adapter(backend):
     return runpy.run_path(
-        str(ROOT / "backends" / backend / "python" / "rayd" / backend / "path_exchange.py")
+        str(IMPLEMENTATIONS[backend])
     )
 
 
@@ -65,7 +69,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
 
     def test_cpp_contract_freezes_pod_layout_and_enums(self):
         header = (
-            ROOT / "shared" / "include" / "rayd" / "shared" / "multipath" / "path_record.h"
+            ROOT / "include" / "rayd" / "shared" / "multipath" / "path_record.h"
         ).read_text(encoding="utf-8")
         for token in (
             "PathInteractionKind",
@@ -79,10 +83,19 @@ class F4PathExchangeContractTests(unittest.TestCase):
         ):
             self.assertIn(token, header)
 
-    def test_backend_adapters_are_identical_and_conversion_parity_holds(self):
-        drjit_path = ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit" / "path_exchange.py"
-        torch_path = ROOT / "backends" / "torch" / "python" / "rayd" / "torch" / "path_exchange.py"
+    def test_private_implementations_are_identical_and_conversion_parity_holds(self):
+        drjit_path = IMPLEMENTATIONS["drjit"]
+        torch_path = IMPLEMENTATIONS["torch"]
         self.assertEqual(drjit_path.read_bytes(), torch_path.read_bytes())
+
+        drjit_frontend = (
+            ROOT / "drjit" / "python" / "rayd" / "drjit" / "path_exchange.py"
+        ).read_text(encoding="utf-8")
+        torch_frontend = (
+            ROOT / "torch" / "python" / "rayd" / "torch" / "path_exchange.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("rayd._impl.path_exchange_jit", drjit_frontend)
+        self.assertIn("rayd._impl.path_exchange", torch_frontend)
         modules = [load_adapter("drjit"), load_adapter("torch")]
         records = []
         for module in modules:

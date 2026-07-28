@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DECISION_PATH = ROOT / "shared/contracts/surfel_backend_decision.json"
-MANIFEST_PATH = ROOT / "shared/contracts/public_api.json"
+DECISION_PATH = ROOT / "contracts/surfel_backend_decision.json"
+MANIFEST_PATH = ROOT / "contracts/public_api.json"
 
 
 class SurfelBackendDecisionTests(unittest.TestCase):
@@ -43,10 +43,12 @@ class SurfelBackendDecisionTests(unittest.TestCase):
         self.assertFalse(evidence["reuse"]["host_scene_owner_backend_neutral"])
         self.assertFalse(evidence["reuse"]["ad_replay_backend_neutral"])
 
-        self.assertTrue((ROOT / "backends/drjit/src/surfel/surfel_trace.cu").is_file())
-        self.assertTrue((ROOT / "backends/drjit/src/surfel/surfel.cpp").is_file())
-        torch_sources = ROOT / "backends/torch/src"
-        self.assertFalse(any(torch_sources.rglob("*surfel*")))
+        self.assertTrue((ROOT / "src/surfel/surfel_optix_jit.cu").is_file())
+        self.assertTrue((ROOT / "src/surfel/surfel_jit.cpp").is_file())
+        torch_frontend_sources = ROOT / "torch" / "src"
+        self.assertFalse(torch_frontend_sources.exists())
+        torch_cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertNotIn("src/surfel/", torch_cmake)
 
     def test_reconsideration_is_gated_and_core_parity_stays_first(self) -> None:
         gates = set(self.decision["reconsideration_gates"])

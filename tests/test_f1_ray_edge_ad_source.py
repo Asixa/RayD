@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class F1RayEdgeAdSourceTests(unittest.TestCase):
     def test_autograd_calls_fixed_winner_ray_edge_ops(self):
         source = (
-            ROOT / "backends/torch/python/rayd/torch/autograd.py"
+            ROOT / "python/rayd/_impl/multipath.py"
         ).read_text(encoding="utf-8")
         self.assertIn("nearest_edge_ray_backward_optional", source)
         self.assertIn("nearest_edge_ray_jvp_optional", source)
@@ -19,7 +19,7 @@ class F1RayEdgeAdSourceTests(unittest.TestCase):
 
     def test_dispatcher_registers_ray_edge_derivative_ops(self):
         source = (
-            ROOT / "backends/torch/src/torch_ext/library.cpp"
+            ROOT / "src/bindings/library.cpp"
         ).read_text(encoding="utf-8")
         for operation in (
             "nearest_edge_ray_backward_optional",
@@ -30,7 +30,7 @@ class F1RayEdgeAdSourceTests(unittest.TestCase):
 
     def test_cuda_adapter_uses_shared_ray_segment_derivatives(self):
         source = (
-            ROOT / "backends/torch/src/torch_ext/edge/edge_backward.cu"
+            ROOT / "src/edge/edge_queries.cu"
         ).read_text(encoding="utf-8")
         self.assertIn("shared::edge::ray_segment_vjp_fixed_winner", source)
         self.assertIn("shared::edge::ray_segment_jvp_fixed_winner", source)
@@ -38,7 +38,7 @@ class F1RayEdgeAdSourceTests(unittest.TestCase):
 
     def test_tmax_is_a_detached_domain_boundary(self):
         source = (
-            ROOT / "backends/torch/python/rayd/torch/autograd.py"
+            ROOT / "python/rayd/_impl/multipath.py"
         ).read_text(encoding="utf-8")
         jvp_start = source.index("class _NearestEdgeRayFunction")
         jvp_end = source.index("\ndef nearest_edge_ray", jvp_start)

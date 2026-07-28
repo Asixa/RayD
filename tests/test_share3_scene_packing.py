@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = ROOT / "shared" / "include" / "rayd" / "shared" / "scene" / "packing.h"
-SOURCE = ROOT / "shared" / "src" / "scene" / "packing.cu"
-TORCH_ADAPTER = ROOT / "backends" / "torch" / "src" / "torch_ext" / "scene" / "cache_kernels.cu"
+HEADER = ROOT / "include" / "rayd" / "shared" / "scene" / "packing.h"
+SOURCE = ROOT / "src" / "scene" / "packing_shared.cu"
+TORCH_ADAPTER = ROOT / "src" / "scene" / "cache.cu"
 
 
 class Share3ScenePackingTests(unittest.TestCase):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = json.loads((ROOT / "shared" / "contracts" / "operations.json").read_text())
+CONTRACT = json.loads((ROOT / "contracts" / "operations.json").read_text())
 
 
 def run_script(script):

@@ -8,15 +8,20 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_DIR = ROOT / "shared" / "contracts"
+CONTRACT_DIR = ROOT / "contracts"
 MANIFEST_PATH = CONTRACT_DIR / "public_api.json"
 SCHEMA_PATH = CONTRACT_DIR / "public_api.schema.json"
 MANIFEST = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-DRJIT_BINDING_SOURCE = ROOT / "backends" / "drjit" / "src" / "rayd.cpp"
+DRJIT_BINDING_SOURCE = ROOT / "src" / "bindings" / "module_jit.cpp"
 
-DRJIT_PACKAGE = ROOT / "backends" / "drjit" / "python" / "rayd" / "drjit"
-TORCH_PACKAGE = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
+DRJIT_PACKAGE = ROOT / "drjit" / "python" / "rayd" / "drjit"
+TORCH_PACKAGE = ROOT / "torch" / "python" / "rayd" / "torch"
+IMPL_PACKAGE = ROOT / "python" / "rayd" / "_impl"
+DRJIT_CAPABILITIES = IMPL_PACKAGE / "capabilities_jit.py"
+TORCH_CAPABILITIES = IMPL_PACKAGE / "capabilities.py"
+DRJIT_RUNTIME = IMPL_PACKAGE / "runtime_jit.py"
+TORCH_GEOMETRY = IMPL_PACKAGE / "geometry.py"
 DRJIT_NATIVE_STUB = DRJIT_PACKAGE / "_C.pyi"
 # `rayd/drjit/__init__.pyi` is the one shadow stub that has to stay. It carries
 # no annotations of its own -- it re-exports `_C` and the two `_capabilities`
@@ -36,21 +41,7 @@ DRJIT_TOP_LEVEL_STUB = DRJIT_PACKAGE / "__init__.pyi"
 # nanobind extension has no Python source to annotate and the top-level stub
 # shields the checker from a broken third-party stub.
 DRJIT_PUBLIC_MODULES = ("__init__", "path_exchange")
-TORCH_PUBLIC_MODULES = (
-    "__init__",
-    "autograd",
-    "camera",
-    "mesh",
-    "path_exchange",
-    "scene",
-    "sdf",
-    "types",
-    # Private module, public surface: `MultiDeviceOptions` is re-exported from
-    # `rayd.torch` and `DeviceCalibration` is what `Scene.calibrate_devices()`
-    # hands back, so both are as reachable for a downstream caller as anything
-    # in the modules above.
-    "_multi",
-)
+TORCH_PUBLIC_MODULES = ("__init__", "path_exchange")
 
 # Dunder methods that are part of a public class's callable surface and were
 # typed by the removed stubs; every other dunder stays out of scope.
@@ -221,7 +212,8 @@ def _reexported_names(statements):
     return {
         alias.asname or alias.name
         for node in statements
-        if isinstance(node, ast.ImportFrom) and node.level > 0
+        if isinstance(node, ast.ImportFrom)
+        and (node.level > 0 or (node.module or "").startswith("rayd._impl"))
         for alias in node.names
         if alias.name != "*" and not (alias.asname or alias.name).startswith("_")
     }
@@ -272,7 +264,7 @@ def _star_imported_modules(statements):
         node.module
         for node in statements
         if isinstance(node, ast.ImportFrom)
-        and node.level == 1
+        and (node.level == 1 or (node.module or "").startswith("rayd."))
         and any(alias.name == "*" for alias in node.names)
     }
 
@@ -343,10 +335,11 @@ class PublicApiManifestTests(unittest.TestCase):
         schema_hash = hashlib.sha256(
             MANIFEST_PATH.read_bytes().replace(b"\r\n", b"\n")
         ).hexdigest()
-        for backend in ("drjit", "torch"):
-            module_path = (
-                ROOT / "backends" / backend / "python" / "rayd" / backend / "_capabilities.py"
-            )
+        capability_modules = {
+            "drjit": DRJIT_CAPABILITIES,
+            "torch": TORCH_CAPABILITIES,
+        }
+        for backend, module_path in capability_modules.items():
             namespace = runpy.run_path(str(module_path))
             flat = namespace["backend_capabilities"]()
             rich = namespace["api_manifest"]()
@@ -394,12 +387,16 @@ class PublicApiManifestTests(unittest.TestCase):
         a downstream type checker at all, so it is load-bearing rather than
         decorative now that the shadow stubs are gone.
         """
-        for package in (DRJIT_PACKAGE, TORCH_PACKAGE):
-            with self.subTest(package=package.name):
+        packages = {
+            "drjit": (DRJIT_PACKAGE, DRJIT_CAPABILITIES),
+            "torch": (TORCH_PACKAGE, TORCH_CAPABILITIES),
+        }
+        for backend, (package, capability_path) in packages.items():
+            with self.subTest(package=backend):
                 self.assertEqual((package / "py.typed").read_text(encoding="utf-8"), "")
                 capabilities = {
                     node.name: node
-                    for node in _module_statements(package / "_capabilities.py")
+                    for node in _module_statements(capability_path)
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 }
                 for name in ("backend_capabilities", "api_manifest"):
@@ -432,9 +429,11 @@ class PublicApiManifestTests(unittest.TestCase):
         ast.parse(
             DRJIT_NATIVE_STUB.read_text(encoding="utf-8"), filename=str(DRJIT_NATIVE_STUB)
         )
-        runtime = _module_statements(DRJIT_PACKAGE / "__init__.py")
+        frontend = _module_statements(DRJIT_PACKAGE / "__init__.py")
+        runtime = _module_statements(DRJIT_RUNTIME)
         shield = _module_statements(DRJIT_TOP_LEVEL_STUB)
-        self.assertIn("_C", _star_imported_modules(runtime))
+        self.assertIn("rayd._impl.runtime_jit", _star_imported_modules(frontend))
+        self.assertIn("rayd.drjit._C", _star_imported_modules(runtime))
         self.assertIn("_C", _star_imported_modules(shield))
         # `__all__` names the extension does not bind have to be re-exported by
         # the shield explicitly, or they are unresolvable for the same reason.
@@ -522,7 +521,7 @@ class PublicApiManifestTests(unittest.TestCase):
         reexported = _reexported_names(statements)
         defined = {
             node.name
-            for node in _module_statements(TORCH_PACKAGE / "types.py")
+            for node in _module_statements(TORCH_GEOMETRY)
             if isinstance(node, ast.ClassDef) and _is_public(node.name)
         }
         for name in (
@@ -537,7 +536,7 @@ class PublicApiManifestTests(unittest.TestCase):
                 self.assertIn(name, declared)
 
     def test_drjit_top_level_all_matches_native_bindings(self):
-        runtime = ast.parse((DRJIT_PACKAGE / "__init__.py").read_text(encoding="utf-8"))
+        runtime = ast.parse(DRJIT_RUNTIME.read_text(encoding="utf-8"))
         all_node = next(
             node for node in runtime.body
             if isinstance(node, ast.Assign)
@@ -551,7 +550,7 @@ class PublicApiManifestTests(unittest.TestCase):
         self.assertEqual(
             declared,
             expected,
-            "rayd.drjit.__all__ is out of sync with backends/drjit/src/rayd.cpp; "
+            "rayd.drjit.__all__ is out of sync with src/bindings/module_jit.cpp; "
             f"missing={sorted(expected - declared)} stale={sorted(declared - expected)}",
         )
 

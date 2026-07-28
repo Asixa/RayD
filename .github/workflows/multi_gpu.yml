@@ -40,7 +40,7 @@ on:
         default: python
       run_benchmark:
         description: >-
-          Also run backends/torch/tests/benchmark_multi_device.py and retain
+          Also run torch/tests/benchmark_multi_device.py and retain
           its schema-versioned JSON artifact. Benchmark execution errors fail
           the job; speedup values remain measurements rather than thresholds.
         required: false
@@ -71,7 +71,7 @@ jobs:
       PYTHON: ${{ inputs.python || 'python' }}
       # The extension is built in-tree on this route (see the "Build" step),
       # so the backend package is imported from the working copy.
-      PYTHONPATH: ${{ github.workspace }}/backends/torch/python
+      PYTHONPATH: ${{ github.workspace }}/python:${{ github.workspace }}/torch/python
 
     steps:
       - uses: actions/checkout@v5
@@ -100,14 +100,14 @@ jobs:
         shell: bash
         # The runner is expected to carry CUDA, the OptiX headers and a CUDA
         # Torch already; only RayD itself is built here, with the editable dev
-        # command `backends/torch/scripts/dev_build_native.ps1` documents. Set
+        # command `torch/scripts/dev_build_native.ps1` documents. Set
         # RAYD_CI_PREBUILT=1 on a runner that keeps a warm build tree instead
         # of rebuilding from scratch on every dispatch.
         run: |
           if [ "${RAYD_CI_PREBUILT:-0}" = "1" ]; then
             echo "RAYD_CI_PREBUILT=1: reusing the runner's existing build"
           else
-            "$PYTHON" -m pip install --no-build-isolation -e backends/torch \
+            "$PYTHON" -m pip install --no-build-isolation -e torch \
               -Cbuild-dir=build/ci-multi-gpu
           fi
           # Prints the module that will actually be tested, so a stale or

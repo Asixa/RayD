@@ -1,8 +1,8 @@
 """Dependency-free JSON-Schema validator for the RayD contract schemas.
 
 Implements only the JSON-Schema draft 2020-12 constructs used by
-``shared/contracts/public_api.schema.json`` and
-``shared/contracts/path_exchange.schema.json``. Any schema keyword or
+``contracts/public_api.schema.json`` and
+``contracts/path_exchange.schema.json``. Any schema keyword or
 ``type`` value it does not implement raises ``NotImplementedError`` so that
 schema growth cannot silently skip validation.
 """

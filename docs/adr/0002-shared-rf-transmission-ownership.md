@@ -1,10 +1,16 @@
 # ADR-0002: Shared RF primitives and transmission ownership
 
-- Status: Accepted
+- Status: Accepted; source path and ownership-namespace clauses superseded by ADR-0039
 - Date: 2026-07-19
 - Decision ID: `shared-rf-transmission-ownership`
 - Scope: Channel Native direct-RayD integration, phases 5 and 6
 
+> **ADR-0039 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
+> `rf` ownership namespace below are historical. Canonical transmission owners
+> are `include/rayd/{shared,torch}/transmission/`; cross-concept field transport
+> is flat under `include/rayd/{shared,torch}/`. Numerical ownership, fusion,
+> stream, activation, rollback, and downstream atomic-switch clauses remain in
+> force.
 ## Context
 
 Channel Native currently owns both the public Channel contracts and the CUDA

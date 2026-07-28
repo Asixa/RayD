@@ -1,7 +1,7 @@
 {
   "backend": "drjit",
   "comparison_policy": {
-    "continuous": "shared/contracts/operations.json tolerances (default_abs, default_rel)",
+    "continuous": "contracts/operations.json tolerances (default_abs, default_rel)",
     "discrete": "exact bitwise equality (ints, bools-as-ints, strings)",
     "informative": "recorded but not compared (traversal-order or tie dependent)"
   },

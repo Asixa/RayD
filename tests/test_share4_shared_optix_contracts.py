@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "shared/include/rayd/shared/optix"
+SHARED = ROOT / "include/rayd/shared/optix"
 
 
 class Share4SharedOptixContractsTests(unittest.TestCase):
@@ -24,12 +24,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
 
     def test_backend_headers_are_thin_shared_aliases(self):
         headers = (
-            ("backends/drjit/include/rayd/multipath/reflection_trace_params.h", "ReflectionTraceParams"),
-            ("backends/torch/include/rayd/torch/reflection/trace_params.h", "ReflectionTraceParams"),
-            ("backends/drjit/include/rayd/multipath/segment_visibility_params.h", "SegmentVisibilityParams"),
-            ("backends/torch/include/rayd/torch/reflection/visibility_params.h", "SegmentVisibilityParams"),
-            ("backends/drjit/include/rayd/multipath/reflection_epc_params.h", "ReflEpcParams"),
-            ("backends/torch/include/rayd/torch/reflection/epc_params.h", "ReflEpcParams"),
+            ("include/rayd/multipath/reflection_trace_params.h", "ReflectionTraceParams"),
+            ("include/rayd/torch/reflection/trace_params.h", "ReflectionTraceParams"),
+            ("include/rayd/multipath/segment_visibility_params.h", "SegmentVisibilityParams"),
+            ("include/rayd/torch/visibility/visibility_params.h", "SegmentVisibilityParams"),
+            ("include/rayd/multipath/reflection_epc_params.h", "ReflEpcParams"),
+            ("include/rayd/torch/reflection/epc_params.h", "ReflEpcParams"),
         )
         for relative, type_name in headers:
             source = (ROOT / relative).read_text(encoding="utf-8")
@@ -80,12 +80,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertIn("optixTrace", (SHARED / name).read_text(encoding="utf-8"))
 
         adapters = (
-            ("backends/drjit/src/multipath/reflection_trace.cu", "reflection_trace_device.cuh"),
-            ("backends/torch/src/torch_ext/reflection/trace_optix.cu", "reflection_trace_device.cuh"),
-            ("backends/drjit/src/multipath/reflection_epc.cu", "reflection_epc_device.cuh"),
-            ("backends/torch/src/torch_ext/reflection/epc_optix.cu", "reflection_epc_device.cuh"),
-            ("backends/drjit/src/multipath/segment_visibility.cu", "segment_visibility_device.cuh"),
-            ("backends/torch/src/torch_ext/reflection/visibility_optix.cu", "segment_visibility_device.cuh"),
+            ("src/reflection/trace_optix_jit.cu", "reflection_trace_device.cuh"),
+            ("src/reflection/trace_optix.cu", "reflection_trace_device.cuh"),
+            ("src/reflection/epc_optix_jit.cu", "reflection_epc_device.cuh"),
+            ("src/reflection/epc_optix.cu", "reflection_epc_device.cuh"),
+            ("src/visibility/visibility_optix_jit.cu", "segment_visibility_device.cuh"),
+            ("src/visibility/visibility_optix.cu", "segment_visibility_device.cuh"),
         )
         for relative, shared_header in adapters:
             source = (ROOT / relative).read_text(encoding="utf-8")
@@ -96,36 +96,36 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertNotIn("struct VisibilityPayload {", source)
 
     def test_backend_policies_preserve_existing_device_semantics(self):
-        drjit_trace = (ROOT / "backends/drjit/src/multipath/reflection_trace.cu").read_text(
+        drjit_trace = (ROOT / "src/reflection/trace_optix_jit.cu").read_text(
             encoding="utf-8"
         )
-        torch_trace = (ROOT / "backends/torch/src/torch_ext/reflection/trace_optix.cu").read_text(
+        torch_trace = (ROOT / "src/reflection/trace_optix.cu").read_text(
             encoding="utf-8"
         )
         self.assertIn("DrJitReflectionTracePolicy", drjit_trace)
         self.assertIn("TorchReflectionTracePolicy", torch_trace)
 
-        drjit_visibility = (ROOT / "backends/drjit/src/multipath/segment_visibility.cu").read_text(
+        drjit_visibility = (ROOT / "src/visibility/visibility_optix_jit.cu").read_text(
             encoding="utf-8"
         )
-        torch_visibility = (ROOT / "backends/torch/src/torch_ext/reflection/visibility_optix.cu").read_text(
+        torch_visibility = (ROOT / "src/visibility/visibility_optix.cu").read_text(
             encoding="utf-8"
         )
         self.assertIn("SegmentVisibilityDevicePolicy<false, false>", drjit_visibility)
         self.assertIn("SegmentVisibilityDevicePolicy<true, true>", torch_visibility)
 
-        drjit_epc = (ROOT / "backends/drjit/src/multipath/reflection_epc.cu").read_text(
+        drjit_epc = (ROOT / "src/reflection/epc_optix_jit.cu").read_text(
             encoding="utf-8"
         )
-        torch_epc = (ROOT / "backends/torch/src/torch_ext/reflection/epc_optix.cu").read_text(
+        torch_epc = (ROOT / "src/reflection/epc_optix.cu").read_text(
             encoding="utf-8"
         )
         self.assertIn("DisableAnyHitWithoutIgnore = false", drjit_epc)
         self.assertIn("DisableAnyHitWithoutIgnore = true", torch_epc)
 
     def test_ptx_builds_depend_on_shared_device_programs(self):
-        drjit_cmake = (ROOT / "backends/drjit/CMakeLists.txt").read_text(encoding="utf-8")
-        torch_cmake = (ROOT / "backends/torch/CMakeLists.txt").read_text(encoding="utf-8")
+        drjit_cmake = (ROOT / "drjit/CMakeLists.txt").read_text(encoding="utf-8")
+        torch_cmake = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
         for header in (
             "reflection_trace_device.cuh",
             "reflection_epc_device.cuh",

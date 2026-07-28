@@ -4,7 +4,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TORCH = ROOT / "backends" / "torch"
+TORCH_INCLUDE = ROOT / "include" / "rayd" / "torch"
+TORCH_SOURCE = ROOT / "src"
+TORCH_PYTHON = ROOT / "python" / "rayd" / "_impl"
 
 
 def read(path: Path) -> str:
@@ -20,7 +22,7 @@ def struct_body(text: str, name: str) -> str:
 
 class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
     def test_required_path_export_validity_survives_api6(self):
-        integration = read(TORCH / "include" / "rayd" / "torch" / "integration.h")
+        integration = read(TORCH_INCLUDE / "integration.h")
         self.assertIn("kIntegrationApiVersion = 6", integration)
         config = struct_body(integration, "DiffractionPathConfig")
         self.assertEqual(config.count("at::Tensor active;"), 1)
@@ -35,7 +37,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         )
 
     def test_dispatch_and_public_python_require_active(self):
-        library = read(TORCH / "src" / "torch_ext" / "library.cpp")
+        library = read(TORCH_SOURCE / "bindings" / "library.cpp")
         schema = next(
             line
             for line in library.splitlines()
@@ -44,14 +46,14 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         self.assertIn("Tensor active", schema)
         self.assertNotIn("Tensor? active", schema)
 
-        autograd = read(TORCH / "python" / "rayd" / "torch" / "autograd.py")
+        autograd = read(TORCH_PYTHON / "multipath.py")
         trace_native = autograd.split("def trace_dfr_paths_order1_native", 1)[1].split(
             ") -> DfrPaths:", 1
         )[0]
         self.assertIn("active: torch.Tensor,", trace_native)
         self.assertNotIn("active: torch.Tensor | None", trace_native)
 
-        scene = read(TORCH / "python" / "rayd" / "torch" / "scene.py")
+        scene = read(TORCH_PYTHON / "scene.py")
         trace_scene = scene.split("def trace_dfr_paths", 1)[1].split(") -> DfrPaths:", 1)[
             0
         ]
@@ -59,7 +61,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         self.assertNotIn("active: torch.Tensor | None", trace_scene)
 
     def test_host_contract_is_cuda_bool_contiguous_exact_width(self):
-        ops = read(TORCH / "src" / "torch_ext" / "diffraction" / "ops.cpp")
+        ops = read(TORCH_SOURCE / "diffraction" / "diffraction.cpp")
         body = ops.split("DiffractionPathOutputs diffraction_paths_order1_forward_impl", 1)[1]
         body = body.split("py::tuple diffraction_path_outputs_to_tuple", 1)[0]
         for contract in (
@@ -76,10 +78,10 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
 
     def test_device_paths_have_no_implicit_all_valid_branch(self):
         optix = read(
-            TORCH / "src" / "torch_ext" / "diffraction" / "paths_optix.cu"
+            TORCH_SOURCE / "diffraction" / "paths_optix.cu"
         )
         shared = read(
-            ROOT / "shared" / "include" / "rayd" / "shared" / "multipath"
+            ROOT / "include" / "rayd" / "shared" / "multipath"
             / "diffraction_paths_algo.h"
         )
         for source in (optix, shared):
@@ -101,7 +103,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
         self.assertEqual((ROOT / "AGENTS.md").read_bytes(), (ROOT / "CLAUDE.md").read_bytes())
         link = "0031-required-diffraction-path-validity.md"
         self.assertIn(link, read(ROOT / "AGENTS.md"))
-        self.assertIn(link, read(TORCH / "README.md"))
+        self.assertIn(link, read(ROOT / "torch" / "README.md"))
 
 
 if __name__ == "__main__":

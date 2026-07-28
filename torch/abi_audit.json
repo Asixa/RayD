@@ -1,0 +1,146 @@
+{
+  "artifacts": {
+    "_C": {
+      "exports": [
+        "build_info",
+        "contract_values"
+      ],
+      "links_native_core": false,
+      "sources": [
+        "src/bindings/module.cpp"
+      ],
+      "uses_torch_extension_header": false
+    },
+    "_legacy_ops": {
+      "links_native_core": true,
+      "links_torch_python": true,
+      "operator_count": 57,
+      "operators": [
+        "camera_sample_ray",
+        "camera_sample_ray_backward",
+        "camera_sample_to_world",
+        "camera_sample_to_world_backward",
+        "camera_world_to_sample",
+        "camera_world_to_sample_backward",
+        "default_dfr_material",
+        "diffraction_accumulation_chain_backward",
+        "diffraction_accumulation_chain_jvp",
+        "diffraction_accumulation_direct_backward",
+        "diffraction_accumulation_direct_jvp",
+        "diffraction_accumulation_forward",
+        "diffraction_coherent_accumulation_forward",
+        "diffraction_path_stats",
+        "diffraction_paths_order1_forward",
+        "intersect_ad_flags",
+        "intersect_ad_t",
+        "intersect_backward_optional",
+        "intersect_backward_t",
+        "intersect_backward_t_h",
+        "intersect_forward",
+        "intersect_forward_ad_flags",
+        "intersect_forward_flags",
+        "intersect_forward_t",
+        "intersect_forward_tape_h",
+        "intersect_jvp_optional",
+        "intersection_empty_fields",
+        "intersection_valid",
+        "nearest_edge_backward_optional",
+        "nearest_edge_forward",
+        "nearest_edge_forward_noad",
+        "nearest_edge_jvp_optional",
+        "nearest_edge_ray_backward_optional",
+        "nearest_edge_ray_forward",
+        "nearest_edge_ray_jvp_optional",
+        "nearest_edges_topk_forward",
+        "pack_scene_vertex_tangents",
+        "reflection_accumulation_forward",
+        "reflection_dedup_forward",
+        "reflection_epc_paths_forward",
+        "reflection_trace_stats",
+        "sdf_intersect_backward",
+        "sdf_intersect_forward",
+        "sdf_intersect_jvp",
+        "split_scene_vertex_grad",
+        "trace_refl_epc_field_backward",
+        "trace_refl_epc_field_forward",
+        "trace_refl_epc_field_jvp",
+        "trace_reflections_backward_optional",
+        "trace_reflections_forward",
+        "trace_reflections_forward_noad",
+        "trace_reflections_forward_reduced",
+        "trace_reflections_jvp_optional",
+        "visibility_forward",
+        "visible_chain_forward",
+        "visible_edge_forward",
+        "visible_pair_forward"
+      ],
+      "owns_scene_custom_class": true,
+      "sources": [
+        "src/bindings/library.cpp",
+        "src/bindings/legacy_anchor.cpp"
+      ]
+    },
+    "_stable_ops": {
+      "links_torch_python": false,
+      "operator_count": 7,
+      "operators": [
+        "camera_sample_ray",
+        "camera_sample_ray_backward",
+        "camera_sample_to_world",
+        "camera_sample_to_world_backward",
+        "camera_world_to_sample",
+        "camera_world_to_sample_backward",
+        "intersection_valid"
+      ],
+      "sources": [
+        "src/camera/camera_stable.cu",
+        "src/scene/intersection_stable.cu"
+      ],
+      "uses_stable_registration": true
+    }
+  },
+  "decision": {
+    "_C": "minimal_metadata_compatibility_shim",
+    "_legacy_ops": "python_and_libtorch_abi_bound_dispatcher_and_custom_classes",
+    "_stable_ops": "independent_libtorch_stable_abi_dispatcher"
+  },
+  "inventory": {
+    "compatibility_pybind_export_count": 2,
+    "legacy_dispatcher_operator_count": 57,
+    "py_object_occurrence_count": 104,
+    "py_object_occurrences_by_file": {
+      "src/bindings/library.cpp": 49,
+      "src/diffraction/diffraction.cpp": 1,
+      "src/edge/edge.cpp": 15,
+      "src/reflection/reflection.cpp": 18,
+      "src/scene/intersection.cpp": 17,
+      "src/scene/scene.cpp": 1,
+      "src/visibility/visibility.cpp": 3
+    },
+    "stable_dispatcher_operator_count": 7
+  },
+  "migration": {
+    "legacy_retained": {
+      "geometry_ad_and_multipath": "Implementations share rayd_torch_native_core ATen/autograd objects and py::object optional adapters; port kernel-by-kernel before moving.",
+      "scene_custom_class_and_stateful_queries": "Scene ownership, OptiX/CUDA acceleration state, intrusive_ptr custom classes, and ATen tensor ABI require the matched Python/LibTorch build."
+    },
+    "retired": {
+      "plan13_extern_c_integration": "All same-graph native consumers use the versioned typed rayd::torch integration surface."
+    },
+    "stable": [
+      "camera_sample_ray",
+      "camera_sample_ray_backward",
+      "camera_sample_to_world",
+      "camera_sample_to_world_backward",
+      "camera_world_to_sample",
+      "camera_world_to_sample_backward",
+      "intersection_valid"
+    ],
+    "typed_native_candidates": {
+      "axial_edge_visibility_forward": "dormant_same_graph_exact_optix_source_integration",
+      "segment_penetration_complete_family": "dormant_same_graph_batched_optix_fixed_winner_ad"
+    }
+  },
+  "source_sha256": "2711c621e9a10f6f4dc8d1677fc618ed17349b0389dae563b23640c8f11ceca2",
+  "version": 2
+}

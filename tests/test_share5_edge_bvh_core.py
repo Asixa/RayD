@@ -4,13 +4,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "shared/include/rayd/shared/edge"
-SHARED_SOURCE = ROOT / "shared/src/edge"
+SHARED_INCLUDE = ROOT / "include/rayd/shared/edge"
+SHARED_SOURCE = ROOT / "src/edge"
 # P3 Stage A moved the primitive-agnostic BVH machinery into shared/bvh/. The
 # edge headers now re-export it, so the pins below live on the new locations and
 # additionally assert that the edge layer keeps delegating to the core.
-BVH_CORE_INCLUDE = ROOT / "shared/include/rayd/shared/bvh"
-BVH_CORE_SOURCE = ROOT / "shared/src/bvh"
+BVH_CORE_INCLUDE = ROOT / "include/rayd/shared/bvh"
+BVH_CORE_SOURCE = ROOT / "src/bvh"
 
 
 class Share5EdgeBvhCoreTests(unittest.TestCase):
@@ -36,7 +36,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_product_treelet_constants_have_one_shared_definition(self):
         shared = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
         edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
-        adapter = (ROOT / "backends/drjit/include/rayd/edge/edge_bvh_config.h").read_text(
+        adapter = (ROOT / "include/rayd/edge/edge_bvh_config.h").read_text(
             encoding="utf-8"
         )
         for token in (
@@ -63,15 +63,15 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
             self.assertIn(f"using bvh::{name};", edge)
         self.assertGreaterEqual(adapter.count("shared::edge::kBvhTreelet"), 4)
         self.assertIn("shared::edge::kBvhLeafSize", adapter)
-        scene_edge = (ROOT / "backends/drjit/src/edge/scene_edge.cpp").read_text(
+        scene_edge = (ROOT / "src/edge/edge_jit.cpp").read_text(
             encoding="utf-8"
         )
         self.assertIn("shared::edge::kBvhTraversalStackDepth", scene_edge)
-        drjit_build = (ROOT / "backends/drjit/src/edge/edge_bvh.cu").read_text(
+        drjit_build = (ROOT / "src/edge/edge_bvh_jit.cu").read_text(
             encoding="utf-8"
         )
         torch_build = (
-            ROOT / "backends/torch/src/torch_ext/scene/scene_cache.cpp"
+            ROOT / "src/scene/scene.cpp"
         ).read_text(encoding="utf-8")
         self.assertIn("primitive_count <= EdgeBVHTreeletMaxPrimitives", drjit_build)
         self.assertIn(
@@ -81,9 +81,9 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
 
     def test_build_stages_are_shared_and_drjit_is_an_adapter(self):
         header = (SHARED_INCLUDE / "bvh_build.h").read_text(encoding="utf-8")
-        shared = (SHARED_SOURCE / "bvh_build.cu").read_text(encoding="utf-8")
-        core = (BVH_CORE_SOURCE / "build.cu").read_text(encoding="utf-8")
-        adapter = (ROOT / "backends/drjit/src/edge/edge_bvh.cu").read_text(encoding="utf-8")
+        shared = (SHARED_SOURCE / "edge_shared.cu").read_text(encoding="utf-8")
+        core = (BVH_CORE_SOURCE / "build_shared.cu").read_text(encoding="utf-8")
+        adapter = (ROOT / "src/edge/edge_bvh_jit.cu").read_text(encoding="utf-8")
         launchers = (
             "launch_compute_primitive_bounds_async",
             "launch_init_sequence_async",
@@ -112,9 +112,9 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_shared_cuda_owns_no_resources_or_host_barriers(self):
         combined = "\n".join(
             (SHARED_SOURCE / name).read_text(encoding="utf-8")
-            for name in ("bvh_build.cu", "bvh_query.cu", "edge_distance.cu")
+            for name in ("edge_shared.cu",)
         )
-        combined += "\n" + (BVH_CORE_SOURCE / "build.cu").read_text(encoding="utf-8")
+        combined += "\n" + (BVH_CORE_SOURCE / "build_shared.cu").read_text(encoding="utf-8")
         for forbidden in (
             "cudaMalloc",
             "cudaFree",
@@ -134,7 +134,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
 
     def test_query_contract_freezes_masks_topk_stack_and_tie_break(self):
         header = (SHARED_INCLUDE / "bvh_query.h").read_text(encoding="utf-8")
-        source = (SHARED_SOURCE / "bvh_query.cu").read_text(encoding="utf-8")
+        source = (SHARED_SOURCE / "edge_shared.cu").read_text(encoding="utf-8")
         traversal = (BVH_CORE_INCLUDE / "traversal_common.cuh").read_text(encoding="utf-8")
         for token in (
             "CompactBvhTopologyView topology",
@@ -159,7 +159,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
 
     def test_topk_runtime_dispatch_uses_bucketed_local_state(self):
         header = (SHARED_INCLUDE / "bvh_query.h").read_text(encoding="utf-8")
-        source = (SHARED_SOURCE / "bvh_query.cu").read_text(encoding="utf-8")
+        source = (SHARED_SOURCE / "edge_shared.cu").read_text(encoding="utf-8")
         expected_buckets = {
             0: 0,
             1: 1,
@@ -199,7 +199,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
 
     def test_exact_distance_contract_is_masked_and_async(self):
         header = (SHARED_INCLUDE / "edge_distance.h").read_text(encoding="utf-8")
-        source = (SHARED_SOURCE / "edge_distance.cu").read_text(encoding="utf-8")
+        source = (SHARED_SOURCE / "edge_shared.cu").read_text(encoding="utf-8")
         for token in (
             "launch_point_edge_distances_async",
             "launch_ray_edge_distances_async",
@@ -211,14 +211,13 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
         self.assertIn("ray_segment_distance", source)
 
     def test_both_backends_compile_the_shared_units(self):
-        drjit = (ROOT / "backends/drjit/CMakeLists.txt").read_text(encoding="utf-8")
-        torch = (ROOT / "backends/torch/CMakeLists.txt").read_text(encoding="utf-8")
-        for unit in ("bvh_build.cu", "bvh_query.cu", "edge_distance.cu"):
-            self.assertIn(f"shared/src/edge/{unit}", drjit)
-            self.assertIn(f"shared/src/edge/{unit}", torch)
+        drjit = (ROOT / "drjit/CMakeLists.txt").read_text(encoding="utf-8")
+        torch = (ROOT / "torch/CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("edge/edge_shared.cu", drjit)
+        self.assertIn("edge/edge_shared.cu", torch)
         # Both backends also compile the shared primitive-agnostic BVH core.
-        self.assertIn("shared/src/bvh/build.cu", drjit)
-        self.assertIn("shared/src/bvh/build.cu", torch)
+        self.assertIn("bvh/build_shared.cu", drjit)
+        self.assertIn("bvh/build_shared.cu", torch)
 
     def test_removed_strategies_do_not_reappear_in_shared_core(self):
         paths = (

@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "shared" / "include"
+SHARED_INCLUDE = ROOT / "include"
 MULTIPATH_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "multipath"
 RT_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "rt"
 ALGO_HEADERS = (
@@ -139,29 +139,18 @@ class RtHostCompileTests(unittest.TestCase):
         # Both GPU frontends instantiate the migrated algorithm bodies with the
         # CUDA BVH traverser for their eager-native fallback. Their OptiX paths
         # remain separate thin traversal shims.
-        drjit_src = ROOT / "backends" / "drjit" / "src"
-        torch_src = ROOT / "backends" / "torch" / "src"
-
-        def sources(root):
-            return list(root.rglob("*.cu")) + list(root.rglob("*.cpp")) + \
-                list(root.rglob("*.cuh")) + list(root.rglob("*.h"))
-
-        drjit_uses_cuda_bvh = any(
-            "CudaBvhTraverser" in path.read_text(encoding="utf-8", errors="ignore")
-            for path in sources(drjit_src))
-        self.assertTrue(drjit_uses_cuda_bvh,
-                        "drjit backend must instantiate algo bodies with CudaBvhTraverser")
-
-        if torch_src.is_dir():
-            torch_cuda_sources = [
-                str(path.relative_to(ROOT))
-                for path in sources(torch_src)
-                if "CudaBvhTraverser" in path.read_text(encoding="utf-8", errors="ignore")
-            ]
-            self.assertIn(
-                str(Path("backends/torch/src/torch_ext/scene/multipath_cuda.cu")),
-                torch_cuda_sources,
-            )
+        frontends = {
+            "drjit": ROOT / "src" / "scene" / "multipath_jit.cu",
+            "torch": ROOT / "src" / "scene" / "multipath.cu",
+        }
+        for backend, source in frontends.items():
+            with self.subTest(backend=backend):
+                self.assertTrue(source.is_file(), source)
+                self.assertIn(
+                    "CudaBvhTraverser",
+                    source.read_text(encoding="utf-8", errors="ignore"),
+                    f"{backend} frontend must instantiate algo bodies with CudaBvhTraverser",
+                )
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):
@@ -174,7 +163,7 @@ class RtHostCompileTests(unittest.TestCase):
         cuda_include = _cuda_include_dir()
         self.assertIsNotNone(cuda_include, "CUDA_PATH/include needed for <vector_types.h>")
 
-        out_dir = ROOT / "backends" / "drjit" / "build" / "rt_host_compile"
+        out_dir = ROOT / "artifacts" / "rt_host_compile"
         out_dir.mkdir(parents=True, exist_ok=True)
         # cl.exe is passed by full path: CreateProcess resolves a bare name
         # against the current process PATH, not the captured MSVC env.

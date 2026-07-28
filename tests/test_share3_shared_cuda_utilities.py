@@ -4,11 +4,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "shared" / "include" / "rayd" / "shared"
-SHARED_SOURCE = ROOT / "shared" / "src"
+SHARED_INCLUDE = ROOT / "include" / "rayd" / "shared"
+SHARED_SOURCE = ROOT / "src"
 
-# A local build drops generated trees under backends/*/build (notably the Torch
-# rayd-source-bundle, which is a verbatim copy of shared/src). Those copies are
+# Local builds drop generated trees under backend build directories (notably the
+# Torch rayd-source-bundle, which contains a verbatim canonical source copy). Those copies are
 # build output, not a second definition, so ownership scans must skip them.
 _BUILD_OUTPUT_DIRS = frozenset({"build", "artifacts", "_skbuild", "dist"})
 
@@ -20,15 +20,15 @@ def _is_build_output(path: Path) -> bool:
 UNITS = {
     "aabb": (
         SHARED_INCLUDE / "edge" / "edge_aabb.h",
-        SHARED_SOURCE / "edge" / "edge_aabb.cu",
+        SHARED_SOURCE / "edge" / "edge_shared.cu",
     ),
     "dedup": (
         SHARED_INCLUDE / "multipath" / "reflection_dedup.h",
-        SHARED_SOURCE / "multipath" / "reflection_dedup.cu",
+        SHARED_SOURCE / "reflection" / "dedup_shared.cu",
     ),
     "packing": (
         SHARED_INCLUDE / "scene" / "packing.h",
-        SHARED_SOURCE / "scene" / "packing.cu",
+        SHARED_SOURCE / "scene" / "packing_shared.cu",
     ),
 }
 
@@ -149,19 +149,18 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
 
     def test_duplicate_cuda_kernels_have_one_shared_definition(self):
         expected_locations = {
-            "compute_edge_aabbs_kernel": "shared/src/edge/edge_aabb.cu",
-            "reflection_dedup_build_keys_kernel": "shared/src/multipath/reflection_dedup.cu",
-            "reflection_dedup_mark_boundaries_kernel": "shared/src/multipath/reflection_dedup.cu",
-            "reflection_dedup_zero_base_ids_kernel": "shared/src/multipath/reflection_dedup.cu",
-            "reflection_dedup_sub_cluster_kernel": "shared/src/multipath/reflection_dedup.cu",
-            "reflection_dedup_compact_kernel": "shared/src/multipath/reflection_dedup.cu",
-            "pack_global_geometry_kernel": "shared/src/scene/packing.cu",
-            "pack_global_vertex_tangent_kernel": "shared/src/scene/packing.cu",
+            "compute_edge_aabbs_kernel": "src/edge/edge_shared.cu",
+            "reflection_dedup_build_keys_kernel": "src/reflection/dedup_shared.cu",
+            "reflection_dedup_mark_boundaries_kernel": "src/reflection/dedup_shared.cu",
+            "reflection_dedup_zero_base_ids_kernel": "src/reflection/dedup_shared.cu",
+            "reflection_dedup_sub_cluster_kernel": "src/reflection/dedup_shared.cu",
+            "reflection_dedup_compact_kernel": "src/reflection/dedup_shared.cu",
+            "pack_global_geometry_kernel": "src/scene/packing_shared.cu",
+            "pack_global_vertex_tangent_kernel": "src/scene/packing_shared.cu",
         }
         cuda_sources = [
             path
-            for root in ((ROOT / "shared"), (ROOT / "backends"))
-            for path in root.rglob("*.cu")
+            for path in (ROOT / "src").rglob("*.cu")
             if not _is_build_output(path)
         ]
         for kernel, expected in expected_locations.items():
@@ -173,32 +172,32 @@ class Share3SharedCudaUtilitiesTests(unittest.TestCase):
             self.assertEqual(definitions, [expected], kernel)
 
     def test_cmake_and_callers_name_shared_paths_explicitly(self):
-        drjit_cmake = (ROOT / "backends" / "drjit" / "CMakeLists.txt").read_text(
+        drjit_cmake = (ROOT / "drjit" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         ).replace("\\", "/")
-        torch_cmake = (ROOT / "backends" / "torch" / "CMakeLists.txt").read_text(
+        torch_cmake = (ROOT / "torch" / "CMakeLists.txt").read_text(
             encoding="utf-8"
         ).replace("\\", "/")
         for cmake in (drjit_cmake, torch_cmake):
             self.assertTrue(
-                "shared/src/edge/edge_aabb.cu" in cmake,
+                "edge/edge_shared.cu" in cmake,
                 "backend CMake is missing the shared AABB source path",
             )
             self.assertTrue(
-                "shared/src/multipath/reflection_dedup.cu" in cmake,
+                "reflection/dedup_shared.cu" in cmake,
                 "backend CMake is missing the shared reflection-dedup source path",
             )
         self.assertTrue(
-            "shared/src/scene/packing.cu" in torch_cmake,
+            "scene/packing_shared.cu" in torch_cmake,
             "Torch CMake is missing the shared scene-packing source path",
         )
 
         callers = {
-            "drjit_aabb": ROOT / "backends" / "drjit" / "src" / "edge" / "edge_bvh.cu",
-            "torch_aabb": ROOT / "backends" / "torch" / "src" / "torch_ext" / "edge" / "bvh.cu",
-            "drjit_dedup": ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_dedup.cu",
-            "torch_dedup": ROOT / "backends" / "torch" / "src" / "torch_ext" / "reflection" / "dedup.cu",
-            "torch_packing": ROOT / "backends" / "torch" / "src" / "torch_ext" / "scene" / "cache_kernels.cu",
+            "drjit_aabb": ROOT / "src" / "edge" / "edge_bvh_jit.cu",
+            "torch_aabb": ROOT / "src" / "edge" / "edge_bvh.cu",
+            "drjit_dedup": ROOT / "src" / "reflection" / "reflection_kernels_jit.cu",
+            "torch_dedup": ROOT / "src" / "reflection" / "reflection_kernels.cu",
+            "torch_packing": ROOT / "src" / "scene" / "cache.cu",
         }
         caller_text = {
             name: path.read_text(encoding="utf-8") for name, path in callers.items()

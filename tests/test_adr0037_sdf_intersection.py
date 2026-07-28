@@ -24,19 +24,19 @@ ADR_PATH = ROOT / "docs" / "adr" / "0037-differentiable-sdf-intersection.md"
 ADR0036_PATH = ROOT / "docs" / "adr" / "0036-backend-mirrored-python-modules.md"
 ADR_INDEX_PATH = ROOT / "docs" / "adr" / "README.md"
 PLAN_PATH = ROOT / "docs" / "dev" / "sdf_intersection_plan.md"
-OPERATIONS_PATH = ROOT / "shared" / "contracts" / "operations.json"
-PUBLIC_API_PATH = ROOT / "shared" / "contracts" / "public_api.json"
-COMPILE_POLICY_PATH = ROOT / "shared" / "contracts" / "compile_policy.json"
+OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
+PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
+COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
 SPHERE_TRACE_PATH = (
-    ROOT / "shared" / "include" / "rayd" / "shared" / "sdf" / "sphere_trace.h"
+    ROOT / "include" / "rayd" / "shared" / "sdf" / "sphere_trace.h"
 )
 DEVICE_MATH_PATH = (
-    ROOT / "backends" / "torch" / "include" / "rayd" / "torch" / "sdf" / "device_math.cuh"
+    ROOT / "include" / "rayd" / "torch" / "sdf" / "device_math.cuh"
 )
-TORCH_PACKAGE = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
+TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
 CAPABILITY_MODULES = {
-    backend: ROOT / "backends" / backend / "python" / "rayd" / backend / "_capabilities.py"
-    for backend in ("drjit", "torch")
+    "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
+    "torch": ROOT / "python" / "rayd" / "_impl" / "capabilities.py",
 }
 
 CAPABILITY = "sdf_intersect"
@@ -625,7 +625,7 @@ class Adr0037OperationContractTests(AdrTestCase):
         self.assertPhrase("min_i(scale_i / (N_i - 1))", policy["eps_hit_default"])
 
     def test_result_fields_match_the_public_torch_result_type(self) -> None:
-        source = read(TORCH_PACKAGE / "types.py")
+        source = read(TORCH_PACKAGE / "geometry.py")
         start = source.index("class SdfIntersection:")
         block = source[start : source.index("@dataclass", start)]
         fields = re.findall(r"^    ([a-z][a-z0-9_]*): torch\.Tensor$", block, re.M)

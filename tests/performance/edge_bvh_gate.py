@@ -10,7 +10,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MATRIX = ROOT / "shared" / "benchmarks" / "edge_bvh_matrix.json"
+DEFAULT_MATRIX = ROOT / "benchmarks" / "edge_bvh_matrix.json"
 
 PROFILE_KEYS = (
     "edge_counts",

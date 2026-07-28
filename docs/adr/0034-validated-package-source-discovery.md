@@ -1,10 +1,15 @@
 # ADR-0034: Validated package source discovery
 
-- Status: Accepted
+- Status: Accepted; internal source-bundle layout amended by ADR-0039
 - Date: 2026-07-22
 - Decision ID: `validated-package-source-discovery`
 - Scope: RayD Torch packaging and same-graph native consumers
 
+> **ADR-0039 amendment.** The passive resource remains
+> `rayd/torch/_source`, but its internal canonical source tree is now
+> `torch/CMakeLists.txt`, `include/`, `src/`, and `cmake/`. All discovery,
+> manifest completeness, hashing, validation, relocatability, and same-graph
+> requirements below remain in force.
 ## Context
 
 Native consumers currently require an explicitly located RayD Git checkout in

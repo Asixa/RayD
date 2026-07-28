@@ -57,16 +57,16 @@ class WheelLayoutTests(unittest.TestCase):
         prefix = "rayd/torch/_source/"
         self.assertIn(f"{prefix}rayd-source.json", names)
         self.assertIn(f"{prefix}source-files.json", names)
-        self.assertIn(f"{prefix}source/backends/torch/CMakeLists.txt", names)
+        self.assertIn(f"{prefix}source/torch/CMakeLists.txt", names)
         self.assertIn(
-            f"{prefix}source/backends/torch/include/rayd/torch/integration.h",
+            f"{prefix}source/include/rayd/torch/integration.h",
             names,
         )
         self.assertTrue(
-            any(name.startswith(f"{prefix}source/shared/include/") for name in names)
+            any(name.startswith(f"{prefix}source/include/") for name in names)
         )
         self.assertTrue(
-            any(name.startswith(f"{prefix}source/shared/src/") for name in names)
+            any(name.startswith(f"{prefix}source/src/") for name in names)
         )
         forbidden = ("/.git/", "/__pycache__/", ".obj", ".pdb", ".pyc")
         self.assertFalse(any(token in name for name in names for token in forbidden))

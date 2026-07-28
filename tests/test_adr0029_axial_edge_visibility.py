@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TORCH = ROOT / "backends" / "torch"
+TORCH = ROOT / "torch"
 
 
 class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
@@ -12,17 +12,17 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         cls.adr = (ROOT / "docs/adr/0029-typed-axial-edge-visibility.md").read_text(
             encoding="utf-8"
         )
-        cls.header = (TORCH / "include/rayd/torch/integration.h").read_text(
+        cls.header = (ROOT / "include/rayd/torch/integration.h").read_text(
             encoding="utf-8"
         )
-        cls.ops = (TORCH / "src/torch_ext/reflection/ops.cpp").read_text(
+        cls.ops = (ROOT / "src/visibility/visibility.cpp").read_text(
             encoding="utf-8"
         )
         cls.device = (
-            TORCH / "src/torch_ext/reflection/axial_edge_visibility_optix.cu"
+            ROOT / "src/visibility/axial_edge_visibility_optix.cu"
         ).read_text(encoding="utf-8")
         cls.cmake = (TORCH / "CMakeLists.txt").read_text(encoding="utf-8")
-        cls.direct_test = (TORCH / "tests/cpp/integration_test.cpp").read_text(
+        cls.direct_test = (ROOT / "tests/native/integration_test.cpp").read_text(
             encoding="utf-8"
         )
 
@@ -62,14 +62,14 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
 
     def test_one_launch_and_empty_returns_before_launch(self):
         start = self.ops.index("axial_edge_visibility_forward_native_impl")
-        end = self.ops.index("ReflectionJvpOutputs integration_trace_reflections_jvp_impl", start)
+        end = self.ops.index("} // namespace rayd::torch_backend", start)
         body = self.ops[start:end]
         self.assertEqual(body.count("->launch("), 1)
         self.assertLess(body.index("state_count == 0"), body.index("->launch("))
 
     def test_parity_and_existing_staging_sync_are_explicit(self):
         common_launch = (
-            TORCH / "src/torch_ext/common/optix_pipeline.cpp"
+            ROOT / "src/runtime/optix.cpp"
         ).read_text(encoding="utf-8")
         self.assertIn("cudaEventSynchronize(params_staging_events_[slot])", common_launch)
         self.assertIn("reducing four public launch-parameter staging checks to one", self.adr)
@@ -78,10 +78,10 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         self.assertIn("single axial launch versus four segment launches", self.direct_test)
 
     def test_candidate_is_not_python_or_legacy_dispatcher_exposed(self):
-        library = (TORCH / "src/torch_ext/library.cpp").read_text(encoding="utf-8")
-        module = (TORCH / "src/torch_ext/module.cpp").read_text(encoding="utf-8")
+        library = (ROOT / "src/bindings/library.cpp").read_text(encoding="utf-8")
+        module = (ROOT / "src/bindings/module.cpp").read_text(encoding="utf-8")
         legacy_device = (
-            TORCH / "src/torch_ext/reflection/visibility_optix.cu"
+            ROOT / "src/visibility/visibility_optix.cu"
         ).read_text(encoding="utf-8")
         self.assertNotIn("axial_edge_visibility", library)
         self.assertNotIn("axial_edge_visibility", module)

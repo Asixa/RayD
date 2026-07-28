@@ -60,17 +60,17 @@
     },
     "mask_update": {
       "status": "covered_elsewhere",
-      "reference": "backends/drjit/tests/drjit/test_geometry.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
+      "reference": "tests/scene/test_geometry_jit.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
       "rationale": "set_edge_mask + sync is exercised by an existing dedicated edge-BVH test across all edge backends; it is stateful and out of scope for the forward-value golden suite."
     },
     "edge_dynamic_refit": {
       "status": "covered_elsewhere",
-      "reference": "backends/drjit/tests/drjit/test_geometry.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
+      "reference": "tests/scene/test_geometry_jit.py::GeometryCoreTests.test_scene_edge_bvh_optix_backend_matches_drjit_queries_mask_and_refit",
       "rationale": "Edge query after update_mesh_vertices + sync is exercised by the same existing edge-BVH test."
     },
     "edge_vjp_jvp": {
       "status": "covered_elsewhere",
-      "reference": "backends/drjit/tests/drjit/test_geometry.py (vertex/transform gradient tests) and the P0 NumericPolicy/AD deliverable",
+      "reference": "tests/scene/test_geometry_jit.py (vertex/transform gradient tests) and the P0 NumericPolicy/AD deliverable",
       "rationale": "The golden suite freezes forward discrete and continuous query values only; fixed-winner VJP/JVP gradients are frozen by the existing AD gradient tests."
     }
   }

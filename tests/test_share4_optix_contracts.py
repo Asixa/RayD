@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "shared" / "include" / "rayd" / "shared" / "optix"
+SHARED = ROOT / "include" / "rayd" / "shared" / "optix"
 
 
 class Share4DiffractionOptixContractsTests(unittest.TestCase):
@@ -13,12 +13,12 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
         cls.contract_path = SHARED / "diffraction_contracts.h"
         cls.contract = cls.contract_path.read_text(encoding="utf-8")
         cls.path_headers = (
-            ROOT / "backends" / "drjit" / "include" / "rayd" / "multipath" / "diffraction_paths_params.h",
-            ROOT / "backends" / "torch" / "include" / "rayd" / "torch" / "diffraction" / "paths_params.h",
+            ROOT / "include" / "rayd" / "multipath" / "diffraction_paths_params.h",
+            ROOT / "include" / "rayd" / "torch" / "diffraction" / "paths_params.h",
         )
         cls.accum_headers = (
-            ROOT / "backends" / "drjit" / "include" / "rayd" / "multipath" / "diffraction_accumulation_params.h",
-            ROOT / "backends" / "torch" / "include" / "rayd" / "torch" / "diffraction" / "accum_params.h",
+            ROOT / "include" / "rayd" / "multipath" / "diffraction_accumulation_params.h",
+            ROOT / "include" / "rayd" / "torch" / "diffraction" / "accum_params.h",
         )
 
     def test_contract_is_backend_neutral_pod_only(self):
@@ -59,8 +59,8 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
 
     def test_backend_public_enums_derive_from_shared_values(self):
         headers = (
-            ROOT / "backends" / "drjit" / "include" / "rayd" / "multipath" / "diffraction_accumulation.h",
-            ROOT / "backends" / "torch" / "include" / "rayd" / "torch" / "diffraction" / "common.h",
+            ROOT / "include" / "rayd" / "multipath" / "diffraction_accumulation.h",
+            ROOT / "include" / "rayd" / "torch" / "diffraction" / "common.h",
         )
         combined = "\n".join(path.read_text(encoding="utf-8") for path in headers)
         self.assertGreaterEqual(combined.count("DiffractionStrategyBit::"), 6)
@@ -108,10 +108,10 @@ class Share4DiffractionOptixContractsTests(unittest.TestCase):
 
     def test_device_programs_consume_backend_params_without_host_ownership(self):
         device_sources = (
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "diffraction_paths.cu",
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "diffraction_accumulation.cu",
-            ROOT / "backends" / "torch" / "src" / "torch_ext" / "diffraction" / "paths_optix.cu",
-            ROOT / "backends" / "torch" / "src" / "torch_ext" / "diffraction" / "accum_optix.cu",
+            ROOT / "src" / "diffraction" / "paths_optix_jit.cu",
+            ROOT / "src" / "diffraction" / "accumulation_optix_jit.cu",
+            ROOT / "src" / "diffraction" / "paths_optix.cu",
+            ROOT / "src" / "diffraction" / "accumulation_optix.cu",
         )
         for path in device_sources:
             source = path.read_text(encoding="utf-8")

@@ -20,22 +20,22 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 
 ## Architecture
 
-- `backends/drjit/include/rayd/`, `backends/drjit/src/`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
-- `backends/torch/include/rayd/torch/`, `backends/torch/src/`: Torch backend, dispatcher, and autograd bindings
-- `shared/include/rayd/shared/`, `shared/src/`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
-- `shared/contracts/`: machine-readable public API and operation manifests
+- `include/rayd/`, `src/**/*_jit.*`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
+- `include/rayd/torch/`, unsuffixed files under `src/`: Torch backend, dispatcher, and autograd bindings
+- `include/rayd/shared/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
+- `contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
-- `Camera`: primary-ray sampling plus primary-edge preprocessing/sampling. **Torch backend only** (`backends/torch/python/rayd/torch/camera.py`); the Dr.Jit backend has no `Camera`
+- `Camera`: primary-ray sampling plus primary-edge preprocessing/sampling. **Torch backend only** (`python/rayd/_impl/camera.py`); the Dr.Jit backend has no `Camera`
 - `scene.intersect(ray)`: differentiable intersection query
 - `scene.nearest_edge(point)` / `scene.nearest_edge(ray)`: scene-level nearest-edge query over a GPU BVH
 - `scene.trace_reflections(...)`: specular reflection-path tracing; `symbolic=True` selects the bounce-level C++ path
 - `scene.visible(...)`: batched segment visibility queries
 - `scene.trace_refl_epc(...)` / `scene.trace_refl_epc_field(...)`: equivalent-path correction primitives for reflection paths
-- `backends/drjit/src/multipath/`: multipath result types, OptiX launch wrappers, and CUDA/OptiX kernels
-- `backends/drjit/python/rayd/drjit/`, `backends/torch/python/rayd/torch/`: the two backend Python packages; `rayd` itself is a PEP 420 namespace with no default backend
+- Dr.Jit variants under `src/{reflection,diffraction,visibility}/`: multipath result types, OptiX launch wrappers, and CUDA/OptiX kernels
+- `drjit/python/rayd/drjit/`, `torch/python/rayd/torch/`, plus their manifest-owned files under `python/rayd/_impl/`: the two backend Python packages; `rayd` itself is a PEP 420 namespace with no default backend
 
-Public names follow `backends/drjit/API_NAMING_STANDARD.md`; `backends/drjit/API_RENAME.md` records the 2026-05-21 rename.
+Public names follow `drjit/API_NAMING_STANDARD.md`; `drjit/API_RENAME.md` records the 2026-05-21 rename.
 
 ## Generic RF Scattering Ownership
 
@@ -47,8 +47,8 @@ their builders, lifecycle, seeds, topology, estimator, RNG/MIS, accumulation,
 metadata, and public results.
 
 - Declarations have one owner in
-  `backends/torch/include/rayd/torch/rf/scattering.h`; shared table device math
-  has one owner in `shared/include/rayd/shared/rf/scattering_table.cuh`.
+  `include/rayd/torch/scattering/scattering.h`; shared table device math
+  has one owner in `include/rayd/shared/scattering/scattering_table.cuh`.
 - Move every family complete. Do not split primal from backward/JVP, copy a
   Channel implementation/header, include Channel private headers, or add a
   second Python extension/dispatcher.
@@ -143,13 +143,13 @@ dispatcher, host count read, partial result, or fallback. See
 The Dr.Jit backend commits its eight generated OptiX `*_ptx.h` headers, and
 PTX regeneration is opt-in and OFF by default, so editing a `.cu` file or any
 header it reaches silently leaves the committed PTX describing older device
-code. `backends/drjit/ptx_sources.json` records each PTX module's transitive
+code. `drjit/ptx_sources.json` records each PTX module's transitive
 in-repository include closure and content digests, and
 `tests/test_ptx_source_digest.py` recomputes the record on every run. Check
 that record before editing any file it lists under `modules.*.sources`. A
 drifted digest is repaired only by actually regenerating the affected PTX,
 copying the regenerated header over the committed one, and re-running
-`python backends/drjit/scripts/audit_ptx_sources.py --write`; use `--check` to
+`python drjit/scripts/audit_ptx_sources.py --write`; use `--check` to
 diagnose, and `--mark-verified <module>` only after byte-comparing the
 regenerated header against the committed one. The record states source
 identity, never correctness, and `--write` without a real regeneration only
@@ -157,7 +157,7 @@ falsifies it.
 
 ## CUDA Compile-Flag Policy
 
-`shared/contracts/compile_policy.json` declares the per-translation-unit CUDA
+`contracts/compile_policy.json` declares the per-translation-unit CUDA
 numeric flag assignment for both backends over the four closed profiles
 `nvcc_default`, `fast_math`, `no_fmad`, and `precise_no_ftz`;
 `tests/test_compile_flag_policy_contract.py` re-derives the assignment from
@@ -174,10 +174,10 @@ fix; it is the drift the test exists to catch.
 ADR-0038 accepts scene replication plus batch sharding as RayD's multi-GPU
 regime. The Torch backend owns the in-process layer
 (`Scene(devices=[...])` with the optional `MultiDeviceOptions`, orchestrated by
-the private `backends/torch/python/rayd/torch/_multi.py`); the Dr.Jit backend is
+the private `python/rayd/_impl/multi.py`); the Dr.Jit backend is
 process-per-GPU only. The capability key is `multi_device_replicated`
 (`torch: true`, `drjit: false`), and every operation carries a `shardability`
-class in `shared/contracts/operations.json`.
+class in `contracts/operations.json`.
 
 - Multi-device execution is a composition layer above unchanged kernels. No
   launch shape, reduction order, atomic, or compile flag changes because a
@@ -237,7 +237,7 @@ Current status notes:
 - the former `LBVH + top-level SAH` HLBVH experiment was removed after it made large-scene queries much slower; its historical measurements are retained below
 - the dead GPU-prepared flat-treelet prototype was removed; the supported treelet path keeps its host-prepared schedule and launches GPU treelet optimization kernels
 - the shared edge core owns the backend-neutral OptiX AABB kernel, LBVH/treelet build stages, dirty-ancestor/dirty-level/refit launchers, compact-BVH CUDA traversal, and exact-distance launchers; every API takes raw pointers, caller-owned buffers, and an explicit stream
-- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, host compaction, and its JIT traversal; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`backends/torch/src/torch_ext/scene/scene_cache.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
+- Dr.Jit still owns CUB/allocation, LBVH/treelet host orchestration, host compaction, and its JIT traversal; Torch persistent compact-BVH ownership and public top-k/visibility integration landed in F1 (`src/scene/scene.cpp`, `tests/test_f1_torch_global_geometry_contract.py`)
 
 Supported custom-BVH configuration after BVH-3 convergence:
 
@@ -246,7 +246,7 @@ Supported custom-BVH configuration after BVH-3 convergence:
 - serial build remains a deterministic debug mode only; it has no public performance commitment
 - refit keeps `Auto`, `Full`, and `DirtyAncestors`; `Auto` is the product default while the explicit modes remain calibration and debug controls
 - `PerLevelUploads`, `LevelByLevel`, `HostUploadExact`, `GpuEmit`, and `Packed` were removed from the supported configuration surface after their measured benefits failed the BVH-3 Pareto thresholds
-- the quantified one-factor comparisons, including the legacy sparse-mask caveat for exact compaction, are preserved in `shared/benchmarks/baselines/bvh3_configuration_convergence_20260711.json`
+- the quantified one-factor comparisons, including the legacy sparse-mask caveat for exact compaction, are preserved in `benchmarks/baselines/bvh3_configuration_convergence_20260711.json`
 
 Performance snapshot used for the current decision, measured on the verified Windows machine in this repository (`RTX 5080`, `Ryzen 7 9800X3D`) with a `192x192` grid mesh, `110,976` edges, and `65,536` batched queries:
 
@@ -279,5 +279,5 @@ owner.
 ## Tests
 
 ```bash
-python -m unittest backends.drjit.tests.drjit.test_geometry -v
+python -m unittest discover -s tests -t . -v
 ```

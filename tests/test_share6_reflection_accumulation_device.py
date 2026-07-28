@@ -6,10 +6,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "shared/include/rayd/shared/multipath/reflection_accumulation_device.cuh"
-ALGO = ROOT / "shared/include/rayd/shared/multipath/reflection_accumulation_algo.h"
-DRJIT = ROOT / "backends/drjit/src/multipath/reflection_accumulation.cu"
-TORCH = ROOT / "backends/torch/src/torch_ext/reflection/accum_optix.cu"
+SHARED = ROOT / "include/rayd/shared/multipath/reflection_accumulation_device.cuh"
+ALGO = ROOT / "include/rayd/shared/multipath/reflection_accumulation_algo.h"
+DRJIT = ROOT / "src/reflection/accumulation_optix_jit.cu"
+TORCH = ROOT / "src/reflection/accumulation_optix.cu"
 
 
 class SharedReflectionAccumulationDeviceTests(unittest.TestCase):

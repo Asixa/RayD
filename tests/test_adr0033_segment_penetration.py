@@ -15,7 +15,7 @@ def read(relative: str) -> str:
 
 class Adr0033SegmentPenetrationTests(unittest.TestCase):
     def test_stable_typed_api_is_complete(self) -> None:
-        header = read("backends/torch/include/rayd/torch/integration.h")
+        header = read("include/rayd/torch/integration.h")
         self.assertIn("kIntegrationApiVersion = 6", header)
         self.assertIn('"rayd.torch.integration"', header)
         for name in (
@@ -46,9 +46,9 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         self.assertNotIn("next", family.lower())
 
     def test_one_optix_launch_contains_the_d_plus_one_march(self) -> None:
-        host = read("backends/torch/src/torch_ext/penetration/ops.cpp")
+        host = read("src/penetration/penetration.cpp")
         device = read(
-            "backends/torch/src/torch_ext/penetration/segment_penetration_optix.cu"
+            "src/penetration/penetration_optix.cu"
         )
         self.assertEqual(host.count("->launch("), 1)
         self.assertIn(
@@ -67,9 +67,9 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
 
     def test_all_inactive_validation_and_batch_sanitize_are_device_resident(self) -> None:
         cuda = read(
-            "backends/torch/src/torch_ext/penetration/segment_penetration.cu"
+            "src/penetration/penetration.cu"
         )
-        host = read("backends/torch/src/torch_ext/penetration/ops.cpp")
+        host = read("src/penetration/penetration.cpp")
         self.assertIn("!input_active_any && input_active != nullptr", cuda)
         self.assertIn("atomicOr(capacity_failure_state, failure_bit)", cuda)
         self.assertIn("segment_penetration_initialize_cuda", host)
@@ -91,9 +91,9 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             self.assertNotIn(forbidden, family)
 
     def test_tape_freezes_restart_and_ad_never_retraces(self) -> None:
-        header = read("backends/torch/include/rayd/torch/integration.h")
+        header = read("include/rayd/torch/integration.h")
         cuda = read(
-            "backends/torch/src/torch_ext/penetration/segment_penetration.cu"
+            "src/penetration/penetration.cu"
         )
         for field in (
             "tape_primitive_id",
@@ -111,12 +111,12 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         self.assertIn("direction_denominator_branch", cuda)
 
     def test_cmake_owns_precise_ptx_native_and_direct_test(self) -> None:
-        cmake = read("backends/torch/CMakeLists.txt")
+        cmake = read("torch/CMakeLists.txt")
         self.assertIn("rayd_torch_segment_penetration_optix_ptx", cmake)
-        self.assertIn("penetration/segment_penetration_optix.cu", cmake)
-        self.assertIn("penetration/segment_penetration.cu", cmake)
-        self.assertIn("penetration/pipeline.cpp", cmake)
-        self.assertIn("penetration/ops.cpp", cmake)
+        self.assertIn("penetration/penetration_optix.cu", cmake)
+        self.assertIn("penetration/penetration.cu", cmake)
+        self.assertIn("penetration/penetration.cpp", cmake)
+        self.assertIn("penetration/penetration.cpp", cmake)
         self.assertIn("--ftz=false", cmake)
         self.assertIn("--prec-div=true", cmake)
         self.assertIn("--prec-sqrt=true", cmake)
@@ -124,11 +124,11 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
         command = cmake[start : cmake.index("add_custom_command(", start)]
         self.assertNotIn("RAYD_TORCH_OPTIX_NVCC_FLAGS", command)
         self.assertIn("rayd_torch_segment_penetration_test", cmake)
-        self.assertIn("tests/cpp/segment_penetration_oracle.cu", cmake)
+        self.assertIn("tests/penetration/segment_penetration_oracle.cu", cmake)
         self.assertIn("NAME rayd_torch_segment_penetration", cmake)
 
     def test_direct_contract_matrix_is_present(self) -> None:
-        direct = read("backends/torch/tests/cpp/segment_penetration_test.cpp")
+        direct = read("tests/penetration/segment_penetration_test.cpp")
         for evidence in (
             "plain/tape primal mismatch",
             "exact-D hit count",
@@ -180,14 +180,14 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             self.assertIn(evidence, direct)
 
     def test_family_is_typed_only_and_documented(self) -> None:
-        library = read("backends/torch/src/torch_ext/library.cpp")
+        library = read("src/bindings/library.cpp")
         python_sources = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (TORCH / "python").rglob("*.py")
         )
         self.assertNotIn("segment_penetration", library)
         self.assertNotIn("segment_penetration", python_sources)
-        audit = json.loads(read("backends/torch/abi_audit.json"))
+        audit = json.loads(read("torch/abi_audit.json"))
         self.assertEqual(
             audit["migration"]["typed_native_candidates"][
                 "segment_penetration_complete_family"

@@ -27,23 +27,23 @@ ADR_PATH = ROOT / "docs" / "adr" / "0038-replicated-multi-device-execution.md"
 ADR0036_PATH = ROOT / "docs" / "adr" / "0036-backend-mirrored-python-modules.md"
 PLAN_PATH = ROOT / "docs" / "dev" / "multi_gpu_plan.md"
 OPERATIONS_DOC_PATH = ROOT / "docs" / "dev" / "multi_gpu_operations.md"
-OPERATIONS_PATH = ROOT / "shared" / "contracts" / "operations.json"
-PUBLIC_API_PATH = ROOT / "shared" / "contracts" / "public_api.json"
-PTX_SOURCES_PATH = ROOT / "backends" / "drjit" / "ptx_sources.json"
-TORCH_PACKAGE = ROOT / "backends" / "torch" / "python" / "rayd" / "torch"
-MULTI_PATH = TORCH_PACKAGE / "_multi.py"
+OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
+PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
+PTX_SOURCES_PATH = ROOT / "drjit" / "ptx_sources.json"
+TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
+MULTI_PATH = TORCH_PACKAGE / "multi.py"
 SCENE_PATH = TORCH_PACKAGE / "scene.py"
-AUTOGRAD_PATH = TORCH_PACKAGE / "autograd.py"
-LIBRARY_PATH = ROOT / "backends" / "torch" / "src" / "torch_ext" / "library.cpp"
+AUTOGRAD_PATH = TORCH_PACKAGE / "multipath.py"
+LIBRARY_PATH = ROOT / "src" / "bindings" / "library.cpp"
 DIFFRACTION_OPS_PATH = (
-    ROOT / "backends" / "torch" / "src" / "torch_ext" / "diffraction" / "ops.cpp"
+    ROOT / "src" / "diffraction" / "diffraction.cpp"
 )
 DRJIT_PARITY_TEST_PATH = (
-    ROOT / "backends" / "drjit" / "tests" / "drjit" / "test_cuda_multipath.py"
+    ROOT / "tests" / "native" / "test_cuda_multipath_jit.py"
 )
 CAPABILITY_MODULES = {
-    backend: ROOT / "backends" / backend / "python" / "rayd" / backend / "_capabilities.py"
-    for backend in ("drjit", "torch")
+    "drjit": ROOT / "python" / "rayd" / "_impl" / "capabilities_jit.py",
+    "torch": ROOT / "python" / "rayd" / "_impl" / "capabilities.py",
 }
 
 CAPABILITY = "multi_device_replicated"
@@ -528,12 +528,12 @@ class Adr0038SingleDeviceInvarianceTests(AdrTestCase):
         self.body = sections(read(ADR_PATH), 3)["9. Zero single-GPU regression (D9)"]
 
     def test_the_orchestration_layer_is_imported_only_when_devices_are_requested(self) -> None:
-        # `from ._multi import ...` appears exactly once, inside the branch that
+        # `from .multi import ...` appears exactly once, inside the branch that
         # only runs when the caller asked for devices or options.
-        self.assertEqual(self.scene.count("from ._multi import"), 1)
+        self.assertEqual(self.scene.count("from .multi import"), 1)
         self.assertIn(
             "if devices is not None or options is not None:\n"
-            "            from ._multi import plan as _plan_multi_device",
+            "            from .multi import plan as _plan_multi_device",
             self.scene,
         )
         module_level = [

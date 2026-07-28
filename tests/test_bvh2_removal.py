@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "backends" / "drjit" / "src" / "edge" / "edge_bvh.cu"
+SOURCE = ROOT / "src" / "edge" / "edge_bvh_jit.cu"
 
 
 class BVH2RemovalTests(unittest.TestCase):

@@ -3,10 +3,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "backends" / "drjit" / "include" / "rayd" / "edge" / "edge_bvh_config.h"
-BUILD_SOURCE = ROOT / "backends" / "drjit" / "src" / "edge" / "edge_bvh.cu"
-SCENE_SOURCE = ROOT / "backends" / "drjit" / "src" / "edge" / "scene_edge.cpp"
-BENCHMARK = ROOT / "backends" / "drjit" / "tests" / "benchmark_edge_bvh_stages.py"
+CONFIG = ROOT / "include" / "rayd" / "edge" / "edge_bvh_config.h"
+BUILD_SOURCE = ROOT / "src" / "edge" / "edge_bvh_jit.cu"
+SCENE_SOURCE = ROOT / "src" / "edge" / "edge_jit.cpp"
+BENCHMARK = ROOT / "benchmarks" / "drjit" / "benchmark_edge_bvh_stages.py"
 
 
 class BVH3ConfigConvergenceTests(unittest.TestCase):

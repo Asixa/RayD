@@ -5,16 +5,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "shared" / "include" / "rayd" / "shared"
+SHARED = ROOT / "include" / "rayd" / "shared"
 
 
 class SharedFieldMathTests(unittest.TestCase):
     def test_utd_uses_rayd_namespace_with_compatibility_alias(self):
-        types = (SHARED / "utd" / "utd_types.h").read_text(encoding="utf-8")
-        math_header = (SHARED / "utd" / "utd_math.h").read_text(encoding="utf-8")
-        self.assertIn("namespace rayd::shared::utd", types)
-        self.assertIn("namespace rayd::shared::utd", math_header)
-        self.assertIn("namespace native_ext = ::rayd::shared::utd", types)
+        types = (SHARED / "diffraction" / "utd_types.h").read_text(encoding="utf-8")
+        math_header = (SHARED / "diffraction" / "utd_math.h").read_text(encoding="utf-8")
+        self.assertIn("namespace rayd::shared::diffraction", types)
+        self.assertIn("namespace rayd::shared::diffraction", math_header)
+        self.assertIn("namespace native_ext = ::rayd::shared::diffraction", types)
         self.assertNotIn("namespace witwin::channel::native_ext {", types)
 
     def test_accumulation_backends_delegate_diffraction_parameter(self):
@@ -23,12 +23,12 @@ class SharedFieldMathTests(unittest.TestCase):
         shared_algo = (
             SHARED / "multipath" / "diffraction_accumulation_algo.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/utd/utd_math.h>", shared_algo)
-        self.assertIn("::rayd::shared::utd::first_order_diffraction_parameter(", shared_algo)
+        self.assertIn("<rayd/shared/diffraction/utd_math.h>", shared_algo)
+        self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
 
         paths = (
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "diffraction_accumulation.cu",
-            ROOT / "backends" / "torch" / "src" / "torch_ext" / "diffraction" / "accum_optix.cu",
+            ROOT / "src" / "diffraction" / "accumulation_optix_jit.cu",
+            ROOT / "src" / "diffraction" / "accumulation_optix.cu",
         )
         for path in paths:
             source = path.read_text(encoding="utf-8")
@@ -48,7 +48,7 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("is_standard_layout_v<Complex>", header)
 
         torch_compat = (
-            ROOT / "backends" / "torch" / "include" / "rayd" / "torch" / "common" / "complex.cuh"
+            ROOT / "include" / "rayd" / "torch" / "reflection" / "complex.cuh"
         ).read_text(encoding="utf-8")
         self.assertIn("<rayd/shared/field_math.h>", torch_compat)
         self.assertNotIn("struct Complex {", torch_compat)
@@ -59,8 +59,8 @@ class SharedFieldMathTests(unittest.TestCase):
         self.assertIn("field::fresnel_reflection_coefficients(", shared_reflection_algo)
 
         accumulation_adapters = (
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_accumulation.cu",
-            ROOT / "backends" / "torch" / "src" / "torch_ext" / "reflection" / "accum_optix.cu",
+            ROOT / "src" / "reflection" / "accumulation_optix_jit.cu",
+            ROOT / "src" / "reflection" / "accumulation_optix.cu",
         )
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
@@ -73,8 +73,8 @@ class SharedFieldMathTests(unittest.TestCase):
             self.assertNotIn("struct Complex {", source)
 
         epc_consumers = (
-            ROOT / "backends" / "drjit" / "src" / "multipath" / "reflection_epc_field.cu",
-            ROOT / "backends" / "torch" / "src" / "torch_ext" / "reflection" / "epc_field.cu",
+            ROOT / "src" / "reflection" / "reflection_kernels_jit.cu",
+            ROOT / "src" / "reflection" / "reflection_kernels.cu",
         )
         for path in epc_consumers:
             source = path.read_text(encoding="utf-8")

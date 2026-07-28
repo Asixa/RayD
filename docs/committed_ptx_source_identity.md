@@ -9,11 +9,11 @@ headers, and — just as importantly — what the guard does *not* claim.
 
 The Dr.Jit backend deliberately builds without an OptiX SDK. Its device programs
 are compiled to PTX ahead of time and checked in as C++ string literals under
-`backends/drjit/include/rayd/**/*_ptx.h`, so a wheel build needs only nvcc and
+`drjit/include/rayd/**/*_ptx.h`, so a wheel build needs only nvcc and
 CUDA. Regeneration is opt-in through the eight `RAYD_REGENERATE_*_PTX` options,
 all `OFF` by default.
 
-The Torch backend is the opposite: `backends/torch/CMakeLists.txt` writes all of
+The Torch backend is the opposite: `torch/CMakeLists.txt` writes all of
 its PTX headers into `${CMAKE_CURRENT_BINARY_DIR}/generated/rayd/torch/`,
 regenerates every one of them on each native build, and hard-fails without the
 OptiX SDK. Torch therefore cannot go stale, commits no PTX, and is out of scope
@@ -26,25 +26,25 @@ Because regeneration is off by default, editing `.cu` device code — or any hea
 it reaches — changes nothing that the build observes. The committed PTX keeps
 describing the older device code and the build keeps succeeding. This is not
 hypothetical: commit `8d3ba3f` modified
-`backends/drjit/src/multipath/diffraction_paths.cu` without touching
+`drjit/src/multipath/diffraction_paths.cu` without touching
 `diffraction_paths_ptx.h`, which stayed at its previous content until `d8a064a`.
 
 ## The guard
 
-`backends/drjit/ptx_sources.json` records, for each of the eight modules, the
+`drjit/ptx_sources.json` records, for each of the eight modules, the
 transitive in-repository `#include` closure of its `.cu` file, a SHA-256 over the
 contents of that closure, the SHA-256 of the committed header, the exact nvcc PTX
 command line, the Dr.Jit pin, and the names of every include that resolves
 outside the repository.
 
-`backends/drjit/scripts/audit_ptx_sources.py` generates and re-checks that
-record. It follows the same shape as `backends/torch/scripts/audit_abi_boundary.py`
-and `backends/torch/abi_audit.json`:
+`drjit/scripts/audit_ptx_sources.py` generates and re-checks that
+record. It follows the same shape as `torch/scripts/audit_abi_boundary.py`
+and `torch/abi_audit.json`:
 
 ```bash
-python backends/drjit/scripts/audit_ptx_sources.py --check      # gate
-python backends/drjit/scripts/audit_ptx_sources.py --write      # after a regen
-python backends/drjit/scripts/audit_ptx_sources.py --git-drift  # staleness evidence
+python drjit/scripts/audit_ptx_sources.py --check      # gate
+python drjit/scripts/audit_ptx_sources.py --write      # after a regen
+python drjit/scripts/audit_ptx_sources.py --git-drift  # staleness evidence
 ```
 
 Three consumers:
@@ -52,7 +52,7 @@ Three consumers:
 - `tests/test_ptx_source_digest.py` is the authoritative gate. It recomputes
   everything from source with the standard library alone: no CUDA, no OptiX SDK,
   no GPU, no build.
-- `backends/drjit/CMakeLists.txt` replays `--check` at configure time. It warns
+- `drjit/CMakeLists.txt` replays `--check` at configure time. It warns
   by default and fails under `-DRAYD_STRICT_PTX_SOURCE_CHECK=ON`. It warns rather
   than fails by default because a source build is not required to have the OptiX
   SDK that fixing the warning would need.
@@ -63,7 +63,7 @@ Three consumers:
   `stable-abi-ci.yml` do not invoke the root `tests/` suite). Until someone wires
   one of those in, a stale committed PTX can reach a release with only a
   non-fatal configure warning as its trace. To close the gap: add
-  `python backends/drjit/scripts/audit_ptx_sources.py --check` to the release
+  `python drjit/scripts/audit_ptx_sources.py --check` to the release
   workflow's metadata job, and pass `-DRAYD_STRICT_PTX_SOURCE_CHECK=ON` in
   release wheel configures.
 - `rayd_embed_ptx()`'s `DEPENDS` lists are checked against the same closure. The
@@ -110,12 +110,12 @@ deliberate three-step manual operation:
 1. Configure with `-DRAYD_REGENERATE_<MODULE>_PTX=ON` and an OptiX SDK present,
    and build.
 2. Copy `<build>/rayd/<header>` over
-   `backends/drjit/include/rayd/<header>`.
-3. Run `python backends/drjit/scripts/audit_ptx_sources.py --write` and commit
+   `drjit/include/rayd/<header>`.
+3. Run `python drjit/scripts/audit_ptx_sources.py --write` and commit
    the header and the record together.
 4. If — and only if — step 2 left `git diff` on that header empty, attest the
    byte-equality with
-   `python backends/drjit/scripts/audit_ptx_sources.py --mark-verified <module>`.
+   `python drjit/scripts/audit_ptx_sources.py --mark-verified <module>`.
    That is the claim the bootstrap record could not make.
 
 ## Scanner semantics
@@ -131,6 +131,6 @@ Dr.Jit, standard library — are recorded by name in `external_includes` and nev
 hashed, so the digest stays machine-independent. A *new* external include still
 shows up as drift. The residual gap is a Dr.Jit upgrade that perturbs device code
 without changing any tracked file; `drjit_pin` closes it by being *parsed from*
-`backends/drjit/pyproject.toml` at audit time (never hardcoded), so a pin bump
+`drjit/pyproject.toml` at audit time (never hardcoded), so a pin bump
 changes the rendered record, `--check` fails, and the bumper is forced into a
 conscious `--write` plus re-verification.
