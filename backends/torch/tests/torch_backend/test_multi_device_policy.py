@@ -8,8 +8,11 @@ CUDA evidence for the budget contract.
 
 from __future__ import annotations
 
+import ast
 from contextlib import nullcontext
+import inspect
 from types import SimpleNamespace
+import textwrap
 import unittest
 from unittest import mock
 
@@ -156,6 +159,24 @@ class PeerTopologyPolicyTests(unittest.TestCase):
 
 
 class OperationPolicyTests(unittest.TestCase):
+    def test_default_intersection_probe_uses_the_private_dispatch_signature(self) -> None:
+        tree = ast.parse(
+            textwrap.dedent(inspect.getsource(_ReplicatedScene._default_probe))
+        )
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "intersect"
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            len(calls[0].args),
+            3,
+            "the built-in probe must work for both Scene and _ReplicatedScene",
+        )
+
     def test_builtin_probe_cannot_be_mislabeled_as_another_operation(self) -> None:
         layer = _planned(rt.MultiDeviceOptions(warm_up=False))
         with self.assertRaisesRegex(ValueError, "(?i)built-in|custom probe"):

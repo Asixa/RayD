@@ -214,6 +214,7 @@ from .types import (
     NearestPointEdge,
     NearestRayEdge,
     Ray,
+    RayFlags,
     ReflEpcField,
     ReflectionChain,
     SegmentChainVisibility,
@@ -2221,7 +2222,10 @@ class _ReplicatedScene:
             if max_bounces > 0:
                 replica.trace_reflections(ray, max_bounces, None).valid
             else:
-                replica.intersect(ray).t
+                # Both public `Scene` and private `_ReplicatedScene` accept
+                # this explicit shape. The latter intentionally has no
+                # defaults because it sits below public argument validation.
+                replica.intersect(ray, None, int(RayFlags.All)).t
 
         return probe
 
