@@ -1,4 +1,4 @@
-#include <rayd/diffraction/torch.h>
+#include <rayd/diffraction.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>

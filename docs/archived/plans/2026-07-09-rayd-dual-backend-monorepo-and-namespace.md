@@ -71,7 +71,7 @@ registrations.
 
 ### C++ namespaces and include roots
 
-- shared runtime-independent code: `rayd::shared`, `<rayd/shared/...>`;
+- shared runtime-independent code: `rayd::shared`, `<rayd/detail/...>`;
 - Dr.Jit backend: existing `rayd` C++ namespace may remain internally;
 - Torch backend: migrate `raydn` C++ namespace to `rayd::torch_backend`;
 - Torch-private headers: `<rayd/torch/...>`.
@@ -252,7 +252,7 @@ RayD/
 │       ├── tests/
 │       └── scripts/
 ├── shared/
-│   ├── include/rayd/shared/
+│   ├── include/rayd/detail/
 │   ├── contracts/
 │   └── testdata/
 ├── tests/

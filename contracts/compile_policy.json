@@ -9,7 +9,7 @@
       "which of those divergences are frozen by decision rather than accidental"
     ],
     "excludes": [
-      "epsilon and sentinel constants, which include/rayd/shared/rt/numeric_policy.h owns",
+      "epsilon and sentinel constants, which include/rayd/detail/rt/numeric_policy.h owns",
       "host compiler flags, optimization level, and warning flags, which change no device arithmetic",
       "include directories, preprocessor definitions, -std, --extended-lambda, and -Xcompiler=-fPIC",
       "the effective command line after CMake resolves build-type and CUDA-language defaults; this contract records flags as written in CMake"
@@ -837,14 +837,14 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/reflection/trace_algo.h",
-        "include/rayd/shared/visibility/segment_algo.h",
-        "include/rayd/shared/reflection/epc_algo.h",
-        "include/rayd/shared/reflection/accumulation_algo.h",
-        "include/rayd/shared/diffraction/paths_algo.h",
-        "include/rayd/shared/diffraction/accumulation_algo.h",
-        "include/rayd/shared/diffraction/utd_math.h",
-        "include/rayd/shared/bvh/triangle_intersect.h"
+        "include/rayd/detail/reflection/trace_algo.h",
+        "include/rayd/detail/visibility/segment_algo.h",
+        "include/rayd/detail/reflection/epc_algo.h",
+        "include/rayd/detail/reflection/accumulation_algo.h",
+        "include/rayd/detail/diffraction/paths_algo.h",
+        "include/rayd/detail/diffraction/accumulation_algo.h",
+        "include/rayd/detail/diffraction/utd_math.h",
+        "include/rayd/detail/bvh/triangle_intersect.h"
       ],
       "evidence": [
         "drjit/CMakeLists.txt: rayd_cuda_object(NAME src/scene/multipath_jit.cu ... EXTRA_FLAGS --use_fast_math)",
@@ -869,8 +869,8 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/reflection/trace_algo.h",
-        "include/rayd/shared/rt/numeric_policy.h"
+        "include/rayd/detail/reflection/trace_algo.h",
+        "include/rayd/detail/rt/numeric_policy.h"
       ],
       "evidence": [
         "cmake/RayDOptix.cmake: rayd_embed_ptx() emits -arch=compute_70 in both the Windows and POSIX branches",
@@ -900,8 +900,8 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/diffraction/utd_math.h",
-        "include/rayd/shared/diffraction/utd_types.h"
+        "include/rayd/detail/diffraction/utd_math.h",
+        "include/rayd/detail/diffraction/utd_types.h"
       ],
       "evidence": [
         "torch/CMakeLists.txt: set_source_files_properties(src/diffraction/wedge.cu ... --use_fast_math)",
@@ -926,8 +926,8 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/bvh/triangle_intersect.h",
-        "include/rayd/shared/bvh/traversal_common.cuh"
+        "include/rayd/detail/bvh/triangle_intersect.h",
+        "include/rayd/detail/bvh/traversal_common.cuh"
       ],
       "evidence": [
         "drjit/CMakeLists.txt: src/scene/multipath_jit.cu carries EXTRA_FLAGS --use_fast_math; src/bvh/triangle_query_shared.cu carries none"
@@ -961,7 +961,7 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/edge/edge_distance_math.h"
+        "include/rayd/detail/edge/edge_distance_math.h"
       ],
       "evidence": [
         "The same nearest-edge distance expression backs both the PTX custom-AABB backend and the custom BVH backend, and the two backends are selectable at runtime through src/edge/edge_bvh_jit.cu_backend."
@@ -995,7 +995,7 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/field_math.h"
+        "include/rayd/detail/field_math.h"
       ],
       "evidence": [
         "drjit/CMakeLists.txt: src/reflection/accumulation_optix_jit.cu is a rayd_embed_ptx() unit; src/reflection/reflection_kernels_jit.cu is a rayd_cuda_object() unit with no EXTRA_FLAGS"
@@ -1019,8 +1019,8 @@
         }
       ],
       "shared_headers": [
-        "include/rayd/shared/diffraction/paths_algo.h",
-        "include/rayd/shared/diffraction/utd_math.h"
+        "include/rayd/detail/diffraction/paths_algo.h",
+        "include/rayd/detail/diffraction/utd_math.h"
       ],
       "evidence": [
         "tests/parity/test_src/scene/multipath_jit.cu.py::test_diffraction_direct_and_unreachable_suffix_match_optix fails at baseline on key fx_re with optix=-0.002432416193187237 and cuda=-0.0016550300642848015, an absolute difference of 7.77e-4 against a 5e-5 field tolerance.",
@@ -1076,158 +1076,158 @@
     }
   ],
   "shared_header_exposure": {
-    "include/rayd/shared/bvh/cuda_bvh_traverser.h": [
+    "include/rayd/detail/bvh/cuda_bvh_traverser.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/bvh/topology.h": [
+    "include/rayd/detail/bvh/topology.h": [
       "fast_math",
       "nvcc_default",
       "precise_no_ftz"
     ],
-    "include/rayd/shared/bvh/traversal_common.cuh": [
+    "include/rayd/detail/bvh/traversal_common.cuh": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/bvh/triangle_intersect.h": [
+    "include/rayd/detail/bvh/triangle_intersect.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/bvh/triangle_query.h": [
+    "include/rayd/detail/bvh/triangle_query.h": [
       "fast_math",
       "nvcc_default",
       "precise_no_ftz"
     ],
-    "include/rayd/shared/bvh/triangle_query_device.cuh": [
+    "include/rayd/detail/bvh/triangle_query_device.cuh": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/contracts.h": [
+    "include/rayd/detail/contracts.h": [
       "fast_math",
       "no_fmad",
       "nvcc_default",
       "precise_no_ftz"
     ],
-    "include/rayd/shared/diffraction/utd_math.h": [
+    "include/rayd/detail/diffraction/utd_math.h": [
       "fast_math",
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/diffraction/utd_types.h": [
+    "include/rayd/detail/diffraction/utd_types.h": [
       "fast_math",
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/edge/bvh_types.h": [
+    "include/rayd/detail/edge/bvh_types.h": [
       "nvcc_default",
       "precise_no_ftz"
     ],
-    "include/rayd/shared/edge/edge_distance_math.h": [
+    "include/rayd/detail/edge/edge_distance_math.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/field_math.h": [
+    "include/rayd/detail/field_math.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/field_transport.cuh": [
+    "include/rayd/detail/field_transport.cuh": [
       "fast_math",
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/math/vec3.h": [
+    "include/rayd/detail/vec3.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/diffraction/accumulation_algo.h": [
+    "include/rayd/detail/diffraction/accumulation_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/diffraction/paths_algo.h": [
+    "include/rayd/detail/diffraction/paths_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/accumulation_algo.h": [
+    "include/rayd/detail/reflection/accumulation_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/epc_algo.h": [
+    "include/rayd/detail/reflection/epc_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/trace_algo.h": [
+    "include/rayd/detail/reflection/trace_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/visibility/segment_algo.h": [
+    "include/rayd/detail/visibility/segment_algo.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/diffraction/contracts.h": [
+    "include/rayd/detail/diffraction/contracts.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/rt/optix_pipeline_contracts.h": [
+    "include/rayd/detail/rt/optix_pipeline_contracts.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/epc_params.h": [
+    "include/rayd/detail/reflection/epc_params.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/trace_params.h": [
+    "include/rayd/detail/reflection/trace_params.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/edge/optix_contracts.h": [
+    "include/rayd/detail/edge/optix_contracts.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/visibility/segment_params.h": [
+    "include/rayd/detail/visibility/segment_params.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/epc_chain.h": [
+    "include/rayd/detail/reflection/epc_chain.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/reflection/reflection_geometry.h": [
+    "include/rayd/detail/reflection/reflection_geometry.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/rt/numeric_policy.h": [
+    "include/rayd/detail/rt/numeric_policy.h": [
       "fast_math",
       "nvcc_default",
       "precise_no_ftz"
     ],
-    "include/rayd/shared/rt/qualifiers.h": [
+    "include/rayd/detail/rt/qualifiers.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/rt/traverser.h": [
+    "include/rayd/detail/rt/traverser.h": [
       "fast_math",
       "nvcc_default"
     ],
-    "include/rayd/shared/scattering/scattering_table.cuh": [
+    "include/rayd/detail/scattering_table.cuh": [
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/transmission/complex.cuh": [
-      "fast_math",
-      "no_fmad",
-      "nvcc_default"
-    ],
-    "include/rayd/shared/transmission/fresnel.cuh": [
+    "include/rayd/detail/transmission/complex.cuh": [
       "fast_math",
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/transmission/layer_stack.cuh": [
+    "include/rayd/detail/transmission/fresnel.cuh": [
       "fast_math",
       "no_fmad",
       "nvcc_default"
     ],
-    "include/rayd/shared/transmission/medium.cuh": [
+    "include/rayd/detail/transmission/layer_stack.cuh": [
+      "fast_math",
+      "no_fmad",
+      "nvcc_default"
+    ],
+    "include/rayd/detail/transmission/medium.cuh": [
       "fast_math",
       "no_fmad",
       "nvcc_default"

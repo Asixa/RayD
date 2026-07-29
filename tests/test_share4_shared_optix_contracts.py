@@ -4,8 +4,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REFLECTION = ROOT / "include/rayd/shared/reflection"
-VISIBILITY = ROOT / "include/rayd/shared/visibility"
+REFLECTION = ROOT / "include/rayd/detail/reflection"
+VISIBILITY = ROOT / "include/rayd/detail/visibility"
 
 
 class Share4SharedOptixContractsTests(unittest.TestCase):
@@ -25,12 +25,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
 
     def test_backend_headers_are_thin_shared_aliases(self):
         headers = (
-            ("src/reflection/trace_params_jit.h", "rayd/shared/reflection/", "ReflectionTraceParams"),
-            ("src/reflection/trace_params.h", "rayd/shared/reflection/", "ReflectionTraceParams"),
-            ("src/visibility/segment_params_jit.h", "rayd/shared/visibility/", "SegmentVisibilityParams"),
-            ("src/visibility/visibility_params.h", "rayd/shared/visibility/", "SegmentVisibilityParams"),
-            ("src/reflection/epc_params_jit.h", "rayd/shared/reflection/", "ReflEpcParams"),
-            ("src/reflection/epc_params.h", "rayd/shared/reflection/", "ReflEpcParams"),
+            ("src/reflection/trace_params_jit.h", "rayd/detail/reflection/", "ReflectionTraceParams"),
+            ("src/reflection/trace_params.h", "rayd/detail/reflection/", "ReflectionTraceParams"),
+            ("src/visibility/segment_params_jit.h", "rayd/detail/visibility/", "SegmentVisibilityParams"),
+            ("src/visibility/visibility_params.h", "rayd/detail/visibility/", "SegmentVisibilityParams"),
+            ("src/reflection/epc_params_jit.h", "rayd/detail/reflection/", "ReflEpcParams"),
+            ("src/reflection/epc_params.h", "rayd/detail/reflection/", "ReflEpcParams"),
         )
         for relative, owner, type_name in headers:
             source = (ROOT / relative).read_text(encoding="utf-8")
@@ -59,12 +59,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertIn(symbol, helper)
 
         primitive_id = (
-            ROOT / "include/rayd/shared/rt/optix_primitive_id.h"
+            ROOT / "include/rayd/detail/rt/optix_primitive_id.h"
         ).read_text(encoding="utf-8")
         self.assertIn("global_primitive_id", primitive_id)
-        self.assertIn("rayd/shared/rt/optix_primitive_id.h", helper)
+        self.assertIn("rayd/detail/rt/optix_primitive_id.h", helper)
         self.assertIn(
-            "rayd/shared/rt/optix_primitive_id.h",
+            "rayd/detail/rt/optix_primitive_id.h",
             (VISIBILITY / "segment_optix_device.cuh").read_text(encoding="utf-8"),
         )
 
@@ -78,7 +78,7 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertIn(entry, source)
 
         reflection_trace = (REFLECTION / "trace_optix_device.cuh").read_text(encoding="utf-8")
-        self.assertIn("rayd/shared/reflection/optix_traverser.h", reflection_trace)
+        self.assertIn("rayd/detail/reflection/optix_traverser.h", reflection_trace)
         self.assertIn("OptixTraverser", reflection_trace)
         traverser = (REFLECTION / "optix_traverser.h").read_text(encoding="utf-8")
         self.assertIn("optixTrace", traverser)
@@ -86,12 +86,12 @@ class Share4SharedOptixContractsTests(unittest.TestCase):
             self.assertIn("optixTrace", path.read_text(encoding="utf-8"))
 
         adapters = (
-            ("src/reflection/trace_optix_jit.cu", "rayd/shared/reflection/trace_optix_device.cuh"),
-            ("src/reflection/trace_optix.cu", "rayd/shared/reflection/trace_optix_device.cuh"),
-            ("src/reflection/epc_optix_jit.cu", "rayd/shared/reflection/epc_optix_device.cuh"),
-            ("src/reflection/epc_optix.cu", "rayd/shared/reflection/epc_optix_device.cuh"),
-            ("src/visibility/visibility_optix_jit.cu", "rayd/shared/visibility/segment_optix_device.cuh"),
-            ("src/visibility/visibility_optix.cu", "rayd/shared/visibility/segment_optix_device.cuh"),
+            ("src/reflection/trace_optix_jit.cu", "rayd/detail/reflection/trace_optix_device.cuh"),
+            ("src/reflection/trace_optix.cu", "rayd/detail/reflection/trace_optix_device.cuh"),
+            ("src/reflection/epc_optix_jit.cu", "rayd/detail/reflection/epc_optix_device.cuh"),
+            ("src/reflection/epc_optix.cu", "rayd/detail/reflection/epc_optix_device.cuh"),
+            ("src/visibility/visibility_optix_jit.cu", "rayd/detail/visibility/segment_optix_device.cuh"),
+            ("src/visibility/visibility_optix.cu", "rayd/detail/visibility/segment_optix_device.cuh"),
         )
         for relative, shared_header in adapters:
             source = (ROOT / relative).read_text(encoding="utf-8")

@@ -4,8 +4,8 @@
 #include <memory>
 #include <vector>
 
-#include <rayd/rt/drjit/optix.h>
-#include <rayd/core/drjit.h>
+#include <rayd/jit/optix.h>
+#include <rayd/jit/core.h>
 #include <src/reflection/trace_params_jit.h>
 #include <src/reflection/epc_params_jit.h>
 #include <src/reflection/accumulation_params_jit.h>

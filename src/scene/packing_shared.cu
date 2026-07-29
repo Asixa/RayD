@@ -1,4 +1,4 @@
-#include <rayd/shared/scene/packing.h>
+#include <rayd/detail/scene/packing.h>
 
 #include <cuda_runtime.h>
 

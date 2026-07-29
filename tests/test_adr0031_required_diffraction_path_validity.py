@@ -22,9 +22,9 @@ def struct_body(text: str, name: str) -> str:
 
 class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
     def test_required_path_export_validity_survives_api6(self):
-        integration = read(RAYD_INCLUDE / "integration" / "torch.h")
-        self.assertIn("kIntegrationApiVersion = 7", integration)
-        diffraction = read(RAYD_INCLUDE / "diffraction" / "torch.h")
+        integration = read(RAYD_INCLUDE / "integration.h")
+        self.assertIn("kIntegrationApiVersion = 8", integration)
+        diffraction = read(RAYD_INCLUDE / "diffraction.h")
         config = struct_body(diffraction, "DiffractionPathConfig")
         self.assertEqual(config.count("at::Tensor active;"), 1)
         self.assertNotIn("std::optional<at::Tensor> active", config)
@@ -82,7 +82,7 @@ class Adr0031RequiredDiffractionPathValidityTests(unittest.TestCase):
             TORCH_SOURCE / "diffraction" / "paths_optix.cu"
         )
         shared = read(
-            ROOT / "include" / "rayd" / "shared" / "diffraction"
+            ROOT / "include" / "rayd" / "detail" / "diffraction"
             / "paths_algo.h"
         )
         for source in (optix, shared):

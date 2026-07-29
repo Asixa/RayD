@@ -5,8 +5,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACTS_H = ROOT / "include" / "rayd" / "shared" / "contracts.h"
-POLICY_H = ROOT / "include" / "rayd" / "shared" / "rt" / "numeric_policy.h"
+CONTRACTS_H = ROOT / "include" / "rayd" / "detail" / "contracts.h"
+POLICY_H = ROOT / "include" / "rayd" / "detail" / "rt" / "numeric_policy.h"
 OPERATIONS = json.loads(
     (ROOT / "contracts" / "operations.json").read_text(encoding="utf-8")
 )

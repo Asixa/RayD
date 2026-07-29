@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 namespace rayd::torch::detail {
 
@@ -127,7 +127,7 @@ inline int64_t check_scattering_chain_ensemble_request(
 
 #include <optional>
 
-#include <rayd/field_transport/torch_ad.cuh>
+#include <src/field_transport/ad.cuh>
 
 // Backward / JVP companion kernels for the field transport forwards
 // (plan 07 AD-1 materials/frequency, AD-2 geometry). Fixed-topology contract:

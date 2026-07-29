@@ -4,12 +4,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED_INCLUDE = ROOT / "include/rayd/shared/edge"
+SHARED_INCLUDE = ROOT / "include/rayd/detail/edge"
 SHARED_SOURCE = ROOT / "src/edge"
 # P3 Stage A moved the primitive-agnostic BVH machinery into shared/bvh/. The
 # edge headers now re-export it, so the pins below live on the new locations and
 # additionally assert that the edge layer keeps delegating to the core.
-BVH_CORE_INCLUDE = ROOT / "include/rayd/shared/bvh"
+BVH_CORE_INCLUDE = ROOT / "include/rayd/detail/bvh"
 BVH_CORE_SOURCE = ROOT / "src/bvh"
 
 
@@ -36,7 +36,7 @@ class Share5EdgeBvhCoreTests(unittest.TestCase):
     def test_product_treelet_constants_have_one_shared_definition(self):
         shared = (BVH_CORE_INCLUDE / "topology.h").read_text(encoding="utf-8")
         edge = (SHARED_INCLUDE / "bvh_types.h").read_text(encoding="utf-8")
-        adapter = (ROOT / "include/rayd/edge/drjit/edge_bvh_config.h").read_text(
+        adapter = (ROOT / "include/rayd/jit/edge_bvh_config.h").read_text(
             encoding="utf-8"
         )
         for token in (

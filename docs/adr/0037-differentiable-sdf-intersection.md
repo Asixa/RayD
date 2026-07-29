@@ -1,15 +1,15 @@
 # ADR-0037: Differentiable SDF ray intersection
 
-- Status: Accepted; integration include and API-version clauses superseded by ADR-0040
+- Status: Accepted; integration include and API-version clauses superseded by ADR-0041
 - Date: 2026-07-26
 - Decision ID: `differentiable-sdf-intersection`
 - Scope: the RayD Torch backend's standalone signed-distance-field intersection
   primitive, its grid and oriented-box representation, its sphere-trace
   algorithm, its numeric constants, and its fixed-winner AD contract
 
-> **ADR-0040 supersession.** Historical integration-path and API-6 statements
+> **ADR-0041 supersession.** Historical integration-path and API-6 statements
 > below remain evidence; the current typed boundary is
-> `rayd/integration/torch.h` at API version 7.
+> `rayd/integration.h` at API version 8.
 
 ## Context
 
@@ -362,8 +362,8 @@ else, and never synchronizes.
   reachable from any `backends/drjit/ptx_sources.json` module include closure,
   and no existing shared header may be modified. New shared device math lives
   in new files under `shared/include/rayd/shared/sdf/`; those files may include
-  closure-listed leaf headers such as `rayd/shared/math/vec3.h` and
-  `rayd/shared/rt/qualifiers.h` read-only, because inclusion in that direction
+  closure-listed leaf headers such as `rayd/detail/vec3.h` and
+  `rayd/detail/rt/qualifiers.h` read-only, because inclusion in that direction
   leaves every PTX closure and digest unchanged. This keeps
   `tests/test_ptx_source_digest.py` green by construction rather than by repair.
 - **`nvcc_default` only.** Every new CUDA translation unit takes the

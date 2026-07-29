@@ -1,6 +1,6 @@
 # ADR-0040: Concept-owned backend headers and centralized Python frontends
 
-- Status: Accepted
+- Status: Accepted; installed-header and source-header-set clauses superseded by ADR-0041
 - Date: 2026-07-28
 - Decision ID: `internal-header-and-python-frontend-layout`
 - Scope: RayD installed source headers, private Torch headers, Python frontend source ownership, and downstream source-bundle activation
@@ -27,7 +27,7 @@ The physical directories `include/rayd/shared/multipath` and `include/rayd/share
 
 This is also an intentional hard break for the moved installed Dr.Jit shared-header and multipath spellings. `include/rayd/multipath` is removed. Its six public headers move to concept-owned `rayd/{reflection,diffraction,visibility}/drjit` paths, while its ten private headers move beside their implementations under `src/<concept>`. Dr.Jit installs an explicit public header manifest instead of recursively installing `include/rayd`. No forwarding headers, namespace aliases, duplicate headers, or compatibility include roots are added.
 
-The same backend qualification applies to every installed Dr.Jit header, not only multipath. include/rayd contains concept directories rather than loose headers. A concept facade is ayd/<concept>/drjit.h; subordinate headers are ayd/<concept>/drjit/<part>.h. Core, diagnostics, math, ray, runtime, scene, edge, surfel, and trace headers follow this rule, so paths such as ayd/rayd.h, ayd/scene/scene.h, and ayd/edge/edge.h are removed without forwarding copies.
+The same backend qualification applies to every installed Dr.Jit header, not only multipath. `include/rayd` contains concept directories rather than loose headers. A concept facade is `rayd/<concept>/drjit.h`; subordinate headers are `rayd/<concept>/drjit/<part>.h`. Core, diagnostics, math, ray, runtime, scene, edge, surfel, and trace headers follow this rule, so paths such as `rayd/rayd.h`, `rayd/scene/scene.h`, and `rayd/edge/edge.h` are removed without forwarding copies.
 
 The two public Python frontend source trees are centralized under the existing repository Python root:
 

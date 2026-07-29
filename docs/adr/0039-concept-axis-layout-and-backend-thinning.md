@@ -1,6 +1,6 @@
 # ADR-0039: Concept-axis source layout and thin backend frontends
 
-- Status: Accepted
+- Status: Accepted; installed-header clauses superseded by ADR-0041
 - Date: 2026-07-28
 - Decision ID: `concept-axis-layout-and-backend-thinning`
 - Scope: RayD repository layout, source ownership, packaging manifests, and source-level RF ownership names
@@ -22,13 +22,13 @@ The Python implementation install path is `rayd/_impl` with no `__init__.py`. Th
 The generic `rf/` source umbrella and ownership namespace are retired in the same source-ABI cut:
 
 - passive complex, medium, Fresnel, layer-stack, and transmission sequence code is owned by `rayd/{shared,torch}/transmission` and `rayd::shared::transmission`;
-- resident-table, ensemble, patch, and chain scattering code is owned by `rayd/{shared,torch}/scattering` and the corresponding scattering namespaces;
-- UTD and wedge-field code is owned by diffraction, with backend-neutral UTD code under `rayd/shared/diffraction` and `rayd::shared::diffraction`;
-- genuinely cross-concept field transport uses `rayd/shared/field_transport.cuh` and `rayd/field_transport/torch_ad.cuh` owners.
+- resident-table, ensemble, patch, and chain scattering code is owned by `rayd/scattering.h`, `rayd/detail/scattering_table.cuh`, `src/scattering`, and the corresponding scattering namespaces;
+- UTD and wedge-field code is owned by diffraction, with backend-neutral UTD code under `rayd/detail/diffraction` and `rayd::shared::diffraction`;
+- genuinely cross-concept field transport uses `rayd/detail/field_transport.cuh` and `src/field_transport/ad.cuh` owners.
 
 No forwarding `rf/` headers, namespace aliases, copied helpers, runtime owner selection, or compatibility shims are added. Channel must update its direct includes, qualified names, RayD pin, and source-manifest digest atomically before the renamed source ABI is active downstream.
 
-The passive Torch source resource remains exactly `rayd/torch/_source`, but its internal canonical source tree is `torch/CMakeLists.txt`, `include/`, `src/`, and `cmake/`, plus its metadata and license. It remains passive, relocatable, fully manifested, and compiled in the consumer graph. ADR-0040 subsequently moves the durable include to `rayd/integration/torch.h` and advances `kIntegrationApiVersion` to `7`, while preserving identity `rayd.torch.integration`.
+The passive Torch source resource remains exactly `rayd/torch/_source`, but its internal canonical source tree is `torch/CMakeLists.txt`, the allowlisted public/detail headers, `src/`, and `cmake/`, plus its metadata and license. It remains passive, relocatable, fully manifested, and compiled in the consumer graph. ADR-0041 subsequently makes `rayd/integration.h` the flat durable include and advances `kIntegrationApiVersion` to `8`, while preserving identity `rayd.torch.integration`.
 
 CUDA translation-unit consolidation may map several historical logical units to one physical source only when owner, compiler, numeric profile, registration lifetime, ABI, and activation boundary match. `contracts/compile_policy.json` retains all 80 logical TU roles under stable concept names and preserves D1-D10 semantics while recording the final physical source for each role; every logical entry mapped to one physical compile must agree with that compile's profile, target, kind, architecture, and option. No CUDA numeric flag changes are authorized.
 

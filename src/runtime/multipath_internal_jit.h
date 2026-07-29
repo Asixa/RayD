@@ -8,13 +8,13 @@
 #include <string>
 #include <vector>
 
-#include <rayd/ray/drjit.h>
+#include <rayd/jit/ray.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
 #include <src/reflection/dedup_jit.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 #include <src/scene/cuda_multipath_gpu_jit.h>
 
 namespace rayd {

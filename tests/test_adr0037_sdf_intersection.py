@@ -28,7 +28,7 @@ OPERATIONS_PATH = ROOT / "contracts" / "operations.json"
 PUBLIC_API_PATH = ROOT / "contracts" / "public_api.json"
 COMPILE_POLICY_PATH = ROOT / "contracts" / "compile_policy.json"
 SPHERE_TRACE_PATH = (
-    ROOT / "include" / "rayd" / "shared" / "sdf" / "sphere_trace.h"
+    ROOT / "include" / "rayd" / "detail" / "sdf" / "sphere_trace.h"
 )
 DEVICE_MATH_PATH = ROOT / "src" / "sdf" / "device_math.cuh"
 TORCH_PACKAGE = ROOT / "python" / "rayd" / "_impl"
@@ -106,7 +106,7 @@ class Adr0037RecordTests(AdrTestCase):
         head = self.adr.splitlines()[:6]
         self.assertEqual(head[0], "# ADR-0037: Differentiable SDF ray intersection")
         self.assertRegex(head[2], r"^- Status: Accepted(?:; .+)?$")
-        self.assertIn("ADR-0040", head[2])
+        self.assertIn("ADR-0041", head[2])
         self.assertEqual(head[3], "- Date: 2026-07-26")
         self.assertEqual(head[4], "- Decision ID: `differentiable-sdf-intersection`")
         self.assertTrue(head[5].startswith("- Scope:"))
@@ -116,7 +116,9 @@ class Adr0037RecordTests(AdrTestCase):
         self.assertIn(
             "| [0037](0037-differentiable-sdf-intersection.md) "
             "| Differentiable SDF ray intersection "
-            "| `differentiable-sdf-intersection` | 2026-07-26 | Accepted |",
+            "| `differentiable-sdf-intersection` | 2026-07-26 "
+            "| Accepted; integration include and API-version clauses "
+            "superseded by ADR-0041 |",
             index,
         )
         # The sequence sentence must cover 0037; later ADRs extend the range

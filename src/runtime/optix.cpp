@@ -1,5 +1,5 @@
 #include <src/runtime/optix_pipeline.h>
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -7,7 +7,7 @@
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/shared/rt/optix_sbt.h>
+#include <rayd/detail/rt/optix_sbt.h>
 
 #include <algorithm>
 #include <cstring>
@@ -408,8 +408,8 @@ void OptixLaunchPipeline::launch_impl(
 #include <rayd/edge/topk_torch_ptx.h>
 #include <rayd/scene/intersection_torch_ptx.h>
 #include <rayd/reflection/trace_torch_ptx.h>
-#include <rayd/shared/edge/optix_contracts.h>
-#include <rayd/shared/scene/optix_contracts.h>
+#include <rayd/detail/edge/optix_contracts.h>
+#include <rayd/detail/scene/optix_contracts.h>
 
 #include <algorithm>
 #include <cctype>

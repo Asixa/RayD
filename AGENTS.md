@@ -20,9 +20,9 @@ The repository root is a meta-distribution and builds no native code. Build a ba
 
 ## Architecture
 
-- `include/rayd/<concept>/drjit.h` and `include/rayd/<concept>/drjit/`, `src/**/*_jit.*`: Dr.Jit backend C++/CUDA geometry, edge, and multipath kernels
-- `include/rayd/<concept>/torch.h`, unsuffixed files under `src/<concept>/`: public Torch typed APIs plus private dispatcher and autograd implementations
-- `include/rayd/shared/<concept>/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels
+- `include/rayd/*.h`: flat default Torch typed API plus the backend-neutral `path_exchange.h` contract
+- `include/rayd/jit/*.h`, `src/**/*_jit.*`: flat Dr.Jit C++ API and its CUDA/OptiX implementations
+- `include/rayd/detail/`, `src/**/*_shared.*`: backend-neutral contracts, math, edge BVH core, and accumulation kernels; only multi-file modules retain subdirectories
 - `contracts/`: machine-readable public API and operation manifests
 - `Scene`: mesh container plus OptiX acceleration structure
 - `Mesh`: raw triangle mesh input, transforms, edge topology, secondary edge query data
@@ -47,8 +47,8 @@ their builders, lifecycle, seeds, topology, estimator, RNG/MIS, accumulation,
 metadata, and public results.
 
 - Declarations have one owner in
-  `include/rayd/scattering/torch.h`; shared table device math
-  has one owner in `include/rayd/shared/scattering/scattering_table.cuh`.
+  `include/rayd/scattering.h`; shared table device math
+  has one owner in `include/rayd/detail/scattering_table.cuh`.
 - Move every family complete. Do not split primal from backward/JVP, copy a
   Channel implementation/header, include Channel private headers, or add a
   second Python extension/dispatcher.
@@ -85,12 +85,12 @@ remain higher-priority developer inputs and retain Git commit/remote/dirty
 validation.
 
 The same-graph Torch C++ boundary has one durable name:
-`rayd/integration/torch.h`, with exact identity `rayd.torch.integration` and
-numeric `kIntegrationApiVersion = 7`. Do not add an `integration_v2` forwarding
+`rayd/integration.h`, with exact identity `rayd.torch.integration` and
+numeric `kIntegrationApiVersion = 8`. Do not add an `integration_v2` forwarding
 header, target alias, alternate identity, dispatcher, or compatibility shim.
 Historical Phase 10B identity/hash evidence may retain its former label but is
 not a live include path. See
-`docs/adr/0028-stable-typed-integration-naming.md`.
+ADR-0028 and `docs/adr/0041-flat-default-and-jit-header-layout.md`.
 
 Capacity-shaped row operations require a CUDA boolean validity tensor in the
 top-level primal request. Kernels must test it before reading any row payload or

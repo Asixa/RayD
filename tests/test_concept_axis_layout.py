@@ -1,4 +1,4 @@
-"""Architecture gate for ADR-0039's concept-major repository layout."""
+"""Architecture gate for the ADR-0039/0040/0041 repository layout."""
 
 import json
 import re
@@ -74,40 +74,98 @@ class ConceptAxisLayoutTests(unittest.TestCase):
         self.assertEqual(rf_directories, [])
         self.assertEqual(rf_namespaces, [])
 
-    def test_drjit_public_headers_are_concept_and_backend_qualified(self):
+    def test_public_headers_use_flat_default_and_jit_surfaces(self):
         include_root = ROOT / "include" / "rayd"
         self.assertEqual(
-            [path.name for path in include_root.iterdir() if path.is_file()],
-            [],
-            "include/rayd may contain concept directories only",
+            {path.name for path in include_root.iterdir() if path.is_file()},
+            {
+                "diffraction.h",
+                "integration.h",
+                "path_exchange.h",
+                "penetration.h",
+                "reflection.h",
+                "scattering.h",
+                "scene.h",
+                "transmission.h",
+                "visibility.h",
+            },
         )
-        expected = {
-            "core/drjit.h",
-            "core/drjit/types.h",
-            "core/drjit/utils.h",
-            "diagnostics/drjit/native_launch_audit.h",
-            "rt/drjit/optix.h",
-            "ray/drjit.h",
-            "math/drjit/transform.h",
-            "scene/drjit.h",
-            "scene/drjit/mesh.h",
-            "scene/drjit/scene_optix.h",
-            "edge/drjit.h",
-            "edge/drjit/edge_bvh.h",
-            "edge/drjit/edge_bvh_config.h",
-            "edge/drjit/edge_optix_params.h",
-            "edge/drjit/scene_edge.h",
-            "edge/drjit/scene_edge_optix.h",
-            "surfel/drjit.h",
-            "surfel/drjit/surfel_optix.h",
-            "surfel/drjit/surfel_trace_params.h",
-            "trace/drjit/trace_backend.h",
-            "trace/drjit/cuda_trace_backend.h",
-            "trace/drjit/optix_trace_backend.h",
-            "trace/drjit/triangle_bvh_gpu.h",
+        self.assertEqual(
+            {path.name for path in include_root.iterdir() if path.is_dir()},
+            {"detail", "jit"},
+        )
+
+        jit_root = include_root / "jit"
+        self.assertEqual([path for path in jit_root.iterdir() if path.is_dir()], [])
+        self.assertEqual(
+            {path.name for path in jit_root.iterdir() if path.is_file()},
+            {
+                "core.h",
+                "cuda_trace_backend.h",
+                "diffraction_accumulation.h",
+                "diffraction_paths.h",
+                "edge.h",
+                "edge_bvh.h",
+                "edge_bvh_config.h",
+                "edge_optix_params.h",
+                "mesh.h",
+                "native_launch_audit.h",
+                "optix.h",
+                "optix_trace_backend.h",
+                "ray.h",
+                "reflection_accumulation.h",
+                "reflection_epc.h",
+                "reflection_trace.h",
+                "scene.h",
+                "scene_edge.h",
+                "scene_edge_optix.h",
+                "scene_optix.h",
+                "surfel.h",
+                "surfel_optix.h",
+                "surfel_trace_params.h",
+                "trace_backend.h",
+                "transform.h",
+                "triangle_bvh_gpu.h",
+                "types.h",
+                "utils.h",
+                "visibility.h",
+            },
+        )
+
+        detail_root = include_root / "detail"
+        self.assertEqual(
+            {path.name for path in detail_root.iterdir() if path.is_file()},
+            {
+                "contracts.h",
+                "field_math.h",
+                "field_transport.cuh",
+                "scattering_table.cuh",
+                "vec3.h",
+            },
+        )
+        detail_directories = {
+            path.name: len([child for child in path.iterdir() if child.is_file()])
+            for path in detail_root.iterdir()
+            if path.is_dir()
         }
-        missing = sorted(path for path in expected if not (include_root / path).is_file())
-        self.assertEqual(missing, [])
+        self.assertEqual(
+            set(detail_directories),
+            {
+                "bvh",
+                "diffraction",
+                "edge",
+                "reflection",
+                "rt",
+                "scene",
+                "sdf",
+                "transmission",
+                "visibility",
+            },
+        )
+        self.assertTrue(all(count >= 2 for count in detail_directories.values()))
+        self.assertFalse(any(include_root.rglob("torch.h")))
+        self.assertFalse(any(include_root.rglob("drjit.h")))
+        self.assertFalse((include_root / "shared").exists())
     def test_torch_backend_private_headers_are_concept_owned(self):
         expected = {
             "src/bindings/tensor_contract.h",

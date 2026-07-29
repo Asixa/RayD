@@ -3,9 +3,9 @@
 
 #include <src/runtime/math.cuh>
 #include <src/edge/optix_params.h>
-#include <rayd/shared/contracts.h>
-#include <rayd/shared/edge/edge_distance_math.h>
-#include <rayd/shared/edge/optix_device.cuh>
+#include <rayd/detail/contracts.h>
+#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/detail/edge/optix_device.cuh>
 
 namespace rayd::torch_backend {
 

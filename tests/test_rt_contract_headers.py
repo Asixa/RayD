@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RT_DIR = ROOT / "include" / "rayd" / "shared" / "rt"
+RT_DIR = ROOT / "include" / "rayd" / "detail" / "rt"
 NUMERIC_POLICY = RT_DIR / "numeric_policy.h"
 HIT_TYPES = RT_DIR / "hit_types.h"
 RAY_TYPES = RT_DIR / "ray_types.h"

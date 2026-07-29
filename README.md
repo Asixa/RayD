@@ -496,12 +496,13 @@ The multi-architecture CUDA matrix is reserved for release CI. Pass
 Native downstream projects can add the Torch backend with CMake and link
 against `rayd_torch_native_core`. The source-level integration declarations
 are provided by
-[`include/rayd/integration/torch.h`](include/rayd/integration/torch.h).
+[`include/rayd/integration.h`](include/rayd/integration.h).
 This interface is intended for projects built in the same CMake/libtorch graph;
 it is not a stable binary ABI across unrelated libtorch builds.
 
-Shared RF device headers are public source-level contracts under
-`include/rayd/shared/{transmission,scattering}`. Transmission families are introduced as
+Shared RF device headers are source-level contracts under
+`include/rayd/detail/transmission/` and
+`include/rayd/detail/scattering_table.cuh`. Transmission families are introduced as
 dormant RayD candidates before a downstream pin and switch; dormancy does not
 create a second production owner or authorize runtime fallback dispatch.
 
@@ -509,11 +510,9 @@ create a second production owner or authorize runtime fallback dispatch.
 
 - [`drjit`](drjit): thin Dr.Jit distribution/build frontend
 - [`torch`](torch): thin Torch distribution/build frontend
-- [`python/rayd/drjit`](python/rayd/drjit) and
-- [`python/rayd/_impl`](python/rayd/_impl): private manifest-owned backend
-  implementations
-- [`include`](include): installed Dr.Jit, Torch integration, and shared numerical
-  headers organized by concept
+- [`python/rayd/drjit`](python/rayd/drjit) and [`python/rayd/torch`](python/rayd/torch): public backend frontends
+- [`python/rayd/_impl`](python/rayd/_impl): private manifest-owned backend implementations
+- [`include/rayd`](include/rayd): flat default C++ API, flat `jit/` Dr.Jit API, and backend-neutral `detail/` headers
 - [`src`](src): concept-major native implementation with adjacent unsuffixed
   Torch, `*_jit.*` Dr.Jit, and `*_shared.*` backend-neutral variants
 - [`contracts`](contracts): machine-readable public API,

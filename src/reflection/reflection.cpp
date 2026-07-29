@@ -20,7 +20,7 @@
 #include <src/reflection/trace_params.h>
 #include <src/scene/cache.h>
 #include <src/bindings/tensor_contract.h>
-#include <rayd/reflection/torch.h>
+#include <rayd/reflection.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -2533,7 +2533,7 @@ ReflectionEpcJvpResult reflection_epc_paths_jvp(
 #include <src/reflection/accum_params.h>
 #include <src/reflection/epc_params.h>
 #include <src/reflection/trace_params.h>
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 #include <rayd/reflection/accumulation_torch_ptx.h>
 #include <rayd/reflection/epc_torch_ptx.h>
 #include <rayd/reflection/trace_torch_ptx.h>

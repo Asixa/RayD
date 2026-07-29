@@ -9,7 +9,7 @@ STABLE_INTEGRATION_ADR = (
     ROOT / "docs" / "adr" / "0028-stable-typed-integration-naming.md"
 )
 STABLE_INTEGRATION_HEADER = (
-    "include/rayd/integration/torch.h"
+    "include/rayd/integration.h"
 )
 STABLE_INTEGRATION_HEADER_HASH = (
     "57f83ea460e376166fd5ee22a8243a7c1576a290e1de99c0cbe8e86e93392e14"
@@ -127,9 +127,9 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
 
     def test_phase10b_typed_header_identity_and_dormant_source_scope(self):
         header = (
-            ROOT / "include" / "rayd" / "integration" / "torch.h"
+            ROOT / "include" / "rayd" / "integration.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("#include <rayd/scattering/torch.h>", header)
+        self.assertIn("#include <rayd/scattering.h>", header)
         self.assertIn(
             "rayd.torch.integration",
             header,
@@ -212,7 +212,7 @@ class Adr0026ScatteringOwnershipTests(unittest.TestCase):
             self.stable_integration_text,
         )
         header = (ROOT / STABLE_INTEGRATION_HEADER).read_text(encoding="utf-8")
-        self.assertIn("kIntegrationApiVersion = 7", header)
+        self.assertIn("kIntegrationApiVersion = 8", header)
         self.assertIn('"rayd.torch.integration"', header)
 
     def test_phase10b_cuda_sources_have_no_shim_fallback_or_scope_leak(self):

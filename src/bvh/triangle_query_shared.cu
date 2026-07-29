@@ -1,13 +1,13 @@
-#include <rayd/shared/bvh/triangle_query.h>
+#include <rayd/detail/bvh/triangle_query.h>
 
-#include <rayd/shared/bvh/cuda_bvh_traverser.h>
-#include <rayd/shared/bvh/topology.h>
-#include <rayd/shared/bvh/triangle_query_device.cuh>
+#include <rayd/detail/bvh/cuda_bvh_traverser.h>
+#include <rayd/detail/bvh/topology.h>
+#include <rayd/detail/bvh/triangle_query_device.cuh>
 
 #include <cmath>
 
 // The per-ray traversal cores now live in
-// rayd/shared/bvh/triangle_query_device.cuh so the standalone BVH kernels below
+// rayd/detail/bvh/triangle_query_device.cuh so the standalone BVH kernels below
 // and the on-device CudaBvhTraverser share one implementation. These kernels are
 // thin __global__ wrappers: index guard, output init, ray load, then a single
 // call into the shared core, followed by the P3 overflow-repair bookkeeping.

@@ -1,4 +1,4 @@
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>

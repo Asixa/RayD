@@ -5,22 +5,22 @@
 
 #include <cuda_runtime.h>
 
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 
-#include <rayd/shared/bvh/cuda_bvh_traverser.h>
-#include <rayd/shared/bvh/topology.h>
-#include <rayd/shared/bvh/triangle_query.h>
-#include <rayd/shared/field_math.h>
-#include <rayd/shared/math/vec3.h>
+#include <rayd/detail/bvh/cuda_bvh_traverser.h>
+#include <rayd/detail/bvh/topology.h>
+#include <rayd/detail/bvh/triangle_query.h>
+#include <rayd/detail/field_math.h>
+#include <rayd/detail/vec3.h>
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
-#include <rayd/shared/diffraction/accumulation_algo.h>
-#include <rayd/shared/diffraction/paths_algo.h>
-#include <rayd/shared/reflection/accumulation_algo.h>
-#include <rayd/shared/reflection/epc_algo.h>
-#include <rayd/shared/reflection/trace_algo.h>
-#include <rayd/shared/visibility/segment_algo.h>
-#include <rayd/shared/rt/traverser.h>
+#include <rayd/detail/diffraction/accumulation_algo.h>
+#include <rayd/detail/diffraction/paths_algo.h>
+#include <rayd/detail/reflection/accumulation_algo.h>
+#include <rayd/detail/reflection/epc_algo.h>
+#include <rayd/detail/reflection/trace_algo.h>
+#include <rayd/detail/visibility/segment_algo.h>
+#include <rayd/detail/rt/traverser.h>
 
 // CUDA fused multipath executor (P4 Stage D). Each launcher runs the migrated,
 // traverser-templated multipath algorithm body (concept-owned shared/*/*_algo.h) with

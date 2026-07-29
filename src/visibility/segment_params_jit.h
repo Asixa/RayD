@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/shared/visibility/segment_params.h>
+#include <rayd/detail/visibility/segment_params.h>
 
 namespace rayd {
 

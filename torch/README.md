@@ -88,15 +88,15 @@ The native operators support Torch reverse-mode VJP and forward-mode JVP for the
 ## Native Source Integration
 
 Native downstream projects built in the same CMake/LibTorch graph use the
-versioned typed C++ surface in `rayd/integration/torch.h`; they do not load a
+versioned typed C++ surface in `rayd/integration.h`; they do not load a
 second RayD Python extension or use a dynamic symbol registry. Solver-neutral
-transmission and scattering device math is exposed through the corresponding
-`rayd/shared/{transmission,scattering}/` concept headers. Torch-specific
-cross-concept field AD helpers live at `rayd/field_transport/torch_ad.cuh`.
+transmission and scattering device math is exposed through
+`rayd/detail/transmission/` and `rayd/detail/scattering_table.cuh`. Torch-specific
+cross-concept field AD helpers live at `src/field_transport/ad.cuh`.
 
 The `rayd-torch` wheel also carries a relocatable source bundle at
 `rayd/torch/_source`. `rayd-source.json` records the distribution version,
-source commit and repository, integration ABI identity, the complete nine-header public API set and its aggregate SHA-256, and the SHA-256 of a
+source commit and repository, integration ABI identity, the complete eight-header integration API set and its aggregate SHA-256, the separately bundled `path_exchange.h` contract, and the SHA-256 of a
 complete per-file manifest. The bundle contains the canonical include, source,
 and build inputs needed for a same-graph native build. Downstreams locate this
 passive
@@ -155,7 +155,7 @@ implementation remains dormant until Channel pins it, switches a complete
 family with parity evidence, and deletes the local implementation. See
 [`docs/adr/0026-generic-scattering-runtime-ownership.md`](../docs/adr/0026-generic-scattering-runtime-ownership.md).
 
-The stable source-level boundary is named `rayd/integration/torch.h`, its exact
+The stable source-level boundary is named `rayd/integration.h`, its exact
 identity is `rayd.torch.integration`, and its numeric API version is `7`.
 No `integration_v2` forwarding header, CMake target alias, or alternate
 identity is supported. See

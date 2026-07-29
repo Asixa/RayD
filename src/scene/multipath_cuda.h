@@ -1,8 +1,8 @@
 #pragma once
 
-#include <rayd/shared/reflection/trace_params.h>
-#include <rayd/shared/reflection/epc_params.h>
-#include <rayd/shared/visibility/segment_params.h>
+#include <rayd/detail/reflection/trace_params.h>
+#include <rayd/detail/reflection/epc_params.h>
+#include <rayd/detail/visibility/segment_params.h>
 #include <src/reflection/accum_params.h>
 #include <src/diffraction/paths_params.h>
 #include <src/diffraction/accum_params.h>

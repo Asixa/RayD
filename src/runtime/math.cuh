@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-#include <rayd/shared/rt/numeric_policy.h>
+#include <rayd/detail/rt/numeric_policy.h>
 
 namespace rayd::torch_backend {
 

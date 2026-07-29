@@ -1,5 +1,5 @@
 #include <src/edge/bvh.h>
-#include <rayd/shared/edge/edge_aabb.h>
+#include <rayd/detail/edge/edge_aabb.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_reduce.cuh>
 

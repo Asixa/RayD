@@ -22,7 +22,7 @@
 #include <src/scene/cache.h>
 #include <src/scene/multipath_cuda.h>
 #include <src/bindings/tensor_contract.h>
-#include <rayd/diffraction/torch.h>
+#include <rayd/diffraction.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -3519,7 +3519,7 @@ CoherentDiffractionResult diffraction_coherent_accumulation_forward(
 
 #include <src/diffraction/accum_params.h>
 #include <src/diffraction/paths_params.h>
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 #include <rayd/diffraction/accumulation_torch_ptx.h>
 #include <rayd/diffraction/paths_torch_ptx.h>
 

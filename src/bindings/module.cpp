@@ -1,6 +1,6 @@
 #include <pybind11/pybind11.h>
 
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/contracts.h>
 
 namespace rayd::torch_backend {
 

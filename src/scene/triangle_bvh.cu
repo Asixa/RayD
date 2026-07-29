@@ -1,8 +1,8 @@
 #include <src/scene/triangle_bvh.h>
 
 #include <src/scene/cache.h>
-#include <rayd/shared/bvh/triangle_query.h>
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/bvh/triangle_query.h>
+#include <rayd/detail/contracts.h>
 
 #include <cuda_runtime.h>
 

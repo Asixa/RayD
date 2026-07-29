@@ -1,5 +1,5 @@
 #include <src/reflection/dedup_jit.h>
-#include <rayd/shared/reflection/dedup.h>
+#include <rayd/detail/reflection/dedup.h>
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -8,8 +8,8 @@
 #include <cstdint>
 #include <string>
 
-#include <rayd/core/drjit.h>
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/core.h>
+#include <rayd/jit/native_launch_audit.h>
 
 namespace rayd {
 
@@ -414,17 +414,17 @@ int reflection_dedup_gpu(
 
 // Consolidated reflection EPC field kernels.
 #include <src/reflection/epc_field_jit.h>
-#include <rayd/shared/contracts.h>
-#include <rayd/shared/field_math.h>
+#include <rayd/detail/contracts.h>
+#include <rayd/detail/field_math.h>
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
 #include <string>
 
-#include <rayd/core/drjit.h>
+#include <rayd/jit/core.h>
 
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 
 namespace rayd {
 
@@ -521,7 +521,7 @@ static __forceinline__ __device__ void store_zero_field(
     (P).out_field_z_re[(RAY)] = (FIELD).z.r;                \
     (P).out_field_z_im[(RAY)] = (FIELD).z.i;
 
-#include <rayd/shared/reflection/epc_field_device.cuh>
+#include <rayd/detail/reflection/epc_field_device.cuh>
 
 void check_epc_field_cuda_call(cudaError_t error, const char *message) {
     require(error == cudaSuccess,

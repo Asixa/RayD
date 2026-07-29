@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "include" / "rayd" / "shared" / "contracts.h"
+CONTRACT = ROOT / "include" / "rayd" / "detail" / "contracts.h"
 
 
 class SharedContractsTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class SharedContractsTests(unittest.TestCase):
 
     def test_backends_consume_shared_values_without_merging_ray_tmin(self):
         sources = {
-            "drjit_rayd": ROOT / "include" / "rayd" / "core" / "drjit.h",
+            "drjit_rayd": ROOT / "include" / "rayd" / "jit" / "core.h",
             "torch_forward": ROOT / "src" / "scene" / "intersection.cu",
             "torch_backward": ROOT / "src" / "scene" / "intersection.cu",
             "torch_intersect": ROOT / "src" / "scene" / "intersection_optix.cu",

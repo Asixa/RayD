@@ -942,7 +942,7 @@ ReflEpcJvpOutputs refl_epc_jvp_cuda(
 // ---- merged from src/reflection/dedup_part.cu ----
 
 #include <src/reflection/dedup.h>
-#include <rayd/shared/reflection/dedup.h>
+#include <rayd/detail/reflection/dedup.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -1360,7 +1360,7 @@ int reflection_dedup_gpu(
 // ---- merged from src/reflection/epc_field_part.cu ----
 
 #include <src/reflection/epc_field.h>
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/contracts.h>
 
 #include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
@@ -1519,7 +1519,7 @@ __global__ void reflection_epc_forward_setup_kernel(ReflEpcForwardSetupParams pa
         (P).out_field_z_im[(RAY)] = (FIELD).z.i;                                   \
     }
 
-#include <rayd/shared/reflection/epc_field_device.cuh>
+#include <rayd/detail/reflection/epc_field_device.cuh>
 
 void check_cuda_last_error(const char *message) {
     check_cuda_call(cudaGetLastError(), message);
@@ -1594,7 +1594,7 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index
 // raygen solves for an already-selected plane sequence: mirror the source
 // through each plane, walk back from the receiver intersecting each plane,
 // sum the segment lengths. That chain lives in
-// include/rayd/shared/reflection/epc_chain.h together with its
+// include/rayd/detail/reflection/epc_chain.h together with its
 // reverse-mode companion, so the math here has exactly one implementation.
 // Which primitive each bounce hits, the containment test and the visibility
 // casts are frozen discovery decisions: invalid rows contribute nothing and
@@ -1602,8 +1602,8 @@ void reflection_epc_field_gpu(const ReflEpcFieldParams &params, int device_index
 
 #include <src/reflection/kernels.h>
 #include <src/runtime/math.cuh>
-#include <rayd/shared/reflection/epc_params.h>
-#include <rayd/shared/reflection/epc_chain.h>
+#include <rayd/detail/reflection/epc_params.h>
+#include <rayd/detail/reflection/epc_chain.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

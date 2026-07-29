@@ -26,10 +26,10 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
-#include <rayd/shared/scattering/scattering_table.cuh>
+#include <rayd/detail/scattering_table.cuh>
 
 namespace {
 

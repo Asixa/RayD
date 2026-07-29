@@ -1,7 +1,7 @@
-#include <rayd/shared/edge/bvh_build.h>
+#include <rayd/detail/edge/bvh_build.h>
 
-#include <rayd/shared/bvh/build.h>
-#include <rayd/shared/bvh/refit.h>
+#include <rayd/detail/bvh/build.h>
+#include <rayd/detail/bvh/refit.h>
 
 namespace rayd::shared::edge {
 namespace {
@@ -97,14 +97,14 @@ void launch_refit_selected_internal_nodes_async(const InternalNodeRefitParams &p
 
 } // namespace rayd::shared::edge
 
-#include <rayd/shared/edge/bvh_query.h>
+#include <rayd/detail/edge/bvh_query.h>
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-#include <rayd/shared/bvh/traversal_common.cuh>
-#include <rayd/shared/edge/edge_distance_math.h>
-#include <rayd/shared/math/vec3.h>
+#include <rayd/detail/bvh/traversal_common.cuh>
+#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/detail/vec3.h>
 
 namespace rayd::shared::edge {
 namespace query_detail {
@@ -328,7 +328,7 @@ __device__ __forceinline__ void initialize_output(const EdgeQueryOutputView &out
 }
 
 // The depth-major stack push/load helpers and the near/far tie-break are shared
-// with any BVH consumer via <rayd/shared/bvh/traversal_common.cuh>; the edge
+// with any BVH consumer via <rayd/detail/bvh/traversal_common.cuh>; the edge
 // query calls bvh::stack_push / bvh::stack_load / bvh::near_child_is_left so the
 // coalesced indexing and traversal order stay bitwise identical.
 
@@ -594,7 +594,7 @@ void launch_ray_bvh_query_async(const RayBvhQueryParams &params) {
 
 } // namespace rayd::shared::edge
 
-#include <rayd/shared/edge/edge_aabb.h>
+#include <rayd/detail/edge/edge_aabb.h>
 
 #include <cuda_runtime.h>
 
@@ -663,13 +663,13 @@ void launch_edge_aabb(
 
 } // namespace rayd::shared::edge
 
-#include <rayd/shared/edge/edge_distance.h>
+#include <rayd/detail/edge/edge_distance.h>
 
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-#include <rayd/shared/edge/edge_distance_math.h>
-#include <rayd/shared/math/vec3.h>
+#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/detail/vec3.h>
 
 namespace rayd::shared::edge {
 namespace distance_detail {

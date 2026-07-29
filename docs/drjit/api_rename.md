@@ -16,10 +16,10 @@ ray = rd.Ray(...)                 ray = rd.RayAD(...)        # autodiff
 
 C++ follows the same convention. Each type `X` is defined as a template
 `XData<Float_>`; `XT<Detached>` selects the non-AD or AD `Float`, and `X` (non-AD)
-/ `XAD` (AD) are the two concrete instantiations (`include/rayd/core/drjit.h:23-30`).
+/ `XAD` (AD) are the two concrete instantiations (`include/rayd/jit/core.h:23-30`).
 There is no `RayDetached` alias. The foundational `Float` / `Vector*f` /
 `Matrix4f` aliases follow the same rule: `Float` is non-AD and `FloatAD` is the
-autodiff variant (`include/rayd/core/drjit/types.h:25-26, 78-79, 87-88`).
+autodiff variant (`include/rayd/jit/types.h:25-26, 78-79, 87-88`).
 
 ## 2. Python class renames
 

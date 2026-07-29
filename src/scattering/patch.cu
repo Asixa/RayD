@@ -33,7 +33,7 @@
 #include <c10/util/complex.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
 
@@ -440,7 +440,7 @@ rayd::torch::scattering_patch_integral_eval(
 #include <c10/util/complex.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
 

@@ -1,5 +1,5 @@
-#include <rayd/shared/bvh/build.h>
-#include <rayd/shared/bvh/refit.h>
+#include <rayd/detail/bvh/build.h>
+#include <rayd/detail/bvh/refit.h>
 
 namespace rayd::shared::bvh {
 namespace {

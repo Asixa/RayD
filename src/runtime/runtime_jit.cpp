@@ -1,9 +1,9 @@
 #include <drjit-core/optix.h>
 #define OPTIX_STUBS_IMPL
-#include <rayd/rt/drjit/optix.h>
+#include <rayd/jit/optix.h>
 #undef OPTIX_STUBS_IMPL
 
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 
 #include <algorithm>
 #include <array>
@@ -531,7 +531,7 @@ void init_optix_api() {
 }
 
 // Consolidated native launch audit implementation.
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -746,8 +746,8 @@ bool native_launch_audit_timing_enabled() {
 
 #include <cuda_runtime_api.h>
 
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/jit/native_launch_audit.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 
 #include <reflection_trace_ptx.h>
 #include <reflection_epc_ptx.h>
@@ -1330,13 +1330,13 @@ OptixPipelineConfig segment_chain_visibility_pipeline_config() {
 #include <string>
 #include <vector>
 
-#include <rayd/ray/drjit.h>
+#include <rayd/jit/ray.h>
 #include "scene_internal_jit.h"
 #include <src/diffraction/accumulation_ad_jit.h>
 #include <src/reflection/dedup_jit.h>
 #include <src/reflection/epc_field_jit.h>
 #include <src/runtime/optix_pipelines_jit.h>
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
+#include <rayd/jit/native_launch_audit.h>
 #include <src/scene/cuda_multipath_gpu_jit.h>
 
 #include "multipath_internal_jit.h"

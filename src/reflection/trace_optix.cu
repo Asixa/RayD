@@ -2,8 +2,8 @@
 #include <optix_device.h>
 
 #include <src/reflection/trace_params.h>
-#include <rayd/shared/reflection/optix_hit.h>
-#include <rayd/shared/reflection/trace_optix_device.cuh>
+#include <rayd/detail/reflection/optix_hit.h>
+#include <rayd/detail/reflection/trace_optix_device.cuh>
 
 namespace rayd::torch_backend {
 

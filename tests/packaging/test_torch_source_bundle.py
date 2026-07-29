@@ -60,23 +60,22 @@ class SourceBundleTests(unittest.TestCase):
             self.assertEqual(metadata["source_manifest"]["sha256"], sha256(manifest_path))
             integration_abi = metadata["integration_abi"]
             self.assertEqual(integration_abi["kind"], "source-header-set-sha256")
-            self.assertEqual(integration_abi["api_version"], 7)
+            self.assertEqual(integration_abi["api_version"], 8)
             self.assertEqual(integration_abi["identity"], "rayd.torch.integration")
             self.assertEqual(
-                integration_abi["entrypoint"], "include/rayd/integration/torch.h"
+                integration_abi["entrypoint"], "include/rayd/integration.h"
             )
             self.assertEqual(
                 {header["path"] for header in integration_abi["headers"]},
                 {
-                    "include/rayd/integration/torch.h",
-                    "include/rayd/diffraction/torch.h",
-                    "include/rayd/field_transport/torch_ad.cuh",
-                    "include/rayd/penetration/torch.h",
-                    "include/rayd/reflection/torch.h",
-                    "include/rayd/scattering/torch.h",
-                    "include/rayd/scene/torch.h",
-                    "include/rayd/transmission/torch.h",
-                    "include/rayd/visibility/torch.h",
+                    "include/rayd/integration.h",
+                    "include/rayd/diffraction.h",
+                                "include/rayd/penetration.h",
+                    "include/rayd/reflection.h",
+                    "include/rayd/scattering.h",
+                    "include/rayd/scene.h",
+                    "include/rayd/transmission.h",
+                    "include/rayd/visibility.h",
                 },
             )
             self.assertEqual(integration_abi["sha256"], header_set_sha256(integration_abi["headers"]))
@@ -93,7 +92,10 @@ class SourceBundleTests(unittest.TestCase):
             }
             self.assertEqual(described, actual)
             self.assertIn("torch/CMakeLists.txt", actual)
-            self.assertIn("include/rayd/integration/torch.h", actual)
+            self.assertIn("include/rayd/integration.h", actual)
+            self.assertIn("include/rayd/path_exchange.h", actual)
+            self.assertIn("src/field_transport/ad.cuh", actual)
+            self.assertFalse(any(path.startswith("include/rayd/jit/") for path in actual))
             self.assertTrue(any(path.startswith("src/") for path in actual))
             self.assertTrue(any(path.startswith("include/") for path in actual))
             self.assertTrue(any(path.startswith("cmake/") for path in actual))

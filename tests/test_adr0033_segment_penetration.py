@@ -15,9 +15,9 @@ def read(relative: str) -> str:
 
 class Adr0033SegmentPenetrationTests(unittest.TestCase):
     def test_stable_typed_api_is_complete(self) -> None:
-        integration = read("include/rayd/integration/torch.h")
-        header = read("include/rayd/penetration/torch.h")
-        self.assertIn("kIntegrationApiVersion = 7", integration)
+        integration = read("include/rayd/integration.h")
+        header = read("include/rayd/penetration.h")
+        self.assertIn("kIntegrationApiVersion = 8", integration)
         self.assertIn('"rayd.torch.integration"', integration)
         for name in (
             "SegmentPenetrationPolicy",
@@ -91,7 +91,7 @@ class Adr0033SegmentPenetrationTests(unittest.TestCase):
             self.assertNotIn(forbidden, family)
 
     def test_tape_freezes_restart_and_ad_never_retraces(self) -> None:
-        header = read("include/rayd/penetration/torch.h")
+        header = read("include/rayd/penetration.h")
         cuda = read(
             "src/penetration/penetration.cu"
         )

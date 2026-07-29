@@ -27,20 +27,20 @@ def kernel_body(text: str, name: str) -> str:
 
 class Adr0030CapacityRowValidityTests(unittest.TestCase):
     def test_api_version_and_stable_identity(self):
-        integration = read(RAYD_INCLUDE / "integration" / "torch.h")
-        self.assertIn("kIntegrationApiVersion = 7", integration)
+        integration = read(RAYD_INCLUDE / "integration.h")
+        self.assertIn("kIntegrationApiVersion = 8", integration)
         self.assertIn('"rayd.torch.integration"', integration)
         self.assertFalse((RAYD_INCLUDE / "integration" / "torch_v2.h").exists())
 
     def test_top_level_primal_requests_require_cuda_row_validity(self):
         contracts = {
-            RAYD_INCLUDE / "diffraction" / "torch.h": {
+            RAYD_INCLUDE / "diffraction.h": {
                 "DiffractionWedgeRequest": "at::Tensor valid;",
             },
-            RAYD_INCLUDE / "transmission" / "torch.h": {
+            RAYD_INCLUDE / "transmission.h": {
                 "TransmissionSequenceRequest": "at::Tensor path_valid;",
             },
-            RAYD_INCLUDE / "scattering" / "torch.h": {
+            RAYD_INCLUDE / "scattering.h": {
                 "ScatteringTableEvalRequest": "at::Tensor valid;",
                 "ScatteringTableSampleRequest": "at::Tensor valid;",
                 "ScatteringTablePdfRequest": "at::Tensor valid;",
@@ -59,7 +59,7 @@ class Adr0030CapacityRowValidityTests(unittest.TestCase):
                     self.assertNotIn("std::optional<at::Tensor> valid", body)
                     self.assertNotIn("std::optional<at::Tensor> path_valid", body)
 
-        scattering = read(RAYD_INCLUDE / "scattering" / "torch.h")
+        scattering = read(RAYD_INCLUDE / "scattering.h")
         for name in (
             "ScatteringTableEvalBackwardRequest",
             "ScatteringTableEvalJvpRequest",

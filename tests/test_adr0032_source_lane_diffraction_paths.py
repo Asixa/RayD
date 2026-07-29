@@ -23,10 +23,10 @@ def struct_body(text: str, name: str) -> str:
 
 class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
     def test_api6_exposes_stable_layout_without_a_new_boundary(self):
-        integration = read(RAYD_INCLUDE / "integration" / "torch.h")
-        self.assertIn("kIntegrationApiVersion = 7", integration)
+        integration = read(RAYD_INCLUDE / "integration.h")
+        self.assertIn("kIntegrationApiVersion = 8", integration)
         self.assertIn('"rayd.torch.integration"', integration)
-        diffraction = read(RAYD_INCLUDE / "diffraction" / "torch.h")
+        diffraction = read(RAYD_INCLUDE / "diffraction.h")
         self.assertIn("enum class DiffractionPathLayout", diffraction)
         enum = diffraction.split("enum class DiffractionPathLayout", 1)[1].split("};", 1)[0]
         self.assertIn("Compact = 0", enum)
@@ -61,7 +61,7 @@ class Adr0032SourceLaneDiffractionPathTests(unittest.TestCase):
             ROOT
             / "include"
             / "rayd"
-            / "shared"
+            / "detail"
             / "diffraction"
             / "paths_algo.h"
         )

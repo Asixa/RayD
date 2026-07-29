@@ -1,4 +1,4 @@
-#include <rayd/shared/visibility/segment_optix_device.cuh>
+#include <rayd/detail/visibility/segment_optix_device.cuh>
 #include <src/visibility/visibility_params.h>
 
 namespace rayd::torch_backend {

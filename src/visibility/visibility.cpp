@@ -21,8 +21,8 @@
 #include <src/reflection/trace_params.h>
 #include <src/visibility/visibility.h>
 #include <src/visibility/visibility_params.h>
-#include <rayd/visibility/torch.h>
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/visibility.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 #include <rayd/visibility/segment_torch_ptx.h>
 #include <rayd/visibility/axial_edge_torch_ptx.h>
 #include <src/scene/cache.h>

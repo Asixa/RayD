@@ -5,8 +5,8 @@
 #include <cmath>
 #include <string>
 
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
-#include <rayd/core/drjit.h>
+#include <rayd/jit/native_launch_audit.h>
+#include <rayd/jit/core.h>
 
 namespace rayd {
 
@@ -75,7 +75,7 @@ static __forceinline__ __device__ float3 normalize3(float3 v) {
 #define RAYD_DFR_AD_SUFFIX_FACE_PRIM(P, F, S, HAS_THIRD, SECOND, THIRD) \
     ((HAS_THIRD) ? (P).F[(THIRD)] : (P).F[(SECOND)])
 
-#include <rayd/shared/diffraction/accumulation_ad_device.cuh>
+#include <rayd/detail/diffraction/accumulation_ad_device.cuh>
 
 static __forceinline__ __device__ void add_chain_unit_vjp(
     const DfrChainAccumADParams &params,
@@ -115,7 +115,7 @@ static __forceinline__ __device__ void add_unit_vjp(
 #define RAYD_DFR_AD_ADD_CHAIN_UNIT_VJP_DENSE(P, PR, G, F, I, T) \
     add_chain_unit_vjp((P), (PR), (G), (P).F, (I), (T))
 
-#include <rayd/shared/diffraction/accumulation_ad_vjp_device.cuh>
+#include <rayd/detail/diffraction/accumulation_ad_vjp_device.cuh>
 
 __global__ void dfr_direct_accum_jvp_kernel(DfrDirectAccumADParams params) {
     const int lane = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);

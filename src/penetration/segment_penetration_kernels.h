@@ -7,7 +7,7 @@
 
 #include <src/runtime/optix_pipeline.h>
 #include <src/scene/cache.h>
-#include <rayd/penetration/torch.h>
+#include <rayd/penetration.h>
 
 namespace rayd::torch_backend {
 

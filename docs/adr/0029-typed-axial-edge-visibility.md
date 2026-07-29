@@ -1,13 +1,13 @@
 # ADR-0029: Typed axial-edge visibility
 
-- Status: Accepted; public include clause superseded by ADR-0040
+- Status: Accepted; public include clause superseded by ADR-0041
 - Date: 2026-07-20
 - Decision ID: `typed-axial-edge-visibility`
 - Scope: RayD Torch same-graph native source integration
 
-> **ADR-0040 supersession.** The operation remains unchanged, but its canonical
-> typed public owner is now `rayd/visibility/torch.h`, aggregated by
-> `rayd/integration/torch.h` at API version 7.
+> **ADR-0041 supersession.** The operation remains unchanged, but its canonical
+> typed public owner is now `rayd/visibility.h`, aggregated by
+> `rayd/integration.h` at API version 8.
 
 ## Context
 

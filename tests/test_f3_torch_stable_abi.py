@@ -175,10 +175,10 @@ class TorchStableAbiBoundaryTests(unittest.TestCase):
     def test_plan13_extern_c_integration_surface_is_retired(self):
         include = ROOT / "include" / "rayd"
         self.assertFalse((include / "integration" / "torch_v2.h").exists())
-        typed = (include / "integration" / "torch.h").read_text(encoding="utf-8")
-        scene = (include / "scene" / "torch.h").read_text(encoding="utf-8")
+        typed = (include / "integration.h").read_text(encoding="utf-8")
+        scene = (include / "scene.h").read_text(encoding="utf-8")
         self.assertIn("namespace rayd::torch", typed)
-        self.assertIn("kIntegrationApiVersion = 7", typed)
+        self.assertIn("kIntegrationApiVersion = 8", typed)
         self.assertIn('"rayd.torch.integration"', typed)
         self.assertIn("at::Tensor", scene)
 

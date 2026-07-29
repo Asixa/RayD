@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/shared/diffraction/contracts.h>
+#include <rayd/detail/diffraction/contracts.h>
 
 namespace rayd {
 

@@ -1,13 +1,13 @@
 # ADR-0028: Stable typed integration naming
 
-- Status: Accepted; public include and API-version clauses superseded by ADR-0040
+- Status: Accepted; public include and API-version clauses superseded by ADR-0041
 - Date: 2026-07-20
 - Decision ID: `stable-typed-integration-naming`
 - Scope: RayD Torch same-graph native source integration
 
-> **ADR-0040 supersession.** The historical boundary below was introduced as
+> **ADR-0041 supersession.** The historical boundary below was introduced as
 > `rayd/torch/integration.h` at API version 6. Its canonical include is now
-> `rayd/integration/torch.h` at API version 7. The exact identity
+> `rayd/integration.h` at API version 8. The exact identity
 > `rayd.torch.integration` and the prohibition on compatibility aliases remain.
 
 ## Context

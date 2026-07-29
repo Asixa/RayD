@@ -2,10 +2,10 @@
 
 #include <cmath>
 
-#include <rayd/shared/math/vec3.h>
-#include <rayd/shared/rt/qualifiers.h>
-#include <rayd/shared/sdf/grid_sdf.cuh>
-#include <rayd/shared/sdf/sphere_trace.h>
+#include <rayd/detail/vec3.h>
+#include <rayd/detail/rt/qualifiers.h>
+#include <rayd/detail/sdf/grid_sdf.cuh>
+#include <rayd/detail/sdf/sphere_trace.h>
 
 // Device math the ADR-0037 SDF intersection kernels share between the forward
 // translation unit and the derivative one. The shared headers own the field

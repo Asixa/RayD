@@ -21,8 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-SHARED_ROOT = SHARED_INCLUDE / "rayd" / "shared"
-RT_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "rt"
+SHARED_ROOT = SHARED_INCLUDE / "rayd" / "detail"
+RT_INCLUDE = SHARED_INCLUDE / "rayd" / "detail" / "rt"
 ALGO_HEADERS = (
     SHARED_ROOT / "reflection" / "trace_algo.h",
     SHARED_ROOT / "visibility" / "segment_algo.h",

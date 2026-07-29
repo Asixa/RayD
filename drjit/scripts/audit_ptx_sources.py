@@ -146,34 +146,34 @@ ADOPTION = {
     "sources_committed_after_header": {
         "diffraction_accumulation": [
             "src/diffraction/accumulation_params_jit.h @2634aa1",
-            "include/rayd/shared/diffraction/accumulation_algo.h @2634aa1",
-            "include/rayd/shared/diffraction/utd_math.h @346416f",
-            "include/rayd/shared/diffraction/utd_types.h @346416f",
+            "include/rayd/detail/diffraction/accumulation_algo.h @2634aa1",
+            "include/rayd/detail/diffraction/utd_math.h @346416f",
+            "include/rayd/detail/diffraction/utd_types.h @346416f",
         ],
         "diffraction_paths": [
             "src/diffraction/paths_params_jit.h @2634aa1",
-            "include/rayd/shared/diffraction/paths_algo.h @cf51e4c",
-            "include/rayd/shared/diffraction/utd_math.h @346416f",
-            "include/rayd/shared/diffraction/utd_types.h @346416f",
+            "include/rayd/detail/diffraction/paths_algo.h @cf51e4c",
+            "include/rayd/detail/diffraction/utd_math.h @346416f",
+            "include/rayd/detail/diffraction/utd_types.h @346416f",
         ],
         "edge_optix": [
-            "include/rayd/shared/edge/edge_distance_math.h @3cf3fb1",
-            "include/rayd/shared/math/vec3.h @a139d93",
-            "include/rayd/shared/rt/numeric_policy.h @3cf3fb1",
-            "include/rayd/shared/rt/qualifiers.h @a139d93",
+            "include/rayd/detail/edge/edge_distance_math.h @3cf3fb1",
+            "include/rayd/detail/vec3.h @a139d93",
+            "include/rayd/detail/rt/numeric_policy.h @3cf3fb1",
+            "include/rayd/detail/rt/qualifiers.h @a139d93",
         ],
         "reflection_accumulation": [
             "src/reflection/accumulation_params_jit.h @2634aa1",
-            "include/rayd/shared/reflection/accumulation_algo.h @2634aa1",
+            "include/rayd/detail/reflection/accumulation_algo.h @2634aa1",
         ],
         "reflection_epc": [
-            "include/rayd/shared/reflection/epc_algo.h @2634aa1",
+            "include/rayd/detail/reflection/epc_algo.h @2634aa1",
         ],
         "reflection_trace": [
-            "include/rayd/shared/reflection/trace_algo.h @2634aa1",
+            "include/rayd/detail/reflection/trace_algo.h @2634aa1",
         ],
         "segment_visibility": [
-            "include/rayd/shared/visibility/segment_algo.h @2634aa1",
+            "include/rayd/detail/visibility/segment_algo.h @2634aa1",
         ],
         "surfel_trace": [],
     },

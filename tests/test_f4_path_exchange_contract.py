@@ -69,7 +69,7 @@ class F4PathExchangeContractTests(unittest.TestCase):
 
     def test_cpp_contract_freezes_pod_layout_and_enums(self):
         header = (
-            ROOT / "include" / "rayd" / "shared" / "path_exchange" / "record.h"
+            ROOT / "include" / "rayd" / "path_exchange.h"
         ).read_text(encoding="utf-8")
         for token in (
             "PathInteractionKind",

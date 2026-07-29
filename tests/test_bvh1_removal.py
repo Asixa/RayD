@@ -20,7 +20,7 @@ class BVH1RemovalTests(unittest.TestCase):
             "build_top_level_bvh_recursive",
         )
         active_paths = (
-            ROOT / "include" / "rayd" / "edge" / "drjit" / "edge_bvh_config.h",
+            ROOT / "include" / "rayd" / "jit" / "edge_bvh_config.h",
             ROOT / "src" / "edge" / "edge_jit.cpp",
             ROOT / "benchmarks" / "drjit" / "benchmark_edge_bvh_stages.py",
         )

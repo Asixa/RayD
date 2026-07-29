@@ -1,7 +1,7 @@
 #include <cmath>
 
-#include <rayd/shared/edge/edge_distance_math.h>
-#include <rayd/shared/reflection/reflection_geometry.h>
+#include <rayd/detail/edge/edge_distance_math.h>
+#include <rayd/detail/reflection/reflection_geometry.h>
 
 namespace {
 

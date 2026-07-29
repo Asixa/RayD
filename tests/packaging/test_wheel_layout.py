@@ -4,22 +4,22 @@ import os
 import posixpath
 import unittest
 import zipfile
+from collections import Counter
 from email.parser import BytesParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 class WheelLayoutTests(unittest.TestCase):
     SOURCE_PREFIX = "rayd/torch/_source/"
     INTEGRATION_HEADERS = {
-        "include/rayd/integration/torch.h",
-        "include/rayd/diffraction/torch.h",
-        "include/rayd/field_transport/torch_ad.cuh",
-        "include/rayd/penetration/torch.h",
-        "include/rayd/reflection/torch.h",
-        "include/rayd/scattering/torch.h",
-        "include/rayd/scene/torch.h",
-        "include/rayd/transmission/torch.h",
-        "include/rayd/visibility/torch.h",
+        "include/rayd/integration.h",
+        "include/rayd/diffraction.h",
+        "include/rayd/penetration.h",
+        "include/rayd/reflection.h",
+        "include/rayd/scattering.h",
+        "include/rayd/scene.h",
+        "include/rayd/transmission.h",
+        "include/rayd/visibility.h",
     }
     @classmethod
     def setUpClass(cls):
@@ -69,6 +69,72 @@ class WheelLayoutTests(unittest.TestCase):
     def test_namespace_root_is_implicit(self):
         for wheel in (self.drjit_wheel, self.torch_wheel):
             self.assertNotIn("rayd/__init__.py", self.names(wheel))
+
+    def test_drjit_wheel_contains_exact_flat_jit_and_detail_headers(self):
+        source_root = Path(__file__).resolve().parents[2] / "include" / "rayd"
+        wheel_prefix = "rayd/drjit/include/rayd/"
+
+        expected = {"path_exchange.h"}
+        for directory in ("jit", "detail"):
+            expected.update(
+                path.relative_to(source_root).as_posix()
+                for path in (source_root / directory).rglob("*")
+                if path.is_file() and path.suffix in {".h", ".cuh"}
+            )
+
+        actual = {
+            name.removeprefix(wheel_prefix)
+            for name in self.names(self.drjit_wheel)
+            if name.startswith(wheel_prefix) and not name.endswith("/")
+        }
+        self.assertEqual(actual, expected)
+
+        root_files = {
+            name for name in actual if len(PurePosixPath(name).parts) == 1
+        }
+        root_directories = {
+            PurePosixPath(name).parts[0]
+            for name in actual
+            if len(PurePosixPath(name).parts) > 1
+        }
+        self.assertEqual(root_files, {"path_exchange.h"})
+        self.assertEqual(root_directories, {"jit", "detail"})
+
+        jit_headers = {
+            name for name in actual if name.startswith("jit/")
+        }
+        self.assertEqual(len(jit_headers), 29)
+        self.assertTrue(
+            all(PurePosixPath(name).parent == PurePosixPath("jit")
+                for name in jit_headers),
+            jit_headers,
+        )
+
+        detail_headers = {
+            name for name in actual if name.startswith("detail/")
+        }
+        self.assertEqual(len(detail_headers), 66)
+        detail_subdirectory_counts = Counter(
+            PurePosixPath(name).parent
+            for name in detail_headers
+            if PurePosixPath(name).parent != PurePosixPath("detail")
+        )
+        self.assertEqual(len(detail_subdirectory_counts), 9)
+        self.assertTrue(
+            all(len(directory.parts) == 2
+                for directory in detail_subdirectory_counts),
+            detail_subdirectory_counts,
+        )
+        self.assertTrue(
+            all(count > 1 for count in detail_subdirectory_counts.values()),
+            detail_subdirectory_counts,
+        )
+
+        torch_root_headers = {
+            name.removeprefix("include/rayd/")
+            for name in self.INTEGRATION_HEADERS
+        }
+        self.assertTrue(actual.isdisjoint(torch_root_headers))
 
     def test_backend_files_are_disjoint(self):
         drjit = {
@@ -153,6 +219,10 @@ class WheelLayoutTests(unittest.TestCase):
             paths = [entry["path"] for entry in entries]
             self.assertEqual(len(paths), len(set(paths)))
             manifest_by_path = {entry["path"]: entry for entry in entries}
+            self.assertIn("include/rayd/path_exchange.h", manifest_by_path)
+            self.assertFalse(
+                any(path.startswith("include/rayd/jit/") for path in paths)
+            )
             for source_path in paths:
                 with self.subTest(source_path=source_path):
                     self.assertEqual(source_path, posixpath.normpath(source_path))
@@ -175,9 +245,9 @@ class WheelLayoutTests(unittest.TestCase):
             integration = metadata["integration_abi"]
             self.assertEqual(integration["kind"], "source-header-set-sha256")
             self.assertEqual(
-                integration["entrypoint"], "include/rayd/integration/torch.h"
+                integration["entrypoint"], "include/rayd/integration.h"
             )
-            self.assertEqual(integration["api_version"], 7)
+            self.assertEqual(integration["api_version"], 8)
             self.assertEqual(integration["identity"], "rayd.torch.integration")
             headers = integration["headers"]
             header_paths = [header["path"] for header in headers]

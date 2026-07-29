@@ -12,7 +12,7 @@ class TypedAxialEdgeVisibilityGovernanceTests(unittest.TestCase):
         cls.adr = (ROOT / "docs/adr/0029-typed-axial-edge-visibility.md").read_text(
             encoding="utf-8"
         )
-        cls.header = (ROOT / "include/rayd/visibility/torch.h").read_text(
+        cls.header = (ROOT / "include/rayd/visibility.h").read_text(
             encoding="utf-8"
         )
         cls.ops = (ROOT / "src/visibility/visibility.cpp").read_text(

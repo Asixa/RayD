@@ -1,6 +1,6 @@
 #include <src/scene/optix_intersect_params.h>
-#include <rayd/shared/contracts.h>
-#include <rayd/shared/scene/optix_device.cuh>
+#include <rayd/detail/contracts.h>
+#include <rayd/detail/scene/optix_device.cuh>
 
 #include <optix_device.h>
 

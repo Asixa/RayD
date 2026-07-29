@@ -1,5 +1,5 @@
 #include <src/scene/geometry_kernels.h>
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/contracts.h>
 #include <src/runtime/math.cuh>
 #include <src/runtime/optix_context.h>
 #include <src/scene/optix_intersect_params.h>
@@ -522,7 +522,7 @@ at::Tensor intersect_forward_t_only_cuda(
 
 #include <src/scene/geometry_kernels.h>
 #include <src/runtime/math.cuh>
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/contracts.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/shared/diffraction/contracts.h>
+#include <rayd/detail/diffraction/contracts.h>
 
 namespace rayd::torch_backend {
 

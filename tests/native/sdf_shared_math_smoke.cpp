@@ -10,8 +10,8 @@
 #include <limits>
 #include <vector>
 
-#include <rayd/shared/sdf/grid_sdf.cuh>
-#include <rayd/shared/sdf/sphere_trace.h>
+#include <rayd/detail/sdf/grid_sdf.cuh>
+#include <rayd/detail/sdf/sphere_trace.h>
 
 namespace {
 

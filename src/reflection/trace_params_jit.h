@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/shared/reflection/trace_params.h>
+#include <rayd/detail/reflection/trace_params.h>
 
 namespace rayd {
 

@@ -4,10 +4,10 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/shared/transmission/layer_stack.cuh>
+#include <rayd/detail/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
-#include <rayd/field_transport/torch_ad.cuh>
-#include <rayd/transmission/torch.h>
+#include <src/field_transport/ad.cuh>
+#include <rayd/transmission.h>
 
 // Debug/parity surface for the shared em/ layer-stack core: evaluates the
 // full stack r/t (both polarizations) plus power R/T per input angle. This is
@@ -619,10 +619,10 @@ rayd::torch::LayerStackResult rayd::torch::em_layer_stack_jvp(
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
-#include <rayd/shared/field_transport.cuh>
-#include <rayd/shared/transmission/layer_stack.cuh>
+#include <rayd/detail/field_transport.cuh>
+#include <rayd/detail/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
-#include <rayd/transmission/torch.h>
+#include <rayd/transmission.h>
 
 #include <utility>
 
@@ -982,11 +982,11 @@ rayd::torch::field_transmission_sequence(
 #include <c10/util/Exception.h>
 #include <c10/util/complex.h>
 
-#include <rayd/shared/field_transport.cuh>
-#include <rayd/shared/transmission/layer_stack.cuh>
+#include <rayd/detail/field_transport.cuh>
+#include <rayd/detail/transmission/layer_stack.cuh>
 #include <src/bindings/tensor_contract.h>
-#include <rayd/field_transport/torch_ad.cuh>
-#include <rayd/transmission/torch.h>
+#include <src/field_transport/ad.cuh>
+#include <rayd/transmission.h>
 
 #include <optional>
 #include <utility>

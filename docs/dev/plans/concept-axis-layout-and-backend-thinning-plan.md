@@ -1,8 +1,13 @@
 # RayD Concept-Axis Layout and Backend Thinning Plan
 
-Status: **executed — ADR-0039 and ADR-0040 govern the final layout.**
+Status: **executed — ADR-0039, ADR-0040, and ADR-0041 govern the final layout.**
 
 Date: 2026-07-28
+
+> Final include-layout amendment: ADR-0041 replaces the concept/backend header
+> nesting with flat default headers, a flat `rayd/jit` surface, and dense
+> `rayd/detail` implementation modules. The earlier path tables remain migration
+> history, not live include paths.
 
 Reference: `E:\Code\witwin-platform\channel\docs\dev\plans\15-concept-axis-layout-and-module-consolidation-plan.md`
 

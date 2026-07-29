@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/scene/drjit.h>
+#include <rayd/jit/scene.h>
 
 namespace rayd {
 

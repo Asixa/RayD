@@ -1,14 +1,14 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/diffraction/drjit/paths.h>
+#include <rayd/jit/diffraction_paths.h>
 #include <src/diffraction/paths_params_jit.h>
-#include <rayd/shared/diffraction/paths_optix_device.cuh>
+#include <rayd/detail/diffraction/paths_optix_device.cuh>
 
 // Dr.Jit OptiX adapter for first-order diffraction path export. The algorithm
 // body now lives in the host-compilable, traverser-templated
-// rayd/shared/diffraction/paths_algo.h behind the OptiX shim
-// rayd/shared/diffraction/paths_optix_device.cuh; this file only wires the
+// rayd/detail/diffraction/paths_algo.h behind the OptiX shim
+// rayd/detail/diffraction/paths_optix_device.cuh; this file only wires the
 // backend's constant params block and the extern "C" program entry points.
 
 namespace rayd {

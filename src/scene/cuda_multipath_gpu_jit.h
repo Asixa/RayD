@@ -5,9 +5,9 @@
 #include <src/diffraction/accumulation_params_jit.h>
 #include <src/diffraction/paths_params_jit.h>
 #include <src/reflection/accumulation_params_jit.h>
-#include <rayd/shared/reflection/epc_params.h>
-#include <rayd/shared/reflection/trace_params.h>
-#include <rayd/shared/visibility/segment_params.h>
+#include <rayd/detail/reflection/epc_params.h>
+#include <rayd/detail/reflection/trace_params.h>
+#include <rayd/detail/visibility/segment_params.h>
 
 // Host/device seam for the CUDA fused multipath executor (P4 Stage D). The
 // launchers below run the migrated, traverser-templated multipath algorithm

@@ -1,4 +1,4 @@
-#include <rayd/shared/edge/bvh_query.h>
+#include <rayd/detail/edge/bvh_query.h>
 
 #include <cuda_runtime.h>
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = ROOT / "include" / "rayd" / "shared" / "scene" / "packing.h"
+HEADER = ROOT / "include" / "rayd" / "detail" / "scene" / "packing.h"
 SOURCE = ROOT / "src" / "scene" / "packing_shared.cu"
 TORCH_ADAPTER = ROOT / "src" / "scene" / "cache.cu"
 
@@ -68,7 +68,7 @@ class Share3ScenePackingTests(unittest.TestCase):
 
     def test_torch_adapter_owns_validation_stream_and_errors(self):
         source = TORCH_ADAPTER.read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/scene/packing.h>", source)
+        self.assertIn("<rayd/detail/scene/packing.h>", source)
         for launcher in (
             "shared::scene::launch_pack_global_geometry_async",
             "shared::scene::launch_pack_global_vertex_tangent_async",

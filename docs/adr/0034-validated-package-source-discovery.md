@@ -1,17 +1,18 @@
 # ADR-0034: Validated package source discovery
 
-- Status: Accepted; internal source-bundle layout and ABI identity schema amended by ADR-0039 and ADR-0040
+- Status: Accepted; internal source-bundle layout and ABI identity schema amended by ADR-0039, ADR-0040, and ADR-0041
 - Date: 2026-07-22
 - Decision ID: `validated-package-source-discovery`
 - Scope: RayD Torch packaging and same-graph native consumers
 
-> **ADR-0039/0040 amendment.** The passive resource remains
+> **ADR-0039/0040/0041 amendment.** The passive resource remains
 > `rayd/torch/_source`, but its internal canonical source tree is now
 > `torch/CMakeLists.txt`, `include/`, `src/`, and `cmake/`. All discovery,
 > manifest completeness, validation, relocatability, and same-graph requirements
-> below remain in force. Schema 2 records the exact nine-header public API set,
-> normalized per-header SHA-256 values, and its aggregate digest; the older single
-> integration-header hash description below is historical.
+> below remain in force. Schema 2 records the exact eight-header integration API
+> set, normalized per-header SHA-256 values, and its aggregate digest. The
+> backend-neutral `path_exchange.h` contract is bundled separately; the older
+> single integration-header hash description below is historical.
 ## Context
 
 Native consumers currently require an explicitly located RayD Git checkout in

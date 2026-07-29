@@ -40,8 +40,8 @@ class ProjectMetadataTests(unittest.TestCase):
 
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         bindings = (WORKSPACE_ROOT / "src" / "bindings" / "module_jit.cpp").read_text(encoding="utf-8")
-        fwd = (WORKSPACE_ROOT / "include" / "rayd" / "core" / "drjit.h").read_text(encoding="utf-8")
-        scene_header = (WORKSPACE_ROOT / "include" / "rayd" / "scene" / "drjit.h").read_text(encoding="utf-8")
+        fwd = (WORKSPACE_ROOT / "include" / "rayd" / "jit" / "core.h").read_text(encoding="utf-8")
+        scene_header = (WORKSPACE_ROOT / "include" / "rayd" / "jit" / "scene.h").read_text(encoding="utf-8")
 
         self.assertNotIn("camera.h", cmake)
         self.assertNotIn("camera.cpp", cmake)
@@ -210,12 +210,12 @@ class ProjectMetadataTests(unittest.TestCase):
             WORKSPACE_ROOT
             / "include"
             / "rayd"
-            / "shared"
+            / "detail"
             / "visibility"
             / "segment_algo.h"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "<rayd/shared/visibility/segment_optix_device.cuh>",
+            "<rayd/detail/visibility/segment_optix_device.cuh>",
             segment_source,
         )
         self.assertIn("params.out_first_blocked_prim[ray]", shared_segment_source)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/scene/torch.h>
+#include <rayd/scene.h>
 #include <src/scene/cache.h>
 
 namespace rayd::torch::detail {

@@ -3,7 +3,7 @@
 
 #include <src/runtime/math.cuh>
 #include <src/reflection/accum_params.h>
-#include <rayd/shared/reflection/accumulation_optix_device.cuh>
+#include <rayd/detail/reflection/accumulation_optix_device.cuh>
 
 namespace rayd::torch_backend {
 

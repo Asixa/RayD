@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include" / "rayd" / "shared"
+SHARED = ROOT / "include" / "rayd" / "detail"
 
 
 class SharedFieldMathTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class SharedFieldMathTests(unittest.TestCase):
         shared_algo = (
             SHARED / "diffraction" / "accumulation_algo.h"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/diffraction/utd_math.h>", shared_algo)
+        self.assertIn("<rayd/detail/diffraction/utd_math.h>", shared_algo)
         self.assertIn("::rayd::shared::diffraction::first_order_diffraction_parameter(", shared_algo)
 
         paths = (
@@ -33,7 +33,7 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in paths:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/shared/diffraction/accumulation_optix_device.cuh>",
+                "<rayd/detail/diffraction/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("first_order_diffraction_parameter", source)
@@ -50,7 +50,7 @@ class SharedFieldMathTests(unittest.TestCase):
         torch_compat = (
             ROOT / "src" / "reflection" / "complex.cuh"
         ).read_text(encoding="utf-8")
-        self.assertIn("<rayd/shared/field_math.h>", torch_compat)
+        self.assertIn("<rayd/detail/field_math.h>", torch_compat)
         self.assertNotIn("struct Complex {", torch_compat)
 
         shared_reflection_algo = (
@@ -65,7 +65,7 @@ class SharedFieldMathTests(unittest.TestCase):
         for path in accumulation_adapters:
             source = path.read_text(encoding="utf-8")
             self.assertIn(
-                "<rayd/shared/reflection/accumulation_optix_device.cuh>",
+                "<rayd/detail/reflection/accumulation_optix_device.cuh>",
                 source,
             )
             self.assertNotIn("fresnel_reflection_coefficients", source)

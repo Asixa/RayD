@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/shared/field_math.h>
+#include <rayd/detail/field_math.h>
 
 namespace rayd::torch_backend {
 

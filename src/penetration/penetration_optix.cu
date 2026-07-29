@@ -3,7 +3,7 @@
 
 #include <cuda_runtime.h>
 
-#include <rayd/shared/contracts.h>
+#include <rayd/detail/contracts.h>
 #include <src/penetration/segment_penetration_params.h>
 
 namespace rayd::torch_backend {

@@ -444,7 +444,7 @@ SegmentPenetrationJvpResult segment_penetration_jvp(
 #include <src/penetration/segment_penetration_kernels.h>
 #include <src/penetration/segment_penetration_params.h>
 
-#include <rayd/shared/rt/optix_pipeline_contracts.h>
+#include <rayd/detail/rt/optix_pipeline_contracts.h>
 #include <rayd/penetration/segment_torch_ptx.h>
 
 namespace rayd::torch_backend {

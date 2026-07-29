@@ -1,7 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 
-#include <rayd/shared/diffraction/accumulation_optix_device.cuh>
+#include <rayd/detail/diffraction/accumulation_optix_device.cuh>
 #include <src/runtime/math.cuh>
 #include <src/diffraction/accum_params.h>
 

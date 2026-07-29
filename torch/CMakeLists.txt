@@ -354,6 +354,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/scene/intersection_optix.cu"
             -o "${RAYD_TORCH_OPTIX_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_OPTIX_PTX}.d"
+            -MT "${RAYD_TORCH_OPTIX_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -362,9 +365,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/scene/intersection_optix.cu
             ${RAYD_ROOT_DIR}/src/scene/optix_intersect_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/scene/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/scene/optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/scene/optix_contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/scene/optix_device.cuh"
+        DEPFILE "${RAYD_TORCH_OPTIX_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_OPTIX_PTX_HEADER}"
@@ -386,6 +391,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/edge/edge_optix.cu"
             -o "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}.d"
+            -MT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}"
             -DRAYD_TORCH_EDGE_POINT_RAY_ONLY=1
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
@@ -396,11 +404,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/edge/edge_optix.cu
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/edge/optix_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/edge_distance_math.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/optix_contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/optix_device.cuh"
+        DEPFILE "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_POINT_RAY_PTX_HEADER}"
@@ -421,6 +431,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/edge/edge_optix.cu"
             -o "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}.d"
+            -MT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}"
             -DRAYD_TORCH_EDGE_TOPK_ONLY=1
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
@@ -431,11 +444,13 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/edge/edge_optix.cu
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/edge/optix_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/edge_distance_math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/optix_contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/edge/optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/edge_distance_math.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/optix_contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/edge/optix_device.cuh"
+        DEPFILE "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_EDGE_OPTIX_TOPK_PTX_HEADER}"
@@ -461,6 +476,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/reflection/trace_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_TRACE_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_REFLECTION_TRACE_PTX}.d"
+            -MT "${RAYD_TORCH_REFLECTION_TRACE_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -470,16 +488,18 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/reflection/trace_optix.cu
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/reflection/trace_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/optix_hit.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/optix_traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/trace_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/trace_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/trace_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/reflection_geometry.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/optix_hit.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/optix_traverser.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/trace_params.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/trace_optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/trace_algo.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/qualifiers.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/traverser.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/numeric_policy.h"
+        DEPFILE "${RAYD_TORCH_REFLECTION_TRACE_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_TRACE_PTX_HEADER}"
@@ -501,6 +521,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/visibility/visibility_optix.cu"
             -o "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}.d"
+            -MT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -510,13 +533,15 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/visibility/visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/visibility/visibility_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_params.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_algo.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/qualifiers.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/traverser.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/numeric_policy.h"
+        DEPFILE "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_SEGMENT_VISIBILITY_PTX_HEADER}"
@@ -538,6 +563,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_optix.cu"
             -o "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}.d"
+            -MT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -546,13 +574,15 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_optix.cu
             ${RAYD_ROOT_DIR}/src/visibility/axial_edge_visibility_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/visibility/segment_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_algo.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/visibility/segment_params.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/numeric_policy.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/qualifiers.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/traverser.h"
+        DEPFILE "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_AXIAL_EDGE_VISIBILITY_PTX_HEADER}"
@@ -576,6 +606,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/reflection/epc_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_EPC_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_REFLECTION_EPC_PTX}.d"
+            -MT "${RAYD_TORCH_REFLECTION_EPC_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -585,17 +618,19 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/reflection/epc_optix.cu
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/reflection/epc_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/optix_hit.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/epc_params.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/epc_optix_device.cuh"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/epc_algo.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/math/vec3.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/reflection_geometry.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/reflection/epc_chain.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/qualifiers.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/traverser.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/rt/numeric_policy.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/optix_hit.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/epc_params.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/epc_optix_device.cuh"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/epc_algo.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/vec3.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/reflection_geometry.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/reflection/epc_chain.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/qualifiers.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/traverser.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/rt/numeric_policy.h"
+        DEPFILE "${RAYD_TORCH_REFLECTION_EPC_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_EPC_PTX_HEADER}"
@@ -617,6 +652,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/reflection/accumulation_optix.cu"
             -o "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}.d"
+            -MT "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -627,8 +665,10 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/reflection/complex.cuh
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/reflection/accum_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/field_math.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/field_math.h"
+        DEPFILE "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_REFLECTION_ACCUMULATION_PTX_HEADER}"
@@ -650,6 +690,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/diffraction/paths_optix.cu"
             -o "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}.d"
+            -MT "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -660,9 +703,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/diffraction/common.h
             ${RAYD_ROOT_DIR}/src/diffraction/paths_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/utd_math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/utd_types.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/utd_math.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/utd_types.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/contracts.h"
+        DEPFILE "${RAYD_TORCH_DIFFRACTION_PATHS_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_PATHS_PTX_HEADER}"
@@ -684,6 +729,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/diffraction/accumulation_optix.cu"
             -o "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}.d"
+            -MT "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -694,9 +742,11 @@ if(RAYD_TORCH_BUILD_NATIVE)
             ${RAYD_ROOT_DIR}/src/runtime/math.cuh
             ${RAYD_ROOT_DIR}/src/diffraction/common.h
             ${RAYD_ROOT_DIR}/src/diffraction/accum_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/utd_math.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/utd_types.h"
-            "${RAYD_INCLUDE_DIR}/rayd/shared/diffraction/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/utd_math.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/utd_types.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/diffraction/contracts.h"
+        DEPFILE "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_DIFFRACTION_ACCUMULATION_PTX_HEADER}"
@@ -718,6 +768,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
             --ptx
             "${RAYD_ROOT_DIR}/src/penetration/penetration_optix.cu"
             -o "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
+            -MD
+            -MF "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}.d"
+            -MT "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}"
             -I "${RAYD_ROOT_DIR}"
             -I "${RAYD_INCLUDE_DIR}"
             -I "${CUDAToolkit_INCLUDE_DIRS}"
@@ -730,7 +783,9 @@ if(RAYD_TORCH_BUILD_NATIVE)
         DEPENDS
             ${RAYD_ROOT_DIR}/src/penetration/penetration_optix.cu
             ${RAYD_ROOT_DIR}/src/penetration/segment_penetration_params.h
-            "${RAYD_INCLUDE_DIR}/rayd/shared/contracts.h"
+            "${RAYD_INCLUDE_DIR}/rayd/detail/contracts.h"
+        DEPFILE "${RAYD_TORCH_SEGMENT_PENETRATION_PTX}.d"
+        VERBATIM
     )
     add_custom_command(
         OUTPUT "${RAYD_TORCH_SEGMENT_PENETRATION_PTX_HEADER}"

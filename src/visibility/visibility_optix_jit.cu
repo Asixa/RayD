@@ -1,5 +1,5 @@
 #include <src/visibility/segment_params_jit.h>
-#include <rayd/shared/visibility/segment_optix_device.cuh>
+#include <rayd/detail/visibility/segment_optix_device.cuh>
 
 namespace rayd {
 

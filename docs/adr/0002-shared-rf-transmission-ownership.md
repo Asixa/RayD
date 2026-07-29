@@ -7,8 +7,8 @@
 
 > **ADR-0039/0040 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
 > `rf` ownership namespace below are historical. Canonical transmission owners
-> are `include/rayd/shared/transmission/` and `include/rayd/transmission/torch.h`; cross-concept field transport
-> is owned by `include/rayd/shared/field_transport.cuh` and `include/rayd/field_transport/torch_ad.cuh`. Numerical ownership, fusion,
+> are `include/rayd/detail/transmission/` and `include/rayd/transmission.h`; cross-concept field transport
+> is owned by `include/rayd/detail/field_transport.cuh` and `src/field_transport/ad.cuh`. Numerical ownership, fusion,
 > stream, activation, rollback, and downstream atomic-switch clauses remain in
 > force.
 ## Context

@@ -70,7 +70,7 @@ bbox transform, and the rays.
   `src/bindings/library.cpp`), NOT the `py::tuple` +
   `gil_scoped_acquire` legacy pattern.
 - **Typed integration boundary**: v1 does NOT touch
-  `include/rayd/integration/torch.h`; ADR-0040 later advances the repository-wide boundary to API version 7.
+  `include/rayd/integration.h`; ADR-0041 later advances the repository-wide boundary to API version 8.
   Typed same-graph exposure for Channel is Phase 5.
 
 ## 3. Public API (v1)

@@ -1,8 +1,8 @@
-#include <rayd/edge/drjit/edge_bvh.h>
-#include <rayd/edge/drjit/edge_bvh_config.h>
-#include <rayd/diagnostics/drjit/native_launch_audit.h>
-#include <rayd/shared/edge/bvh_build.h>
-#include <rayd/shared/edge/edge_aabb.h>
+#include <rayd/jit/edge_bvh.h>
+#include <rayd/jit/edge_bvh_config.h>
+#include <rayd/jit/native_launch_audit.h>
+#include <rayd/detail/edge/bvh_build.h>
+#include <rayd/detail/edge/edge_aabb.h>
 
 #include <algorithm>
 #include <cstdlib>

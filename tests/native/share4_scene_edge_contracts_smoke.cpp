@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <rayd/shared/edge/optix_contracts.h>
-#include <rayd/shared/rt/optix_sbt.h>
-#include <rayd/shared/scene/optix_contracts.h>
+#include <rayd/detail/edge/optix_contracts.h>
+#include <rayd/detail/rt/optix_sbt.h>
+#include <rayd/detail/scene/optix_contracts.h>
 
 using namespace rayd::shared::optix;
 

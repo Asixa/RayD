@@ -41,12 +41,12 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 
-#include <rayd/scattering/torch.h>
+#include <rayd/scattering.h>
 
 #include "scattering_internal.cuh"
 
-#include <rayd/shared/field_transport.cuh>
-#include <rayd/shared/scattering/scattering_table.cuh>
+#include <rayd/detail/field_transport.cuh>
+#include <rayd/detail/scattering_table.cuh>
 
 namespace {
 
@@ -484,8 +484,8 @@ ScatteringChainEnsembleEvalResult scattering_chain_ensemble_eval(
 // covers geometry in forward mode, and a follow-up wave adds the reverse.
 
 #include "scattering_internal.cuh"
-#include <rayd/shared/scattering/scattering_table.cuh>
-#include <rayd/scattering/torch.h>
+#include <rayd/detail/scattering_table.cuh>
+#include <rayd/scattering.h>
 
 namespace ad = rayd::torch::field_transport_ad;
 using ad::DualC;

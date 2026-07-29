@@ -7,7 +7,7 @@
 
 > **ADR-0039/0040 supersession.** The `rayd/{shared,torch}/rf/` paths and generic
 > `rf` ownership namespace below are historical. Canonical scattering owners
-> are `include/rayd/shared/scattering/`, `include/rayd/scattering/torch.h`, and `src/scattering/`. The 17
+> are `include/rayd/detail/scattering_table.cuh`, `include/rayd/scattering.h`, and `src/scattering/`. The 17
 > operation contracts, compile profiles, fusion, stream, derivative, failure,
 > activation, rollback, and downstream atomic-switch clauses remain in force.
 ## Context
@@ -208,7 +208,7 @@ line endings are normalized to LF:
 `ac95c418860d109aeaa96623131592e4df8887992e5fc25ecab71b4ddbf1f55b`
 for `rayd/torch/rf/scattering.h`,
 `38ea9be424640301a88a97bccca9ab4bc599191ecfb0b259881ef6a300c96e38`
-for `rayd/shared/rf/scattering_table.cuh`, and
+for `rayd/detail/rf/scattering_table.cuh`, and
 `0608bfbaf022379bc03442f9baa777ec05cfe3f6ab9b964e2385ec12a7b6c654`
 for `rayd/torch/integration_v2.h`. The shared chain-AD host/device helper pin is
 `2551c33533dc7ea0a0c1680d67e5432587f8c2f77833d5a717fcb2d20597b507`

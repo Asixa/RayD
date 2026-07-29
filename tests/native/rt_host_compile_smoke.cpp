@@ -11,14 +11,14 @@
 
 #include <cstdint>
 
-#include <rayd/shared/diffraction/paths_algo.h>
-#include <rayd/shared/diffraction/accumulation_algo.h>
-#include <rayd/shared/reflection/accumulation_algo.h>
-#include <rayd/shared/reflection/epc_algo.h>
-#include <rayd/shared/reflection/trace_algo.h>
-#include <rayd/shared/visibility/segment_algo.h>
-#include <rayd/shared/rt/qualifiers.h>
-#include <rayd/shared/rt/traverser.h>
+#include <rayd/detail/diffraction/paths_algo.h>
+#include <rayd/detail/diffraction/accumulation_algo.h>
+#include <rayd/detail/reflection/accumulation_algo.h>
+#include <rayd/detail/reflection/epc_algo.h>
+#include <rayd/detail/reflection/trace_algo.h>
+#include <rayd/detail/visibility/segment_algo.h>
+#include <rayd/detail/rt/qualifiers.h>
+#include <rayd/detail/rt/traverser.h>
 
 namespace {
 

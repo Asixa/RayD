@@ -2,7 +2,7 @@
 
 Two claims are checked. The first is structural, in the style of
 `tests/test_shared_headers.py` and `tests/test_share2_shared_math.py`: the two
-new headers under `include/rayd/shared/sdf/` are backend-neutral, spell
+new headers under `include/rayd/detail/sdf/` are backend-neutral, spell
 only the shared host/device qualifier, and stay outside every committed-PTX
 include closure, which is what keeps `tests/test_ptx_source_digest.py` green by
 construction (ADR-0037 section 9).
@@ -28,7 +28,7 @@ from tests.test_rt_host_compile import _msvc_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_INCLUDE = ROOT / "include"
-SDF_INCLUDE = SHARED_INCLUDE / "rayd" / "shared" / "sdf"
+SDF_INCLUDE = SHARED_INCLUDE / "rayd" / "detail" / "sdf"
 GRID_HEADER = SDF_INCLUDE / "grid_sdf.cuh"
 TRACE_HEADER = SDF_INCLUDE / "sphere_trace.h"
 SMOKE_TU = ROOT / "tests" / "native" / "sdf_shared_math_smoke.cpp"
@@ -93,7 +93,7 @@ class SdfSharedHeaderTests(unittest.TestCase):
     def test_headers_spell_the_shared_host_device_qualifier(self):
         for path in (GRID_HEADER, TRACE_HEADER):
             source = path.read_text(encoding="utf-8")
-            self.assertIn("<rayd/shared/rt/qualifiers.h>", source)
+            self.assertIn("<rayd/detail/rt/qualifiers.h>", source)
             self.assertIn("RAYD_HOST_DEVICE", source)
             # `__device__` must only ever arrive through the shared macro.
             self.assertNotIn("__device__ ", source)

@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / "include/rayd/shared/reflection/accumulation_optix_device.cuh"
-ALGO = ROOT / "include/rayd/shared/reflection/accumulation_algo.h"
+SHARED = ROOT / "include/rayd/detail/reflection/accumulation_optix_device.cuh"
+ALGO = ROOT / "include/rayd/detail/reflection/accumulation_algo.h"
 DRJIT = ROOT / "src/reflection/accumulation_optix_jit.cu"
 TORCH = ROOT / "src/reflection/accumulation_optix.cu"
 

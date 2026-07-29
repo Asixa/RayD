@@ -1,7 +1,7 @@
 #include <src/edge/kernels.h>
 #include <src/edge/optix_params.h>
 #include <src/runtime/optix_context.h>
-#include <rayd/shared/edge/edge_distance_math.h>
+#include <rayd/detail/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -808,7 +808,7 @@ EdgeRayForwardOutputs edge_ray_forward_cuda(
 
 #include <src/edge/kernels.h>
 #include <src/runtime/math.cuh>
-#include <rayd/shared/edge/edge_distance_math.h>
+#include <rayd/detail/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
@@ -1398,8 +1398,8 @@ EdgeRayJvpOutputs edge_ray_jvp_optional_cuda(
 #include <src/runtime/optix_context.h>
 #include <src/scene/cache.h>
 
-#include <rayd/shared/edge/bvh_query.h>
-#include <rayd/shared/edge/edge_distance_math.h>
+#include <rayd/detail/edge/bvh_query.h>
+#include <rayd/detail/edge/edge_distance_math.h>
 
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>

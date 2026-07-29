@@ -1,4 +1,4 @@
-#include <rayd/integration/torch.h>
+#include <rayd/integration.h>
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -29,7 +29,7 @@ at::Tensor channel_segment_restart_point_oracle(
 
 namespace {
 
-static_assert(rayd::torch::kIntegrationApiVersion == 7);
+static_assert(rayd::torch::kIntegrationApiVersion == 8);
 
 [[noreturn]] void fail(const std::string &message) {
     throw std::runtime_error(message);

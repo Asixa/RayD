@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rayd/shared/reflection/epc_params.h>
+#include <rayd/detail/reflection/epc_params.h>
 
 namespace rayd {
 

@@ -10,27 +10,30 @@ import subprocess
 from pathlib import Path
 
 
-INTEGRATION_ABI_PATH = "include/rayd/integration/torch.h"
+INTEGRATION_ABI_PATH = "include/rayd/integration.h"
 INTEGRATION_ABI_PATHS = (
     INTEGRATION_ABI_PATH,
-    "include/rayd/diffraction/torch.h",
-    "include/rayd/field_transport/torch_ad.cuh",
-    "include/rayd/penetration/torch.h",
-    "include/rayd/reflection/torch.h",
-    "include/rayd/scattering/torch.h",
-    "include/rayd/scene/torch.h",
-    "include/rayd/transmission/torch.h",
-    "include/rayd/visibility/torch.h",
+    "include/rayd/diffraction.h",
+    "include/rayd/penetration.h",
+    "include/rayd/reflection.h",
+    "include/rayd/scattering.h",
+    "include/rayd/scene.h",
+    "include/rayd/transmission.h",
+    "include/rayd/visibility.h",
+)
+BUNDLED_PUBLIC_HEADERS = (
+    *INTEGRATION_ABI_PATHS,
+    "include/rayd/path_exchange.h",
 )
 SOURCE_INPUTS = (
     "LICENSE",
     "torch/CMakeLists.txt",
     "torch/scripts/embed_ptx.py",
-    "include",
+    *BUNDLED_PUBLIC_HEADERS,
+    "include/rayd/detail",
     "src",
     "cmake",
 )
-
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -137,8 +140,8 @@ def generate(
     _write_json(manifest_path, {"schema_version": 1, "files": manifest_files})
     integration_header = source_root / INTEGRATION_ABI_PATH
     header_text = integration_header.read_text(encoding="utf-8")
-    if "kIntegrationApiVersion = 7;" not in header_text:
-        raise RuntimeError("RayD integration API version is not the expected stable value 7")
+    if "kIntegrationApiVersion = 8;" not in header_text:
+        raise RuntimeError("RayD integration API version is not the expected stable value 8")
     if '"rayd.torch.integration"' not in header_text:
         raise RuntimeError("RayD integration identity is not rayd.torch.integration")
 
@@ -164,7 +167,7 @@ def generate(
                 "entrypoint": INTEGRATION_ABI_PATH,
                 "headers": integration_headers,
                 "sha256": integration_digest,
-                "api_version": 7,
+                "api_version": 8,
                 "identity": "rayd.torch.integration",
             },
         },

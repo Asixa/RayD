@@ -1,7 +1,7 @@
 #include <src/scene/cache_kernels.h>
 #include <src/runtime/math.cuh>
 #include <src/runtime/optix_context.h>
-#include <rayd/shared/scene/packing.h>
+#include <rayd/detail/scene/packing.h>
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
