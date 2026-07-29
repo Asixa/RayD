@@ -43,9 +43,12 @@ jobs:
       - name: Validate package and release metadata
         shell: bash
         run: |
-          python -m unittest tests.packaging.test_project_metadata -v
-          (cd drjit && python -m unittest tests.test_project_metadata -v)
-          (cd torch && python -m unittest tests.test_project_metadata -v)
+          python -m unittest \
+            tests.packaging.test_project_metadata \
+            tests.governance.test_drjit_project_metadata \
+            tests.governance.test_verify_cuda_binary_arches_jit \
+            tests.packaging.test_torch_project_metadata \
+            -v
 
   build-drjit-linux:
     name: rayd-drjit / manylinux_2_28 / py${{ matrix.python-version }}

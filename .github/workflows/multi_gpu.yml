@@ -40,7 +40,7 @@ on:
         default: python
       run_benchmark:
         description: >-
-          Also run torch/tests/benchmark_multi_device.py and retain
+          Also run benchmarks/torch/benchmark_multi_device.py and retain
           its schema-versioned JSON artifact. Benchmark execution errors fail
           the job; speedup values remain measurements rather than thresholds.
         required: false
@@ -119,21 +119,21 @@ jobs:
         shell: bash
         # Fresh process per module on purpose: the layer's single-device
         # invariant is partly an import-time property (a default `Scene()`
-        # must never import `rayd.torch._multi`), and OptiX pipeline state is
+        # must never import `rayd._impl.multi`), and OptiX pipeline state is
         # per process, so modules must not share one.
         run: |
           status=0
           for module in \
-            test_multi_device_smoke \
-            test_multi_device_stress \
-            test_multi_device_scene \
-            test_chunked_executor \
-            test_multi_device_policy \
-            test_multi_device_resilience \
-            test_lane_offset
+            tests.scene.test_multi_device_smoke \
+            tests.scene.test_multi_device_stress \
+            tests.scene.test_multi_device_scene \
+            tests.scene.test_chunked_executor \
+            tests.scene.test_multi_device_policy \
+            tests.scene.test_multi_device_resilience \
+            tests.diffraction.test_lane_offset
           do
             echo "::group::$module"
-            "$PYTHON" -m unittest "backends.torch.tests.torch_backend.$module" -v || status=1
+            "$PYTHON" -m unittest "$module" -v || status=1
             echo "::endgroup::"
           done
           exit "$status"
@@ -145,7 +145,7 @@ jobs:
         # nothing has to be set here; it skips itself if `torchrun` is missing.
         run: |
           "$PYTHON" -m unittest \
-            backends.torch.tests.torch_backend.test_distributed_recipe -v
+            tests.scene.test_distributed_recipe -v
 
       - name: Governance suite
         shell: bash
@@ -170,7 +170,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts/multi_gpu
-          "$PYTHON" -m backends.torch.tests.benchmark_multi_device \
+          "$PYTHON" -m benchmarks.torch.benchmark_multi_device \
             --json artifacts/multi_gpu/benchmark.json
 
       - name: Upload multi-device benchmark JSON

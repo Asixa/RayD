@@ -1,12 +1,14 @@
 # Copyright Xingyu Chen.
 # Tests project metadata.
 
+import re
+import unittest
+from pathlib import Path
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
-import unittest
-from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +87,24 @@ class DistributionMetadataTests(unittest.TestCase):
             self.assertNotIn("\n  schedule:", workflow)
             self.assertIn("\n  pull_request:\n    types: [labeled]", workflow)
             self.assertIn(label_guard, workflow)
+
+    def test_workflow_python_modules_exist_at_repository_root(self):
+        module_pattern = re.compile(
+            r"(?<![A-Za-z0-9_])(?:tests|benchmarks)(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
+        )
+        workflows = ROOT / ".github" / "workflows"
+        workflow_paths = (*workflows.glob("*.yml"), *workflows.glob("*.yaml"))
+
+        for workflow_path in sorted(workflow_paths):
+            workflow = workflow_path.read_text(encoding="utf-8")
+            for module in sorted(set(module_pattern.findall(workflow))):
+                module_path = ROOT.joinpath(*module.split(".")).with_suffix(".py")
+                package_path = ROOT.joinpath(*module.split("."), "__init__.py")
+                with self.subTest(workflow=workflow_path.name, module=module):
+                    self.assertTrue(
+                        module_path.is_file() or package_path.is_file(),
+                        f"{workflow_path.name} references missing Python module {module}",
+                    )
 
 
 if __name__ == "__main__":

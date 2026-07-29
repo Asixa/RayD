@@ -37,9 +37,12 @@ jobs:
       - name: Validate package metadata and CI policy
         shell: bash
         run: |
-          python -m unittest tests.packaging.test_project_metadata -v
-          (cd drjit && python -m unittest tests.test_project_metadata tests.test_verify_cuda_binary_arches -v)
-          (cd torch && python -m unittest tests.test_project_metadata -v)
+          python -m unittest \
+            tests.packaging.test_project_metadata \
+            tests.governance.test_drjit_project_metadata \
+            tests.governance.test_verify_cuda_binary_arches_jit \
+            tests.packaging.test_torch_project_metadata \
+            -v
 
   native-wheel:
     name: ${{ matrix.backend }} / ${{ matrix.os }} / py3.12 / quick CUDA
