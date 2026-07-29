@@ -71,7 +71,7 @@
       "header_sha256": "d658ee0f7f752e11571e19ea1d23ec8f042b5a1799a27b7a1dfd28f2dd4d8094",
       "option": "RAYD_REGENERATE_DIFFRACTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "62de06c6371279e4cf7489276a662d6cf2899419e4285c28a71dc6986e5df3f8",
+      "source_sha256": "2d2f3e704133021b6d749dae5213702e3fe33eb09e434c43b2c0b0d57ee892b3",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",
@@ -118,7 +118,7 @@
       "header_sha256": "b67d7faf4994fc0e260d5bfd58299d9bf9dfa9ac8e5948778c1f1c597c41d4f8",
       "option": "RAYD_REGENERATE_DIFFRACTION_PATHS_PTX",
       "regeneration_verified": true,
-      "source_sha256": "b37e47c56ee0afc8d87ab5035c2f937c2c602da01e1a5ef2b2f864b25c1057ef",
+      "source_sha256": "05a855cbed6692f389bbeb66b5fe18c92a24d92bbca07001d02eb6526d302c0d",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",
@@ -166,7 +166,7 @@
       "header_sha256": "53357fc7c514121854e87cfd93d77d35ca1efc02ab0084bff56d0db3d0db14cc",
       "option": "RAYD_REGENERATE_EDGE_OPTIX_PTX",
       "regeneration_verified": true,
-      "source_sha256": "a91b43f3c31617ee11f987a74146e76580638cad46d2e98491afbd1c2167f903",
+      "source_sha256": "1d5fb3086986d492ec7ae15e68e4db216991c757debf87123a419294be1b8eee",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",
@@ -202,7 +202,7 @@
       "header_sha256": "02eb4361307d143cea13651b75df0b48ff77473de2636d2916e892578b636a06",
       "option": "RAYD_REGENERATE_REFLECTION_ACCUMULATION_PTX",
       "regeneration_verified": true,
-      "source_sha256": "a3afc22576e17bfa7b4060e049139bed1174b68550caeb0ba4ae660bf6202e9e",
+      "source_sha256": "a54f52ac6ace984978fc229e058e10c1d1f5a55f371d8f8afcb04cf1ee1d6ddb",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -236,7 +236,7 @@
       "header_sha256": "8ca5efaed885f0ea457332058524de8063cb04c17cdb39d0df412ba7a5d75fe8",
       "option": "RAYD_REGENERATE_REFLECTION_EPC_PTX",
       "regeneration_verified": true,
-      "source_sha256": "1616bfdbc7b6f9c2d5d09ee44c8f9896a46d80948b48bdfa1314315044a70b3c",
+      "source_sha256": "1cb7965531d326ee03c4869442e3a9f1199180a41975bb1fcaeaa3b3d6ae1de7",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -269,7 +269,7 @@
       "header_sha256": "8e08830fcf47630d90adb04f3fcb80994437eb68869187a8e049e13e699d638f",
       "option": "RAYD_REGENERATE_REFLECTION_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "e03ca70d7aa6228d43b8eb9b84b6b4c1ad67babd05589f65b359819ce86472fa",
+      "source_sha256": "0e41a32481aa67362bc8ae689c6adb34265e1a942aa85b3a90e2017e3ea54743",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -300,7 +300,7 @@
       "header_sha256": "d62a3d679bccc82c78a72526deba203d9764b1ddae053ed0ebdc517860bc4156",
       "option": "RAYD_REGENERATE_SEGMENT_VISIBILITY_PTX",
       "regeneration_verified": true,
-      "source_sha256": "919ce084346ded960db27702cd92712d908a9743f69763745efb21a1f61cacf5",
+      "source_sha256": "ed5ecfc63d983fc256b8d68657af35cee5028d039deea7577f6767815bf33765",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/math.h",
@@ -341,7 +341,7 @@
       "header_sha256": "21ed6124af392b08e9600185bd357376f7a643b04fcee6628e7061be490b04d0",
       "option": "RAYD_REGENERATE_SURFEL_TRACE_PTX",
       "regeneration_verified": true,
-      "source_sha256": "866dfdb8c706477daa3cb8e707788e272bdce951eaede2d7a5fa55f1ec7f0316",
+      "source_sha256": "c9d9f1fdcf53fd7a64be3fd9a093e34e5d455b21a50d39b68d740a0e38b4948b",
       "sources": [
         "include/rayd/contracts.h",
         "include/rayd/jit/core.h",

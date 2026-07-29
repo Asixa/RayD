@@ -88,6 +88,13 @@ class DistributionMetadataTests(unittest.TestCase):
             self.assertIn("\n  pull_request:\n    types: [labeled]", workflow)
             self.assertIn(label_guard, workflow)
 
+    def test_metadata_gates_compile_shared_math_on_posix(self):
+        workflows = ROOT / ".github" / "workflows"
+        for name in ("ci.yml", "pypi.yml"):
+            workflow = (workflows / name).read_text(encoding="utf-8")
+            with self.subTest(workflow=name):
+                self.assertIn("tests.test_rt_host_compile", workflow)
+
     def test_workflow_python_modules_exist_at_repository_root(self):
         module_pattern = re.compile(
             r"(?<![A-Za-z0-9_])(?:tests|benchmarks)(?:\.[A-Za-z_][A-Za-z0-9_]*)+"

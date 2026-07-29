@@ -143,11 +143,13 @@ class ProjectMetadataTests(unittest.TestCase):
         self.assertIn("inputs.scope == 'windows-torch-smoke' && '[\"3.10\"]'", pypi)
         windows_wheel_job = pypi.split("  build-windows-wheels:", 1)[1]
         self.assertNotIn("CMAKE_CUDA_FLAGS:", windows_wheel_job)
-        # Both backends cache CUDA, through the two different mechanisms their
-        # build shapes require: Torch compiles CUDA with CMake's CUDA language,
-        # Dr.Jit with hand-written nvcc command lines that only the
-        # RAYD_NVCC_LAUNCHER shim can wrap.
-        self.assertIn("CMAKE_CUDA_COMPILER_LAUNCHER: sccache", windows_wheel_job)
+        # Windows Torch bypasses sccache only for grouped CUDA calls; C/C++
+        # remains cached. Dr.Jit's single-output nvcc shim remains cacheable.
+        self.assertIn("CMAKE_C_COMPILER_LAUNCHER: sccache", windows_wheel_job)
+        self.assertIn("CMAKE_CXX_COMPILER_LAUNCHER: sccache", windows_wheel_job)
+        self.assertNotIn("CMAKE_CUDA_COMPILER_LAUNCHER: sccache", windows_wheel_job)
+        self.assertIn('CMAKE_CUDA_COMPILER_LAUNCHER: ""', windows_wheel_job)
+        self.assertIn("loses secondary cubin files", windows_wheel_job)
         self.assertIn("RAYD_NVCC_LAUNCHER: sccache", windows_wheel_job)
         self.assertIn("CMAKE_CUDA_COMPILER_LAUNCHER=", pypi)
         # A pinned build directory keeps compile command lines byte-identical

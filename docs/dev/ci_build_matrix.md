@@ -64,10 +64,13 @@ commands. Torch uses two build-system jobs and `nvcc --threads=2`, which lets
 each multi-architecture CUDA compilation use two threads without multiplying
 four outer jobs by two inner jobs.
 
-Both workflows install `sccache` 0.11.0. Torch routes C, C++, and CUDA compiler
-invocations through CMake launchers. Dr.Jit's explicit NVCC custom commands use
-the generated `RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four
-independent translation units. Linux manylinux jobs access the host-installed
+Both workflows install `sccache` 0.11.0. Linux Torch routes C, C++, and CUDA
+compiler invocations through CMake launchers. Windows Torch routes only C and
+C++ through sccache because version 0.11 loses secondary cubin files from
+multi-output grouped gencode calls; its CMake CUDA commands run directly.
+Dr.Jit's explicit NVCC custom commands use the generated
+`RAYD_NVCC_LAUNCHER` wrapper, while Ninja still schedules four independent
+translation units. Linux manylinux jobs access the host-installed
 portable sccache binary and persistent cache through cibuildwheel's default
 `/host` mount; `/project` is a container copy and must not hold persistent
 compiler state. Before the container exits, it resets the cache tree ownership

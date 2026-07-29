@@ -387,7 +387,11 @@ RAYD_MATH_INLINE float floorf(float value) {
     return ::floorf(value);
 }
 RAYD_MATH_INLINE bool isfinite(float value) {
+#if defined(__CUDA_ARCH__)
     return ::isfinite(value);
+#else
+    return std::isfinite(value);
+#endif
 }
 RAYD_MATH_INLINE void sincosf(float value, float* sine, float* cosine) {
 #if defined(__CUDA_ARCH__)
@@ -439,7 +443,7 @@ RAYD_MATH_INLINE Dual floorf(Dual value) {
     return {::floorf(value.v), 0.0f};
 }
 RAYD_MATH_INLINE bool isfinite(Dual value) {
-    return ::isfinite(value.v);
+    return isfinite(value.v);
 }
 RAYD_MATH_INLINE void sincosf(Dual value, Dual* sine, Dual* cosine) {
     float sine_value;

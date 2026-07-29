@@ -9,16 +9,16 @@ optixTrace / payload register / launch-index token, all ray casts routed through
 the rt::Traverser concept. This test proves that claim two ways:
 
 * A pure token grep-gate over reflection_trace_algo.h (fast, always runs).
-* An actual host compile of tests/native/rt_host_compile_smoke.cpp with the
-  MSVC host compiler (cl.exe located via vswhere, mirroring
-  scripts/build_local.ps1's Initialize-MSVCEnvironment), no CUDA/OptiX device
-  compiler involved.
+* A POSIX C++17 compile of the shared math header and an MSVC host compile of
+  tests/native/rt_host_compile_smoke.cpp, with no CUDA/OptiX device compiler.
 """
 
 import os
 import platform
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -153,6 +153,42 @@ class RtHostCompileTests(unittest.TestCase):
                     source.read_text(encoding="utf-8", errors="ignore"),
                     f"{backend} frontend must instantiate algo bodies with CudaBvhTraverser",
                 )
+
+    @unittest.skipIf(platform.system() == "Windows", "POSIX compiler gate runs outside Windows")
+    def test_shared_math_header_compiles_with_posix_cxx(self):
+        compiler = next((path for name in ("c++", "g++", "clang++") if (path := shutil.which(name))), None)
+        if compiler is None:
+            self.skipTest("no POSIX C++ compiler found")
+
+        source = r"""
+#include <limits>
+#include <rayd/math.h>
+
+int main() {
+    using rayd::shared::diffraction::Dual;
+    using rayd::shared::diffraction::isfinite;
+    const float infinity = std::numeric_limits<float>::infinity();
+    const Dual finite_primal_infinite_tangent{1.0f, infinity};
+    const Dual infinite_primal{infinity, 0.0f};
+    return isfinite(1.0f) && isfinite(finite_primal_infinite_tangent) && !isfinite(infinite_primal) ? 0 : 1;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "math_host_compile_smoke"
+            compile_result = subprocess.run(
+                [compiler, "-std=c++17", f"-I{SHARED_INCLUDE}", "-x", "c++", "-o", str(executable), "-"],
+                input=source,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                compile_result.returncode,
+                0,
+                f"POSIX host compile failed.\nSTDOUT:\n{compile_result.stdout}\nSTDERR:\n{compile_result.stderr}",
+            )
+            run_result = subprocess.run([str(executable)], capture_output=True, text=True, check=False)
+            self.assertEqual(run_result.returncode, 0, run_result.stderr)
 
     @unittest.skipUnless(platform.system() == "Windows", "host-compile gate uses MSVC cl.exe")
     def test_smoke_translation_unit_compiles_host_only(self):

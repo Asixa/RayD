@@ -47,6 +47,7 @@ jobs:
             tests.packaging.test_project_metadata \
             tests.governance.test_drjit_project_metadata \
             tests.governance.test_verify_cuda_binary_arches_jit \
+            tests.test_rt_host_compile \
             tests.packaging.test_torch_project_metadata \
             -v
 
@@ -322,13 +323,10 @@ jobs:
         --generate-code=arch=compute_120,code=[sm_120,compute_120]
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      # Torch compiles CUDA through CMake's CUDA language, so it needs the CMake
-      # launcher; Dr.Jit uses hand-written nvcc command lines and needs the
-      # RAYD_NVCC_LAUNCHER shim instead. Measured on this lane: sccache reports
-      # a 100% hit rate on a repeat build and the `Build Torch wheel` step drops
-      # from 23m30s to 6m56s. sccache decomposes each nvcc call and caches the
-      # cicc and ptxas stages, so grouped --generate-code does not prevent it.
-      CMAKE_CUDA_COMPILER_LAUNCHER: sccache
+      # Windows sccache 0.11 loses secondary cubin files from grouped CUDA
+      # gencode calls. Keep C/C++ caching and Dr.Jit's single-output nvcc shim,
+      # but run Torch CMake CUDA commands directly.
+      CMAKE_CUDA_COMPILER_LAUNCHER: ""
       RAYD_NVCC_LAUNCHER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.cache/rayd-sccache
       SCCACHE_CACHE_SIZE: 1G
