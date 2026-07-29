@@ -103,6 +103,7 @@ class ConceptAxisLayoutTests(unittest.TestCase):
                 "diffraction.h",
                 "edge.h",
                 "mesh.h",
+                "mixed_scene.h",
                 "native_launch_audit.h",
                 "optix.h",
                 "reflection.h",

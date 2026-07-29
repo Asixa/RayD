@@ -34,9 +34,10 @@ from rayd._impl.geometry import (
     SegmentChainVisibility,
     SegmentPairVisibility,
 )
+from rayd._impl.mixed import MixedScene
 from rayd._impl.scene import Mesh
 from rayd._impl.scene import Scene
-from rayd._impl.sdf import SdfGrid, sdf_intersect
+from rayd._impl.sdf import SdfGrid, SdfTraceOptions, sdf_intersect
 from rayd._impl.surfel import SurfelCloud, SurfelComposite, SurfelIntersection, SurfelScene, SurfelTraceOptions
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ __all__ = [
     "Intersection",
     "AxialEdgeVisibility",
     "Mesh",
+    "MixedScene",
     "MultiDeviceOptions",
     "NearestPointEdge",
     "NearestEdgesTopK",
@@ -76,6 +78,7 @@ __all__ = [
     "SceneGlobalGeometry",
     "SdfGrid",
     "SdfIntersection",
+    "SdfTraceOptions",
     "SurfelCloud",
     "SurfelComposite",
     "SurfelIntersection",

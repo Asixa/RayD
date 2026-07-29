@@ -266,9 +266,9 @@ class Adr0038ContractStateTests(AdrTestCase):
 
     def test_the_capability_is_not_an_operation(self) -> None:
         # Section 11: multi-device execution is a property of the existing
-        # operations, not a fourteenth one.
+        # operations, not a fifteenth one.
         self.assertNotIn(CAPABILITY, self.operations["operations"])
-        self.assertEqual(len(self.operations["operations"]), 13)
+        self.assertEqual(len(self.operations["operations"]), 14)
 
     def test_shardability_classes_are_declared_with_their_dispositions(self) -> None:
         declared = self.operations["shardability_classes"]
@@ -326,6 +326,7 @@ class Adr0038ClassificationTableTests(AdrTestCase):
                 "diffraction_direct": ("grid_reduce", "sharded"),
                 "diffraction_chain": ("grid_reduce", "sharded"),
                 "sdf_intersect": ("per_ray", "single_device"),
+                "mixed_scene": ("per_ray", "single_device"),
             },
         )
 

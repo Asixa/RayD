@@ -271,16 +271,17 @@ template <bool Detached> ReflectionChainT<Detached> initialize_sdf_chain(int ray
     return result;
 }
 
-template <bool Detached>
-FloatT<Detached> sdf_query_bias(const SdfGrid& grid, const SdfTraceOptions& options, int ray_count) {
+} // namespace
+
+template <bool Detached> FloatT<Detached> SdfGrid::query_bias(const SdfTraceOptions& options, int ray_count) const {
     Float resolved;
     if (options.eps_hit > 0.0f) {
         resolved = full<Float>(options.eps_hit, ray_count);
     } else {
-        const Vector3f scale = detach<false>(grid.scale());
-        const Float voxel = minimum(scale.x() / static_cast<float>(grid.nx() - 1),
-                                    minimum(scale.y() / static_cast<float>(grid.ny() - 1),
-                                            scale.z() / static_cast<float>(grid.nz() - 1)));
+        const Vector3f detached_scale = detach<false>(scale());
+        const Float voxel = minimum(detached_scale.x() / static_cast<float>(nx() - 1),
+                                    minimum(detached_scale.y() / static_cast<float>(ny() - 1),
+                                            detached_scale.z() / static_cast<float>(nz() - 1)));
         resolved = voxel * 1.0e-3f + zeros<Float>(ray_count);
     }
     resolved = maximum(2.0f * resolved, Float(RayEpsilon));
@@ -289,8 +290,6 @@ FloatT<Detached> sdf_query_bias(const SdfGrid& grid, const SdfTraceOptions& opti
     else
         return FloatAD(resolved);
 }
-
-} // namespace
 
 SdfGrid::SdfGrid(const Float& values, int nx, int ny, int nz, const Vector3f& position, const Float& rotation,
                  const Vector3f& scale) {
@@ -346,7 +345,7 @@ MaskT<Detached> SdfGrid::visible(const Vector3fT<Detached>& start, const Vector3
     require(static_cast<int>(slices(end)) == ray_count, "SdfGrid::visible(): start and end must have the same width.");
     const Vector3fT<Detached> delta = end - start;
     const FloatT<Detached> length = sqrt(dot(delta, delta));
-    const FloatT<Detached> bias = sdf_query_bias<Detached>(*this, options, ray_count);
+    const FloatT<Detached> bias = query_bias<Detached>(options, ray_count);
     const MaskT<Detached> short_segment = length <= 2.0f * bias;
     const Vector3fT<Detached> direction = delta / maximum(length, FloatT<Detached>(1.0e-12f));
     const RayT<Detached> ray(start + direction * bias, direction,
@@ -372,7 +371,7 @@ ReflectionChainT<Detached> SdfGrid::trace_reflections(const RayT<Detached>& ray,
     const Int slot_base = arange<Int>(ray_count) * max_bounces;
     const IntT<Detached> one = full<IntT<Detached>>(1, ray_count);
     const IntT<Detached> zero = zeros<IntT<Detached>>(ray_count);
-    const FloatT<Detached> bias = sdf_query_bias<Detached>(*this, options, ray_count);
+    const FloatT<Detached> bias = query_bias<Detached>(options, ray_count);
 
     for (int bounce = 0; bounce < max_bounces; ++bounce) {
         const SdfIntersectionT<Detached> hit = intersect<Detached>(current_ray, options, current_active);
@@ -417,5 +416,7 @@ template Mask SdfGrid::visible<true>(const Vector3f&, const Vector3f&, const Sdf
 template MaskAD SdfGrid::visible<false>(const Vector3fAD&, const Vector3fAD&, const SdfTraceOptions&, MaskAD) const;
 template ReflectionChain SdfGrid::trace_reflections<true>(const Ray&, int, const SdfTraceOptions&, Mask) const;
 template ReflectionChainAD SdfGrid::trace_reflections<false>(const RayAD&, int, const SdfTraceOptions&, MaskAD) const;
+template Float SdfGrid::query_bias<true>(const SdfTraceOptions&, int) const;
+template FloatAD SdfGrid::query_bias<false>(const SdfTraceOptions&, int) const;
 
 } // namespace rayd

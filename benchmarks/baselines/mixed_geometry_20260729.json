@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "benchmark": "rayd_mixed_geometry",
+  "date": "2026-07-29",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "compute_capability": "12.0",
+    "driver": "596.49",
+    "cpu": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "os": "Windows-10-10.0.26200-SP0"
+  },
+  "runtime": {
+    "python": "3.10.20",
+    "torch": "2.11.0+cu128",
+    "torch_cuda": "12.8",
+    "drjit": "1.3.1",
+    "rayd_cuda_architecture": "sm_120"
+  },
+  "command": "python -m benchmarks.benchmark_mixed_geometry --backend all --rays 65536 262144 1048576 --warmup 5 --repeat 15",
+  "method": "Median of 15 GPU-synchronized samples after five warmups. Manual/unified and native/mesh-only variants are measured as alternating pairs to cancel clock and thermal drift.",
+  "gates": {
+    "mixed": "unified/manual p50 ratio <= 1.10 or delta <= 0.1 ms",
+    "mesh_only": "unified/native p50 ratio <= 1.05 or delta <= 0.01 ms"
+  },
+  "cases": {
+    "torch": {
+      "65536": {
+        "manual_mixed_p50_ms": 1.705600,
+        "unified_mixed_p50_ms": 1.705000,
+        "mixed_ratio": 0.999648,
+        "native_mesh_p50_ms": 0.067100,
+        "unified_mesh_only_p50_ms": 0.069100,
+        "mesh_only_ratio": 1.029806,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      },
+      "262144": {
+        "manual_mixed_p50_ms": 2.124100,
+        "unified_mixed_p50_ms": 2.164100,
+        "mixed_ratio": 1.018832,
+        "native_mesh_p50_ms": 0.085800,
+        "unified_mesh_only_p50_ms": 0.087500,
+        "mesh_only_ratio": 1.019814,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      },
+      "1048576": {
+        "manual_mixed_p50_ms": 2.105800,
+        "unified_mixed_p50_ms": 2.175000,
+        "mixed_ratio": 1.032862,
+        "native_mesh_p50_ms": 0.255700,
+        "unified_mesh_only_p50_ms": 0.257700,
+        "mesh_only_ratio": 1.007822,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      }
+    },
+    "drjit": {
+      "65536": {
+        "manual_mixed_p50_ms": 0.292900,
+        "unified_mixed_p50_ms": 0.294800,
+        "mixed_ratio": 1.006487,
+        "native_mesh_p50_ms": 0.131300,
+        "unified_mesh_only_p50_ms": 0.134300,
+        "mesh_only_ratio": 1.022849,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      },
+      "262144": {
+        "manual_mixed_p50_ms": 0.357600,
+        "unified_mixed_p50_ms": 0.360600,
+        "mixed_ratio": 1.008389,
+        "native_mesh_p50_ms": 0.144800,
+        "unified_mesh_only_p50_ms": 0.145600,
+        "mesh_only_ratio": 1.005525,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      },
+      "1048576": {
+        "manual_mixed_p50_ms": 0.656900,
+        "unified_mixed_p50_ms": 0.658500,
+        "mixed_ratio": 1.002436,
+        "native_mesh_p50_ms": 0.180500,
+        "unified_mesh_only_p50_ms": 0.179600,
+        "mesh_only_ratio": 0.995014,
+        "all_gates_passed": true,
+        "stress_sanity_passed": true
+      }
+    }
+  }
+}

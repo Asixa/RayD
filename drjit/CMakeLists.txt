@@ -237,6 +237,7 @@ set(RAYD_CORE_SOURCE_FILES
     ${RAYD_SOURCE_DIR}/diffraction/diffraction_jit.cpp
     ${RAYD_SOURCE_DIR}/surfel_jit.cpp
     ${RAYD_SOURCE_DIR}/sdf_jit.cpp
+    ${RAYD_SOURCE_DIR}/mixed_scene_jit.cpp
 )
 
 include("${RAYD_ROOT}/cmake/RayDCompilePolicy.cmake")

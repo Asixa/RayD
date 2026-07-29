@@ -32,6 +32,7 @@ class SharedOperationContractTests(unittest.TestCase):
                 "diffraction_direct",
                 "diffraction_chain",
                 "sdf_intersect",
+                "mixed_scene",
             },
         )
         for name, operation in operations.items():
@@ -139,6 +140,7 @@ class SharedOperationContractTests(unittest.TestCase):
             "diffraction_direct": {"drjit": ["eager_native"], "torch": ["eager_native"]},
             "diffraction_chain": {"drjit": ["eager_native"], "torch": ["eager_native"]},
             "sdf_intersect": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+            "mixed_scene": {"drjit": ["eager_native"], "torch": ["eager_native"]},
         }
         operations = CONTRACT["operations"]
         self.assertEqual(set(expected), set(operations))
@@ -165,6 +167,7 @@ class SharedOperationContractTests(unittest.TestCase):
             "diffraction_direct": ("grid_reduce", "sharded"),
             "diffraction_chain": ("grid_reduce", "sharded"),
             "sdf_intersect": ("per_ray", "single_device"),
+            "mixed_scene": ("per_ray", "single_device"),
         }
         declared = CONTRACT["shardability_classes"]
         operations = CONTRACT["operations"]

@@ -5,7 +5,7 @@
     "nearest_edges_topk", "edge_mask", "visibility", "visibility_pair",
     "visibility_edge", "visibility_chain",
     "reflection_trace", "reflection_accumulation", "diffraction_direct",
-    "diffraction_chain", "surfel", "sdf_intersect",
+    "diffraction_chain", "surfel", "sdf_intersect", "mixed_scene",
     "reverse_ad", "forward_ad", "torch_compile", "multi_device_replicated"
   ],
   "standalone_geometry_scope": {
@@ -17,6 +17,18 @@
       "affects": ["visibility", "reflection_trace", "transmission"],
       "does_not_affect": ["diffraction_direct", "diffraction_chain"]
     }
+  },
+  "mixed_scene_scope": {
+    "record": "docs/adr/0043-unified-mixed-geometry-scene.md",
+    "geometry_order_on_exact_ties": ["mesh", "sdf_by_insertion", "surfel_scene_by_insertion", "surfel_id"],
+    "global_primitive_id_space": ["mesh_faces", "sdf_grids", "surfels"],
+    "sdf_broad_phase": "Each SdfGrid position, rotation, and scale define an oriented bounding box; sphere tracing is clipped to its ray interval.",
+    "execution": "One resident current-stream query per non-empty specialized acceleration owner followed by device-side fixed-winner selection; no host read, CPU fallback, or synchronization.",
+    "mesh_only_fast_path": "Direct delegation to the existing Scene query with no added CUDA or OptiX launch.",
+    "affects": ["intersect", "visibility", "reflection_trace", "transmission"],
+    "does_not_affect": ["diffraction_direct", "diffraction_chain"],
+    "transmission": "Mesh hits are opaque, SDF grids are ignored, and surfel alpha transmittance is multiplicative.",
+    "ad": "Fixed-winner VJP/JVP through the selected continuous mesh, SDF, or surfel fields; selection masks and IDs are discrete."
   },
   "constants": {
     "invalid_signed_id": -1,
@@ -328,6 +340,16 @@
         "miss_sentinel": "inf",
         "determinism": "the forward pass is bitwise deterministic and atomic-free; the values, position, rotation, and scale gradients accumulate across rays with float32 atomics"
       }
+    },
+    "mixed_scene": {
+      "shardability": {"class": "per_ray", "torch_multi_device": "single_device", "note": "MixedScene is a single-device composition layer; mesh-only queries retain the ordinary Scene path."},
+      "record": "docs/adr/0043-unified-mixed-geometry-scene.md",
+      "integration": {"drjit": ["eager_native"], "torch": ["eager_native"]},
+      "inputs": ["meshes", "sdf_grids", "surfel_clouds", "ray", "active"],
+      "result": "intersection",
+      "operations": ["intersect", "visible", "trace_reflections", "transmittance"],
+      "ad": "fixed-winner forward/VJP/JVP for continuous selected hit fields and surfel transmission",
+      "diffraction": "not exposed; existing triangle Scene remains the diffraction owner"
     }
   },
   "tolerances": {

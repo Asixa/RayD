@@ -22,6 +22,23 @@ _EPS_HIT_DEVICE_DERIVED = -1.0
 _RAY_EPSILON = 1.0e-3
 
 
+@dataclass(frozen=True, slots=True)
+class SdfTraceOptions:
+    """Controls bounded sphere tracing inside an SDF grid's oriented bounding box."""
+
+    max_steps: int = DEFAULT_MAX_STEPS
+    relaxation: float = DEFAULT_RELAXATION
+    eps_hit: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_steps < 1:
+            raise ValueError("SdfTraceOptions.max_steps must be at least 1.")
+        if not 0.0 < self.relaxation <= 1.0:
+            raise ValueError("SdfTraceOptions.relaxation must lie in (0, 1].")
+        if self.eps_hit is not None and not self.eps_hit > 0.0:
+            raise ValueError("SdfTraceOptions.eps_hit must be positive or None.")
+
+
 def _require_resident_float32(value: torch.Tensor, name: str) -> None:
     if value.device.type != "cuda":
         raise TypeError(f"{name} must be a CUDA tensor (got device {value.device}).")

@@ -416,12 +416,14 @@ outside the `Scene` surface the layer wraps, so it neither shards nor refuses).
 | `diffraction_direct` | `grid_reduce` | `sharded` |
 | `diffraction_chain` | `grid_reduce` | `sharded` |
 | `sdf_intersect` | `per_ray` | `single_device` |
+| `mixed_scene` | `per_ray` | `single_device` |
 
-`reflection_accumulation` and `sdf_intersect` are `single_device` for the same
-structural reason: neither is reached through a wrapped `Scene` method -- the
-first is a dispatcher op, the second a standalone primitive with no `Scene`
-membership (ADR-0037) -- so a multi-device scene never sees them. Classifying
-them is not a promise to shard them.
+`reflection_accumulation`, `sdf_intersect`, and `mixed_scene` are `single_device` for the same
+structural reason: none is reached through a wrapped `Scene` method -- the
+first is a dispatcher op, the second is a standalone primitive with no `Scene`
+membership (ADR-0037), and the third is the explicitly single-device
+`MixedScene` surface (ADR-0043) -- so a multi-device scene never sees them.
+Classifying them is not a promise to shard them.
 
 ## Measured results
 
@@ -496,7 +498,7 @@ Phase 4 of the plan lands the following, as one change:
    declarable there; had it been forbidden, the classification would have lived
    in section 11 alone. No operation is added: this capability is an execution
    property of the existing operations, not a new one, so `operations` keeps its
-   thirteen entries.
+   fourteen entries.
 3. `backends/drjit/python/rayd/drjit/_capabilities.py` and
    `backends/torch/python/rayd/torch/_capabilities.py`: both gain the key in
    the same change, and both repin `_SCHEMA_SHA256` to the new EOL-normalized

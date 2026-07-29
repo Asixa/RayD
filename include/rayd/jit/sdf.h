@@ -10,6 +10,8 @@
 
 namespace rayd {
 
+class MixedScene;
+
 struct SdfTraceOptions {
     int max_steps = 64;
     float relaxation = 0.9f;
@@ -71,6 +73,9 @@ class SdfGrid {
                                                  MaskT<Detached> active = true) const;
 
   private:
+    friend class MixedScene;
+    template <bool Detached> FloatT<Detached> query_bias(const SdfTraceOptions& options, int ray_count) const;
+
     void initialize(const FloatAD& values, int nx, int ny, int nz, const Vector3fAD& position, const FloatAD& rotation,
                     const Vector3fAD& scale);
 

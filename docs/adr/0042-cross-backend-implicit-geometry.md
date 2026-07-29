@@ -1,6 +1,6 @@
 # ADR-0042: Cross-backend implicit and surfel geometry
 
-- Status: Accepted
+- Status: Accepted; standalone-only composition clauses superseded by ADR-0043
 - Date: 2026-07-29
 - Decision ID: `cross-backend-implicit-geometry`
 - Scope: standalone SDF and surfel geometry in the Dr.Jit and Torch backends
@@ -14,10 +14,10 @@ specular reflection, while a surfel participates in line of sight, specular
 reflection, and alpha transmission. Neither geometry contributes an edge or a
 diffraction path.
 
-The existing standalone geometry owners already provide the right isolation
-boundary. Extending those owners avoids changing the triangle `Scene` kernels,
-the diffraction exporter, UTD state, reduction order, or multipath compile
-profiles.
+The standalone geometry owners remain the numerical and acceleration owners.
+ADR-0043 later adds a unified composition layer above them without changing the
+triangle `Scene` kernels, diffraction exporter, UTD state, reduction order, or
+multipath compile profiles.
 
 ## Decision
 
@@ -30,11 +30,10 @@ The operation matrix is closed:
 | dense SDF | yes | yes | yes | no | no |
 | surfel | yes | yes | yes | yes | no |
 
-These are standalone geometry owners. This decision does not add SDF or surfel
-primitives to the triangle `Scene`, does not define precedence between mixed
-geometry owners, and does not create a material, BSDF, emitter, or integrator
-framework. A caller that owns several geometry families composes their LOS,
-reflection, or transmission results at its solver boundary.
+These remain standalone geometry owners and do not become triangle `Scene`
+primitives. The original prohibition on RayD-owned mixed precedence and
+composition is superseded by ADR-0043. This decision still does not create a
+material, BSDF, emitter, or integrator framework.
 
 ### SDF
 
@@ -111,7 +110,8 @@ representation, numerical march, derivative, sentinel, and failure contracts.
 - Adding SDF/surfel branches to diffraction was rejected because the required
   scope explicitly excludes diffraction.
 - Replacing the triangle scene's fused visibility or reflection kernels with a
-  generic mixed-geometry dispatcher was rejected because standalone ownership
-  satisfies the operation scope without perturbing existing kernels.
+  generic mixed-geometry dispatcher was rejected here. ADR-0043 supersedes the
+  standalone-only conclusion with a composition layer that leaves those
+  kernels unchanged.
 - Treating a Torch proxy triangle as the differentiable surfel was rejected;
   the proxy is only a detached broad phase and cannot own Gaussian hit math.

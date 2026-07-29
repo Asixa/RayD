@@ -51,6 +51,7 @@ __all__ = [
     "Material",
     "MaterialAD",
     "Mesh",
+    "MixedScene",
     "NearestEdgesTopK",
     "NearestEdgesTopKAD",
     "NearestPointEdge",

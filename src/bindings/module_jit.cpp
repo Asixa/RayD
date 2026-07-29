@@ -15,6 +15,7 @@
 #include <rayd/jit/edge.h>
 #include <rayd/jit/visibility.h>
 #include <rayd/jit/mesh.h>
+#include <rayd/jit/mixed_scene.h>
 #include <rayd/jit/optix.h>
 #include <rayd/jit/sdf.h>
 #include <rayd/jit/surfel.h>
@@ -2322,5 +2323,71 @@ NB_MODULE(_C, m) {
             .def_prop_ro("version", &Scene::version)
             .def_prop_ro("edge_version", &Scene::edge_version)
             .def("__repr__", &Scene::to_string);
+    });
+
+    bind_section("mixed scene", [&]() {
+        nb::class_<MixedScene>(m, "MixedScene")
+            .def(
+                "__init__",
+                [](MixedScene* scene, const std::string& trace_backend, const std::string& edge_bvh_backend) {
+                    new (scene) MixedScene(edge_bvh_backend, trace_backend);
+                },
+                "trace_backend"_a = "auto", "edge_bvh_backend"_a = "auto")
+            .def("add_mesh", &MixedScene::add_mesh, "mesh"_a, "dynamic"_a = false)
+            .def("add_sdf", &MixedScene::add_sdf, "grid"_a, "options"_a = SdfTraceOptions())
+            .def("add_surfel", &MixedScene::add_surfel, "cloud"_a, "options"_a = SurfelTraceOptions())
+            .def("build", &MixedScene::build)
+            .def("is_ready", &MixedScene::is_ready)
+            .def_prop_ro("num_meshes", &MixedScene::num_meshes)
+            .def_prop_ro("num_sdfs", &MixedScene::num_sdfs)
+            .def_prop_ro("num_surfel_scenes", &MixedScene::num_surfel_scenes)
+            .def(
+                "intersect",
+                [](const MixedScene& scene, const Ray& ray, rayd::Mask active, RayFlags flags) {
+                    return scene.intersect<true>(ray, active, flags);
+                },
+                nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
+            .def(
+                "intersect",
+                [](const MixedScene& scene, const RayAD& ray, rayd::MaskAD active, RayFlags flags) {
+                    return scene.intersect<false>(ray, active, flags);
+                },
+                nb::arg("ray").noconvert(), "active"_a = true, "flags"_a = RayFlags::All)
+            .def(
+                "visible",
+                [](const MixedScene& scene, const Vector3f& start, const Vector3f& end, rayd::Mask active) {
+                    return scene.visible<true>(start, end, active);
+                },
+                "start"_a, "end"_a, "active"_a = true)
+            .def(
+                "visible",
+                [](const MixedScene& scene, const Vector3fAD& start, const Vector3fAD& end, rayd::MaskAD active) {
+                    return scene.visible<false>(start, end, active);
+                },
+                "start"_a, "end"_a, "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const MixedScene& scene, const Ray& ray, int max_bounces, rayd::Mask active) {
+                    return scene.trace_reflections<true>(ray, max_bounces, active);
+                },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+            .def(
+                "trace_reflections",
+                [](const MixedScene& scene, const RayAD& ray, int max_bounces, rayd::MaskAD active) {
+                    return scene.trace_reflections<false>(ray, max_bounces, active);
+                },
+                nb::arg("ray").noconvert(), "max_bounces"_a, "active"_a = true)
+            .def(
+                "transmittance",
+                [](const MixedScene& scene, const Ray& ray, rayd::Mask active) {
+                    return scene.transmittance<true>(ray, active);
+                },
+                nb::arg("ray").noconvert(), "active"_a = true)
+            .def(
+                "transmittance",
+                [](const MixedScene& scene, const RayAD& ray, rayd::MaskAD active) {
+                    return scene.transmittance<false>(ray, active);
+                },
+                nb::arg("ray").noconvert(), "active"_a = true);
     });
 }

@@ -112,6 +112,7 @@ edges, visibility, and multipath query results.
 | Direct and chained diffraction | Yes | Yes |
 | Surfel primitives | Yes | Yes |
 | SDF grid intersection | Yes | Yes |
+| Unified mesh/SDF/surfel scene | Yes | Yes |
 | Reverse-mode AD | Yes | Yes |
 | Forward-mode AD | Yes | Yes |
 | `torch.compile` integration | No | Yes |
@@ -133,6 +134,7 @@ overlap:
 
 - `Mesh`: triangle geometry, transforms, UVs, and edge topology
 - `Scene`: mesh container plus OptiX acceleration structures
+- `MixedScene`: unified differentiable mesh, bounded-SDF, and surfel ray queries
 - `Ray` / `RayAD`: batched origins, directions, and optional `tmax`
 - `scene.intersect(ray)`: closest differentiable ray-mesh hit
 - `scene.nearest_edge(query)`: nearest-edge point or ray query
@@ -171,7 +173,7 @@ Both backends expose standalone differentiable signed-distance-field queries:
 Gradients and tangents reach the grid values, the box transform, and the rays
 through the frozen-winner implicit function theorem. Torch uses the existing
 CUDA dispatcher and Dr.Jit launches the shared sphere march on its current CUDA
-stream. The primitive stays standalone and does not join a triangle `Scene`.
+stream. The primitive remains directly usable and can also join a `MixedScene`.
 
 Both backends also expose standalone surfels. Surfel LOS and reflection use the
 accepted analytic Gaussian hit; `composite_alpha(...)` (and Torch's
@@ -180,6 +182,15 @@ scope is intentional: SDF participates only in LOS/reflection, surfel in
 LOS/reflection/transmission, and neither participates in diffraction. See
 [`ADR-0037`](docs/adr/0037-differentiable-sdf-intersection.md) and
 [`ADR-0042`](docs/adr/0042-cross-backend-implicit-geometry.md).
+
+`MixedScene` owns one public `intersect`, `visible`, `trace_reflections`, and
+`transmittance` surface for any simultaneous mix of meshes, oriented-bbox SDFs,
+and surfels. It keeps each geometry owner's specialized GPU accelerator, merges
+closest hits on the device, and differentiates through the fixed winning hit.
+Mesh hits are opaque for transmission, SDFs are ignored, and surfels contribute
+alpha transmission. A mesh-only `MixedScene` forwards directly to `Scene`, and
+the class intentionally exposes no diffraction method.
+See [`ADR-0043`](docs/adr/0043-unified-mixed-geometry-scene.md).
 
 ## Differentiation Contract
 
