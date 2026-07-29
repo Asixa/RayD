@@ -219,6 +219,86 @@ void enable_all_gradients(
     request.need_grad_vertices = true;
 }
 
+rayd::shared::utd::Complex beta_term_value(
+    float beta,
+    float n,
+    float k_l,
+    float cot_sign,
+    bool plus_branch) {
+    namespace utd = rayd::shared::utd;
+    float cot_value;
+    float cot_first;
+    float cot_second;
+    float x_value;
+    float x_first;
+    float x_second;
+    utd::beta_term_values(
+        beta, n, k_l, cot_sign, plus_branch,
+        cot_value, cot_first, cot_second,
+        x_value, x_first, x_second);
+    utd::Complex transition;
+    utd::Complex transition_first;
+    utd::Complex transition_second;
+    utd::f_utd_with_derivatives(
+        x_value, transition, transition_first, transition_second);
+    utd::Complex value;
+    utd::Complex first;
+    utd::Complex second;
+    utd::assemble_beta_term(
+        cot_value, cot_first, cot_second,
+        x_value, x_first, x_second,
+        k_l, n, cot_sign,
+        transition, transition_first, transition_second,
+        value, first, second);
+    return value;
+}
+
+void test_mend_beta_has_no_legacy_cutoff_jump() {
+    namespace utd = rayd::shared::utd;
+    constexpr float n = 1.5F;
+    constexpr float k_l = 100.0F;
+    constexpr float cot_sign = 1.0F;
+    constexpr bool plus_branch = true;
+    constexpr float b_star = utd::UTD_PI;
+    const float delta_w = 4.0F * std::sqrt(utd::UTD_TWO_PI / k_l);
+    const float cutoff_delta = delta_w * std::sqrt(std::log(1000.0F));
+    constexpr float relative_offset = 1.0e-6F;
+    const float beta_inside =
+        b_star + cutoff_delta * (1.0F - relative_offset);
+    const float beta_outside =
+        b_star + cutoff_delta * (1.0F + relative_offset);
+    const float inside_weight = std::exp(
+        -std::pow((beta_inside - b_star) / delta_w, 2.0F));
+    const float outside_weight = std::exp(
+        -std::pow((beta_outside - b_star) / delta_w, 2.0F));
+    require(
+        inside_weight > 1.0e-3F && outside_weight < 1.0e-3F,
+        "Mend regression fixture must straddle the legacy w=1e-3 cutoff");
+    const auto unit_truncation = utd::cplx(1.0F, 0.0F);
+
+    const auto inside = utd::mend_beta_term_value(
+        beta_term_value(beta_inside, n, k_l, cot_sign, plus_branch),
+        beta_inside, b_star, n, k_l, cot_sign, plus_branch,
+        0.0F, unit_truncation);
+    const auto outside = utd::mend_beta_term_value(
+        beta_term_value(beta_outside, n, k_l, cot_sign, plus_branch),
+        beta_outside, b_star, n, k_l, cot_sign, plus_branch,
+        0.0F, unit_truncation);
+    require(
+        std::isfinite(inside.re) && std::isfinite(inside.im) &&
+            std::isfinite(outside.re) && std::isfinite(outside.im),
+        "Mend beta term must stay finite around the legacy w=1e-3 cutoff");
+    const float jump = std::hypot(
+        inside.re - outside.re, inside.im - outside.im);
+    const float scale = std::max({
+        1.0e-6F,
+        std::hypot(inside.re, inside.im),
+        std::hypot(outside.re, outside.im)});
+    require(
+        jump <= 1.0e-4F * scale,
+        "Mend beta term must be continuous around the legacy w=1e-3 cutoff");
+}
+
 void test_stationary_line_fermat_and_short_dipole_amplitude() {
     namespace utd = rayd::shared::utd;
     const auto source = utd::make_f3(0.0F, -3.0F, 2.0F);
@@ -254,6 +334,29 @@ void test_stationary_line_fermat_and_short_dipole_amplitude() {
     const float axial_power = utd::cplx_abs_sqr(axial.x) + utd::cplx_abs_sqr(axial.y) +
                               utd::cplx_abs_sqr(axial.z);
     require(axial_power <= 1.0e-12F * scalar_power, "short-dipole axial field must vanish");
+    using Dual = utd::Dual;
+    utd::MaterialParamsT<Dual> dual_material = {};
+    dual_material.txPolZ = Dual(1.0F);
+    const Dual dual_theta(theta, 1.0F);
+    const utd::Vec3T<Dual> dual_direction = {
+        utd::sinf(dual_theta), Dual(0.0F), utd::cosf(dual_theta)};
+    const utd::Vec3T<Dual> dual_origin = {
+        Dual(0.0F), Dual(0.0F), Dual(0.0F)};
+    const auto dual_vector = utd::direct_source_vector(
+        dual_origin, dual_direction, Dual(3.0F), dual_material);
+    const auto dual_scalar = utd::direct_source_field(
+        dual_origin, dual_direction, Dual(3.0F));
+    const Dual dual_amplitude = utd::sqrtf(
+        (utd::cplx_abs_sqr(dual_vector.x) +
+         utd::cplx_abs_sqr(dual_vector.y) +
+         utd::cplx_abs_sqr(dual_vector.z)) /
+        utd::cplx_abs_sqr(dual_scalar));
+    require(
+        std::fabs(dual_amplitude.v - std::sin(theta)) <= 2.0e-5F,
+        "short-dipole Dual amplitude must equal sin(theta)");
+    require(
+        std::fabs(dual_amplitude.d - std::cos(theta)) <= 2.0e-5F,
+        "short-dipole Dual tangent must equal cos(theta)");
 }
 void test_empty_schema_and_optional_bundle() {
     const auto empty = empty_wedge_request();
@@ -596,6 +699,8 @@ void test_invalid_row_short_circuits_poison() {
 int main() {
     try {
         require(at::cuda::is_available(), "CUDA is required for wedge tests");
+        std::cout << "[RUN] test_mend_beta_has_no_legacy_cutoff_jump\n";
+        test_mend_beta_has_no_legacy_cutoff_jump();
         std::cout << "[RUN] test_stationary_line_fermat_and_short_dipole_amplitude\n";
         test_stationary_line_fermat_and_short_dipole_amplitude();
         std::cout << "[RUN] test_empty_schema_and_optional_bundle\n";
